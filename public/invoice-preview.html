@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MinuteFlow Invoice Preview</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Libre+Baskerville:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --cream: #faf7f2;
+      --parchment: #f3ede4;
+      --sand: #e8dfd3;
+      --clay: #d4c8b8;
+      --stone: #b5a898;
+      --bark: #8b7b6b;
+      --walnut: #6b5b4b;
+      --espresso: #3d3229;
+      --ink: #2a221a;
+      --white: #fffdf9;
+      --terracotta: #c2694f;
+      --terracotta-soft: #f0ddd5;
+      --sage: #6b8f71;
+      --sage-soft: #dce8dd;
+      --amber: #b8860b;
+      --amber-soft: #f5ecd0;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--sand);
+      color: var(--ink);
+      padding: 40px 20px;
+    }
+
+    .page-header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .page-header h1 {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 28px;
+      color: var(--espresso);
+      margin-bottom: 8px;
+    }
+    .page-header p {
+      color: var(--bark);
+      font-size: 14px;
+    }
+
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      max-width: 900px;
+      margin: 0 auto 0;
+    }
+    .tab {
+      padding: 12px 28px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 2px solid var(--clay);
+      border-bottom: none;
+      background: var(--parchment);
+      color: var(--bark);
+      border-radius: 10px 10px 0 0;
+      transition: all 0.2s;
+    }
+    .tab.active {
+      background: var(--white);
+      color: var(--terracotta);
+      border-color: var(--terracotta);
+    }
+
+    .invoice-container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: var(--white);
+      border-radius: 0 16px 16px 16px;
+      box-shadow: 0 4px 24px rgba(42, 34, 26, 0.08);
+      overflow: hidden;
+    }
+
+    /* ===== SUMMARY INVOICE ===== */
+    .invoice-header {
+      background: linear-gradient(135deg, var(--espresso) 0%, var(--walnut) 100%);
+      color: var(--cream);
+      padding: 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+    .invoice-header-left h2 {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .invoice-header-left .subtitle {
+      font-size: 14px;
+      color: var(--stone);
+      margin-bottom: 20px;
+    }
+    .invoice-header-left .client-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--stone);
+      margin-bottom: 4px;
+    }
+    .invoice-header-left .client-name {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .invoice-header-left .client-account {
+      font-size: 13px;
+      color: var(--clay);
+      margin-top: 2px;
+    }
+    .invoice-header-left .client-email {
+      font-size: 13px;
+      color: var(--stone);
+      margin-top: 4px;
+    }
+
+    .invoice-header-right {
+      text-align: right;
+    }
+    .invoice-header-right .company-name {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .invoice-header-right .company-sub {
+      font-size: 12px;
+      color: var(--stone);
+      margin-bottom: 12px;
+    }
+    .invoice-header-right .meta-row {
+      font-size: 13px;
+      color: var(--clay);
+      margin-bottom: 2px;
+    }
+    .invoice-header-right .meta-row span {
+      color: var(--cream);
+      font-weight: 600;
+    }
+    .invoice-header-right .amount-box {
+      margin-top: 16px;
+      background: var(--terracotta);
+      padding: 12px 20px;
+      border-radius: 10px;
+      text-align: center;
+    }
+    .invoice-header-right .amount-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: rgba(255,255,255,0.7);
+    }
+    .invoice-header-right .amount-value {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .invoice-body {
+      padding: 40px;
+    }
+
+    /* Hours Summary */
+    .hours-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .hour-card {
+      background: var(--parchment);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+    }
+    .hour-card.highlight {
+      background: var(--terracotta-soft);
+      border: 2px solid var(--terracotta);
+    }
+    .hour-card .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--bark);
+      margin-bottom: 6px;
+    }
+    .hour-card .value {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--espresso);
+    }
+    .hour-card .unit {
+      font-size: 13px;
+      color: var(--bark);
+    }
+    .hour-card.highlight .value {
+      color: var(--terracotta);
+    }
+
+    .savings-banner {
+      background: var(--sage-soft);
+      border: 2px solid var(--sage);
+      border-radius: 12px;
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 32px;
+    }
+    .savings-banner .text {
+      font-size: 14px;
+      color: var(--sage);
+      font-weight: 600;
+    }
+    .savings-banner .amount {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--sage);
+    }
+
+    .section-title {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--espresso);
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--sand);
+    }
+
+    /* Task Summary Table */
+    .summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 32px;
+    }
+    .summary-table th {
+      text-align: left;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--bark);
+      padding: 8px 12px;
+      border-bottom: 2px solid var(--sand);
+    }
+    .summary-table th:last-child {
+      text-align: right;
+    }
+    .summary-table td {
+      padding: 10px 12px;
+      font-size: 14px;
+      border-bottom: 1px solid var(--parchment);
+    }
+    .summary-table td:last-child {
+      text-align: right;
+      font-weight: 600;
+      font-family: 'DM Sans', sans-serif;
+      color: var(--walnut);
+    }
+    .summary-table tr:last-child td {
+      border-bottom: none;
+    }
+    .summary-table .total-row td {
+      border-top: 2px solid var(--sand);
+      border-bottom: none;
+      font-weight: 700;
+      color: var(--espresso);
+      padding-top: 12px;
+    }
+
+    /* Hours bar */
+    .hours-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .hours-bar {
+      height: 8px;
+      background: var(--terracotta);
+      border-radius: 4px;
+      opacity: 0.7;
+    }
+
+    /* Payment Info */
+    .payment-info {
+      background: var(--parchment);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-top: 32px;
+    }
+    .payment-info h4 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--bark);
+      margin-bottom: 8px;
+    }
+    .payment-info p {
+      font-size: 13px;
+      color: var(--walnut);
+      line-height: 1.6;
+    }
+
+    /* ===== DETAILED REPORT ===== */
+    .detail-section { display: none; }
+    .detail-section.active { display: block; }
+    .summary-section { display: block; }
+    .summary-section.active { display: block; }
+
+    .detail-table-wrap {
+      overflow-x: auto;
+      margin: 0 -40px;
+      padding: 0 40px;
+    }
+    .detail-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      min-width: 800px;
+    }
+    .detail-table thead th {
+      text-align: left;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--bark);
+      padding: 10px 8px;
+      border-bottom: 2px solid var(--sand);
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      background: var(--white);
+    }
+    .detail-table tbody td {
+      padding: 8px;
+      border-bottom: 1px solid var(--parchment);
+      color: var(--espresso);
+    }
+    .detail-table tbody tr:hover {
+      background: var(--parchment);
+    }
+    .detail-table .cat-task { color: var(--terracotta); font-weight: 500; }
+    .detail-table .cat-break { color: var(--amber); font-weight: 500; }
+    .detail-table .cat-meeting { color: var(--sage); font-weight: 500; }
+    .detail-table .cat-sorting { color: var(--bark); font-weight: 500; }
+    .detail-table .cat-personal { color: var(--stone); font-weight: 500; }
+
+    .billable-yes {
+      display: inline-block;
+      background: var(--sage-soft);
+      color: var(--sage);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .billable-no {
+      display: inline-block;
+      background: var(--parchment);
+      color: var(--stone);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .detail-footer {
+      display: flex;
+      gap: 16px;
+      margin-top: 24px;
+      flex-wrap: wrap;
+    }
+    .detail-stat {
+      background: var(--parchment);
+      border-radius: 10px;
+      padding: 14px 20px;
+      flex: 1;
+      min-width: 150px;
+      text-align: center;
+    }
+    .detail-stat .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--bark);
+      margin-bottom: 4px;
+    }
+    .detail-stat .value {
+      font-family: 'Libre Baskerville', serif;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--espresso);
+    }
+
+    /* Print styles */
+    @media print {
+      body { background: white; padding: 0; }
+      .page-header, .tab-bar, .no-print { display: none !important; }
+      .invoice-container {
+        box-shadow: none;
+        border-radius: 0;
+        max-width: 100%;
+      }
+      .invoice-header {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .hour-card, .hour-card.highlight, .savings-banner, .payment-info, .detail-stat {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .hours-bar {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .billable-yes, .billable-no {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+
+    .print-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--terracotta);
+      color: white;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 20px;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .print-btn:hover { opacity: 0.9; }
+
+    .watermark {
+      text-align: center;
+      padding: 20px;
+      color: var(--stone);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="page-header">
+    <h1>MinuteFlow Invoice Preview</h1>
+    <p>Review the summary invoice and detailed report below. These are HTML templates — print-ready from the browser.</p>
+  </div>
+
+  <div class="tab-bar">
+    <div class="tab active" onclick="switchTab('summary')">Summary Invoice</div>
+    <div class="tab" onclick="switchTab('detail')">Detailed Report</div>
+  </div>
+
+  <!-- ==================== SUMMARY INVOICE ==================== -->
+  <div class="invoice-container" id="summary-section">
+    <div class="invoice-header">
+      <div class="invoice-header-left">
+        <h2>INVOICE</h2>
+        <div class="subtitle">February 2026</div>
+        <div class="client-label">Billed To</div>
+        <div class="client-name">Ting Chiu</div>
+        <div class="client-account">TAT Foundation</div>
+        <div class="client-email">Ting.wfg@gmail.com &middot; 404.663.3633</div>
+      </div>
+      <div class="invoice-header-right">
+        <div class="company-name">Virtual Concierge Colina</div>
+        <div class="company-sub">VA Group</div>
+        <div class="meta-row">Invoice No: <span>INV-2026-02-001</span></div>
+        <div class="meta-row">Date: <span>March 1, 2026</span></div>
+        <div class="meta-row">Contact: <span>470.430.1625</span></div>
+        <div class="amount-box">
+          <div class="amount-label">Invoice Amount</div>
+          <div class="amount-value">$1,250.00</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="invoice-body">
+      <!-- Hours Summary -->
+      <div class="hours-grid">
+        <div class="hour-card">
+          <div class="label">Total Hours Rendered</div>
+          <div class="value">86.82</div>
+          <div class="unit">hours</div>
+        </div>
+        <div class="hour-card highlight">
+          <div class="label">Billed Hours</div>
+          <div class="value">50.00</div>
+          <div class="unit">hours &middot; $25.00/hr</div>
+        </div>
+        <div class="hour-card">
+          <div class="label">Volunteer Time</div>
+          <div class="value">36.82</div>
+          <div class="unit">hours</div>
+        </div>
+      </div>
+
+      <div class="savings-banner">
+        <div class="text">Total Amount Saved by Client</div>
+        <div class="amount">$920.50</div>
+      </div>
+
+      <!-- Top Task Summary -->
+      <div class="section-title">Top Task Summary</div>
+      <table class="summary-table">
+        <thead>
+          <tr><th>Task</th><th>Hours</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 200px;"></span></div>Landing Page Update</td><td>34h 08m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 70px;"></span></div>Graphic Des. Development</td><td>12h 00m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 32px;"></span></div>Graphic Des. Review/Revision</td><td>5h 21m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 24px;"></span></div>Promo Reel Developing</td><td>4h 00m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 20px;"></span></div>Meeting w/ Ms. Liang</td><td>3h 30m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 16px;"></span></div>Gathering Digital Assets</td><td>2h 39m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 14px;"></span></div>Blog Content Production</td><td>2h 11m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 12px;"></span></div>Promo Reel Sorting</td><td>2h 00m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 12px;"></span></div>Promo Reel Planning</td><td>2h 00m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 12px;"></span></div>Promo Reel Finalizing</td><td>2h 00m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 11px;"></span></div>Video Reel Production</td><td>1h 55m</td></tr>
+          <tr><td><div class="hours-bar-wrap"><span class="hours-bar" style="width: 11px;"></span></div>Landing Page Development</td><td>1h 51m</td></tr>
+          <tr class="total-row"><td>Total</td><td>86h 49m</td></tr>
+        </tbody>
+      </table>
+
+      <!-- Top Deliverables -->
+      <div class="section-title">Top Deliverables / Objectives</div>
+      <table class="summary-table">
+        <thead>
+          <tr><th>Project / Deliverable</th><th>Hours</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>EmpowerED 2026</td><td>25h 56m</td></tr>
+          <tr><td>College Application Bootcamp</td><td>12h 28m</td></tr>
+          <tr><td>Professional Resume Biography</td><td>8h 06m</td></tr>
+          <tr><td>Bootcamp Application</td><td>6h 00m</td></tr>
+          <tr><td>Financial Education</td><td>4h 42m</td></tr>
+          <tr><td>Hackathon 2026</td><td>2h 05m</td></tr>
+          <tr><td>Flyer Bootcamp Production</td><td>2h 00m</td></tr>
+          <tr><td>Meeting Agenda Reel Developing</td><td>2h 00m</td></tr>
+          <tr><td>LNY Reel Developing</td><td>2h 00m</td></tr>
+          <tr><td>Lunar New Year Production</td><td>1h 53m</td></tr>
+          <tr><td>Media Files</td><td>1h 50m</td></tr>
+          <tr><td>Flyer EmpowerED 2026 Production</td><td>1h 30m</td></tr>
+          <tr><td>LNY Koop Award</td><td>1h 30m</td></tr>
+          <tr class="total-row"><td>Total</td><td>86h 49m</td></tr>
+        </tbody>
+      </table>
+
+      <!-- Payment Info -->
+      <div class="payment-info">
+        <h4>Payment Information</h4>
+        <p>
+          Zelle: 470.430.1625 or 26tonitoni@gmail.com<br>
+          Check: Marie Toni Colina<br>
+          Other methods available upon request.
+        </p>
+      </div>
+
+      <div class="no-print" style="text-align: center;">
+        <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+      </div>
+    </div>
+
+    <div class="watermark">Generated by MinuteFlow &middot; minuteflow.click</div>
+  </div>
+
+  <!-- ==================== DETAILED REPORT ==================== -->
+  <div class="invoice-container detail-section" id="detail-section" style="display:none; margin-top: 0; border-radius: 0 16px 16px 16px;">
+    <div class="invoice-header" style="padding: 30px 40px;">
+      <div class="invoice-header-left">
+        <h2 style="font-size: 22px;">Detailed Time Report</h2>
+        <div class="subtitle">TAT Foundation &middot; February 2026</div>
+      </div>
+      <div class="invoice-header-right">
+        <div class="company-name" style="font-size: 16px;">Virtual Concierge Colina</div>
+        <div class="meta-row">Generated: <span>March 1, 2026</span></div>
+      </div>
+    </div>
+
+    <div class="invoice-body">
+      <div class="detail-footer" style="margin-top: 0; margin-bottom: 24px;">
+        <div class="detail-stat">
+          <div class="label">Total Entries</div>
+          <div class="value">47</div>
+        </div>
+        <div class="detail-stat">
+          <div class="label">Total Hours</div>
+          <div class="value">86.82</div>
+        </div>
+        <div class="detail-stat">
+          <div class="label">Billable Hours</div>
+          <div class="value" style="color: var(--terracotta);">50.00</div>
+        </div>
+        <div class="detail-stat">
+          <div class="label">Date Range</div>
+          <div class="value" style="font-size: 16px;">Feb 1 - 28</div>
+        </div>
+      </div>
+
+      <div class="detail-table-wrap">
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Duration</th>
+              <th>User</th>
+              <th>Task</th>
+              <th>Category</th>
+              <th>Project</th>
+              <th>Account</th>
+              <th>Billable</th>
+              <th>Client Memo</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>3/17/2026</td>
+              <td>11:23 AM</td>
+              <td>11:42 PM</td>
+              <td>6h 19m</td>
+              <td>King Cagayan</td>
+              <td>Research for time tracker</td>
+              <td class="cat-task">Task</td>
+              <td>Time Tracker App</td>
+              <td>Personal</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>8:27 AM</td>
+              <td>8:30 AM</td>
+              <td>3m</td>
+              <td>Charinade David</td>
+              <td>Education Evaluation</td>
+              <td class="cat-task">Task</td>
+              <td>Education Project</td>
+              <td>TAT Foundation</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>9:30 AM</td>
+              <td>9:48 AM</td>
+              <td>18m</td>
+              <td>Arianne Claire Rivera</td>
+              <td>Revision of Memos</td>
+              <td class="cat-task">Task</td>
+              <td></td>
+              <td>Virtual Concierge</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>9:48 AM</td>
+              <td>10:35 AM</td>
+              <td>47m</td>
+              <td>Flordeliz Mandin</td>
+              <td>Marketing &amp; Social Media Manager</td>
+              <td class="cat-task">Task</td>
+              <td>Personal</td>
+              <td>Virtual Concierge</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>10:35 AM</td>
+              <td>11:43 AM</td>
+              <td>1h 08m</td>
+              <td>Arianne Claire Rivera</td>
+              <td>Others</td>
+              <td class="cat-task">Task</td>
+              <td></td>
+              <td>Virtual Concierge</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>10:43 AM</td>
+              <td>10:43 AM</td>
+              <td>0m</td>
+              <td>Toni Colina</td>
+              <td>test</td>
+              <td class="cat-task">Task</td>
+              <td>back from break</td>
+              <td>TAT Foundation</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>11:41 AM</td>
+              <td>11:50 AM</td>
+              <td>9m</td>
+              <td>Arianne Claire Rivera</td>
+              <td>24 months monitoring</td>
+              <td class="cat-task">Task</td>
+              <td>Education Enrollment</td>
+              <td>Virtual Concierge</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>11:50 AM</td>
+              <td>12:27 PM</td>
+              <td>37m</td>
+              <td>Flordeliz Mandin</td>
+              <td>Content Calendar Making</td>
+              <td class="cat-task">Task</td>
+              <td></td>
+              <td>Virtual Concierge</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>12:27 PM</td>
+              <td>1:05 PM</td>
+              <td>38m</td>
+              <td>Flordeliz Mandin</td>
+              <td>Checking Messages and Tasks</td>
+              <td class="cat-task">Task</td>
+              <td></td>
+              <td>Virtual Concierge</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>7:19 PM</td>
+              <td>7:20 PM</td>
+              <td>1m</td>
+              <td>Toni Colina</td>
+              <td>sorting out tasks</td>
+              <td class="cat-sorting">Sorting</td>
+              <td>To do list</td>
+              <td>Virtual Concierge</td>
+              <td><span class="billable-yes">Yes</span></td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3/18/2026</td>
+              <td>7:20 PM</td>
+              <td>7:23 PM</td>
+              <td>3m</td>
+              <td>Toni Colina</td>
+              <td>Break</td>
+              <td class="cat-break">Break</td>
+              <td></td>
+              <td></td>
+              <td><span class="billable-no">No</span></td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="detail-footer">
+        <div class="detail-stat">
+          <div class="label">Total Entries</div>
+          <div class="value">47</div>
+        </div>
+        <div class="detail-stat">
+          <div class="label">Total Hours</div>
+          <div class="value">86.82</div>
+        </div>
+        <div class="detail-stat">
+          <div class="label">Billable</div>
+          <div class="value" style="color: var(--sage);">50.00</div>
+        </div>
+        <div class="detail-stat">
+          <div class="label">Non-Billable</div>
+          <div class="value" style="color: var(--stone);">36.82</div>
+        </div>
+      </div>
+
+      <div class="no-print" style="text-align: center;">
+        <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+      </div>
+    </div>
+
+    <div class="watermark">Generated by MinuteFlow &middot; minuteflow.click</div>
+  </div>
+
+  <script>
+    function switchTab(tab) {
+      const tabs = document.querySelectorAll('.tab');
+      tabs.forEach(t => t.classList.remove('active'));
+
+      if (tab === 'summary') {
+        tabs[0].classList.add('active');
+        document.getElementById('summary-section').style.display = 'block';
+        document.getElementById('detail-section').style.display = 'none';
+      } else {
+        tabs[1].classList.add('active');
+        document.getElementById('summary-section').style.display = 'none';
+        document.getElementById('detail-section').style.display = 'block';
+      }
+    }
+  </script>
+
+</body>
+</html>

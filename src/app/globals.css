@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme inline {
+  /* Typography */
+  --font-sans: var(--font-dm-sans);
+  --font-serif: var(--font-libre-baskerville);
+
+  /* Neutrals */
+  --color-cream: #faf7f2;
+  --color-parchment: #f3ede4;
+  --color-sand: #e8dfd3;
+  --color-clay: #d4c8b8;
+  --color-stone: #b5a898;
+  --color-bark: #8b7b6b;
+  --color-walnut: #6b5b4b;
+  --color-espresso: #3d3229;
+  --color-ink: #2a221a;
+  --color-white: #fffdf9;
+
+  /* Accents */
+  --color-terracotta: #c2694f;
+  --color-terracotta-soft: #f0ddd5;
+  --color-sage: #6b8f71;
+  --color-sage-soft: #dce8dd;
+  --color-amber: #b8860b;
+  --color-amber-soft: #f5ecd0;
+  --color-clay-rose: #b07d6a;
+  --color-clay-rose-soft: #f0e0d8;
+  --color-slate-blue: #697a8a;
+  --color-slate-blue-soft: #dfe5ea;
+
+  /* Custom animation */
+  --animate-breathe: breathe 3s ease-in-out infinite;
+}
+
+body {
+  background-color: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}

@@ -1,0 +1,543 @@
+"use client";
+
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { createClient } from "@/lib/supabase/client";
+import type { PlannedTask, UserRole, Profile } from "@/types/database";
+
+interface DailyTaskPlannerProps {
+  userId: string;
+  role: UserRole;
+  onStartPlannedTask: (task: PlannedTask) => void;
+  teamMembers?: Profile[];
+}
+
+const FALLBACK_ACCOUNTS = [
+  "TAT Foundation",
+  "WSB Awesome Team",
+  "Virtual Concierge",
+  "Colina Portrait",
+  "SNAPS Sublimation",
+  "Thess Personal",
+  "Thess Base",
+  "Right Path Agency",
+  "Personal",
+  "Quad Life",
+  "TONIWSB",
+];
+
+export default function DailyTaskPlanner({
+  userId,
+  role,
+  onStartPlannedTask,
+  teamMembers = [],
+}: DailyTaskPlannerProps) {
+  const supabase = createClient();
+  const [tasks, setTasks] = useState<PlannedTask[]>([]);
+  const [accounts, setAccounts] = useState<string[]>(FALLBACK_ACCOUNTS);
+  const [loading, setLoading] = useState(true);
+  const [logDurations, setLogDurations] = useState<Record<number, number>>({});
+
+  // Single task entry
+  const [newTaskName, setNewTaskName] = useState("");
+  const [newTaskAccount, setNewTaskAccount] = useState("");
+
+  // Bulk entry mode
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkAccount, setBulkAccount] = useState("");
+
+  // Collapsed state
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Admin: which VA to view
+  const [viewUserId, setViewUserId] = useState(userId);
+
+  // Today's date in local timezone
+  const today = new Date().toISOString().split("T")[0];
+
+  // Fetch accounts from DB
+  const fetchAccounts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/accounts");
+      if (res.ok) {
+        const data = await res.json();
+        const activeAccounts = (data.accounts ?? [])
+          .filter((a: { active: boolean }) => a.active)
+          .map((a: { name: string }) => a.name);
+        if (activeAccounts.length > 0) setAccounts(activeAccounts);
+      }
+    } catch {
+      // Keep fallback accounts
+    }
+  }, []);
+
+  // Fetch planned tasks for today
+  const fetchTasks = useCallback(async () => {
+    setLoading(true);
+    const targetUserId = role === "va" ? userId : viewUserId;
+
+    let query = supabase
+      .from("planned_tasks")
+      .select("*")
+      .eq("plan_date", today)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    // "ALL" shows all users' tasks, otherwise filter by selected user
+    if (targetUserId !== "__all__") {
+      query = query.eq("user_id", targetUserId);
+    }
+
+    const { data, error } = await query;
+
+    if (!error && data) {
+      setTasks(data as PlannedTask[]);
+    }
+    setLoading(false);
+  }, [supabase, userId, viewUserId, role, today]);
+
+  useEffect(() => {
+    fetchAccounts();
+  }, [fetchAccounts]);
+
+  useEffect(() => {
+    if (userId) fetchTasks();
+  }, [userId, fetchTasks]);
+
+  // Fetch durations for completed tasks that have linked time_logs
+  useEffect(() => {
+    const completedWithLogs = tasks.filter((t) => t.completed && t.log_id);
+    if (completedWithLogs.length === 0) return;
+    const logIds = completedWithLogs.map((t) => t.log_id!);
+    const missing = logIds.filter((id) => !(id in logDurations));
+    if (missing.length === 0) return;
+
+    (async () => {
+      const { data } = await supabase
+        .from("time_logs")
+        .select("id, duration_ms")
+        .in("id", missing);
+      if (data) {
+        const newDurations: Record<number, number> = { ...logDurations };
+        data.forEach((d: { id: number; duration_ms: number }) => {
+          newDurations[d.id] = d.duration_ms;
+        });
+        setLogDurations(newDurations);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
+
+  // Add a single task
+  const addTask = useCallback(async () => {
+    if (!newTaskName.trim()) return;
+
+    const { data, error } = await supabase
+      .from("planned_tasks")
+      .insert({
+        user_id: role === "va" ? userId : viewUserId,
+        task_name: newTaskName.trim(),
+        account: newTaskAccount || null,
+        plan_date: today,
+        sort_order: tasks.length,
+      })
+      .select()
+      .single();
+
+    if (!error && data) {
+      setTasks((prev) => [...prev, data as PlannedTask]);
+      setNewTaskName("");
+      setNewTaskAccount("");
+    }
+  }, [supabase, userId, viewUserId, role, newTaskName, newTaskAccount, today, tasks.length]);
+
+  // Add tasks in bulk (one per line)
+  const addBulkTasks = useCallback(async () => {
+    const lines = bulkText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length === 0) return;
+
+    const inserts = lines.map((line, i) => ({
+      user_id: role === "va" ? userId : viewUserId,
+      task_name: line,
+      account: bulkAccount || null,
+      plan_date: today,
+      sort_order: tasks.length + i,
+    }));
+
+    const { data, error } = await supabase
+      .from("planned_tasks")
+      .insert(inserts)
+      .select();
+
+    if (!error && data) {
+      setTasks((prev) => [...prev, ...(data as PlannedTask[])]);
+      setBulkText("");
+      setBulkAccount("");
+      setBulkMode(false);
+    }
+  }, [supabase, userId, viewUserId, role, bulkText, bulkAccount, today, tasks.length]);
+
+  // Toggle completed
+  const toggleCompleted = useCallback(
+    async (taskId: number, completed: boolean) => {
+      const { error } = await supabase
+        .from("planned_tasks")
+        .update({ completed, updated_at: new Date().toISOString() })
+        .eq("id", taskId);
+
+      if (!error) {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === taskId ? { ...t, completed } : t))
+        );
+      }
+    },
+    [supabase]
+  );
+
+  // Delete a task
+  const deleteTask = useCallback(
+    async (taskId: number) => {
+      const { error } = await supabase
+        .from("planned_tasks")
+        .delete()
+        .eq("id", taskId);
+
+      if (!error) {
+        setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      }
+    },
+    [supabase]
+  );
+
+  // Update account on an existing task
+  const updateTaskAccount = useCallback(
+    async (taskId: number, account: string) => {
+      const { error } = await supabase
+        .from("planned_tasks")
+        .update({ account: account || null, updated_at: new Date().toISOString() })
+        .eq("id", taskId);
+
+      if (!error) {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === taskId ? { ...t, account: account || null } : t))
+        );
+      }
+    },
+    [supabase]
+  );
+
+  // Start working on a planned task (triggers task entry form prefill)
+  const handleStartTask = useCallback(
+    (task: PlannedTask) => {
+      onStartPlannedTask(task);
+    },
+    [onStartPlannedTask]
+  );
+
+  const pendingTasks = tasks.filter((t) => !t.completed);
+  const completedTasks = tasks.filter((t) => t.completed);
+
+  const vaOptions = role !== "va"
+    ? teamMembers.filter((m) => m.role === "va" || m.id === userId)
+    : [];
+
+  // Name lookup for "All" view
+  const nameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    teamMembers.forEach((m) => map.set(m.id, m.full_name.split(" ")[0]));
+    return map;
+  }, [teamMembers]);
+  const isViewAll = viewUserId === "__all__";
+
+  return (
+    <div className="bg-white border border-sand rounded-xl">
+      {/* Header */}
+      <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex items-center gap-2 cursor-pointer"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            className={`text-bark transition-transform ${collapsed ? "" : "rotate-90"}`}
+          >
+            <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <h3 className="text-sm font-bold text-espresso">
+            Today&apos;s Plan
+          </h3>
+        </button>
+        <div className="flex items-center gap-2">
+          {tasks.length > 0 && (
+            <span className="text-[10px] font-semibold py-[2px] px-2 rounded-full bg-terracotta-soft text-terracotta">
+              {pendingTasks.length} pending
+            </span>
+          )}
+          {!collapsed && (
+            <button
+              onClick={() => setBulkMode(!bulkMode)}
+              className="text-[10px] font-semibold text-terracotta hover:text-[#a85840] cursor-pointer"
+            >
+              {bulkMode ? "Single" : "Bulk"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {!collapsed && (
+        <div className="p-[18px_20px]">
+          {/* Admin: VA selector */}
+          {role !== "va" && vaOptions.length > 0 && (
+            <div className="mb-3">
+              <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                View Plan For
+              </label>
+              <select
+                value={viewUserId}
+                onChange={(e) => setViewUserId(e.target.value)}
+                className="w-full py-2 px-3 border border-sand rounded-lg text-[12px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
+              >
+                <option value="__all__">All Team Members</option>
+                {vaOptions.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.full_name} {m.id === userId ? "(you)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Bulk Entry Mode */}
+          {bulkMode ? (
+            <div className="mb-3">
+              <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                Bulk Add Tasks <span className="text-stone font-normal">(one per line)</span>
+              </label>
+              <textarea
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+                placeholder={"Check emails\nUpdate social media posts\nPrepare weekly report\nClient follow-up calls"}
+                rows={5}
+                className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone resize-none"
+              />
+              <div className="mt-2">
+                <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                  Account <span className="text-stone font-normal">(applied to all)</span>
+                </label>
+                <select
+                  value={bulkAccount}
+                  onChange={(e) => setBulkAccount(e.target.value)}
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[12px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
+                >
+                  <option value="">No account</option>
+                  {accounts.map((a) => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={() => { setBulkMode(false); setBulkText(""); setBulkAccount(""); }}
+                  className="flex-1 py-2 rounded-lg bg-parchment text-walnut border border-sand text-[12px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={addBulkTasks}
+                  disabled={!bulkText.trim()}
+                  className="flex-1 py-2 rounded-lg bg-terracotta text-white text-[12px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Add {bulkText.split("\n").filter((l) => l.trim()).length || 0} Tasks
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Single Task Entry */
+            <div className="mb-3">
+              <div className="flex gap-2 mb-2">
+                <input
+                  type="text"
+                  value={newTaskName}
+                  onChange={(e) => setNewTaskName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newTaskName.trim()) {
+                      addTask();
+                    }
+                  }}
+                  placeholder="Add a task..."
+                  className="flex-1 py-2 px-3 border border-sand rounded-lg text-[12px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone"
+                />
+                <button
+                  onClick={addTask}
+                  disabled={!newTaskName.trim()}
+                  className="py-2 px-3 rounded-lg bg-terracotta text-white text-[12px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  +
+                </button>
+              </div>
+              <select
+                value={newTaskAccount}
+                onChange={(e) => setNewTaskAccount(e.target.value)}
+                className="w-full py-1.5 px-3 border border-sand rounded-lg text-[11px] text-bark bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
+              >
+                <option value="">No account</option>
+                {accounts.map((a) => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Task List */}
+          {loading ? (
+            <div className="py-4 text-center">
+              <div className="animate-pulse h-4 w-32 bg-parchment rounded mx-auto" />
+            </div>
+          ) : tasks.length === 0 ? (
+            <p className="text-xs text-stone py-3 text-center">
+              No tasks planned for today yet.
+            </p>
+          ) : (
+            <div>
+              {/* Pending Tasks */}
+              {pendingTasks.length > 0 && (
+                <div className="space-y-1">
+                  {pendingTasks.map((task) => (
+                    <div
+                      key={task.id}
+                      className="group flex items-start gap-2 py-2 px-2 rounded-lg hover:bg-cream transition-colors"
+                    >
+                      <button
+                        onClick={() => toggleCompleted(task.id, true)}
+                        className="mt-0.5 w-[16px] h-[16px] rounded border border-sand flex-shrink-0 flex items-center justify-center cursor-pointer hover:border-terracotta transition-colors"
+                      >
+                        {/* Empty checkbox */}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] text-espresso font-medium leading-tight">
+                          {isViewAll && (
+                            <span className="text-[9px] font-semibold text-terracotta bg-terracotta-soft px-1.5 py-[1px] rounded mr-1.5">
+                              {nameMap.get(task.user_id) || "?"}
+                            </span>
+                          )}
+                          {task.task_name}
+                        </div>
+                        {task.account ? (
+                          <div className="text-[10px] text-bark mt-0.5">{task.account}</div>
+                        ) : (
+                          <select
+                            value=""
+                            onChange={(e) => updateTaskAccount(task.id, e.target.value)}
+                            className="mt-0.5 text-[10px] text-stone bg-transparent border-none outline-none cursor-pointer p-0"
+                          >
+                            <option value="">+ assign account</option>
+                            {accounts.map((a) => (
+                              <option key={a} value={a}>{a}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => handleStartTask(task)}
+                          title="Start this task"
+                          className="p-1 rounded text-sage hover:bg-sage-soft cursor-pointer transition-colors"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="5,3 19,12 5,21" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => deleteTask(task.id)}
+                          title="Remove"
+                          className="p-1 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft cursor-pointer transition-colors"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 6L6 18M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Completed Tasks */}
+              {completedTasks.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-parchment">
+                  <p className="text-[10px] font-semibold text-stone uppercase tracking-wider mb-1 px-2">
+                    Done ({completedTasks.length})
+                  </p>
+                  <div className="space-y-0.5">
+                    {completedTasks.map((task) => (
+                      <div
+                        key={task.id}
+                        className="group flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors"
+                      >
+                        <button
+                          onClick={() => toggleCompleted(task.id, false)}
+                          className="w-[16px] h-[16px] rounded bg-sage border border-sage flex-shrink-0 flex items-center justify-center cursor-pointer hover:bg-sage/80 transition-colors"
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[12px] text-stone line-through leading-tight">
+                            {isViewAll && (
+                              <span className="text-[9px] font-semibold text-stone/60 bg-parchment px-1.5 py-[1px] rounded mr-1.5 no-underline">
+                                {nameMap.get(task.user_id) || "?"}
+                              </span>
+                            )}
+                            {task.task_name}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {task.account && (
+                              <span className="text-[10px] text-stone/60">{task.account}</span>
+                            )}
+                            {task.log_id && logDurations[task.log_id] != null && logDurations[task.log_id] > 0 && (
+                              <span className="text-[10px] font-semibold text-sage">
+                                {Math.round(logDurations[task.log_id] / 60000)}m
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => deleteTask(task.id)}
+                          className="p-1 rounded text-stone opacity-0 group-hover:opacity-100 hover:text-terracotta cursor-pointer transition-all"
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 6L6 18M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Summary */}
+          {tasks.length > 0 && (
+            <div className="mt-3 pt-2 border-t border-parchment flex items-center justify-between text-[10px] text-bark">
+              <span>{completedTasks.length}/{tasks.length} completed</span>
+              <div className="w-20 h-1.5 bg-parchment rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-sage rounded-full transition-all"
+                  style={{ width: `${tasks.length > 0 ? (completedTasks.length / tasks.length) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
