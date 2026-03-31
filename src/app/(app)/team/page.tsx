@@ -31,6 +31,10 @@ type TeamMember = {
   sortingMs: number;
   taskMs: number;
   breakMs: number;
+  wizardMs: number;
+  collaborationMs: number;
+  meetingMs: number;
+  messageMs: number;
   // Period's logs for expandable task list
   todayLogs: TimeLog[];
 };
@@ -187,7 +191,17 @@ export default function TeamPage() {
         .filter((l) => l.category === "Break")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const taskMs = userLogs
-        .filter((l) => !["Personal", "Sorting", "Sorting Tasks", "Break"].includes(l.category))
+        .filter((l) => !["Personal", "Sorting", "Sorting Tasks", "Break", "Collaboration", "Meeting", "Message"].includes(l.category))
+        .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+      const wizardMs = userLogs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0);
+      const collaborationMs = userLogs
+        .filter((l) => l.category === "Collaboration")
+        .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+      const meetingMs = userLogs
+        .filter((l) => l.category === "Meeting")
+        .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+      const messageMs = userLogs
+        .filter((l) => l.category === "Message")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
       let status: TeamMember["status"] = "away";
@@ -236,6 +250,10 @@ export default function TeamPage() {
         sortingMs,
         taskMs,
         breakMs,
+        wizardMs,
+        collaborationMs,
+        meetingMs,
+        messageMs,
         todayLogs: userLogs,
       };
     });
@@ -796,21 +814,9 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   const avatarColor = getAvatarColor(profile.id);
 
   const statusConfig = {
-    working: {
-      label: "Working",
-      bgClass: "bg-sage-soft",
-      textClass: "text-sage",
-    },
-    "on-break": {
-      label: "On Break",
-      bgClass: "bg-amber-soft",
-      textClass: "text-amber",
-    },
-    away: {
-      label: "Offline",
-      bgClass: "bg-parchment",
-      textClass: "text-stone",
-    },
+    working: { label: "Working", bgClass: "bg-sage-soft", textClass: "text-sage" },
+    "on-break": { label: "On Break", bgClass: "bg-amber-soft", textClass: "text-amber" },
+    away: { label: "Offline", bgClass: "bg-parchment", textClass: "text-stone" },
   }[status];
 
   const payable = computePayable(
@@ -839,7 +845,70 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
     return grouped;
   }, [sortedLogs]);
 
+  // Hours per account breakdown
+  const accountBreakdown = useMemo(() => {
+    const byAccount: Record<string, number> = {};
+    member.todayLogs.forEach((log) => {
+      if (log.category === "Break") return; // exclude break from account hours
+      const acct = log.account || "Unassigned";
+      byAccount[acct] = (byAccount[acct] || 0) + (log.duration_ms || 0);
+    });
+    // Sort by most time first
+    return Object.entries(byAccount).sort((a, b) => b[1] - a[1]);
+  }, [member.todayLogs]);
+
+  // Daily breakdown for multi-day ranges
+  const dailyBreakdown = useMemo(() => {
+    if (isToday) return [];
+    const byDate: Record<string, { logs: TimeLog[]; dateSort: number }> = {};
+    member.todayLogs.forEach((log) => {
+      const d = new Date(log.start_time);
+      const key = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+      const dateSort = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      if (!byDate[key]) byDate[key] = { logs: [], dateSort };
+      byDate[key].logs.push(log);
+    });
+
+    return Object.entries(byDate)
+      .sort((a, b) => b[1].dateSort - a[1].dateSort) // newest first
+      .map(([dateLabel, { logs: dayLogs }]) => {
+        const nonBreakLogs = dayLogs.filter(l => l.category !== "Break");
+        const totalMs = nonBreakLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+        const dayPayable = computePayable(totalMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
+
+        // Clock in: earliest start_time of non-break logs
+        const clockIn = nonBreakLogs.length > 0
+          ? new Date(Math.min(...nonBreakLogs.map(l => new Date(l.start_time).getTime())))
+          : null;
+
+        // Clock out: latest end_time of any log
+        const logsWithEnd = dayLogs.filter(l => l.end_time);
+        const hasActiveLog = dayLogs.some(l => !l.end_time);
+        const clockOut = hasActiveLog
+          ? null // still active
+          : logsWithEnd.length > 0
+            ? new Date(Math.max(...logsWithEnd.map(l => new Date(l.end_time!).getTime())))
+            : null;
+
+        return { dateLabel, totalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: dayLogs };
+      });
+  }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type]);
+
   const showDateGroups = !isToday && Object.keys(logsByDate).length > 1;
+
+  // Category totals - only show non-zero
+  const categoryTotals = useMemo(() => {
+    const cats: { label: string; ms: number; color: string }[] = [];
+    if (member.taskMs > 0) cats.push({ label: "Task", ms: member.taskMs, color: "bg-sage" });
+    if (member.sortingMs > 0) cats.push({ label: "Sorting", ms: member.sortingMs, color: "bg-amber" });
+    if (member.breakMs > 0) cats.push({ label: "Break", ms: member.breakMs, color: "bg-stone" });
+    if (member.wizardMs > 0) cats.push({ label: "Wizard", ms: member.wizardMs, color: "bg-indigo-400" });
+    if (member.collaborationMs > 0) cats.push({ label: "Collaboration", ms: member.collaborationMs, color: "bg-sky-400" });
+    if (member.meetingMs > 0) cats.push({ label: "Meeting", ms: member.meetingMs, color: "bg-violet-400" });
+    if (member.messageMs > 0) cats.push({ label: "Message", ms: member.messageMs, color: "bg-blue-400" });
+    if (member.personalMs > 0) cats.push({ label: "Personal", ms: member.personalMs, color: "bg-clay-rose" });
+    return cats;
+  }, [member]);
 
   return (
     <div className="overflow-hidden rounded-xl border border-terracotta bg-white shadow-[0_4px_20px_rgba(0,0,0,.08)] ring-2 ring-terracotta/20">
@@ -852,9 +921,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
           {getInitials(profile.full_name)}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[18px] font-bold text-espresso">
-            {profile.full_name}
-          </div>
+          <div className="text-[18px] font-bold text-espresso">{profile.full_name}</div>
           <div className="text-[12px] text-bark">
             {profile.position || profile.department || "Team Member"}
             {(profile as Profile & { employee_number?: string }).employee_number && (
@@ -863,11 +930,17 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <span
-            className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold ${statusConfig.bgClass} ${statusConfig.textClass}`}
-          >
+          <span className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold ${statusConfig.bgClass} ${statusConfig.textClass}`}>
             {statusConfig.label}
           </span>
+          {isAdmin && isToday && status !== "away" && onForceLogout && (
+            <button
+              onClick={() => onForceLogout(profile.id, profile.full_name)}
+              className="rounded-lg px-3 py-1.5 text-[11px] font-semibold bg-parchment text-walnut border border-sand hover:bg-terracotta-soft hover:text-terracotta hover:border-terracotta transition-all cursor-pointer"
+            >
+              Force Logout
+            </button>
+          )}
           <button
             onClick={onDeselect}
             className="rounded-lg px-3 py-1.5 text-[11px] font-semibold bg-parchment text-walnut border border-sand hover:bg-sand transition-all cursor-pointer"
@@ -877,91 +950,126 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         </div>
       </div>
 
-      {/* Content: Stats + Task List side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 lg:divide-x divide-parchment">
-        {/* Left: Stats & Current Task */}
-        <div className="p-6">
-          {/* Current Task */}
-          <div className="mb-5">
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.5px] text-bark">
-              {status === "away" ? "Last Task" : "Current Task"}
+      {/* Summary + Category Totals */}
+      <div className="px-6 py-5 border-b border-parchment">
+        {/* Row 1: Key Stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+          <div className="rounded-lg bg-parchment/50 p-3 text-center">
+            <div className={`text-lg font-bold ${status !== "away" ? "text-sage" : "text-espresso"}`}>
+              {formatDuration(member.todayHoursMs)}
             </div>
-            <div className="text-[15px] font-semibold text-espresso">
-              {currentTaskName || "\u2014"}
-            </div>
-            <div className="mt-0.5 text-[12px] text-stone">
-              {currentTaskMeta || "No recent activity"}
-            </div>
+            <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Total Hours</div>
           </div>
-
-          {/* Stat Cards */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-lg bg-parchment/50 p-3 text-center">
-              <div className={`text-lg font-bold ${status !== "away" ? "text-sage" : "text-espresso"}`}>
-                {formatDuration(member.todayHoursMs)}
-              </div>
-              <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">
-                {isToday ? "Today" : "Total Hours"}
-              </div>
-            </div>
-            <div className="rounded-lg bg-parchment/50 p-3 text-center">
-              <div className="text-lg font-bold text-espresso">{member.todayTaskCount}</div>
-              <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Tasks</div>
-            </div>
-            <div className="rounded-lg bg-parchment/50 p-3 text-center">
-              <div className="text-lg font-bold text-espresso">{member.todayScreenshots}</div>
-              <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Screenshots</div>
-            </div>
-            {isAdmin && profile.pay_rate > 0 && (
-              <div className="rounded-lg bg-parchment/50 p-3 text-center">
-                <div className="text-lg font-bold text-sage">{formatCurrency(payable)}</div>
-                <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Payable</div>
-              </div>
-            )}
+          <div className="rounded-lg bg-parchment/50 p-3 text-center">
+            <div className="text-lg font-bold text-espresso">{member.todayTaskCount}</div>
+            <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Total Tasks</div>
           </div>
-
-          {/* Time Allocation */}
-          {isAdmin && member.todayHoursMs > 0 && (
-            <div className="mt-4">
-              <TimeAllocationBar member={member} />
-            </div>
-          )}
-
-          {/* Force Logout */}
-          {isAdmin && isToday && status !== "away" && onForceLogout && (
-            <div className="mt-4">
-              <button
-                onClick={() => onForceLogout(profile.id, profile.full_name)}
-                className="w-full py-2 rounded-lg bg-parchment text-bark border border-sand text-[11px] font-semibold cursor-pointer transition-all hover:bg-terracotta-soft hover:text-terracotta hover:border-terracotta"
-              >
-                Force Logout
-              </button>
+          <div className="rounded-lg bg-parchment/50 p-3 text-center">
+            <div className="text-lg font-bold text-espresso">{member.todayScreenshots}</div>
+            <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Screenshots</div>
+          </div>
+          {isAdmin && profile.pay_rate > 0 && (
+            <div className="rounded-lg bg-parchment/50 p-3 text-center">
+              <div className="text-lg font-bold text-sage">{formatCurrency(payable)}</div>
+              <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Payable</div>
             </div>
           )}
         </div>
 
-        {/* Right: Full Task List (spans 2 cols) */}
-        <div className="lg:col-span-2 p-6 border-t lg:border-t-0 border-parchment">
-          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.5px] text-bark">
-            Task Log ({sortedLogs.length} entries)
-          </div>
-          {sortedLogs.length === 0 ? (
-            <div className="text-[13px] text-stone py-4">No tasks recorded in this period.</div>
-          ) : showDateGroups ? (
-            <div className="space-y-4 max-h-[400px] overflow-y-auto">
-              {Object.entries(logsByDate).map(([dateLabel, dateLogs]) => (
-                <div key={dateLabel}>
-                  <div className="text-[10px] font-semibold text-terracotta uppercase tracking-wide mb-1.5">{dateLabel}</div>
-                  <TaskLogList logs={dateLogs} />
+        {/* Row 2: Category Totals */}
+        {categoryTotals.length > 0 && (
+          <div className="mb-4">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-2">Category Breakdown</div>
+            <div className="flex flex-wrap gap-2">
+              {categoryTotals.map((cat) => (
+                <div key={cat.label} className="flex items-center gap-1.5 rounded-lg bg-parchment/40 px-3 py-1.5">
+                  <span className={`w-2 h-2 rounded-full ${cat.color}`} />
+                  <span className="text-[11px] font-semibold text-espresso">{cat.label}</span>
+                  <span className="text-[11px] text-bark">{formatDuration(cat.ms)}</span>
                 </div>
               ))}
             </div>
-          ) : (
-            <div className="max-h-[400px] overflow-y-auto">
-              <TaskLogList logs={sortedLogs} />
+          </div>
+        )}
+
+        {/* Row 3: Hours per Account */}
+        {accountBreakdown.length > 0 && (
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-2">Hours per Account</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {accountBreakdown.map(([account, ms]) => (
+                <div key={account} className="flex items-center justify-between rounded-lg bg-parchment/40 px-3 py-2">
+                  <span className="text-[12px] font-semibold text-espresso truncate mr-2">{account}</span>
+                  <div className="text-right shrink-0">
+                    <span className="text-[12px] font-bold text-espresso">{formatDuration(ms)}</span>
+                    {isAdmin && profile.pay_rate > 0 && (
+                      <span className="text-[10px] text-sage ml-2">
+                        {formatCurrency(computePayable(ms, profile.pay_rate || 0, profile.pay_rate_type || "hourly"))}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
+          </div>
+        )}
+      </div>
+
+      {/* Daily Breakdown (multi-day ranges only) */}
+      {dailyBreakdown.length > 0 && (
+        <div className="px-6 py-5 border-b border-parchment">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-3">Daily Breakdown</div>
+          <div className="space-y-2">
+            {dailyBreakdown.map((day) => (
+              <div key={day.dateLabel} className="flex items-center justify-between rounded-lg bg-parchment/30 px-4 py-2.5">
+                <div className="flex items-center gap-4">
+                  <span className="text-[12px] font-bold text-terracotta min-w-[100px]">{day.dateLabel}</span>
+                  <span className="text-[11px] text-bark">
+                    {day.clockIn
+                      ? day.clockIn.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+                      : "\u2014"}
+                    {" \u2192 "}
+                    {day.hasActiveLog
+                      ? "Still active"
+                      : day.clockOut
+                        ? day.clockOut.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+                        : "\u2014"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-bark">{day.taskCount} tasks</span>
+                  <span className="text-[12px] font-bold text-espresso">{formatDuration(day.totalMs)}</span>
+                  {isAdmin && profile.pay_rate > 0 && (
+                    <span className="text-[12px] font-semibold text-sage">{formatCurrency(day.dayPayable)}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
+      )}
+
+      {/* Task Log */}
+      <div className="px-6 py-5">
+        <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.5px] text-bark">
+          Task Log ({sortedLogs.length} entries)
+        </div>
+        {sortedLogs.length === 0 ? (
+          <div className="text-[13px] text-stone py-4">No tasks recorded in this period.</div>
+        ) : showDateGroups ? (
+          <div className="space-y-4 max-h-[400px] overflow-y-auto">
+            {Object.entries(logsByDate).map(([dateLabel, dateLogs]) => (
+              <div key={dateLabel}>
+                <div className="text-[10px] font-semibold text-terracotta uppercase tracking-wide mb-1.5">{dateLabel}</div>
+                <TaskLogList logs={dateLogs} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="max-h-[400px] overflow-y-auto">
+            <TaskLogList logs={sortedLogs} />
+          </div>
+        )}
       </div>
     </div>
   );
