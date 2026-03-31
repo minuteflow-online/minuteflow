@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
@@ -9,9 +9,13 @@ import {
   getInitials,
   getAvatarColor,
   todayStart,
+  weekStart,
+  weekEnd,
 } from "@/lib/utils";
 
 /* ── Types ────────────────────────────────────────────────── */
+
+type DateRangePreset = "today" | "week" | "month" | "custom";
 
 type TeamMember = {
   profile: Profile;
@@ -27,7 +31,7 @@ type TeamMember = {
   sortingMs: number;
   taskMs: number;
   breakMs: number;
-  // Today's logs for expandable task list
+  // Period's logs for expandable task list
   todayLogs: TimeLog[];
 };
 
@@ -49,6 +53,17 @@ function formatCurrency(amount: number): string {
   });
 }
 
+function formatDateShort(d: Date): string {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatDateInput(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 /* ── Page Component ───────────────────────────────────────── */
 
 export default function TeamPage() {
@@ -56,6 +71,14 @@ export default function TeamPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole | null>(null);
+
+  // Date range state
+  const [datePreset, setDatePreset] = useState<DateRangePreset>("today");
+  const [customStart, setCustomStart] = useState<string>(formatDateInput(new Date()));
+  const [customEnd, setCustomEnd] = useState<string>(formatDateInput(new Date()));
+
+  // Member selection state
+  const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
 
   // Check role on mount and redirect VAs
   useEffect(() => {
@@ -78,9 +101,44 @@ export default function TeamPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Compute date range boundaries
+  const { rangeStart, rangeEnd, periodLabel } = useMemo(() => {
+    const now = new Date();
+    if (datePreset === "today") {
+      const s = new Date(now);
+      s.setHours(0, 0, 0, 0);
+      const e = new Date(now);
+      e.setHours(23, 59, 59, 999);
+      return { rangeStart: s, rangeEnd: e, periodLabel: "Today" };
+    }
+    if (datePreset === "week") {
+      const s = weekStart(now);
+      const e = weekEnd(now);
+      const label = `${formatDateShort(s)} \u2013 ${formatDateShort(e)}`;
+      return { rangeStart: s, rangeEnd: e, periodLabel: label };
+    }
+    if (datePreset === "month") {
+      const s = new Date(now.getFullYear(), now.getMonth(), 1);
+      s.setHours(0, 0, 0, 0);
+      const e = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      e.setHours(23, 59, 59, 999);
+      const label = s.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+      return { rangeStart: s, rangeEnd: e, periodLabel: label };
+    }
+    // custom
+    const s = new Date(customStart + "T00:00:00");
+    const e = new Date(customEnd + "T23:59:59.999");
+    const label = `${formatDateShort(s)} \u2013 ${formatDateShort(e)}`;
+    return { rangeStart: s, rangeEnd: e, periodLabel: label };
+  }, [datePreset, customStart, customEnd]);
+
+  const isToday = datePreset === "today";
+
   const fetchTeamData = useCallback(async () => {
     const supabase = createClient();
-    const today = todayStart();
+
+    const startISO = rangeStart.toISOString();
+    const endISO = rangeEnd.toISOString();
 
     const [profilesRes, sessionsRes, logsRes, screenshotsRes] =
       await Promise.all([
@@ -89,11 +147,13 @@ export default function TeamPage() {
         supabase
           .from("time_logs")
           .select("*")
-          .gte("start_time", today),
+          .gte("start_time", startISO)
+          .lte("start_time", endISO),
         supabase
           .from("task_screenshots")
           .select("*")
-          .gte("created_at", today),
+          .gte("created_at", startISO)
+          .lte("created_at", endISO),
       ]);
 
     const profiles = (profilesRes.data ?? []) as Profile[];
@@ -185,30 +245,34 @@ export default function TeamPage() {
 
     setMembers(teamMembers);
     setLoading(false);
-  }, []);
+  }, [rangeStart, rangeEnd]);
 
   useEffect(() => {
+    setLoading(true);
     fetchTeamData();
 
-    const interval = setInterval(fetchTeamData, 30000);
+    // Only auto-refresh when viewing today
+    if (isToday) {
+      const interval = setInterval(fetchTeamData, 30000);
 
-    const supabase = createClient();
-    const channel = supabase
-      .channel("team-sessions")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "sessions" },
-        () => {
-          fetchTeamData();
-        }
-      )
-      .subscribe();
+      const supabase = createClient();
+      const channel = supabase
+        .channel("team-sessions")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "sessions" },
+          () => {
+            fetchTeamData();
+          }
+        )
+        .subscribe();
 
-    return () => {
-      clearInterval(interval);
-      supabase.removeChannel(channel);
-    };
-  }, [fetchTeamData]);
+      return () => {
+        clearInterval(interval);
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [fetchTeamData, isToday]);
 
   // ─── Force Logout Handler ──────────────────────────────
   const handleForceLogout = useCallback(async (targetUserId: string, fullName: string) => {
@@ -255,6 +319,27 @@ export default function TeamPage() {
     fetchTeamData();
   }, [fetchTeamData]);
 
+  // ─── Member Selection Handlers ─────────────────────────
+  const toggleMember = useCallback((memberId: string) => {
+    setSelectedMembers((prev) => {
+      const next = new Set(prev);
+      if (next.has(memberId)) {
+        next.delete(memberId);
+      } else {
+        next.add(memberId);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    setSelectedMembers(new Set(members.map((m) => m.profile.id)));
+  }, [members]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedMembers(new Set());
+  }, []);
+
   const activeCount = members.filter((m) => m.status === "working").length;
   const totalTasks = members.reduce((sum, m) => sum + m.todayTaskCount, 0);
   const totalHoursMs = members.reduce((sum, m) => sum + m.todayHoursMs, 0);
@@ -284,6 +369,16 @@ export default function TeamPage() {
     };
   }, [members]);
 
+  const hasSelection = selectedMembers.size > 0;
+
+  // Split members into selected (expanded) and unselected (compact)
+  const expandedMembers = hasSelection
+    ? members.filter((m) => selectedMembers.has(m.profile.id))
+    : [];
+  const compactMembers = hasSelection
+    ? members.filter((m) => !selectedMembers.has(m.profile.id))
+    : members;
+
   // Don't render anything for VAs (redirect in progress)
   if (role === "va") {
     return null;
@@ -291,30 +386,81 @@ export default function TeamPage() {
 
   const isAdmin = role === "admin";
 
+  // Dynamic labels based on date range
+  const periodSuffix = isToday ? "Today" : periodLabel;
+
   return (
     <>
       {/* Page Header */}
-      <div className="mb-6">
-        <h1 className="font-serif text-2xl font-bold text-espresso">Team</h1>
-        <p className="mt-0.5 text-[13px] text-bark">
-          {members.length} members &middot; {activeCount} currently active
-        </p>
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="font-serif text-2xl font-bold text-espresso">Team</h1>
+          <p className="mt-0.5 text-[13px] text-bark">
+            {members.length} members &middot; {activeCount} currently active
+            {!isToday && (
+              <span className="ml-1.5 text-terracotta font-semibold">&middot; Viewing: {periodLabel}</span>
+            )}
+          </p>
+        </div>
+      </div>
+
+      {/* Date Range Controls */}
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        {(["today", "week", "month", "custom"] as DateRangePreset[]).map((preset) => {
+          const labels: Record<DateRangePreset, string> = {
+            today: "Today",
+            week: "This Week",
+            month: "This Month",
+            custom: "Custom",
+          };
+          return (
+            <button
+              key={preset}
+              onClick={() => setDatePreset(preset)}
+              className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${
+                datePreset === preset
+                  ? "bg-white text-espresso border border-sand shadow-sm"
+                  : "bg-parchment text-walnut border border-sand hover:bg-sand"
+              }`}
+            >
+              {labels[preset]}
+            </button>
+          );
+        })}
+
+        {datePreset === "custom" && (
+          <div className="flex items-center gap-2 ml-2">
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso"
+            />
+            <span className="text-[13px] text-bark">to</span>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso"
+            />
+          </div>
+        )}
       </div>
 
       {/* Stats Row */}
       <div className={`mb-6 grid gap-4 ${isAdmin ? "grid-cols-5" : "grid-cols-4"}`}>
         <StatCard value={activeCount} label="Active Now" color="green" />
-        <StatCard value={totalTasks} label="Tasks Today" color="terra" />
+        <StatCard value={totalTasks} label={`Tasks ${isToday ? "Today" : ""}`} color="terra" />
         <StatCard
           value={formatDuration(totalHoursMs)}
-          label="Team Total Today"
+          label={`Team Total ${isToday ? "Today" : ""}`}
           color="default"
         />
         <StatCard value={onBreakCount} label="On Break" color="gold" />
         {isAdmin && (
           <StatCard
             value={formatCurrency(financialSummary.totalPayable)}
-            label="Est. Payable Today"
+            label={`Est. Payable ${isToday ? "Today" : ""}`}
             color="terra"
           />
         )}
@@ -355,6 +501,34 @@ export default function TeamPage() {
         </div>
       )}
 
+      {/* Member Selection Controls */}
+      {!loading && members.length > 0 && (
+        <div className="mb-4 flex items-center gap-3">
+          <span className="text-[12px] font-semibold text-bark">
+            {hasSelection
+              ? `${selectedMembers.size} of ${members.length} selected`
+              : "Click a member to expand"}
+          </span>
+          <div className="flex gap-2">
+            {hasSelection ? (
+              <button
+                onClick={clearSelection}
+                className="rounded-lg px-3 py-1.5 text-[11px] font-semibold bg-parchment text-walnut border border-sand hover:bg-sand transition-all cursor-pointer"
+              >
+                Clear Selection
+              </button>
+            ) : (
+              <button
+                onClick={selectAll}
+                className="rounded-lg px-3 py-1.5 text-[11px] font-semibold bg-parchment text-walnut border border-sand hover:bg-sand transition-all cursor-pointer"
+              >
+                Select All
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Team Grid */}
       {loading ? (
         <div className="grid grid-cols-3 gap-4">
@@ -372,16 +546,40 @@ export default function TeamPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {members.map((member) => (
-            <MemberCard
-              key={member.profile.id}
-              member={member}
-              isAdmin={isAdmin}
-              onForceLogout={isAdmin ? handleForceLogout : undefined}
-            />
-          ))}
-        </div>
+        <>
+          {/* Expanded (selected) members — full width */}
+          {expandedMembers.length > 0 && (
+            <div className="mb-6 space-y-4">
+              {expandedMembers.map((member) => (
+                <ExpandedMemberCard
+                  key={member.profile.id}
+                  member={member}
+                  isAdmin={isAdmin}
+                  isToday={isToday}
+                  onForceLogout={isAdmin ? handleForceLogout : undefined}
+                  onDeselect={() => toggleMember(member.profile.id)}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Compact (unselected) members — grid */}
+          {compactMembers.length > 0 && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {compactMembers.map((member) => (
+                <MemberCard
+                  key={member.profile.id}
+                  member={member}
+                  isAdmin={isAdmin}
+                  isToday={isToday}
+                  isSelected={false}
+                  onSelect={() => toggleMember(member.profile.id)}
+                  onForceLogout={isAdmin ? handleForceLogout : undefined}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </>
   );
@@ -415,9 +613,16 @@ function StatCard({
   );
 }
 
-/* ── Member Card ──────────────────────────────────────────── */
+/* ── Member Card (Compact) ───────────────────────────────── */
 
-function MemberCard({ member, isAdmin, onForceLogout }: { member: TeamMember; isAdmin: boolean; onForceLogout?: (userId: string, fullName: string) => void }) {
+function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLogout }: {
+  member: TeamMember;
+  isAdmin: boolean;
+  isToday: boolean;
+  isSelected: boolean;
+  onSelect: () => void;
+  onForceLogout?: (userId: string, fullName: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const { profile, status, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
@@ -452,9 +657,16 @@ function MemberCard({ member, isAdmin, onForceLogout }: { member: TeamMember; is
   );
 
   return (
-    <div className="overflow-hidden rounded-xl border border-sand bg-white transition-all hover:shadow-[0_4px_16px_rgba(0,0,0,.06)]">
-      {/* Top: Avatar + Name + Status */}
-      <div className="flex items-center gap-3.5 px-5 pt-5 pb-4">
+    <div
+      className={`overflow-hidden rounded-xl border bg-white transition-all hover:shadow-[0_4px_16px_rgba(0,0,0,.06)] ${
+        isSelected ? "border-terracotta ring-2 ring-terracotta/20" : "border-sand"
+      }`}
+    >
+      {/* Top: Avatar + Name + Status — clickable to select/expand */}
+      <div
+        className="flex items-center gap-3.5 px-5 pt-5 pb-4 cursor-pointer hover:bg-parchment/30 transition-colors"
+        onClick={onSelect}
+      >
         <div
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-base font-bold text-white"
           style={{ backgroundColor: avatarColor }}
@@ -499,56 +711,12 @@ function MemberCard({ member, isAdmin, onForceLogout }: { member: TeamMember; is
             onClick={() => setExpanded(!expanded)}
             className="w-full flex items-center justify-between py-1.5 px-3 rounded-lg bg-parchment/50 hover:bg-parchment text-[11px] font-semibold text-bark cursor-pointer transition-colors"
           >
-            <span>{expanded ? "Hide" : "Show"} Today&apos;s Tasks ({sortedLogs.length})</span>
+            <span>{expanded ? "Hide" : "Show"} Tasks ({sortedLogs.length})</span>
             <span className="text-[9px]">{expanded ? "\u25B2" : "\u25BC"}</span>
           </button>
 
           {expanded && (
-            <div className="mt-2 space-y-1.5 max-h-[240px] overflow-y-auto">
-              {sortedLogs.map((log) => {
-                const startTime = new Date(log.start_time).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                  hour12: true,
-                });
-                const duration = log.duration_ms > 0
-                  ? formatDuration(log.duration_ms)
-                  : log.end_time
-                    ? formatDuration(new Date(log.end_time).getTime() - new Date(log.start_time).getTime())
-                    : "active";
-                const isActive = !log.end_time;
-
-                return (
-                  <div
-                    key={log.id}
-                    className={`flex items-start gap-2 py-2 px-2.5 rounded-lg ${
-                      isActive ? "bg-sage-soft/50 border border-sage/20" : "bg-parchment/30"
-                    }`}
-                  >
-                    <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
-                      log.category === "Break" ? "bg-stone" :
-                      log.category === "Personal" ? "bg-clay-rose" :
-                      log.category === "Sorting" || log.category === "Sorting Tasks" ? "bg-amber" :
-                      "bg-sage"
-                    }`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] font-semibold text-espresso truncate">
-                        {log.task_name}
-                      </div>
-                      <div className="text-[10px] text-bark truncate">
-                        {[log.account, log.category].filter(Boolean).join(" \u00B7 ")}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className={`text-[11px] font-semibold ${isActive ? "text-sage" : "text-espresso"}`}>
-                        {duration}
-                      </div>
-                      <div className="text-[9px] text-stone">{startTime}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <TaskLogList logs={sortedLogs} />
           )}
         </div>
       )}
@@ -560,13 +728,13 @@ function MemberCard({ member, isAdmin, onForceLogout }: { member: TeamMember; is
             {formatCurrency(profile.pay_rate)}/{profile.pay_rate_type || "hourly"}
           </span>
           <span className="text-[11px] font-semibold text-sage">
-            {formatCurrency(payable)} today
+            {formatCurrency(payable)} {isToday ? "today" : ""}
           </span>
         </div>
       )}
 
-      {/* Force Logout (admin only, when VA is active) */}
-      {isAdmin && status !== "away" && onForceLogout && (
+      {/* Force Logout (admin only, when VA is active, today only) */}
+      {isAdmin && isToday && status !== "away" && onForceLogout && (
         <div className="px-5 pb-3">
           <button
             onClick={() => onForceLogout(profile.id, profile.full_name)}
@@ -579,60 +747,7 @@ function MemberCard({ member, isAdmin, onForceLogout }: { member: TeamMember; is
 
       {/* Time Allocation (admin only) */}
       {isAdmin && member.todayHoursMs > 0 && (
-        <div className="px-5 pb-3">
-          <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-parchment">
-            {member.taskMs > 0 && (
-              <div
-                className="bg-sage"
-                style={{ width: `${(member.taskMs / (member.todayHoursMs + member.breakMs + member.personalMs || 1)) * 100}%` }}
-              />
-            )}
-            {member.sortingMs > 0 && (
-              <div
-                className="bg-amber"
-                style={{ width: `${(member.sortingMs / (member.todayHoursMs + member.breakMs + member.personalMs || 1)) * 100}%` }}
-              />
-            )}
-            {member.personalMs > 0 && (
-              <div
-                className="bg-clay-rose"
-                style={{ width: `${(member.personalMs / (member.todayHoursMs + member.breakMs + member.personalMs || 1)) * 100}%` }}
-              />
-            )}
-            {member.breakMs > 0 && (
-              <div
-                className="bg-stone"
-                style={{ width: `${(member.breakMs / (member.todayHoursMs + member.breakMs + member.personalMs || 1)) * 100}%` }}
-              />
-            )}
-          </div>
-          <div className="mt-1.5 flex gap-3 text-[9px] text-bark">
-            {member.taskMs > 0 && (
-              <span className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-sage" />
-                Tasks {formatDuration(member.taskMs)}
-              </span>
-            )}
-            {member.sortingMs > 0 && (
-              <span className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber" />
-                Sorting {formatDuration(member.sortingMs)}
-              </span>
-            )}
-            {member.personalMs > 0 && (
-              <span className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-clay-rose" />
-                Personal {formatDuration(member.personalMs)}
-              </span>
-            )}
-            {member.breakMs > 0 && (
-              <span className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-stone" />
-                Break {formatDuration(member.breakMs)}
-              </span>
-            )}
-          </div>
-        </div>
+        <TimeAllocationBar member={member} />
       )}
 
       {/* Stats Footer */}
@@ -644,7 +759,7 @@ function MemberCard({ member, isAdmin, onForceLogout }: { member: TeamMember; is
             {formatDuration(member.todayHoursMs)}
           </div>
           <div className="mt-0.5 text-[9px] uppercase tracking-[0.5px] text-bark">
-            Today
+            {isToday ? "Today" : "Total"}
           </div>
         </div>
         <div className="border-r border-parchment p-3 text-center">
@@ -663,6 +778,305 @@ function MemberCard({ member, isAdmin, onForceLogout }: { member: TeamMember; is
             Screenshots
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Expanded Member Card (Full Width) ───────────────────── */
+
+function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselect }: {
+  member: TeamMember;
+  isAdmin: boolean;
+  isToday: boolean;
+  onForceLogout?: (userId: string, fullName: string) => void;
+  onDeselect: () => void;
+}) {
+  const { profile, status, currentTaskName, currentTaskMeta } = member;
+  const avatarColor = getAvatarColor(profile.id);
+
+  const statusConfig = {
+    working: {
+      label: "Working",
+      bgClass: "bg-sage-soft",
+      textClass: "text-sage",
+    },
+    "on-break": {
+      label: "On Break",
+      bgClass: "bg-amber-soft",
+      textClass: "text-amber",
+    },
+    away: {
+      label: "Offline",
+      bgClass: "bg-parchment",
+      textClass: "text-stone",
+    },
+  }[status];
+
+  const payable = computePayable(
+    member.todayHoursMs,
+    profile.pay_rate || 0,
+    profile.pay_rate_type || "hourly"
+  );
+
+  // Sort logs: most recent first
+  const sortedLogs = [...member.todayLogs].sort(
+    (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
+  );
+
+  // Group logs by date for multi-day ranges
+  const logsByDate = useMemo(() => {
+    const grouped: Record<string, TimeLog[]> = {};
+    sortedLogs.forEach((log) => {
+      const dateKey = new Date(log.start_time).toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+      if (!grouped[dateKey]) grouped[dateKey] = [];
+      grouped[dateKey].push(log);
+    });
+    return grouped;
+  }, [sortedLogs]);
+
+  const showDateGroups = !isToday && Object.keys(logsByDate).length > 1;
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-terracotta bg-white shadow-[0_4px_20px_rgba(0,0,0,.08)] ring-2 ring-terracotta/20">
+      {/* Header Row */}
+      <div className="flex items-center gap-4 px-6 pt-5 pb-4 bg-parchment/20">
+        <div
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-lg font-bold text-white"
+          style={{ backgroundColor: avatarColor }}
+        >
+          {getInitials(profile.full_name)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[18px] font-bold text-espresso">
+            {profile.full_name}
+          </div>
+          <div className="text-[12px] text-bark">
+            {profile.position || profile.department || "Team Member"}
+            {(profile as Profile & { employee_number?: string }).employee_number && (
+              <span className="ml-2 text-stone">&middot; {(profile as Profile & { employee_number?: string }).employee_number}</span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span
+            className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold ${statusConfig.bgClass} ${statusConfig.textClass}`}
+          >
+            {statusConfig.label}
+          </span>
+          <button
+            onClick={onDeselect}
+            className="rounded-lg px-3 py-1.5 text-[11px] font-semibold bg-parchment text-walnut border border-sand hover:bg-sand transition-all cursor-pointer"
+          >
+            Collapse
+          </button>
+        </div>
+      </div>
+
+      {/* Content: Stats + Task List side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 lg:divide-x divide-parchment">
+        {/* Left: Stats & Current Task */}
+        <div className="p-6">
+          {/* Current Task */}
+          <div className="mb-5">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.5px] text-bark">
+              {status === "away" ? "Last Task" : "Current Task"}
+            </div>
+            <div className="text-[15px] font-semibold text-espresso">
+              {currentTaskName || "\u2014"}
+            </div>
+            <div className="mt-0.5 text-[12px] text-stone">
+              {currentTaskMeta || "No recent activity"}
+            </div>
+          </div>
+
+          {/* Stat Cards */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg bg-parchment/50 p-3 text-center">
+              <div className={`text-lg font-bold ${status !== "away" ? "text-sage" : "text-espresso"}`}>
+                {formatDuration(member.todayHoursMs)}
+              </div>
+              <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">
+                {isToday ? "Today" : "Total Hours"}
+              </div>
+            </div>
+            <div className="rounded-lg bg-parchment/50 p-3 text-center">
+              <div className="text-lg font-bold text-espresso">{member.todayTaskCount}</div>
+              <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Tasks</div>
+            </div>
+            <div className="rounded-lg bg-parchment/50 p-3 text-center">
+              <div className="text-lg font-bold text-espresso">{member.todayScreenshots}</div>
+              <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Screenshots</div>
+            </div>
+            {isAdmin && profile.pay_rate > 0 && (
+              <div className="rounded-lg bg-parchment/50 p-3 text-center">
+                <div className="text-lg font-bold text-sage">{formatCurrency(payable)}</div>
+                <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Payable</div>
+              </div>
+            )}
+          </div>
+
+          {/* Time Allocation */}
+          {isAdmin && member.todayHoursMs > 0 && (
+            <div className="mt-4">
+              <TimeAllocationBar member={member} />
+            </div>
+          )}
+
+          {/* Force Logout */}
+          {isAdmin && isToday && status !== "away" && onForceLogout && (
+            <div className="mt-4">
+              <button
+                onClick={() => onForceLogout(profile.id, profile.full_name)}
+                className="w-full py-2 rounded-lg bg-parchment text-bark border border-sand text-[11px] font-semibold cursor-pointer transition-all hover:bg-terracotta-soft hover:text-terracotta hover:border-terracotta"
+              >
+                Force Logout
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Full Task List (spans 2 cols) */}
+        <div className="lg:col-span-2 p-6 border-t lg:border-t-0 border-parchment">
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.5px] text-bark">
+            Task Log ({sortedLogs.length} entries)
+          </div>
+          {sortedLogs.length === 0 ? (
+            <div className="text-[13px] text-stone py-4">No tasks recorded in this period.</div>
+          ) : showDateGroups ? (
+            <div className="space-y-4 max-h-[400px] overflow-y-auto">
+              {Object.entries(logsByDate).map(([dateLabel, dateLogs]) => (
+                <div key={dateLabel}>
+                  <div className="text-[10px] font-semibold text-terracotta uppercase tracking-wide mb-1.5">{dateLabel}</div>
+                  <TaskLogList logs={dateLogs} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="max-h-[400px] overflow-y-auto">
+              <TaskLogList logs={sortedLogs} />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Task Log List (shared between compact & expanded) ───── */
+
+function TaskLogList({ logs }: { logs: TimeLog[] }) {
+  return (
+    <div className="mt-2 space-y-1.5">
+      {logs.map((log) => {
+        const startTime = new Date(log.start_time).toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+        const duration = log.duration_ms > 0
+          ? formatDuration(log.duration_ms)
+          : log.end_time
+            ? formatDuration(new Date(log.end_time).getTime() - new Date(log.start_time).getTime())
+            : "active";
+        const isActive = !log.end_time;
+
+        return (
+          <div
+            key={log.id}
+            className={`flex items-start gap-2 py-2 px-2.5 rounded-lg ${
+              isActive ? "bg-sage-soft/50 border border-sage/20" : "bg-parchment/30"
+            }`}
+          >
+            <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
+              log.category === "Break" ? "bg-stone" :
+              log.category === "Personal" ? "bg-clay-rose" :
+              log.category === "Sorting" || log.category === "Sorting Tasks" ? "bg-amber" :
+              "bg-sage"
+            }`} />
+            <div className="flex-1 min-w-0">
+              <div className="text-[12px] font-semibold text-espresso truncate">
+                {log.task_name}
+              </div>
+              <div className="text-[10px] text-bark truncate">
+                {[log.account, log.category].filter(Boolean).join(" \u00B7 ")}
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className={`text-[11px] font-semibold ${isActive ? "text-sage" : "text-espresso"}`}>
+                {duration}
+              </div>
+              <div className="text-[9px] text-stone">{startTime}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ── Time Allocation Bar ─────────────────────────────────── */
+
+function TimeAllocationBar({ member }: { member: TeamMember }) {
+  const totalMs = member.todayHoursMs + member.breakMs + member.personalMs || 1;
+
+  return (
+    <div className="px-5 pb-3">
+      <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-parchment">
+        {member.taskMs > 0 && (
+          <div
+            className="bg-sage"
+            style={{ width: `${(member.taskMs / totalMs) * 100}%` }}
+          />
+        )}
+        {member.sortingMs > 0 && (
+          <div
+            className="bg-amber"
+            style={{ width: `${(member.sortingMs / totalMs) * 100}%` }}
+          />
+        )}
+        {member.personalMs > 0 && (
+          <div
+            className="bg-clay-rose"
+            style={{ width: `${(member.personalMs / totalMs) * 100}%` }}
+          />
+        )}
+        {member.breakMs > 0 && (
+          <div
+            className="bg-stone"
+            style={{ width: `${(member.breakMs / totalMs) * 100}%` }}
+          />
+        )}
+      </div>
+      <div className="mt-1.5 flex gap-3 text-[9px] text-bark">
+        {member.taskMs > 0 && (
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-sage" />
+            Tasks {formatDuration(member.taskMs)}
+          </span>
+        )}
+        {member.sortingMs > 0 && (
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber" />
+            Sorting {formatDuration(member.sortingMs)}
+          </span>
+        )}
+        {member.personalMs > 0 && (
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-clay-rose" />
+            Personal {formatDuration(member.personalMs)}
+          </span>
+        )}
+        {member.breakMs > 0 && (
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-stone" />
+            Break {formatDuration(member.breakMs)}
+          </span>
+        )}
       </div>
     </div>
   );
