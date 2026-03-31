@@ -136,7 +136,7 @@ export default function EditTimeLogModal({
       endIso && startIso
         ? new Date(endIso).getTime() - new Date(startIso).getTime()
         : 0;
-    const isBillable = category !== "Personal" && category !== "Break";
+    const isBillable = category !== "Personal";
 
     if (isCreate) {
       // Find the selected user's profile for denormalized fields

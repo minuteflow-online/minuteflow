@@ -245,6 +245,25 @@ export interface PlannedTask {
   updated_at: string;
 }
 
+export interface BreakCorrectionRequest {
+  id: number;
+  user_id: string;
+  session_date: string;
+  clock_in_time: string;
+  clock_out_time: string;
+  shift_duration_ms: number;
+  total_break_ms: number;
+  allowed_break_ms: number;
+  excess_break_ms: number;
+  break_log_ids: number[];
+  status: 'pending' | 'approved' | 'denied';
+  custom_billable_ms: number | null;
+  reviewed_by: string | null;
+  review_notes: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
 export interface InvoicePayment {
   id: number;
   invoice_id: number;

@@ -521,6 +521,80 @@ export default function DashboardPage() {
         }
       }
 
+      // --- Billable Break Allowance: recalculate at clock-out ---
+      const clockInTime = session?.clock_in_time;
+      const sessionDate = session?.session_date || new Date().toISOString().split("T")[0];
+
+      if (clockInTime) {
+        const shiftMs = new Date(now).getTime() - new Date(clockInTime).getTime();
+
+        // Break tier table (shift hours → allowed break ms)
+        const shiftHours = shiftMs / (1000 * 60 * 60);
+        let allowedBreakMs = 0;
+        if (shiftHours >= 8) allowedBreakMs = 45 * 60 * 1000;
+        else if (shiftHours >= 7) allowedBreakMs = 30 * 60 * 1000;
+        else if (shiftHours >= 6) allowedBreakMs = 25 * 60 * 1000;
+        else if (shiftHours >= 5) allowedBreakMs = 20 * 60 * 1000;
+        else if (shiftHours >= 4) allowedBreakMs = 15 * 60 * 1000;
+        // Under 4 hours = no billable break allowed
+
+        // Fetch all completed break logs for this session
+        const { data: breakLogs } = await supabase
+          .from("time_logs")
+          .select("id, duration_ms, start_time")
+          .eq("user_id", userId)
+          .eq("category", "Break")
+          .gte("start_time", clockInTime)
+          .lte("start_time", now)
+          .not("end_time", "is", null)
+          .order("start_time", { ascending: true });
+
+        if (breakLogs && breakLogs.length > 0) {
+          const totalBreakMs = breakLogs.reduce((sum, b) => sum + (b.duration_ms || 0), 0);
+          const excessMs = Math.max(0, totalBreakMs - allowedBreakMs);
+
+          if (excessMs > 0) {
+            // Determine which break logs to flip to non-billable (latest first, consuming excess)
+            const sortedDesc = [...breakLogs].sort(
+              (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
+            );
+            let remaining = excessMs;
+            const idsToFlip: number[] = [];
+
+            for (const bl of sortedDesc) {
+              if (remaining <= 0) break;
+              idsToFlip.push(bl.id);
+              remaining -= (bl.duration_ms || 0);
+            }
+
+            // Flip excess break logs to non-billable
+            if (idsToFlip.length > 0) {
+              await supabase
+                .from("time_logs")
+                .update({ billable: false })
+                .in("id", idsToFlip);
+            }
+
+            // Create a break_correction_request for admin review
+            await supabase
+              .from("break_correction_requests")
+              .insert({
+                user_id: userId,
+                session_date: sessionDate,
+                clock_in_time: clockInTime,
+                clock_out_time: now,
+                shift_duration_ms: shiftMs,
+                total_break_ms: totalBreakMs,
+                allowed_break_ms: allowedBreakMs,
+                excess_break_ms: excessMs,
+                break_log_ids: breakLogs.map((b) => b.id),
+                status: "pending",
+              });
+          }
+        }
+      }
+      // --- End Billable Break Allowance ---
+
       setSession((prev) =>
         prev
           ? {
@@ -656,7 +730,7 @@ export default function DashboardPage() {
         start_time: activeTask.start_time,
         end_time: null,
         duration_ms: taskElapsed * 1000,
-        billable: activeTask.category !== "Personal" && activeTask.category !== "Break",
+        billable: activeTask.category !== "Personal",
         client_memo: activeTask.client_memo || null,
         internal_memo: activeTask.internal_memo || null,
         is_manual: false,
@@ -706,7 +780,7 @@ export default function DashboardPage() {
         task_name: "Break",
         category: "Break",
         start_time: now,
-        billable: false,
+        billable: true,
       })
       .select()
       .single();
@@ -817,7 +891,7 @@ export default function DashboardPage() {
     if (!preBreakTask || !userId || !profile) return;
     const now = new Date().toISOString();
 
-    const isBillable = preBreakTask.category !== "Personal" && preBreakTask.category !== "Break";
+    const isBillable = preBreakTask.category !== "Personal";
 
     const { data: logData } = await supabase
       .from("time_logs")
@@ -879,7 +953,7 @@ export default function DashboardPage() {
       await stopCurrentTask();
     }
 
-    const isBillable = log.category !== "Personal" && log.category !== "Break";
+    const isBillable = log.category !== "Personal";
 
     const { data: logData } = await supabase
       .from("time_logs")
@@ -1117,7 +1191,7 @@ export default function DashboardPage() {
       }
 
       const isBillable =
-        formData.category !== "Personal" && formData.category !== "Break";
+        formData.category !== "Personal";
 
       // If memos were for the old task (wizard flow), don't put them on the new task
       const newTaskClientMemo = formData.task_status ? null : formData.client_memo || null;

@@ -10,6 +10,7 @@ import type {
   TaskScreenshot,
   ExtensionHeartbeat,
   TimeCorrectionRequest,
+  BreakCorrectionRequest,
   OrganizationSettings,
   SortingReview,
   TeamAssignment,
@@ -222,6 +223,9 @@ export default function AdminPage() {
 
   // Correction requests
   const [correctionRequests, setCorrectionRequests] = useState<TimeCorrectionRequest[]>([]);
+  const [breakCorrectionRequests, setBreakCorrectionRequests] = useState<BreakCorrectionRequest[]>([]);
+  const [breakReviewNotes, setBreakReviewNotes] = useState<Record<number, string>>({});
+  const [breakCustomMs, setBreakCustomMs] = useState<Record<number, string>>({});
 
   // Sorting review
   const [sortingReviews, setSortingReviews] = useState<SortingReview[]>([]);
@@ -278,6 +282,7 @@ export default function AdminPage() {
       authRes,
       correctionsRes,
       sortingRes,
+      breakCorrectionsRes,
     ] = await Promise.all([
       supabase.from("profiles").select("*"),
       supabase.from("sessions").select("*"),
@@ -305,6 +310,11 @@ export default function AdminPage() {
         .select("*")
         .eq("status", "pending")
         .order("created_at", { ascending: false }),
+      supabase
+        .from("break_correction_requests")
+        .select("*")
+        .eq("status", "pending")
+        .order("created_at", { ascending: false }),
     ]);
 
     setProfiles((profilesRes.data ?? []) as Profile[]);
@@ -315,6 +325,7 @@ export default function AdminPage() {
     setHeartbeats((heartbeatsRes.data ?? []) as ExtensionHeartbeat[]);
     setCorrectionRequests((correctionsRes.data ?? []) as TimeCorrectionRequest[]);
     setSortingReviews((sortingRes.data ?? []) as SortingReview[]);
+    setBreakCorrectionRequests((breakCorrectionsRes.data ?? []) as BreakCorrectionRequest[]);
 
     if (authRes.data?.user) {
       setCurrentUserId(authRes.data.user.id);
@@ -691,6 +702,97 @@ export default function AdminPage() {
     fetchData();
   };
 
+  /* ── Break Correction Handlers ─────────────────────────── */
+
+  const handleApproveBreakCorrection = async (req: BreakCorrectionRequest) => {
+    if (!currentUserId) return;
+    const supabase = createClient();
+
+    // If a custom billable amount was entered, use it. Otherwise, keep the excess as non-billable.
+    const customMs = breakCustomMs[req.id] ? parseInt(breakCustomMs[req.id], 10) * 60 * 1000 : null;
+
+    if (customMs !== null && customMs > 0) {
+      // Recalculate which break logs should be billable vs non-billable
+      // Custom billable amount means only (total_break - custom) is non-billable
+      const nonBillableMs = Math.max(0, req.total_break_ms - customMs);
+
+      if (nonBillableMs > 0) {
+        // Flip ALL break logs to billable first, then flip the excess ones
+        await supabase
+          .from("time_logs")
+          .update({ billable: true })
+          .in("id", req.break_log_ids);
+
+        // Now flip the last N break logs to non-billable to cover the non-billable amount
+        const { data: breakLogs } = await supabase
+          .from("time_logs")
+          .select("id, duration_ms, start_time")
+          .in("id", req.break_log_ids)
+          .order("start_time", { ascending: false });
+
+        if (breakLogs) {
+          let remaining = nonBillableMs;
+          const idsToFlip: number[] = [];
+          for (const bl of breakLogs) {
+            if (remaining <= 0) break;
+            idsToFlip.push(bl.id);
+            remaining -= (bl.duration_ms || 0);
+          }
+          if (idsToFlip.length > 0) {
+            await supabase
+              .from("time_logs")
+              .update({ billable: false })
+              .in("id", idsToFlip);
+          }
+        }
+      } else {
+        // Custom amount covers all breaks — make them all billable
+        await supabase
+          .from("time_logs")
+          .update({ billable: true })
+          .in("id", req.break_log_ids);
+      }
+    }
+    // If no custom amount, the break logs that were already flipped to non-billable at clock-out stay as is
+
+    await supabase
+      .from("break_correction_requests")
+      .update({
+        status: "approved",
+        custom_billable_ms: customMs,
+        reviewed_by: currentUserId,
+        review_notes: breakReviewNotes[req.id] || null,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", req.id);
+
+    fetchData();
+  };
+
+  const handleDenyBreakCorrection = async (req: BreakCorrectionRequest) => {
+    if (!currentUserId) return;
+    const supabase = createClient();
+
+    // Deny = all excess break stays non-billable (already set at clock-out)
+    // But also flip ALL break logs to non-billable since the whole break is denied
+    await supabase
+      .from("time_logs")
+      .update({ billable: false })
+      .in("id", req.break_log_ids);
+
+    await supabase
+      .from("break_correction_requests")
+      .update({
+        status: "denied",
+        reviewed_by: currentUserId,
+        review_notes: breakReviewNotes[req.id] || null,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", req.id);
+
+    fetchData();
+  };
+
   /* ── Render ─────────────────────────────────────────────── */
 
   if (loading) {
@@ -724,8 +826,8 @@ export default function AdminPage() {
         <nav className="flex-1 py-2 px-2 space-y-0.5">
           {SIDEBAR_TABS.map((tab) => {
             const isActive = activeTab === tab.id;
-            const hasBadge = (tab.id === "corrections" && correctionRequests.length > 0) || (tab.id === "sorting" && sortingReviews.length > 0);
-            const badgeCount = tab.id === "corrections" ? correctionRequests.length : tab.id === "sorting" ? sortingReviews.length : 0;
+            const hasBadge = (tab.id === "corrections" && (correctionRequests.length + breakCorrectionRequests.length) > 0) || (tab.id === "sorting" && sortingReviews.length > 0);
+            const badgeCount = tab.id === "corrections" ? correctionRequests.length + breakCorrectionRequests.length : tab.id === "sorting" ? sortingReviews.length : 0;
             return (
               <button
                 key={tab.id}
@@ -777,7 +879,7 @@ export default function AdminPage() {
                 {activeTab === "clients" && "Manage clients"}
                 {activeTab === "invoices" && "Generate and manage client invoices"}
                 {activeTab === "organization" && "Edit organization settings"}
-                {activeTab === "corrections" && "Review pending time correction requests"}
+                {activeTab === "corrections" && "Review pending time and break correction requests"}
                 {activeTab === "sorting" && "Review sorting task entries and assign billing"}
                 {activeTab === "password" && "Update your admin password"}
               </p>
@@ -848,15 +950,27 @@ export default function AdminPage() {
           )}
 
           {activeTab === "corrections" && (
-            <CorrectionsTab
-              correctionRequests={correctionRequests}
-              profileMap={profileMap}
-              logMap={logMap}
-              reviewNotes={reviewNotes}
-              setReviewNotes={setReviewNotes}
-              handleApproveCorrection={handleApproveCorrection}
-              handleDenyCorrection={handleDenyCorrection}
-            />
+            <div className="space-y-6">
+              <CorrectionsTab
+                correctionRequests={correctionRequests}
+                profileMap={profileMap}
+                logMap={logMap}
+                reviewNotes={reviewNotes}
+                setReviewNotes={setReviewNotes}
+                handleApproveCorrection={handleApproveCorrection}
+                handleDenyCorrection={handleDenyCorrection}
+              />
+              <BreakCorrectionsSection
+                breakCorrectionRequests={breakCorrectionRequests}
+                profileMap={profileMap}
+                breakReviewNotes={breakReviewNotes}
+                setBreakReviewNotes={setBreakReviewNotes}
+                breakCustomMs={breakCustomMs}
+                setBreakCustomMs={setBreakCustomMs}
+                handleApproveBreakCorrection={handleApproveBreakCorrection}
+                handleDenyBreakCorrection={handleDenyBreakCorrection}
+              />
+            </div>
           )}
 
           {activeTab === "sorting" && (
@@ -3309,6 +3423,154 @@ function CorrectionsTab({
                 >
                   Deny
                 </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── Break Corrections Section ─────────────────────────────── */
+
+function BreakCorrectionsSection({
+  breakCorrectionRequests,
+  profileMap,
+  breakReviewNotes,
+  setBreakReviewNotes,
+  breakCustomMs,
+  setBreakCustomMs,
+  handleApproveBreakCorrection,
+  handleDenyBreakCorrection,
+}: {
+  breakCorrectionRequests: BreakCorrectionRequest[];
+  profileMap: Map<string, Profile>;
+  breakReviewNotes: Record<number, string>;
+  setBreakReviewNotes: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  breakCustomMs: Record<number, string>;
+  setBreakCustomMs: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  handleApproveBreakCorrection: (req: BreakCorrectionRequest) => void;
+  handleDenyBreakCorrection: (req: BreakCorrectionRequest) => void;
+}) {
+  if (breakCorrectionRequests.length === 0) {
+    return (
+      <div className="rounded-xl border border-sand bg-white px-5 py-12 text-center">
+        <p className="text-sm text-bark">No pending break correction requests.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-sand bg-white">
+      <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
+        <h2 className="text-sm font-bold text-espresso">
+          Break Overage Reviews
+        </h2>
+        <span className="rounded-full bg-terracotta-soft px-2.5 py-[2px] text-[11px] font-semibold text-terracotta">
+          {breakCorrectionRequests.length}
+        </span>
+      </div>
+      <div className="divide-y divide-parchment">
+        {breakCorrectionRequests.map((req) => {
+          const reqProfile = profileMap.get(req.user_id);
+          const shiftHrs = (req.shift_duration_ms / 3600000).toFixed(1);
+
+          return (
+            <div key={req.id} className="px-5 py-4">
+              <div className="flex items-start gap-3 mb-3">
+                {reqProfile && (
+                  <div
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                    style={{ backgroundColor: getAvatarColor(reqProfile.id) }}
+                  >
+                    {getInitials(reqProfile.full_name)}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-semibold text-espresso">
+                    {reqProfile?.full_name || "Unknown"}{" "}
+                    <span className="font-normal text-bark">
+                      exceeded break allowance
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-stone">
+                    {new Date(req.session_date).toLocaleDateString()} &middot; {shiftHrs}h shift
+                  </div>
+
+                  {/* Break details */}
+                  <div className="mt-2 rounded-lg bg-parchment px-3 py-2">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-espresso">
+                      <div>
+                        <span className="font-medium">Total Break:</span>{" "}
+                        {formatDuration(req.total_break_ms)}
+                      </div>
+                      <div>
+                        <span className="font-medium">Allowed:</span>{" "}
+                        {formatDuration(req.allowed_break_ms)}
+                      </div>
+                      <div className="col-span-2">
+                        <span className="font-medium text-terracotta">Excess:</span>{" "}
+                        <span className="text-terracotta font-semibold">
+                          {formatDuration(req.excess_break_ms)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] text-stone shrink-0">
+                  {new Date(req.created_at || "").toLocaleDateString()}
+                </span>
+              </div>
+              {/* Custom billable amount + review notes + actions */}
+              <div className="ml-10 space-y-2">
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] text-bark whitespace-nowrap">
+                    Custom billable (min):
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={breakCustomMs[req.id] || ""}
+                    onChange={(e) =>
+                      setBreakCustomMs((prev) => ({
+                        ...prev,
+                        [req.id]: e.target.value,
+                      }))
+                    }
+                    placeholder={String(Math.round(req.allowed_break_ms / 60000))}
+                    className="w-20 rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                  <span className="text-[10px] text-stone">
+                    (leave blank to keep {Math.round(req.allowed_break_ms / 60000)} min)
+                  </span>
+                </div>
+                <div className="flex items-end gap-2">
+                  <input
+                    type="text"
+                    value={breakReviewNotes[req.id] || ""}
+                    onChange={(e) =>
+                      setBreakReviewNotes((prev) => ({
+                        ...prev,
+                        [req.id]: e.target.value,
+                      }))
+                    }
+                    placeholder="Review notes (optional)..."
+                    className="flex-1 rounded-lg border border-sand px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                  <button
+                    onClick={() => handleApproveBreakCorrection(req)}
+                    className="rounded-lg bg-sage px-3 py-1.5 text-[11px] font-semibold text-white transition-all hover:bg-[#5a7a5a]"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => handleDenyBreakCorrection(req)}
+                    className="rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta"
+                  >
+                    Deny
+                  </button>
+                </div>
               </div>
             </div>
           );

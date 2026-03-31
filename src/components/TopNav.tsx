@@ -227,10 +227,81 @@ export default function TopNav({ user }: TopNavProps) {
         sessionPayload.mood = logoutMood;
       }
 
+      // Fetch session for break recalculation before clearing it
+      const { data: sessionForBreaks } = await supabase
+        .from("sessions")
+        .select("clock_in_time, session_date")
+        .eq("user_id", authUser.id)
+        .maybeSingle();
+
       await supabase.from("sessions").upsert(
         sessionPayload,
         { onConflict: "user_id" }
       );
+
+      // --- Billable Break Allowance: recalculate at clock-out ---
+      const clockInTime = sessionForBreaks?.clock_in_time;
+      const sessionDate = sessionForBreaks?.session_date || new Date().toISOString().split("T")[0];
+
+      if (clockInTime) {
+        const shiftMs = new Date(now).getTime() - new Date(clockInTime).getTime();
+        const shiftHours = shiftMs / (1000 * 60 * 60);
+        let allowedBreakMs = 0;
+        if (shiftHours >= 8) allowedBreakMs = 45 * 60 * 1000;
+        else if (shiftHours >= 7) allowedBreakMs = 30 * 60 * 1000;
+        else if (shiftHours >= 6) allowedBreakMs = 25 * 60 * 1000;
+        else if (shiftHours >= 5) allowedBreakMs = 20 * 60 * 1000;
+        else if (shiftHours >= 4) allowedBreakMs = 15 * 60 * 1000;
+
+        const { data: breakLogs } = await supabase
+          .from("time_logs")
+          .select("id, duration_ms, start_time")
+          .eq("user_id", authUser.id)
+          .eq("category", "Break")
+          .gte("start_time", clockInTime)
+          .lte("start_time", now)
+          .not("end_time", "is", null)
+          .order("start_time", { ascending: true });
+
+        if (breakLogs && breakLogs.length > 0) {
+          const totalBreakMs = breakLogs.reduce((sum, b) => sum + (b.duration_ms || 0), 0);
+          const excessMs = Math.max(0, totalBreakMs - allowedBreakMs);
+
+          if (excessMs > 0) {
+            const sortedDesc = [...breakLogs].sort(
+              (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
+            );
+            let remaining = excessMs;
+            const idsToFlip: number[] = [];
+            for (const bl of sortedDesc) {
+              if (remaining <= 0) break;
+              idsToFlip.push(bl.id);
+              remaining -= (bl.duration_ms || 0);
+            }
+            if (idsToFlip.length > 0) {
+              await supabase
+                .from("time_logs")
+                .update({ billable: false })
+                .in("id", idsToFlip);
+            }
+            await supabase
+              .from("break_correction_requests")
+              .insert({
+                user_id: authUser.id,
+                session_date: sessionDate,
+                clock_in_time: clockInTime,
+                clock_out_time: now,
+                shift_duration_ms: shiftMs,
+                total_break_ms: totalBreakMs,
+                allowed_break_ms: allowedBreakMs,
+                excess_break_ms: excessMs,
+                break_log_ids: breakLogs.map((b) => b.id),
+                status: "pending",
+              });
+          }
+        }
+      }
+      // --- End Billable Break Allowance ---
 
       // Now sign out
       await signOut();
