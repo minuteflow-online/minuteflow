@@ -320,18 +320,17 @@ export default function TeamPage() {
       }
     }
 
-    // Clock them out
-    await supabase.from("sessions").upsert(
-      {
-        user_id: targetUserId,
+    // Clock them out (use update, not upsert — RLS INSERT policy blocks admins)
+    await supabase
+      .from("sessions")
+      .update({
         clocked_in: false,
         clock_in_time: null,
         clock_out_time: now,
         active_task: null,
         updated_at: now,
-      },
-      { onConflict: "user_id" }
-    );
+      })
+      .eq("user_id", targetUserId);
 
     // Refresh team data
     fetchTeamData();

@@ -601,16 +601,15 @@ export default function AdminPage() {
       .eq("user_id", targetUserId)
       .is("end_time", null);
 
-    // Reset their session
-    await supabase.from("sessions").upsert(
-      {
-        user_id: targetUserId,
+    // Reset their session (use update, not upsert — RLS INSERT policy blocks admins)
+    await supabase
+      .from("sessions")
+      .update({
         clocked_in: false,
         active_task: null,
         updated_at: now,
-      },
-      { onConflict: "user_id" }
-    );
+      })
+      .eq("user_id", targetUserId);
 
     fetchData();
   };
