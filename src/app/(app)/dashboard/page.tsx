@@ -781,6 +781,8 @@ export default function DashboardPage() {
         position: profile.position,
         task_name: "Break",
         category: "Break",
+        account: "Virtual Concierge",
+        client_name: "Toni Colina",
         start_time: now,
         billable: true,
       })
