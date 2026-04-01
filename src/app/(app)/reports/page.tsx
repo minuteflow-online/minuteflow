@@ -13,7 +13,7 @@ import {
 
 /* ── Types ────────────────────────────────────────────────── */
 
-type DateRange = "week" | "month";
+type DateRange = "week" | "month" | "custom";
 
 type DailyData = {
   label: string;
@@ -42,6 +42,9 @@ export default function ReportsPage() {
   const [screenshots, setScreenshots] = useState<TaskScreenshot[]>([]);
   const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
   const [dateRange, setDateRange] = useState<DateRange>("week");
+  const [selectedVA, setSelectedVA] = useState<string>("all");
+  const [customStart, setCustomStart] = useState<string>("");
+  const [customEnd, setCustomEnd] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole>("va");
@@ -53,6 +56,17 @@ export default function ReportsPage() {
       const e = weekEnd(now);
       const label = `Week of ${s.toLocaleDateString("en-US", { month: "long", day: "numeric" })} \u2013 ${e.toLocaleDateString("en-US", { day: "numeric", year: "numeric" })}`;
       return { start: s, end: e, periodLabel: label };
+    } else if (dateRange === "custom") {
+      if (customStart && customEnd) {
+        const s = new Date(customStart + "T00:00:00");
+        const e = new Date(customEnd + "T23:59:59");
+        const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric" })} \u2013 ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+        return { start: s, end: e, periodLabel: label };
+      }
+      // Fallback to current week if custom dates not set yet
+      const s = weekStart(now);
+      const e = weekEnd(now);
+      return { start: s, end: e, periodLabel: "Select date range" };
     } else {
       const s = new Date(now.getFullYear(), now.getMonth(), 1);
       const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
@@ -62,7 +76,7 @@ export default function ReportsPage() {
       });
       return { start: s, end: e, periodLabel: label };
     }
-  }, [dateRange]);
+  }, [dateRange, customStart, customEnd]);
 
   const fetchData = useCallback(async () => {
     const supabase = createClient();
@@ -132,34 +146,52 @@ export default function ReportsPage() {
     fetchData();
   }, [fetchData]);
 
+  /* ── Filter by selected VA ───────────────────────────────── */
+
+  const filteredLogs = useMemo(
+    () =>
+      selectedVA === "all"
+        ? logs
+        : logs.filter((l) => l.user_id === selectedVA),
+    [logs, selectedVA]
+  );
+
+  const filteredScreenshots = useMemo(
+    () =>
+      selectedVA === "all"
+        ? screenshots
+        : screenshots.filter((s) => s.user_id === selectedVA),
+    [screenshots, selectedVA]
+  );
+
   /* ── Computed stats ──────────────────────────────────────── */
 
   const totalHoursMs = useMemo(
     () =>
-      logs
+      filteredLogs
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
-    [logs]
+    [filteredLogs]
   );
 
   const billableMs = useMemo(
     () =>
-      logs
+      filteredLogs
         .filter((l) => l.billable)
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
-    [logs]
+    [filteredLogs]
   );
 
   const breakMs = useMemo(
     () =>
-      logs
+      filteredLogs
         .filter((l) => l.category === "Break")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
-    [logs]
+    [filteredLogs]
   );
 
   const tasksCompleted = useMemo(
-    () => logs.filter((l) => l.end_time && l.category !== "Break").length,
-    [logs]
+    () => filteredLogs.filter((l) => l.end_time && l.category !== "Break").length,
+    [filteredLogs]
   );
 
   /* ── Daily chart data ────────────────────────────────────── */
@@ -167,32 +199,47 @@ export default function ReportsPage() {
   const dailyData: DailyData[] = useMemo(() => {
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+    const buildDay = (d: Date, label: string): DailyData => {
+      const dateStr = d.toISOString().slice(0, 10);
+      const dayLogs = filteredLogs.filter(
+        (l) => l.start_time && l.start_time.slice(0, 10) === dateStr
+      );
+      return {
+        label,
+        date: dateStr,
+        billableMs: dayLogs
+          .filter((l) => l.billable)
+          .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
+        personalMs: dayLogs
+          .filter((l) => l.category === "Personal")
+          .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
+        totalMs: dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0),
+      };
+    };
+
     if (dateRange === "week") {
       const days: DailyData[] = [];
       const ws = weekStart();
       for (let i = 0; i < 7; i++) {
         const d = new Date(ws);
         d.setDate(d.getDate() + i);
-        const dateStr = d.toISOString().slice(0, 10);
-        const dayLogs = logs.filter(
-          (l) => l.start_time && l.start_time.slice(0, 10) === dateStr
-        );
-        const billable = dayLogs
-          .filter((l) => l.billable)
-          .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-        const personal = dayLogs
-          .filter((l) => l.category === "Personal")
-          .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-        const total = dayLogs
-          .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-
-        days.push({
-          label: dayNames[d.getDay()],
-          date: dateStr,
-          billableMs: billable,
-          personalMs: personal,
-          totalMs: total,
-        });
+        days.push(buildDay(d, dayNames[d.getDay()]));
+      }
+      return days;
+    } else if (dateRange === "custom" && customStart && customEnd) {
+      const days: DailyData[] = [];
+      const s = new Date(customStart + "T00:00:00");
+      const e = new Date(customEnd + "T23:59:59");
+      const diffDays = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
+      for (let i = 0; i < diffDays && i < 90; i++) {
+        const d = new Date(s);
+        d.setDate(d.getDate() + i);
+        // For short ranges show day names, for longer ranges show date
+        const label =
+          diffDays <= 14
+            ? `${dayNames[d.getDay()]} ${d.getDate()}`
+            : d.getDate().toString();
+        days.push(buildDay(d, label));
       }
       return days;
     } else {
@@ -204,30 +251,11 @@ export default function ReportsPage() {
       ).getDate();
       for (let i = 1; i <= daysInMonth; i++) {
         const d = new Date(start.getFullYear(), start.getMonth(), i);
-        const dateStr = d.toISOString().slice(0, 10);
-        const dayLogs = logs.filter(
-          (l) => l.start_time && l.start_time.slice(0, 10) === dateStr
-        );
-        const billable = dayLogs
-          .filter((l) => l.billable)
-          .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-        const personal = dayLogs
-          .filter((l) => l.category === "Personal")
-          .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-        const total = dayLogs
-          .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-
-        days.push({
-          label: i.toString(),
-          date: dateStr,
-          billableMs: billable,
-          personalMs: personal,
-          totalMs: total,
-        });
+        days.push(buildDay(d, i.toString()));
       }
       return days;
     }
-  }, [logs, dateRange, start]);
+  }, [filteredLogs, dateRange, start, customStart, customEnd]);
 
   const maxDayMs = useMemo(
     () => Math.max(...dailyData.map((d) => d.totalMs), 1),
@@ -238,7 +266,7 @@ export default function ReportsPage() {
 
   const accountHours: AccountHours[] = useMemo(() => {
     const map: Record<string, number> = {};
-    logs
+    filteredLogs
       .forEach((l) => {
         const acct = l.account || "Unassigned";
         map[acct] = (map[acct] || 0) + (l.duration_ms || 0);
@@ -246,7 +274,7 @@ export default function ReportsPage() {
     return Object.entries(map)
       .map(([account, totalMs]) => ({ account, totalMs }))
       .sort((a, b) => b.totalMs - a.totalMs);
-  }, [logs]);
+  }, [filteredLogs]);
 
   const maxAccountMs = useMemo(
     () => Math.max(...accountHours.map((a) => a.totalMs), 1),
@@ -257,7 +285,7 @@ export default function ReportsPage() {
 
   const personHours: PersonHours[] = useMemo(() => {
     const map: Record<string, { totalMs: number; taskCount: number }> = {};
-    logs
+    filteredLogs
       .forEach((l) => {
         if (!map[l.user_id]) map[l.user_id] = { totalMs: 0, taskCount: 0 };
         map[l.user_id].totalMs += l.duration_ms || 0;
@@ -270,7 +298,7 @@ export default function ReportsPage() {
         taskCount: map[p.id]?.taskCount || 0,
       }))
       .sort((a, b) => b.totalMs - a.totalMs);
-  }, [logs, profiles]);
+  }, [filteredLogs, profiles]);
 
   /* ── Export CSV ───────────────────────────────────────────── */
 
@@ -292,7 +320,7 @@ export default function ReportsPage() {
       "Internal Memo",
     ];
 
-    const rows = logs.map((l) => {
+    const rows = filteredLogs.map((l) => {
       const startDate = l.start_time
         ? new Date(l.start_time).toLocaleDateString()
         : "";
@@ -336,7 +364,7 @@ export default function ReportsPage() {
     link.download = `MinuteFlow-Report-${start.toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
-  }, [logs, start]);
+  }, [filteredLogs, start]);
 
   /* ── Export XLSX (HTML table for Excel) ──────────────────── */
 
@@ -364,7 +392,7 @@ export default function ReportsPage() {
     });
     html += `</tr></thead><tbody>`;
 
-    logs.forEach((l) => {
+    filteredLogs.forEach((l) => {
       const cat = l.category || "Task";
       const bg =
         cat === "Break"
@@ -401,7 +429,7 @@ export default function ReportsPage() {
     link.download = `MinuteFlow-Report-${start.toISOString().slice(0, 10)}.xls`;
     link.click();
     URL.revokeObjectURL(url);
-  }, [logs, start]);
+  }, [filteredLogs, start]);
 
   /* ── Render ──────────────────────────────────────────────── */
 
@@ -415,7 +443,25 @@ export default function ReportsPage() {
           </h1>
           <p className="mt-0.5 text-[13px] text-bark">{periodLabel}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* VA Filter (admin/manager only) */}
+          {(role === "admin" || role === "manager") && (
+            <select
+              value={selectedVA}
+              onChange={(e) => setSelectedVA(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] font-semibold text-espresso shadow-sm outline-none focus:border-terracotta"
+            >
+              <option value="all">All Team</option>
+              {profiles
+                .filter((p) => p.role === "va" || p.role === "manager")
+                .sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.full_name || p.username || "Unknown"}
+                  </option>
+                ))}
+            </select>
+          )}
           <button
             onClick={() => setDateRange("week")}
             className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all ${
@@ -437,6 +483,16 @@ export default function ReportsPage() {
             This Month
           </button>
           <button
+            onClick={() => setDateRange("custom")}
+            className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all ${
+              dateRange === "custom"
+                ? "bg-white text-espresso border border-sand shadow-sm"
+                : "bg-parchment text-walnut border border-sand hover:bg-sand"
+            }`}
+          >
+            Custom
+          </button>
+          <button
             onClick={exportCSV}
             className="rounded-lg bg-parchment px-4 py-2 text-[13px] font-semibold text-walnut border border-sand transition-all hover:bg-sand"
           >
@@ -450,6 +506,29 @@ export default function ReportsPage() {
           </button>
         </div>
       </div>
+
+      {/* Custom Date Range Picker */}
+      {dateRange === "custom" && (
+        <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-sand bg-white px-5 py-4">
+          <label className="text-[13px] font-semibold text-espresso">From</label>
+          <input
+            type="date"
+            value={customStart}
+            onChange={(e) => setCustomStart(e.target.value)}
+            className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+          />
+          <label className="text-[13px] font-semibold text-espresso">To</label>
+          <input
+            type="date"
+            value={customEnd}
+            onChange={(e) => setCustomEnd(e.target.value)}
+            className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+          />
+          {!customStart || !customEnd ? (
+            <span className="text-[12px] text-bark">Pick both dates to load data</span>
+          ) : null}
+        </div>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-4 gap-4">
@@ -656,17 +735,16 @@ export default function ReportsPage() {
                 Recent Screenshots
               </h3>
               <span className="text-[11px] text-bark">
-                {screenshots.length} this{" "}
-                {dateRange === "week" ? "week" : "month"}
+                {filteredScreenshots.length} this period
               </span>
             </div>
             <div className="grid grid-cols-6 gap-2 p-5">
-              {screenshots.length === 0 ? (
+              {filteredScreenshots.length === 0 ? (
                 <div className="col-span-6 py-6 text-center text-[13px] text-bark">
                   No screenshots in this period
                 </div>
               ) : (
-                screenshots.slice(0, 12).map((ss) => {
+                filteredScreenshots.slice(0, 12).map((ss) => {
                   const profile = profiles.find(
                     (p) => p.id === ss.user_id
                   );
