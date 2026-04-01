@@ -26,6 +26,7 @@ import {
   todayStart,
   formatTimeET,
 } from "@/lib/utils";
+import ProjectsTasksTab from "@/components/ProjectsTasksTab";
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -79,7 +80,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices";
+type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "projects";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -124,6 +125,17 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z" />
         <path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2" />
+      </svg>
+    ),
+  },
+  {
+    id: "projects",
+    label: "Projects & Tasks",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+        <line x1="12" y1="11" x2="12" y2="17" />
+        <line x1="9" y1="14" x2="15" y2="14" />
       </svg>
     ),
   },
@@ -872,6 +884,7 @@ export default function AdminPage() {
                 {activeTab === "overview" && "Monitor team activity and performance"}
                 {activeTab === "screenshots" && "View and manage team screenshots"}
                 {activeTab === "team" && "Manage team members, roles, and pay rates"}
+                {activeTab === "projects" && "Manage projects and tasks under each account"}
                 {activeTab === "accounts" && "Manage accounts and link them to clients"}
                 {activeTab === "clients" && "Manage clients"}
                 {activeTab === "invoices" && "Generate and manage client invoices"}
@@ -928,6 +941,10 @@ export default function AdminPage() {
               profiles={profiles}
               fetchData={fetchData}
             />
+          )}
+
+          {activeTab === "projects" && (
+            <ProjectsTasksTab />
           )}
 
           {activeTab === "accounts" && (
