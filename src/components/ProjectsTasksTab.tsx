@@ -163,6 +163,12 @@ export default function ProjectsTasksTab() {
     if (selectedAccount) fetchProjects(selectedAccount);
   };
 
+  const handleDeleteProject = async (p: ProjectTag) => {
+    if (!window.confirm(`Delete project "${p.project_name}"? This cannot be undone.`)) return;
+    await fetch(`/api/project-tags?id=${p.id}`, { method: "DELETE" });
+    if (selectedAccount) fetchProjects(selectedAccount);
+  };
+
   /* ── Task CRUD ─────── */
   const handleAddTask = async () => {
     if (!selectedProject) return;
@@ -227,6 +233,12 @@ export default function ProjectsTasksTab() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reorder }),
     });
+    if (selectedProject) fetchTasks(selectedProject.id);
+  };
+
+  const handleDeleteTask = async (t: TaskTemplate) => {
+    if (!window.confirm(`Delete task "${t.task_name}"? This cannot be undone.`)) return;
+    await fetch(`/api/task-templates?id=${t.id}`, { method: "DELETE" });
     if (selectedProject) fetchTasks(selectedProject.id);
   };
 
@@ -466,6 +478,16 @@ export default function ProjectsTasksTab() {
                       </svg>
                     )}
                   </button>
+                  <button
+                    onClick={() => handleDeleteProject(p)}
+                    className="p-1.5 rounded-lg text-stone hover:text-red-600 hover:bg-red-50 cursor-pointer transition-colors"
+                    title="Delete project"
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                    </svg>
+                  </button>
                 </div>
               )}
             </div>
@@ -632,6 +654,16 @@ export default function ProjectsTasksTab() {
                       <line x1="1" y1="1" x2="23" y2="23" />
                     </svg>
                   )}
+                </button>
+                <button
+                  onClick={() => handleDeleteTask(t)}
+                  className="p-1.5 rounded-lg text-stone hover:text-red-600 hover:bg-red-50 cursor-pointer transition-colors"
+                  title="Delete task"
+                >
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                  </svg>
                 </button>
               </div>
             )}
