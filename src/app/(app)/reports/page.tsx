@@ -45,6 +45,8 @@ export default function ReportsPage() {
   const [selectedVA, setSelectedVA] = useState<string>("all");
   const [customStart, setCustomStart] = useState<string>("");
   const [customEnd, setCustomEnd] = useState<string>("");
+  const [appliedStart, setAppliedStart] = useState<string>("");
+  const [appliedEnd, setAppliedEnd] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole>("va");
@@ -62,10 +64,10 @@ export default function ReportsPage() {
       const label = `Week of ${s.toLocaleDateString("en-US", { month: "long", day: "numeric" })} \u2013 ${e.toLocaleDateString("en-US", { day: "numeric", year: "numeric" })}`;
       return { start: s, end: e, periodLabel: label };
     } else if (dateRange === "custom") {
-      if (customStart && customEnd) {
-        const s = new Date(customStart + "T00:00:00");
-        const e = new Date(customEnd + "T23:59:59");
-        const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric" })} \u2013 ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      if (appliedStart && appliedEnd) {
+        const s = new Date(appliedStart + "T00:00:00Z");
+        const e = new Date(appliedEnd + "T23:59:59Z");
+        const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} \u2013 ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`;
         return { start: s, end: e, periodLabel: label };
       }
       // Fallback to current week if custom dates not set yet
@@ -81,7 +83,7 @@ export default function ReportsPage() {
       });
       return { start: s, end: e, periodLabel: label };
     }
-  }, [dateRange, customStart, customEnd]);
+  }, [dateRange, appliedStart, appliedEnd]);
 
   const fetchData = useCallback(async () => {
     const supabase = createClient();
@@ -235,10 +237,10 @@ export default function ReportsPage() {
         days.push(buildDay(d, dayNames[d.getDay()]));
       }
       return days;
-    } else if (dateRange === "custom" && customStart && customEnd) {
+    } else if (dateRange === "custom" && appliedStart && appliedEnd) {
       const days: DailyData[] = [];
-      const s = new Date(customStart + "T00:00:00");
-      const e = new Date(customEnd + "T23:59:59");
+      const s = new Date(appliedStart + "T00:00:00Z");
+      const e = new Date(appliedEnd + "T23:59:59Z");
       const diffDays = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
       for (let i = 0; i < diffDays && i < 90; i++) {
         const d = new Date(s);
@@ -264,7 +266,7 @@ export default function ReportsPage() {
       }
       return days;
     }
-  }, [filteredLogs, dateRange, start, customStart, customEnd]);
+  }, [filteredLogs, dateRange, start, appliedStart, appliedEnd]);
 
   const maxDayMs = useMemo(
     () => Math.max(...dailyData.map((d) => d.totalMs), 1),
@@ -543,9 +545,19 @@ export default function ReportsPage() {
             onChange={(e) => setCustomEnd(e.target.value)}
             className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
           />
-          {!customStart || !customEnd ? (
+          {customStart && customEnd ? (
+            <button
+              onClick={() => {
+                setAppliedStart(customStart);
+                setAppliedEnd(customEnd);
+              }}
+              className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
+            >
+              Apply
+            </button>
+          ) : (
             <span className="text-[12px] text-bark">Pick both dates to load data</span>
-          ) : null}
+          )}
         </div>
       )}
 
