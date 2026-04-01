@@ -137,7 +137,6 @@ export default function ReportsPage() {
   const totalHoursMs = useMemo(
     () =>
       logs
-        .filter((l) => l.category !== "Break")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
     [logs]
   );
@@ -145,7 +144,7 @@ export default function ReportsPage() {
   const billableMs = useMemo(
     () =>
       logs
-        .filter((l) => l.billable && l.category !== "Break")
+        .filter((l) => l.billable)
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
     [logs]
   );
@@ -179,10 +178,12 @@ export default function ReportsPage() {
           (l) => l.start_time && l.start_time.slice(0, 10) === dateStr
         );
         const billable = dayLogs
-          .filter((l) => l.billable && l.category !== "Break")
+          .filter((l) => l.billable)
           .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
         const personal = dayLogs
           .filter((l) => l.category === "Personal")
+          .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+        const total = dayLogs
           .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
         days.push({
@@ -190,7 +191,7 @@ export default function ReportsPage() {
           date: dateStr,
           billableMs: billable,
           personalMs: personal,
-          totalMs: billable + personal,
+          totalMs: total,
         });
       }
       return days;
@@ -208,10 +209,12 @@ export default function ReportsPage() {
           (l) => l.start_time && l.start_time.slice(0, 10) === dateStr
         );
         const billable = dayLogs
-          .filter((l) => l.billable && l.category !== "Break")
+          .filter((l) => l.billable)
           .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
         const personal = dayLogs
           .filter((l) => l.category === "Personal")
+          .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+        const total = dayLogs
           .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
         days.push({
@@ -219,7 +222,7 @@ export default function ReportsPage() {
           date: dateStr,
           billableMs: billable,
           personalMs: personal,
-          totalMs: billable + personal,
+          totalMs: total,
         });
       }
       return days;
@@ -236,7 +239,6 @@ export default function ReportsPage() {
   const accountHours: AccountHours[] = useMemo(() => {
     const map: Record<string, number> = {};
     logs
-      .filter((l) => l.category !== "Break")
       .forEach((l) => {
         const acct = l.account || "Unassigned";
         map[acct] = (map[acct] || 0) + (l.duration_ms || 0);
@@ -256,7 +258,6 @@ export default function ReportsPage() {
   const personHours: PersonHours[] = useMemo(() => {
     const map: Record<string, { totalMs: number; taskCount: number }> = {};
     logs
-      .filter((l) => l.category !== "Break")
       .forEach((l) => {
         if (!map[l.user_id]) map[l.user_id] = { totalMs: 0, taskCount: 0 };
         map[l.user_id].totalMs += l.duration_ms || 0;

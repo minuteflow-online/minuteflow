@@ -353,8 +353,7 @@ export default function TimeLogPage() {
       const dayLogs = logs.filter(
         (l) =>
           l.start_time &&
-          isSameDay(new Date(l.start_time), d) &&
-          l.category !== "Break"
+          isSameDay(new Date(l.start_time), d)
       );
       return {
         dayName: name,
@@ -394,7 +393,6 @@ export default function TimeLogPage() {
 
   const daySummary = useMemo(() => {
     const totalMs = filteredLogs
-      .filter((l) => l.category !== "Break")
       .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
     const billableMs = filteredLogs
@@ -499,7 +497,6 @@ export default function TimeLogPage() {
             day: "numeric",
           });
           const dayTotalMs = dayLogs
-            .filter((l) => l.category !== "Break")
             .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
           return [
             { _type: "header" as const, dateKey, dayLabel, dayTotalMs },
