@@ -172,7 +172,7 @@ export default function TeamPage() {
 
       const userLogs = logs.filter((l) => l.user_id === profile.id);
       const nonBreakLogs = userLogs.filter((l) => l.category !== "Break");
-      const todayHoursMs = nonBreakLogs.reduce(
+      const todayHoursMs = userLogs.reduce(
         (sum, l) => sum + (l.duration_ms || 0),
         0
       );
@@ -849,7 +849,6 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   const accountBreakdown = useMemo(() => {
     const byAccount: Record<string, number> = {};
     member.todayLogs.forEach((log) => {
-      if (log.category === "Break") return; // exclude break from account hours
       const acct = log.account || "Unassigned";
       byAccount[acct] = (byAccount[acct] || 0) + (log.duration_ms || 0);
     });
@@ -873,7 +872,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
       .sort((a, b) => b[1].dateSort - a[1].dateSort) // newest first
       .map(([dateLabel, { logs: dayLogs }]) => {
         const nonBreakLogs = dayLogs.filter(l => l.category !== "Break");
-        const totalMs = nonBreakLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+        const totalMs = dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
         const dayPayable = computePayable(totalMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
 
         // Clock in: earliest start_time of non-break logs

@@ -447,7 +447,6 @@ export default function AdminPage() {
         latestScreenshot,
         todayScreenshots: userScreenshotsToday.length,
         todayHoursMs: userLogs
-          .filter((l) => l.category !== "Break")
           .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
         todayTasks: userLogs.filter((l) => l.category !== "Break").length,
         wizardTimeMs: userLogs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0),
@@ -461,7 +460,6 @@ export default function AdminPage() {
   const stats = useMemo(() => {
     const activeCount = monitorMembers.filter((m) => m.status === "live").length;
     const todayHoursMs = logs
-      .filter((l) => l.category !== "Break")
       .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
     const todayScreenshots = allScreenshots.filter(
       (s) => new Date(s.created_at).toDateString() === new Date().toDateString()
