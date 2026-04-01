@@ -13,7 +13,7 @@ import {
 
 /* ── Types ────────────────────────────────────────────────── */
 
-type DateRange = "week" | "month" | "custom";
+type DateRange = "today" | "week" | "month" | "custom";
 
 type DailyData = {
   label: string;
@@ -51,7 +51,12 @@ export default function ReportsPage() {
 
   const { start, end, periodLabel } = useMemo(() => {
     const now = new Date();
-    if (dateRange === "week") {
+    if (dateRange === "today") {
+      const s = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      const e = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+      const label = s.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+      return { start: s, end: e, periodLabel: label };
+    } else if (dateRange === "week") {
       const s = weekStart(now);
       const e = weekEnd(now);
       const label = `Week of ${s.toLocaleDateString("en-US", { month: "long", day: "numeric" })} \u2013 ${e.toLocaleDateString("en-US", { day: "numeric", year: "numeric" })}`;
@@ -217,7 +222,11 @@ export default function ReportsPage() {
       };
     };
 
-    if (dateRange === "week") {
+    if (dateRange === "today") {
+      const now = new Date();
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return [buildDay(d, dayNames[d.getDay()])];
+    } else if (dateRange === "week") {
       const days: DailyData[] = [];
       const ws = weekStart();
       for (let i = 0; i < 7; i++) {
@@ -453,7 +462,7 @@ export default function ReportsPage() {
             >
               <option value="all">All Team</option>
               {profiles
-                .filter((p) => p.role === "va" || p.role === "manager")
+                .filter((p) => (p.role === "va" || p.role === "manager") && p.is_active !== false)
                 .sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""))
                 .map((p) => (
                   <option key={p.id} value={p.id}>
@@ -462,6 +471,16 @@ export default function ReportsPage() {
                 ))}
             </select>
           )}
+          <button
+            onClick={() => setDateRange("today")}
+            className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all ${
+              dateRange === "today"
+                ? "bg-white text-espresso border border-sand shadow-sm"
+                : "bg-parchment text-walnut border border-sand hover:bg-sand"
+            }`}
+          >
+            Today
+          </button>
           <button
             onClick={() => setDateRange("week")}
             className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all ${
@@ -570,7 +589,7 @@ export default function ReportsPage() {
             <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
               <h3 className="text-sm font-bold text-espresso">Daily Hours</h3>
               <span className="text-[11px] text-bark">
-                {dateRange === "week" ? "This week" : "This month"}
+                {dateRange === "today" ? "Today" : dateRange === "week" ? "This week" : dateRange === "month" ? "This month" : "Custom range"}
               </span>
             </div>
             <div
