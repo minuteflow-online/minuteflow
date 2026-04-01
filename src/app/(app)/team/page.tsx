@@ -160,7 +160,8 @@ export default function TeamPage() {
           .lte("created_at", endISO),
       ]);
 
-    const profiles = (profilesRes.data ?? []) as Profile[];
+    const allProfiles = (profilesRes.data ?? []) as Profile[];
+    const profiles = allProfiles.filter((p) => p.is_active !== false);
     const sessions = (sessionsRes.data ?? []) as Session[];
     const logs = (logsRes.data ?? []) as TimeLog[];
     const screenshots = (screenshotsRes.data ?? []) as TaskScreenshot[];

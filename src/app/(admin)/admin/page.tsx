@@ -403,7 +403,7 @@ export default function AdminPage() {
   }, [allLogs]);
 
   const monitorMembers = useMemo(() => {
-    return profiles.map((profile) => {
+    return profiles.filter((p) => p.is_active !== false).map((profile) => {
       const session = sessions.find((s) => s.user_id === profile.id) ?? null;
       const heartbeat = heartbeats.find((h) => h.user_id === profile.id) ?? null;
       const userLogs = logs.filter((l) => l.user_id === profile.id);
@@ -1096,9 +1096,9 @@ function OverviewTab({
     <>
       {/* Stats */}
       <div className="mb-6 grid grid-cols-5 gap-4">
-        <StatCard value={stats.activeCount} label="Active Now" sub={`of ${profiles.length} team members`} color="sage" />
+        <StatCard value={stats.activeCount} label="Active Now" sub={`of ${profiles.filter(p => p.is_active !== false).length} team members`} color="sage" />
         <StatCard value={formatDuration(stats.todayHoursMs)} label="Total Hours Today" sub="across all VAs" color="terracotta" />
-        <StatCard value={stats.todayScreenshots} label="Screenshots Today" sub={profiles.length > 0 ? `${Math.round(stats.todayScreenshots / profiles.length)} avg per person` : ""} color="slate-blue" />
+        <StatCard value={stats.todayScreenshots} label="Screenshots Today" sub={profiles.filter(p => p.is_active !== false).length > 0 ? `${Math.round(stats.todayScreenshots / profiles.filter(p => p.is_active !== false).length)} avg per person` : ""} color="slate-blue" />
         <StatCard value={stats.todayTasks} label="Tasks Completed" sub="today" color="amber" />
         <StatCard value={formatDuration(stats.wizardTimeMs)} label="Wizard Time" sub="task entry form time" color="walnut" />
       </div>
@@ -1814,6 +1814,7 @@ function TeamManagementTab({
             <thead>
               <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
                 <th className="px-4 py-3">Name</th>
+                <th className="px-3 py-3 text-center">Status</th>
                 <th className="px-3 py-3">Username</th>
                 <th className="px-3 py-3">Role</th>
                 <th className="px-3 py-3">Department</th>
@@ -1837,6 +1838,30 @@ function TeamManagementTab({
                       </div>
                       <span className="font-semibold text-espresso text-[13px]">{p.full_name}</span>
                     </div>
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    <button
+                      onClick={async () => {
+                        const newVal = !(p.is_active !== false);
+                        try {
+                          const res = await fetch("/api/users", {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ user_id: p.id, is_active: newVal }),
+                          });
+                          if (res.ok) fetchData();
+                        } catch { /* silent */ }
+                      }}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold transition-all cursor-pointer ${
+                        p.is_active !== false
+                          ? "bg-sage-soft text-sage hover:bg-sage/20"
+                          : "bg-parchment text-stone hover:bg-sand"
+                      }`}
+                      title={p.is_active !== false ? "Click to deactivate" : "Click to activate"}
+                    >
+                      <span className={`inline-block h-1.5 w-1.5 rounded-full ${p.is_active !== false ? "bg-sage" : "bg-stone"}`} />
+                      {p.is_active !== false ? "Active" : "Inactive"}
+                    </button>
                   </td>
                   <td className="px-3 py-3 text-bark">{p.username}</td>
                   {/* Role - editable */}

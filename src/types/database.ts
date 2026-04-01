@@ -9,6 +9,7 @@ export interface Profile {
   role: UserRole;
   pay_rate: number;
   pay_rate_type: 'hourly' | 'daily' | 'monthly';
+  is_active: boolean;
   created_at: string;
 }
 

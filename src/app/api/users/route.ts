@@ -171,6 +171,7 @@ export async function PATCH(request: Request) {
     "position",
     "pay_rate",
     "pay_rate_type",
+    "is_active",
   ];
   for (const field of allowedFields) {
     if (field in updates) {

@@ -210,16 +210,18 @@ export default function DashboardPage() {
         }
       }
 
-      // Team members
+      // Team members (filter out inactive VAs)
       if (allProfilesRes.data && allSessionsRes.data) {
         const sessionsMap = new Map<string, Session>();
         (allSessionsRes.data as Session[]).forEach((s) =>
           sessionsMap.set(s.user_id, s)
         );
-        const members = (allProfilesRes.data as Profile[]).map((p) => ({
-          profile: p,
-          session: sessionsMap.get(p.id) || null,
-        }));
+        const members = (allProfilesRes.data as Profile[])
+          .filter((p) => p.is_active !== false)
+          .map((p) => ({
+            profile: p,
+            session: sessionsMap.get(p.id) || null,
+          }));
         setTeamMembers(members);
       }
 
