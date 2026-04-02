@@ -27,6 +27,7 @@ import {
   formatTimeET,
 } from "@/lib/utils";
 import ProjectsTasksTab from "@/components/ProjectsTasksTab";
+import FinancialSummaryTab from "@/components/FinancialSummaryTab";
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -80,7 +81,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "projects";
+type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "projects" | "financial";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -159,6 +160,16 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
         <line x1="16" y1="13" x2="8" y2="13" />
         <line x1="16" y1="17" x2="8" y2="17" />
         <polyline points="10 9 9 9 8 9" />
+      </svg>
+    ),
+  },
+  {
+    id: "financial",
+    label: "Financial",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <line x1="12" y1="1" x2="12" y2="23" />
+        <path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
       </svg>
     ),
   },
@@ -959,6 +970,10 @@ export default function AdminPage() {
             <InvoicesTab profiles={profiles} />
           )}
 
+          {activeTab === "financial" && (
+            <FinancialSummaryTab />
+          )}
+
           {activeTab === "organization" && (
             <OrganizationTab />
           )}
@@ -1225,7 +1240,7 @@ function ScreenshotsTab({
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">All VAs</option>
-            {profiles.map((p) => (
+            {profiles.filter((p) => p.is_active !== false).map((p) => (
               <option key={p.id} value={p.id}>{p.full_name}</option>
             ))}
           </select>
@@ -2198,6 +2213,7 @@ interface AccountRow {
   id: number;
   name: string;
   active: boolean;
+  billing_rate: number | null;
   created_at: string;
 }
 
@@ -2230,6 +2246,8 @@ function AccountsTab() {
   const [addError, setAddError] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
+  const [editingRateId, setEditingRateId] = useState<number | null>(null);
+  const [editRate, setEditRate] = useState("");
   const [linkAccountId, setLinkAccountId] = useState<number | null>(null);
   const [linkClientId, setLinkClientId] = useState("");
 
@@ -2285,6 +2303,19 @@ function AccountsTab() {
       body: JSON.stringify({ id, name: editName.trim() }),
     });
     setEditingId(null);
+    fetchAccounts();
+  };
+
+  const handleSaveRate = async (id: number) => {
+    const rate = editRate.trim() === "" ? null : parseFloat(editRate);
+    if (rate !== null && isNaN(rate)) return;
+    await fetch("/api/accounts", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, billing_rate: rate }),
+    });
+    setEditingRateId(null);
+    setEditRate("");
     fetchAccounts();
   };
 
@@ -2364,6 +2395,7 @@ function AccountsTab() {
             <thead>
               <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
                 <th className="px-4 py-3">Name</th>
+                <th className="px-3 py-3">Billing Rate</th>
                 <th className="px-3 py-3">Status</th>
                 <th className="px-3 py-3">Linked Clients</th>
                 <th className="px-3 py-3 text-center">Actions</th>
@@ -2399,6 +2431,38 @@ function AccountsTab() {
                           className="cursor-pointer font-semibold text-espresso text-[13px] hover:text-terracotta transition-colors"
                         >
                           {acc.name}
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      {editingRateId === acc.id ? (
+                        <div className="flex items-center gap-1">
+                          <span className="text-[11px] text-bark">$</span>
+                          <input
+                            value={editRate}
+                            onChange={(e) => setEditRate(e.target.value)}
+                            className="w-20 rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
+                            placeholder="0.00"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveRate(acc.id);
+                              if (e.key === "Escape") setEditingRateId(null);
+                            }}
+                          />
+                          <span className="text-[10px] text-bark">/hr</span>
+                          <button onClick={() => handleSaveRate(acc.id)} className="text-sage text-sm font-bold">OK</button>
+                          <button onClick={() => setEditingRateId(null)} className="text-bark hover:text-terracotta text-sm">&times;</button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => { setEditingRateId(acc.id); setEditRate(acc.billing_rate != null ? String(acc.billing_rate) : ""); }}
+                          className="cursor-pointer text-[12px] font-medium transition-colors hover:text-terracotta"
+                        >
+                          {acc.billing_rate != null ? (
+                            <span className="text-espresso">${Number(acc.billing_rate).toFixed(2)}/hr</span>
+                          ) : (
+                            <span className="text-bark/50 italic">Set rate</span>
+                          )}
                         </button>
                       )}
                     </td>
