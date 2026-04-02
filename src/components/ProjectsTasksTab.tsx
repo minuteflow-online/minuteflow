@@ -314,6 +314,61 @@ export default function ProjectsTasksTab() {
     fetchLibraryTasks();
   };
 
+  const handleBulkDeleteTasks = async () => {
+    if (selectedTaskIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedTaskIds.size} selected task(s)? This removes them from ALL projects.`)) return;
+    setAssigning(true);
+    const promises = Array.from(selectedTaskIds).map((id) =>
+      fetch(`/api/task-library?id=${id}`, { method: "DELETE" })
+    );
+    await Promise.all(promises);
+    setSelectedTaskIds(new Set());
+    setAssigning(false);
+    fetchLibraryTasks();
+    if (selectedProject) fetchAssignments(selectedProject.id);
+  };
+
+  const handleBulkDeleteProjects = async () => {
+    if (selectedProjectIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedProjectIds.size} selected project(s)?`)) return;
+    setAssigning(true);
+    const promises = Array.from(selectedProjectIds).map((id) =>
+      fetch(`/api/project-tags?id=${id}`, { method: "DELETE" })
+    );
+    await Promise.all(promises);
+    if (selectedProject && selectedProjectIds.has(selectedProject.id)) setSelectedProject(null);
+    setSelectedProjectIds(new Set());
+    setAssigning(false);
+    fetchProjects();
+  };
+
+  const toggleSelectAllInCategory = (categoryId: number | null, tasks: TaskLibraryItem[]) => {
+    const taskIds = tasks.map((t) => t.id);
+    const allSelected = taskIds.every((id) => selectedTaskIds.has(id));
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        taskIds.forEach((id) => next.delete(id));
+      } else {
+        taskIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllProjects = () => {
+    const allSelected = projects.length > 0 && projects.every((p) => selectedProjectIds.has(p.id));
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        projects.forEach((p) => next.delete(p.id));
+      } else {
+        projects.forEach((p) => next.add(p.id));
+      }
+      return next;
+    });
+  };
+
   /* ── Project CRUD ─────── */
   const handleAddProject = async () => {
     if (bulkProjectMode) {
@@ -535,6 +590,14 @@ export default function ProjectsTasksTab() {
               </button>
             </>
           )}
+          <span className="text-stone">|</span>
+          <button
+            onClick={handleBulkDeleteTasks}
+            disabled={assigning}
+            className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
+          >
+            {assigning ? "Deleting..." : "Delete"}
+          </button>
           <button
             onClick={() => setSelectedTaskIds(new Set())}
             className="ml-auto px-2 py-0.5 rounded-lg text-stone hover:text-espresso cursor-pointer text-[11px]"
@@ -543,18 +606,36 @@ export default function ProjectsTasksTab() {
           </button>
         </div>
       )}
-      {selectedProjectIds.size > 0 && selectedAccount && (
-        <div className="rounded-lg bg-terracotta-soft border border-terracotta/30 px-3 py-2 flex items-center gap-2 text-xs">
+      {selectedProjectIds.size > 0 && (
+        <div className="rounded-lg bg-terracotta-soft border border-terracotta/30 px-3 py-2 flex items-center gap-2 text-xs flex-wrap">
           <span className="text-terracotta font-semibold">
             {selectedProjectIds.size} project(s) selected
           </span>
-          <span className="text-stone">→</span>
+          {selectedAccount && (
+            <>
+              <span className="text-stone">→</span>
+              <button
+                onClick={handleAssignProjectsToAccount}
+                disabled={assigning}
+                className="px-3 py-1 rounded-lg bg-terracotta text-white font-semibold hover:bg-[#a85840] disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                {assigning ? "Assigning..." : `Assign to "${selectedAccount.name}"`}
+              </button>
+            </>
+          )}
+          <span className="text-stone">|</span>
           <button
-            onClick={handleAssignProjectsToAccount}
+            onClick={handleBulkDeleteProjects}
             disabled={assigning}
-            className="px-3 py-1 rounded-lg bg-terracotta text-white font-semibold hover:bg-[#a85840] disabled:opacity-50 cursor-pointer transition-colors"
+            className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
           >
-            {assigning ? "Assigning..." : `Assign to "${selectedAccount.name}"`}
+            {assigning ? "Deleting..." : "Delete"}
+          </button>
+          <button
+            onClick={() => setSelectedProjectIds(new Set())}
+            className="ml-auto px-2 py-0.5 rounded-lg text-stone hover:text-espresso cursor-pointer text-[11px]"
+          >
+            Clear
           </button>
         </div>
       )}
@@ -562,7 +643,7 @@ export default function ProjectsTasksTab() {
       {/* Hint bars */}
       {selectedProjectIds.size > 0 && !selectedAccount && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
-          Click an account in the right column to assign the selected projects →
+          Click an account in the right column to assign the selected projects, or use Delete to remove them.
         </div>
       )}
 
@@ -691,9 +772,19 @@ export default function ProjectsTasksTab() {
           {categories.map((cat) => {
             const catTasks = tasksByCategory.get(cat.id) ?? [];
             const isCollapsed = collapsedCategories.has(cat.id);
+            const allCatSelected = catTasks.length > 0 && catTasks.every((t) => selectedTaskIds.has(t.id));
+            const someCatSelected = catTasks.some((t) => selectedTaskIds.has(t.id));
             return (
               <div key={cat.id} className="space-y-1">
                 <div className="flex items-center gap-1 group">
+                  <input
+                    type="checkbox"
+                    checked={allCatSelected}
+                    ref={(el) => { if (el) el.indeterminate = someCatSelected && !allCatSelected; }}
+                    onChange={() => toggleSelectAllInCategory(cat.id, catTasks)}
+                    className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+                    title={`Select all in ${cat.category_name}`}
+                  />
                   <button onClick={() => toggleCollapse(cat.id)} className="flex items-center gap-1 flex-1 text-left cursor-pointer py-0.5">
                     <ChevronDown open={!isCollapsed} />
                     {editingCategoryId === cat.id ? (
@@ -758,16 +849,28 @@ export default function ProjectsTasksTab() {
             const uncatTasks = tasksByCategory.get(null) ?? [];
             if (uncatTasks.length === 0 && categories.length > 0) return null;
             const isCollapsed = collapsedCategories.has("uncategorized");
+            const allUncatSelected = uncatTasks.length > 0 && uncatTasks.every((t) => selectedTaskIds.has(t.id));
+            const someUncatSelected = uncatTasks.some((t) => selectedTaskIds.has(t.id));
             return (
               <div className="space-y-1">
                 {categories.length > 0 && (
-                  <button onClick={() => toggleCollapse("uncategorized")} className="flex items-center gap-1 cursor-pointer py-0.5 w-full text-left">
-                    <ChevronDown open={!isCollapsed} />
-                    <span className="text-[11px] font-bold text-stone uppercase tracking-wide">
-                      Uncategorized
-                      <span className="font-normal normal-case ml-1">({uncatTasks.length})</span>
-                    </span>
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={allUncatSelected}
+                      ref={(el) => { if (el) el.indeterminate = someUncatSelected && !allUncatSelected; }}
+                      onChange={() => toggleSelectAllInCategory(null, uncatTasks)}
+                      className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+                      title="Select all uncategorized"
+                    />
+                    <button onClick={() => toggleCollapse("uncategorized")} className="flex items-center gap-1 cursor-pointer py-0.5 flex-1 text-left">
+                      <ChevronDown open={!isCollapsed} />
+                      <span className="text-[11px] font-bold text-stone uppercase tracking-wide">
+                        Uncategorized
+                        <span className="font-normal normal-case ml-1">({uncatTasks.length})</span>
+                      </span>
+                    </button>
+                  </div>
                 )}
                 {(!isCollapsed || categories.length === 0) && (
                   <div className={`space-y-0.5 ${categories.length > 0 ? "pl-2" : ""}`}>
@@ -873,10 +976,20 @@ export default function ProjectsTasksTab() {
               <p className="text-[11px] text-stone text-center py-4">No projects yet.</p>
             ) : (
               <>
-                <button onClick={() => setProjectsCollapsed(!projectsCollapsed)} className="flex items-center gap-1 cursor-pointer py-0.5 w-full text-left">
-                  <ChevronDown open={!projectsCollapsed} />
-                  <span className="text-[11px] font-bold text-stone uppercase tracking-wide">All Projects</span>
-                </button>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={projects.length > 0 && projects.every((p) => selectedProjectIds.has(p.id))}
+                    ref={(el) => { if (el) { const some = projects.some((p) => selectedProjectIds.has(p.id)); const all = projects.every((p) => selectedProjectIds.has(p.id)); el.indeterminate = some && !all; } }}
+                    onChange={toggleSelectAllProjects}
+                    className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+                    title="Select all projects"
+                  />
+                  <button onClick={() => setProjectsCollapsed(!projectsCollapsed)} className="flex items-center gap-1 cursor-pointer py-0.5 flex-1 text-left">
+                    <ChevronDown open={!projectsCollapsed} />
+                    <span className="text-[11px] font-bold text-stone uppercase tracking-wide">All Projects</span>
+                  </button>
+                </div>
                 {!projectsCollapsed && projects.map((p) => (
                   <div
                     key={p.id}
