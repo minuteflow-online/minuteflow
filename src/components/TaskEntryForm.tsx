@@ -27,15 +27,6 @@ const FALLBACK_ACCOUNTS = [
   "TONIWSB",
 ];
 
-const FALLBACK_CLIENTS = [
-  "Ting Chiu",
-  "Thess Peters",
-  "Toni Colina",
-  "Self",
-  "Gary Yip",
-  "Gloria Flores",
-];
-
 const FALLBACK_ACCOUNT_CLIENT_MAP: Record<string, string> = {
   "TAT Foundation": "Ting Chiu",
   "WSB Awesome Team": "Ting Chiu",
@@ -59,6 +50,19 @@ export interface TaskFormData {
   form_fill_ms?: number;
 }
 
+interface ProjectTag {
+  id: number;
+  account: string | null;
+  project_name: string;
+  sort_order: number;
+}
+
+interface ProjectTask {
+  id: number;
+  task_library_id: number;
+  task_name: string;
+}
+
 interface TaskEntryFormProps {
   onStartTask: (data: TaskFormData) => void;
   hasActiveTask?: boolean;
@@ -69,52 +73,38 @@ type WizardStep = "form" | "close-old";
 
 export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va" }: TaskEntryFormProps) {
   const isAdmin = role === "admin" || role === "manager";
-  const [taskName, setTaskName] = useState("");
-  const [category, setCategory] = useState("Task");
-  const [account, setAccount] = useState("");
-  const [client, setClient] = useState("");
-  const [project, setProject] = useState("");
 
-  // Dynamic accounts/clients from DB
-  const [dbAccounts, setDbAccounts] = useState<string[]>(FALLBACK_ACCOUNTS);
-  const [dbClients, setDbClients] = useState<string[]>(FALLBACK_CLIENTS);
+  // ─── Form Fields ───
+  const [account, setAccount] = useState("");
+  const [project, setProject] = useState("");
+  const [projectTagId, setProjectTagId] = useState<number | null>(null);
+  const [taskName, setTaskName] = useState("");
+  const [clientMemo, setClientMemo] = useState("");
+  const [category, setCategory] = useState("Task");
+  const [client, setClient] = useState("");
+
+  // ─── Cascading Data ───
+  const [allAccounts, setAllAccounts] = useState<string[]>(FALLBACK_ACCOUNTS);
+  const [allProjects, setAllProjects] = useState<ProjectTag[]>([]);
+  const [tasksByProject, setTasksByProject] = useState<Record<number, ProjectTask[]>>({});
   const [accountClientMap, setAccountClientMap] = useState<Record<string, string>>(FALLBACK_ACCOUNT_CLIENT_MAP);
 
-  const fetchAccountsAndClients = useCallback(async () => {
+  // Filtered lists
+  const filteredProjects = allProjects.filter((p) => p.account === account);
+  const filteredTasks = projectTagId ? (tasksByProject[projectTagId] ?? []) : [];
+
+  // ─── Fetch cascading data ───
+  const fetchFormOptions = useCallback(async () => {
     try {
-      const [accRes, cliRes] = await Promise.all([
-        fetch("/api/accounts"),
-        fetch("/api/clients"),
-      ]);
-      if (accRes.ok && cliRes.ok) {
-        const accData = await accRes.json();
-        const cliData = await cliRes.json();
+      const res = await fetch("/api/task-form-options");
+      if (!res.ok) return;
+      const data = await res.json();
 
-        // Only use active accounts/clients
-        const activeAccounts = (accData.accounts ?? [])
-          .filter((a: { active: boolean }) => a.active)
-          .map((a: { name: string }) => a.name);
-        const activeClients = (cliData.clients ?? [])
-          .filter((c: { active: boolean }) => c.active)
-          .map((c: { name: string }) => c.name);
-
-        if (activeAccounts.length > 0) setDbAccounts(activeAccounts);
-        if (activeClients.length > 0) setDbClients(activeClients);
-
-        // Build account-client map from mappings
-        const mappings = accData.mappings ?? [];
-        const newMap: Record<string, string> = {};
-        for (const m of mappings) {
-          if (m.clients) {
-            const acc = (accData.accounts ?? []).find(
-              (a: { id: number }) => a.id === m.account_id
-            );
-            if (acc) {
-              newMap[acc.name] = m.clients.name;
-            }
-          }
-        }
-        if (Object.keys(newMap).length > 0) setAccountClientMap(newMap);
+      if (data.accounts?.length > 0) setAllAccounts(data.accounts);
+      if (data.projects?.length > 0) setAllProjects(data.projects);
+      if (data.tasksByProject) setTasksByProject(data.tasksByProject);
+      if (data.clientMap && Object.keys(data.clientMap).length > 0) {
+        setAccountClientMap(data.clientMap);
       }
     } catch {
       // Keep fallback values on error
@@ -122,18 +112,44 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   }, []);
 
   useEffect(() => {
-    fetchAccountsAndClients();
-  }, [fetchAccountsAndClients]);
+    fetchFormOptions();
+  }, [fetchFormOptions]);
 
-  // Listen for prefill events from ProjectSidebar
+  // ─── Cascading resets ───
+  // When account changes, reset project and task
+  useEffect(() => {
+    setProject("");
+    setProjectTagId(null);
+    setTaskName("");
+    // Auto-map client
+    if (account && accountClientMap[account]) {
+      setClient(accountClientMap[account]);
+    } else {
+      setClient("");
+    }
+  }, [account, accountClientMap]);
+
+  // When project changes, reset task
+  useEffect(() => {
+    setTaskName("");
+  }, [projectTagId]);
+
+  // ─── Prefill events from ProjectSidebar / DailyTaskPlanner ───
   useEffect(() => {
     function handlePrefill(e: Event) {
       const detail = (e as CustomEvent).detail;
       if (detail.account) setAccount(detail.account);
-      if (detail.project) setProject(detail.project);
+      if (detail.project) {
+        setProject(detail.project);
+        // Try to find the matching project_tag_id
+        const match = allProjects.find(
+          (p) => p.account === (detail.account || account) && p.project_name === detail.project
+        );
+        if (match) setProjectTagId(match.id);
+      }
       if (detail.category) setCategory(detail.category);
       if (detail.task_name) setTaskName(detail.task_name);
-      // Use explicit client_name if provided, otherwise auto-select based on account
+      if (detail.client_memo) setClientMemo(detail.client_memo);
       if (detail.client_name) {
         setClient(detail.client_name);
       } else if (detail.account && accountClientMap[detail.account]) {
@@ -142,9 +158,17 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     }
     window.addEventListener("minuteflow-prefill", handlePrefill);
     return () => window.removeEventListener("minuteflow-prefill", handlePrefill);
-  }, [accountClientMap]);
+  }, [accountClientMap, allProjects, account]);
 
-  // Close-old-task wizard state
+  // ─── Auto-fill for Break ───
+  useEffect(() => {
+    if (category === "Break") {
+      setAccount("Virtual Concierge");
+      setClient("Toni Colina");
+    }
+  }, [category]);
+
+  // ─── Close-old-task wizard state ───
   const [wizardStep, setWizardStep] = useState<WizardStep>("form");
   const [taskStatus, setTaskStatus] = useState<string>("");
   const [clientMemoText, setClientMemoText] = useState("");
@@ -152,14 +176,13 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const [showClientMemo, setShowClientMemo] = useState(false);
   const [showInternalMemo, setShowInternalMemo] = useState(false);
 
-  // Validation
+  // ─── Validation ───
   const [showValidation, setShowValidation] = useState(false);
 
-  // Form fill time tracking
+  // ─── Form fill time tracking ───
   const formStartTimeRef = useRef<number | null>(null);
   const [formFillElapsed, setFormFillElapsed] = useState(0);
 
-  // Live timer for admin view
   useEffect(() => {
     if (!isAdmin || !formStartTimeRef.current) return;
     const interval = setInterval(() => {
@@ -179,25 +202,10 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
 
   const isPersonalOrBreak = category === "Personal" || category === "Break";
 
-  // Auto-map account to client
-  useEffect(() => {
-    if (account && accountClientMap[account]) {
-      setClient(accountClientMap[account]);
-    }
-  }, [account, accountClientMap]);
-
-  // Auto-fill account for Break
-  useEffect(() => {
-    if (category === "Break") {
-      setAccount("Virtual Concierge");
-      setClient("Toni Colina");
-    }
-  }, [category]);
-
-  // Validate required fields
+  // ─── Validation ───
   const getValidationErrors = (): string[] => {
     const errors: string[] = [];
-    if (!taskName.trim()) errors.push("Task Name is required");
+    if (!taskName.trim()) errors.push("Task is required");
     if (!isPersonalOrBreak) {
       if (!account) errors.push("Account is required");
       if (!project.trim()) errors.push("Project is required");
@@ -207,59 +215,63 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
 
   const isValid = getValidationErrors().length === 0;
 
-  // User clicks "Start Task"
+  // ─── Start Task handler ───
   const handleStartTask = () => {
     setShowValidation(true);
     if (!isValid) return;
 
     if (hasActiveTask) {
-      // Need to close the old task first — show status/memo modal
-      // Auto-expand memos for Meeting category
       if (category === "Meeting") {
         setShowClientMemo(true);
         setShowInternalMemo(true);
       }
       setWizardStep("close-old");
     } else {
-      // No active task — start directly
       submitTask("", "", "");
     }
   };
 
-  // Submit after closing old task — status required, at least one memo required
+  // Submit after closing old task
   const handleCloseOldAndStart = () => {
     if (!taskStatus) return;
     if (!clientMemoText.trim() && !internalMemoText.trim()) return;
-    submitTask(
-      taskStatus,
-      clientMemoText.trim(),
-      internalMemoText.trim()
-    );
+    submitTask(taskStatus, clientMemoText.trim(), internalMemoText.trim());
   };
 
   // Final submit
-  const submitTask = (status: string, clientMemo: string, internalMemo: string) => {
+  const submitTask = (status: string, closeClientMemo: string, closeInternalMemo: string) => {
     const formFillMs = formStartTimeRef.current
       ? Date.now() - formStartTimeRef.current
       : 0;
 
+    // When closing an old task (wizard flow), memos go to the OLD task via client_memo/internal_memo.
+    // The form's "Client Notes" field is for the NEW task — passed separately.
+    // The dashboard's handleCheckAndStartTask uses task_status to decide which memo goes where:
+    //   - If task_status is set → client_memo/internal_memo save to OLD task, new task gets no memo
+    //   - If task_status is NOT set → client_memo goes to the NEW task
+    // So when wizard is used, pass wizard memos as client_memo/internal_memo (for old task).
+    // The form's clientMemo (Client Notes) won't be sent via this interface — it will need
+    // the dashboard to handle it. For now, when no wizard, pass clientMemo as client_memo.
     onStartTask({
       task_name: taskName.trim(),
       category,
       account: isPersonalOrBreak && category === "Personal" ? "" : account,
       client_name: isPersonalOrBreak && category === "Personal" ? "" : client,
       project: project.trim(),
-      client_memo: clientMemo,
-      internal_memo: internalMemo,
+      client_memo: status ? closeClientMemo : (clientMemo.trim() || closeClientMemo),
+      internal_memo: closeInternalMemo,
       task_status: status || undefined,
       form_fill_ms: formFillMs,
     });
+
     // Reset everything
     setTaskName("");
     setCategory("Task");
     setAccount("");
     setClient("");
     setProject("");
+    setProjectTagId(null);
+    setClientMemo("");
     setWizardStep("form");
     setTaskStatus("");
     setClientMemoText("");
@@ -304,6 +316,31 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const fieldError = (condition: boolean) =>
     showValidation && condition ? "border-red-400 bg-red-50/30" : "";
 
+  // Handle project selection from dropdown
+  const handleProjectChange = (value: string) => {
+    if (!value) {
+      setProject("");
+      setProjectTagId(null);
+      return;
+    }
+    const id = parseInt(value);
+    const match = filteredProjects.find((p) => p.id === id);
+    if (match) {
+      setProject(match.project_name);
+      setProjectTagId(match.id);
+    }
+  };
+
+  // Handle task selection from dropdown
+  const handleTaskChange = (value: string) => {
+    if (!value) {
+      setTaskName("");
+      return;
+    }
+    // value is the task_name directly
+    setTaskName(value);
+  };
+
   return (
     <>
       <div className="bg-white border border-sand rounded-xl" data-task-form>
@@ -316,22 +353,111 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
           )}
         </div>
         <div className="p-[18px_20px]">
-          {/* Task Name */}
-          <div className="mb-3.5">
-            <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
-              Task Name <span className="text-terracotta">*</span>
-            </label>
-            <input
-              type="text"
-              value={taskName}
-              onChange={(e) => setTaskName(e.target.value)}
-              onFocus={handleFormFieldFocus}
-              placeholder="What are you working on?"
-              className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone ${fieldError(!taskName.trim())}`}
-            />
+
+          {/* Non-billable info for Personal/Break */}
+          {isPersonalOrBreak && (
+            <div className="mb-3.5 p-3 rounded-lg bg-amber-soft border border-[#d4c07a] text-xs text-amber font-medium">
+              {category === "Break"
+                ? "Break time is billed to Virtual Concierge."
+                : "Personal time is not billed to anyone."}
+            </div>
+          )}
+
+          {/* ─── Row 1: Account + Project (side by side on wide, stacked on narrow) ─── */}
+          {category !== "Personal" && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3.5">
+              {/* Account Dropdown */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                  Account <span className="text-terracotta">*</span>
+                </label>
+                <select
+                  value={account}
+                  onChange={(e) => setAccount(e.target.value)}
+                  onFocus={handleFormFieldFocus}
+                  disabled={category === "Break"}
+                  className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] disabled:opacity-60 disabled:bg-parchment ${fieldError(!account)}`}
+                >
+                  <option value="">Select account...</option>
+                  {allAccounts.map((a) => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Project Dropdown (filtered by account) */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                  Project <span className="text-terracotta">*</span>
+                </label>
+                <select
+                  value={projectTagId?.toString() ?? ""}
+                  onChange={(e) => handleProjectChange(e.target.value)}
+                  onFocus={handleFormFieldFocus}
+                  disabled={!account || category === "Break"}
+                  className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] disabled:opacity-60 disabled:bg-parchment ${fieldError(!project.trim())}`}
+                >
+                  <option value="">
+                    {!account ? "Select account first..." : "Select project..."}
+                  </option>
+                  {filteredProjects.map((p) => (
+                    <option key={p.id} value={p.id.toString()}>{p.project_name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* ─── Row 2: Task + Client Notes (side by side on wide, stacked on narrow) ─── */}
+          <div className={`grid gap-3 mb-3.5 ${isPersonalOrBreak ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
+            {/* Task Dropdown (filtered by project) — or free text for Personal/Break */}
+            <div>
+              <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                Task <span className="text-terracotta">*</span>
+              </label>
+              {isPersonalOrBreak || filteredTasks.length === 0 ? (
+                <input
+                  type="text"
+                  value={taskName}
+                  onChange={(e) => setTaskName(e.target.value)}
+                  onFocus={handleFormFieldFocus}
+                  placeholder={isPersonalOrBreak ? "What are you doing?" : "Type a task..."}
+                  className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone ${fieldError(!taskName.trim())}`}
+                />
+              ) : (
+                <select
+                  value={taskName}
+                  onChange={(e) => handleTaskChange(e.target.value)}
+                  onFocus={handleFormFieldFocus}
+                  className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] ${fieldError(!taskName.trim())}`}
+                >
+                  <option value="">Select task...</option>
+                  {filteredTasks.map((t) => (
+                    <option key={t.id} value={t.task_name}>{t.task_name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Client Notes (free text — Today's Plan taps go here) */}
+            {!isPersonalOrBreak && (
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                  Client Notes
+                </label>
+                <input
+                  type="text"
+                  value={clientMemo}
+                  onChange={(e) => setClientMemo(e.target.value)}
+                  onFocus={handleFormFieldFocus}
+                  placeholder="Notes for this task..."
+                  className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone"
+                />
+              </div>
+            )}
           </div>
 
-          {/* Category Chips */}
+          {/* ─── Row 3: Category Pills (default: Task) ─── */}
           <div className="mb-3.5">
             <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
               Category
@@ -349,71 +475,6 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
             </div>
           </div>
 
-          {/* Non-billable info */}
-          {isPersonalOrBreak && (
-            <div className="mb-3.5 p-3 rounded-lg bg-amber-soft border border-[#d4c07a] text-xs text-amber font-medium">
-              {category === "Break"
-                ? "Break time is billed to Virtual Concierge."
-                : "Personal time is not billed to anyone."}
-            </div>
-          )}
-
-          {/* Account & Client — hidden for Personal, auto-filled for Break */}
-          {category !== "Personal" && (
-            <div className="grid grid-cols-2 gap-3 mb-3.5">
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
-                  Account <span className="text-terracotta">*</span>
-                </label>
-                <select
-                  value={account}
-                  onChange={(e) => setAccount(e.target.value)}
-                  onFocus={handleFormFieldFocus}
-                  disabled={category === "Break"}
-                  className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] disabled:opacity-60 disabled:bg-parchment ${fieldError(!account)}`}
-                >
-                  <option value="">Select account...</option>
-                  {dbAccounts.map((a) => (
-                    <option key={a} value={a}>{a}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
-                  Client
-                </label>
-                <select
-                  value={client}
-                  onChange={(e) => setClient(e.target.value)}
-                  disabled={category === "Break"}
-                  className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] disabled:opacity-60 disabled:bg-parchment"
-                >
-                  <option value="">Select client...</option>
-                  {dbClients.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-
-          {/* Project */}
-          {!isPersonalOrBreak && (
-            <div className="mb-3.5">
-              <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
-                Project <span className="text-terracotta">*</span>
-              </label>
-              <input
-                type="text"
-                value={project}
-                onChange={(e) => setProject(e.target.value)}
-                onFocus={handleFormFieldFocus}
-                placeholder="e.g. Website Redesign"
-                className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone ${fieldError(!project.trim())}`}
-              />
-            </div>
-          )}
-
           {/* Validation errors */}
           {showValidation && !isValid && (
             <div className="mb-3 p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600">
@@ -423,7 +484,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
             </div>
           )}
 
-          {/* Start Task button */}
+          {/* ─── Row 4: Start Task button ─── */}
           <button
             onClick={handleStartTask}
             className="w-full flex items-center justify-center py-[11px] mt-2 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(194,105,79,0.25)]"
@@ -466,7 +527,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                 </div>
               </div>
 
-              {/* Memos — both can be filled independently */}
+              {/* Memos */}
               <div className="mb-3">
                 <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
                   Add Comments <span className="text-stone font-normal">(at least one required)</span>
