@@ -94,64 +94,69 @@ export default function ReportsPage() {
       return;
     }
     setLoading(true);
-    const supabase = createClient();
+    try {
+      const supabase = createClient();
 
-    // Get current user and role
-    const { data: { user } } = await supabase.auth.getUser();
-    const currentUserId = user?.id || null;
-    setUserId(currentUserId);
+      // Get current user and role
+      const { data: { user } } = await supabase.auth.getUser();
+      const currentUserId = user?.id || null;
+      setUserId(currentUserId);
 
-    if (currentUserId) {
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", currentUserId)
-        .single();
-      const userRole = (profileData?.role as UserRole) || "va";
-      setRole(userRole);
+      if (currentUserId) {
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", currentUserId)
+          .single();
+        const userRole = (profileData?.role as UserRole) || "va";
+        setRole(userRole);
+      }
+
+      const [logsRes, profilesRes, screenshotsRes] = await Promise.all([
+        supabase
+          .from("time_logs")
+          .select("*")
+          .gte("start_time", qStart)
+          .lte("start_time", qEnd)
+          .order("start_time", { ascending: true }),
+        supabase.from("profiles").select("*"),
+        supabase
+          .from("task_screenshots")
+          .select("*")
+          .gte("created_at", qStart)
+          .lte("created_at", qEnd),
+      ]);
+
+      setLogs((logsRes.data ?? []) as TimeLog[]);
+      setProfiles((profilesRes.data ?? []) as Profile[]);
+      const ssData = (screenshotsRes.data ?? []) as TaskScreenshot[];
+      setScreenshots(ssData);
+
+      // Generate signed URLs for screenshot thumbnails
+      if (ssData.length > 0) {
+        const urlBatch: Record<number, string> = {};
+        const toSign = ssData.slice(0, 12);
+        const results = await Promise.all(
+          toSign.map(async (ss) => {
+            const { data } = await supabase.storage
+              .from("screenshots")
+              .createSignedUrl(ss.storage_path, 3600);
+            return { id: ss.id, url: data?.signedUrl || "" };
+          })
+        );
+        results.forEach((r) => {
+          if (r.url) urlBatch[r.id] = r.url;
+        });
+        setSignedUrls(urlBatch);
+      } else {
+        setSignedUrls({});
+      }
+    } catch (err) {
+      console.error("Reports fetch error:", err);
+      // Ensure we still show the page (with empty data) rather than stuck loading
+    } finally {
+      setLoading(false);
     }
-
-    const [logsRes, profilesRes, screenshotsRes] = await Promise.all([
-      supabase
-        .from("time_logs")
-        .select("*")
-        .gte("start_time", qStart)
-        .lte("start_time", qEnd)
-        .order("start_time", { ascending: true }),
-      supabase.from("profiles").select("*"),
-      supabase
-        .from("task_screenshots")
-        .select("*")
-        .gte("created_at", qStart)
-        .lte("created_at", qEnd),
-    ]);
-
-    setLogs((logsRes.data ?? []) as TimeLog[]);
-    setProfiles((profilesRes.data ?? []) as Profile[]);
-    const ssData = (screenshotsRes.data ?? []) as TaskScreenshot[];
-    setScreenshots(ssData);
-
-    // Generate signed URLs for screenshot thumbnails
-    if (ssData.length > 0) {
-      const urlBatch: Record<number, string> = {};
-      const toSign = ssData.slice(0, 12);
-      const results = await Promise.all(
-        toSign.map(async (ss) => {
-          const { data } = await supabase.storage
-            .from("screenshots")
-            .createSignedUrl(ss.storage_path, 3600);
-          return { id: ss.id, url: data?.signedUrl || "" };
-        })
-      );
-      results.forEach((r) => {
-        if (r.url) urlBatch[r.id] = r.url;
-      });
-      setSignedUrls(urlBatch);
-    } else {
-      setSignedUrls({});
-    }
-
-    setLoading(false);
   }, []);
 
   /* ── Auto-fetch when startISO/endISO change (for non-custom ranges) ── */
@@ -560,12 +565,10 @@ export default function ReportsPage() {
           {customStart && customEnd ? (
             <button
               onClick={() => {
+                // Just set the applied dates — the useEffect will detect the
+                // change in startISO/endISO and trigger a single fetch.
                 setAppliedStart(customStart);
                 setAppliedEnd(customEnd);
-                // Directly fetch with the new dates — don't rely solely on effect chain
-                const qStart = new Date(customStart + "T00:00:00Z").toISOString();
-                const qEnd = new Date(customEnd + "T23:59:59Z").toISOString();
-                fetchData(qStart, qEnd);
               }}
               className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
             >
