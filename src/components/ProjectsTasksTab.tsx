@@ -49,12 +49,6 @@ const ChevronDown = ({ open }: { open: boolean }) => (
   </svg>
 );
 
-const PlusIcon = () => (
-  <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-  </svg>
-);
-
 const EditIcon = () => (
   <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
     <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
@@ -81,16 +75,16 @@ const TaskIcon = () => (
   </svg>
 );
 
-const ProjectIcon = () => (
-  <svg className="h-3.5 w-3.5 text-terracotta" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-    <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-  </svg>
-);
-
 const AccountIcon = () => (
   <svg className="h-3.5 w-3.5 text-terracotta" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
     <path d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z" />
     <path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2" />
+  </svg>
+);
+
+const ProjectIcon = () => (
+  <svg className="h-3 w-3 text-bark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
   </svg>
 );
 
@@ -109,12 +103,10 @@ export default function ProjectsTasksTab() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
   const [selectedProject, setSelectedProject] = useState<ProjectTag | null>(null);
-  const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
 
   /* ── State: collapsed sections ─────── */
   const [collapsedCategories, setCollapsedCategories] = useState<Set<number | "uncategorized">>(new Set());
-  const [collapsedAccounts, setCollapsedAccounts] = useState<Set<number>>(new Set());
-  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
+  const [collapsedAccounts, setCollapsedAccounts] = useState<Set<number | "unassigned">>(new Set());
 
   /* ── State: add forms ─────── */
   const [showAddTask, setShowAddTask] = useState(false);
@@ -123,15 +115,17 @@ export default function ProjectsTasksTab() {
   const [bulkTaskText, setBulkTaskText] = useState("");
   const [newTaskCategoryId, setNewTaskCategoryId] = useState<number | null>(null);
   const [addingTask, setAddingTask] = useState(false);
-  const [showAddProject, setShowAddProject] = useState(false);
-  const [bulkProjectMode, setBulkProjectMode] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
-  const [bulkProjectText, setBulkProjectText] = useState("");
-  const [addingProject, setAddingProject] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [addingCategory, setAddingCategory] = useState(false);
   const [bulkCategoryTarget, setBulkCategoryTarget] = useState<number | null | "none">("none");
+
+  /* ── State: add project (per account) ─────── */
+  const [addProjectForAccount, setAddProjectForAccount] = useState<string | null>(null);
+  const [bulkProjectMode, setBulkProjectMode] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [bulkProjectText, setBulkProjectText] = useState("");
+  const [addingProject, setAddingProject] = useState(false);
 
   /* ── State: editing ─────── */
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
@@ -356,21 +350,22 @@ export default function ProjectsTasksTab() {
     });
   };
 
-  const toggleSelectAllProjects = () => {
-    const allSelected = projects.length > 0 && projects.every((p) => selectedProjectIds.has(p.id));
+  const toggleSelectAllProjectsInAccount = (accountProjects: ProjectTag[]) => {
+    const projectIds = accountProjects.map((p) => p.id);
+    const allSelected = projectIds.length > 0 && projectIds.every((id) => selectedProjectIds.has(id));
     setSelectedProjectIds((prev) => {
       const next = new Set(prev);
       if (allSelected) {
-        projects.forEach((p) => next.delete(p.id));
+        projectIds.forEach((id) => next.delete(id));
       } else {
-        projects.forEach((p) => next.add(p.id));
+        projectIds.forEach((id) => next.add(id));
       }
       return next;
     });
   };
 
   /* ── Project CRUD ─────── */
-  const handleAddProject = async () => {
+  const handleAddProject = async (accountName: string) => {
     if (bulkProjectMode) {
       const names = bulkProjectText.split("\n").map((n) => n.trim()).filter(Boolean);
       if (names.length === 0) return;
@@ -378,7 +373,7 @@ export default function ProjectsTasksTab() {
       const res = await fetch("/api/project-tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ names }),
+        body: JSON.stringify({ names, account: accountName }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -391,7 +386,7 @@ export default function ProjectsTasksTab() {
       const res = await fetch("/api/project-tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_name: newProjectName.trim() }),
+        body: JSON.stringify({ project_name: newProjectName.trim(), account: accountName }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -399,7 +394,8 @@ export default function ProjectsTasksTab() {
       }
       setNewProjectName("");
     }
-    setShowAddProject(false);
+    setAddProjectForAccount(null);
+    setBulkProjectMode(false);
     setAddingProject(false);
     fetchProjects();
   };
@@ -452,28 +448,11 @@ export default function ProjectsTasksTab() {
     if (selectedProject) fetchAssignments(selectedProject.id);
   };
 
-  /* ── Assignment: projects → account ─────── */
-  const handleAssignProjectsToAccount = async () => {
-    if (!selectedAccount || selectedProjectIds.size === 0) return;
-    setAssigning(true);
+  const handleMoveProjectToAccount = async (projectId: number, accountName: string | null) => {
     await fetch("/api/project-tags", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bulk_assign_account: selectedAccount.name,
-        project_ids: Array.from(selectedProjectIds),
-      }),
-    });
-    setSelectedProjectIds(new Set());
-    setAssigning(false);
-    fetchProjects();
-  };
-
-  const handleUnassignProjectFromAccount = async (projectId: number) => {
-    await fetch("/api/project-tags", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: projectId, account: null }),
+      body: JSON.stringify({ id: projectId, account: accountName }),
     });
     fetchProjects();
   };
@@ -503,7 +482,7 @@ export default function ProjectsTasksTab() {
     });
   };
 
-  const toggleAccountCollapse = (id: number) => {
+  const toggleAccountCollapse = (id: number | "unassigned") => {
     setCollapsedAccounts((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -543,7 +522,7 @@ export default function ProjectsTasksTab() {
 
   return (
     <div className="space-y-3">
-      {/* Action bar */}
+      {/* Task action bar */}
       {selectedTaskIds.size > 0 && (
         <div className="rounded-lg bg-sage-soft border border-sage/30 px-3 py-2 flex items-center gap-2 text-xs flex-wrap">
           <span className="text-sage font-semibold">
@@ -606,23 +585,44 @@ export default function ProjectsTasksTab() {
           </button>
         </div>
       )}
+
+      {/* Project action bar */}
       {selectedProjectIds.size > 0 && (
         <div className="rounded-lg bg-terracotta-soft border border-terracotta/30 px-3 py-2 flex items-center gap-2 text-xs flex-wrap">
           <span className="text-terracotta font-semibold">
             {selectedProjectIds.size} project(s) selected
           </span>
-          {selectedAccount && (
-            <>
-              <span className="text-stone">→</span>
-              <button
-                onClick={handleAssignProjectsToAccount}
-                disabled={assigning}
-                className="px-3 py-1 rounded-lg bg-terracotta text-white font-semibold hover:bg-[#a85840] disabled:opacity-50 cursor-pointer transition-colors"
-              >
-                {assigning ? "Assigning..." : `Assign to "${selectedAccount.name}"`}
-              </button>
-            </>
-          )}
+          {/* Move to account */}
+          <span className="text-stone">|</span>
+          <span className="text-stone text-[11px]">Move to:</span>
+          <select
+            onChange={(e) => {
+              const val = e.target.value;
+              if (!val) return;
+              const accountName = val === "__unassigned__" ? null : val;
+              setAssigning(true);
+              const promises = Array.from(selectedProjectIds).map((id) =>
+                fetch("/api/project-tags", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ id, account: accountName }),
+                })
+              );
+              Promise.all(promises).then(() => {
+                setSelectedProjectIds(new Set());
+                setAssigning(false);
+                fetchProjects();
+              });
+            }}
+            className="rounded-lg border border-terracotta/30 px-2 py-0.5 text-xs text-espresso outline-none bg-white"
+            value=""
+          >
+            <option value="">Pick account...</option>
+            <option value="__unassigned__">Unassigned</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.name}>{a.name}</option>
+            ))}
+          </select>
           <span className="text-stone">|</span>
           <button
             onClick={handleBulkDeleteProjects}
@@ -640,15 +640,8 @@ export default function ProjectsTasksTab() {
         </div>
       )}
 
-      {/* Hint bars */}
-      {selectedProjectIds.size > 0 && !selectedAccount && (
-        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
-          Click an account in the right column to assign the selected projects, or use Delete to remove them.
-        </div>
-      )}
-
-      {/* Three-column grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+      {/* Two-column grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
 
         {/* ═══ COLUMN 1: Task Library ═══ */}
         <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
@@ -905,144 +898,210 @@ export default function ProjectsTasksTab() {
           })()}
         </div>
 
-        {/* ═══ COLUMN 2: Projects ═══ */}
+        {/* ═══ COLUMN 2: Accounts & Projects ═══ */}
         <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
           <div className="flex items-center justify-between sticky top-0 bg-white pb-1 z-10">
             <h3 className="text-xs font-bold text-espresso uppercase tracking-wide flex items-center gap-1.5">
-              <ProjectIcon />
-              Projects
-              <span className="text-stone font-normal normal-case">({projects.length})</span>
+              <AccountIcon />
+              Accounts & Projects
+              <span className="text-stone font-normal normal-case">({accounts.length} accounts, {projects.length} projects)</span>
             </h3>
-            <button
-              onClick={() => setShowAddProject(!showAddProject)}
-              className="text-[11px] font-semibold text-terracotta hover:text-[#a85840] cursor-pointer"
-            >
-              {showAddProject ? "Cancel" : "+ Add"}
-            </button>
           </div>
 
-          {/* Add project form */}
-          {showAddProject && (
-            <div className="rounded-lg border border-sand bg-parchment p-2.5 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-espresso">{bulkProjectMode ? "Bulk Add Projects" : "New Project"}</span>
-                <button
-                  onClick={() => setBulkProjectMode(!bulkProjectMode)}
-                  className="text-[10px] font-semibold text-sage hover:text-[#5a7a5e] cursor-pointer"
-                >
-                  {bulkProjectMode ? "Single mode" : "Bulk mode"}
-                </button>
-              </div>
-              {bulkProjectMode ? (
-                <textarea
-                  value={bulkProjectText}
-                  onChange={(e) => setBulkProjectText(e.target.value)}
-                  placeholder={"Paste project names (one per line):\nProject A\nProject B\nProject C"}
-                  rows={5}
-                  className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta resize-y"
-                  autoFocus
-                />
-              ) : (
-                <input
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAddProject()}
-                  placeholder="Project name"
-                  className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
-                  autoFocus
-                />
-              )}
-              {bulkProjectMode && bulkProjectText.trim() && (
-                <p className="text-[10px] text-stone">
-                  {bulkProjectText.split("\n").map((n) => n.trim()).filter(Boolean).length} project(s) to add
-                </p>
-              )}
-              <div className="flex gap-1.5">
-                <button
-                  onClick={handleAddProject}
-                  disabled={addingProject || (bulkProjectMode ? !bulkProjectText.trim() : !newProjectName.trim())}
-                  className="flex-1 py-1 rounded-lg bg-terracotta text-white text-xs font-semibold disabled:opacity-50 cursor-pointer hover:bg-[#a85840] transition-colors"
-                >
-                  {addingProject ? "Adding..." : bulkProjectMode ? "Add All" : "Add"}
-                </button>
-                <button onClick={() => { setShowAddProject(false); setNewProjectName(""); setBulkProjectText(""); }} className="px-2 py-1 rounded-lg text-xs text-stone hover:text-espresso cursor-pointer">Cancel</button>
-              </div>
-            </div>
-          )}
-
-          {/* All projects list - click to select for task assignment, checkbox for account assignment */}
-          <div className="space-y-1">
-            {projects.length === 0 ? (
-              <p className="text-[11px] text-stone text-center py-4">No projects yet.</p>
+          {/* Accounts list with nested projects */}
+          <div className="space-y-2">
+            {accounts.length === 0 ? (
+              <p className="text-[11px] text-stone text-center py-4">No accounts.</p>
             ) : (
-              <>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="checkbox"
-                    checked={projects.length > 0 && projects.every((p) => selectedProjectIds.has(p.id))}
-                    ref={(el) => { if (el) { const some = projects.some((p) => selectedProjectIds.has(p.id)); const all = projects.every((p) => selectedProjectIds.has(p.id)); el.indeterminate = some && !all; } }}
-                    onChange={toggleSelectAllProjects}
-                    className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
-                    title="Select all projects"
-                  />
-                  <button onClick={() => setProjectsCollapsed(!projectsCollapsed)} className="flex items-center gap-1 cursor-pointer py-0.5 flex-1 text-left">
-                    <ChevronDown open={!projectsCollapsed} />
-                    <span className="text-[11px] font-bold text-stone uppercase tracking-wide">All Projects</span>
-                  </button>
-                </div>
-                {!projectsCollapsed && projects.map((p) => (
-                  <div
-                    key={p.id}
-                    className={`rounded-lg border p-1.5 flex items-center gap-1.5 transition-all text-xs cursor-pointer ${
-                      selectedProject?.id === p.id
-                        ? "border-terracotta bg-terracotta-soft/30 ring-1 ring-terracotta/30"
-                        : "border-sand bg-white hover:border-terracotta/40"
-                    } ${selectedProjectIds.has(p.id) ? "ring-2 ring-sage/30" : ""}`}
-                    onClick={() => {
-                      if (editingProjectId !== p.id) {
-                        setSelectedProject(selectedProject?.id === p.id ? null : p);
-                      }
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedProjectIds.has(p.id)}
-                      onChange={(e) => { e.stopPropagation(); toggleProjectSelection(p.id); }}
-                      onClick={(e) => e.stopPropagation()}
-                      className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
-                      title="Select for account assignment"
-                    />
-                    <div className="flex-1 min-w-0">
-                      {editingProjectId === p.id ? (
-                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            value={editProjectName}
-                            onChange={(e) => setEditProjectName(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") handleEditProject(p.id); if (e.key === "Escape") setEditingProjectId(null); }}
-                            className="flex-1 rounded border border-terracotta px-1.5 py-0.5 text-xs text-espresso outline-none"
+              accounts.map((acc) => {
+                const accProjects = projectsByAccount.get(acc.name) ?? [];
+                const isCollapsed = collapsedAccounts.has(acc.id);
+                const allProjectsSelected = accProjects.length > 0 && accProjects.every((p) => selectedProjectIds.has(p.id));
+                const someProjectsSelected = accProjects.some((p) => selectedProjectIds.has(p.id));
+                const isAddingHere = addProjectForAccount === acc.name;
+                return (
+                  <div key={acc.id} className="rounded-lg border border-sand overflow-hidden">
+                    {/* Account header */}
+                    <div className="bg-parchment/60 px-2.5 py-1.5 flex items-center gap-1.5 text-xs">
+                      {accProjects.length > 0 && (
+                        <input
+                          type="checkbox"
+                          checked={allProjectsSelected}
+                          ref={(el) => { if (el) el.indeterminate = someProjectsSelected && !allProjectsSelected; }}
+                          onChange={() => toggleSelectAllProjectsInAccount(accProjects)}
+                          className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+                          title={`Select all projects in ${acc.name}`}
+                        />
+                      )}
+                      <button
+                        onClick={() => toggleAccountCollapse(acc.id)}
+                        className="flex items-center gap-1 flex-1 text-left cursor-pointer"
+                      >
+                        <ChevronDown open={!isCollapsed} />
+                        <span className="font-bold text-espresso">{acc.name}</span>
+                        <span className="text-[10px] text-stone font-normal">
+                          ({accProjects.length} project{accProjects.length !== 1 ? "s" : ""})
+                        </span>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isAddingHere) {
+                            setAddProjectForAccount(null);
+                            setNewProjectName("");
+                            setBulkProjectText("");
+                            setBulkProjectMode(false);
+                          } else {
+                            setAddProjectForAccount(acc.name);
+                            setNewProjectName("");
+                            setBulkProjectText("");
+                            setBulkProjectMode(false);
+                          }
+                        }}
+                        className="text-[10px] font-semibold text-terracotta hover:text-[#a85840] cursor-pointer shrink-0"
+                      >
+                        {isAddingHere ? "Cancel" : "+ Project"}
+                      </button>
+                    </div>
+
+                    {/* Add project form (inline under this account) */}
+                    {isAddingHere && (
+                      <div className="border-t border-sand bg-parchment/30 px-2.5 py-2 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-espresso">{bulkProjectMode ? "Bulk Add" : "New Project"}</span>
+                          <button
+                            onClick={() => setBulkProjectMode(!bulkProjectMode)}
+                            className="text-[10px] font-semibold text-sage hover:text-[#5a7a5e] cursor-pointer"
+                          >
+                            {bulkProjectMode ? "Single mode" : "Bulk mode"}
+                          </button>
+                        </div>
+                        {bulkProjectMode ? (
+                          <textarea
+                            value={bulkProjectText}
+                            onChange={(e) => setBulkProjectText(e.target.value)}
+                            placeholder={"Paste project names (one per line):\nProject A\nProject B"}
+                            rows={4}
+                            className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta resize-y"
                             autoFocus
                           />
-                          <button onClick={() => handleEditProject(p.id)} className="text-[10px] font-semibold text-sage cursor-pointer">Save</button>
-                          <button onClick={() => setEditingProjectId(null)} className="text-[10px] text-stone cursor-pointer">Cancel</button>
+                        ) : (
+                          <input
+                            value={newProjectName}
+                            onChange={(e) => setNewProjectName(e.target.value)}
+                            onKeyDown={(e) => e.key === "Enter" && handleAddProject(acc.name)}
+                            placeholder="Project name"
+                            className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
+                            autoFocus
+                          />
+                        )}
+                        {bulkProjectMode && bulkProjectText.trim() && (
+                          <p className="text-[10px] text-stone">
+                            {bulkProjectText.split("\n").map((n) => n.trim()).filter(Boolean).length} project(s) to add
+                          </p>
+                        )}
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={() => handleAddProject(acc.name)}
+                            disabled={addingProject || (bulkProjectMode ? !bulkProjectText.trim() : !newProjectName.trim())}
+                            className="flex-1 py-1 rounded-lg bg-terracotta text-white text-xs font-semibold disabled:opacity-50 cursor-pointer hover:bg-[#a85840] transition-colors"
+                          >
+                            {addingProject ? "Adding..." : bulkProjectMode ? "Add All" : "Add"}
+                          </button>
+                          <button onClick={() => { setAddProjectForAccount(null); setNewProjectName(""); setBulkProjectText(""); setBulkProjectMode(false); }} className="px-2 py-1 rounded-lg text-xs text-stone hover:text-espresso cursor-pointer">Cancel</button>
                         </div>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <span className="font-semibold text-espresso truncate">{p.project_name}</span>
-                          {p.account && (
-                            <span className="shrink-0 text-[9px] bg-parchment text-bark px-1.5 py-0.5 rounded-full">{p.account}</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    {editingProjectId !== p.id && (
-                      <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => { setEditingProjectId(p.id); setEditProjectName(p.project_name); }} className="p-0.5 rounded text-stone hover:text-espresso cursor-pointer" title="Edit"><EditIcon /></button>
-                        <button onClick={() => handleDeleteProject(p)} className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer" title="Delete"><TrashIcon /></button>
+                      </div>
+                    )}
+
+                    {/* Projects list under this account */}
+                    {!isCollapsed && accProjects.length > 0 && (
+                      <div className="border-t border-sand divide-y divide-sand/50">
+                        {accProjects.map((p) => (
+                          <ProjectRow
+                            key={p.id}
+                            project={p}
+                            selected={selectedProjectIds.has(p.id)}
+                            isActiveProject={selectedProject?.id === p.id}
+                            onToggleSelect={() => toggleProjectSelection(p.id)}
+                            onClickProject={() => setSelectedProject(selectedProject?.id === p.id ? null : p)}
+                            onEdit={() => { setEditingProjectId(p.id); setEditProjectName(p.project_name); }}
+                            onDelete={() => handleDeleteProject(p)}
+                            editing={editingProjectId === p.id}
+                            editValue={editProjectName}
+                            onEditChange={setEditProjectName}
+                            onEditSave={() => handleEditProject(p.id)}
+                            onEditCancel={() => setEditingProjectId(null)}
+                            accounts={accounts}
+                            onMoveToAccount={(accName) => handleMoveProjectToAccount(p.id, accName)}
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    {/* No projects message */}
+                    {!isCollapsed && accProjects.length === 0 && !isAddingHere && (
+                      <div className="border-t border-sand px-2.5 py-2">
+                        <p className="text-[10px] text-stone italic">No projects yet</p>
                       </div>
                     )}
                   </div>
-                ))}
-              </>
+                );
+              })
+            )}
+
+            {/* Unassigned projects */}
+            {unassignedProjects.length > 0 && (
+              <div className="rounded-lg border border-dashed border-stone/30 overflow-hidden">
+                <div className="bg-stone/5 px-2.5 py-1.5 flex items-center gap-1.5 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={unassignedProjects.every((p) => selectedProjectIds.has(p.id))}
+                    ref={(el) => {
+                      if (el) {
+                        const some = unassignedProjects.some((p) => selectedProjectIds.has(p.id));
+                        const all = unassignedProjects.every((p) => selectedProjectIds.has(p.id));
+                        el.indeterminate = some && !all;
+                      }
+                    }}
+                    onChange={() => toggleSelectAllProjectsInAccount(unassignedProjects)}
+                    className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+                    title="Select all unassigned projects"
+                  />
+                  <button
+                    onClick={() => toggleAccountCollapse("unassigned")}
+                    className="flex items-center gap-1 flex-1 text-left cursor-pointer"
+                  >
+                    <ChevronDown open={!collapsedAccounts.has("unassigned")} />
+                    <span className="font-bold text-stone">Unassigned</span>
+                    <span className="text-[10px] text-stone font-normal">
+                      ({unassignedProjects.length} project{unassignedProjects.length !== 1 ? "s" : ""})
+                    </span>
+                  </button>
+                </div>
+                {!collapsedAccounts.has("unassigned") && (
+                  <div className="divide-y divide-stone/10">
+                    {unassignedProjects.map((p) => (
+                      <ProjectRow
+                        key={p.id}
+                        project={p}
+                        selected={selectedProjectIds.has(p.id)}
+                        isActiveProject={selectedProject?.id === p.id}
+                        onToggleSelect={() => toggleProjectSelection(p.id)}
+                        onClickProject={() => setSelectedProject(selectedProject?.id === p.id ? null : p)}
+                        onEdit={() => { setEditingProjectId(p.id); setEditProjectName(p.project_name); }}
+                        onDelete={() => handleDeleteProject(p)}
+                        editing={editingProjectId === p.id}
+                        editValue={editProjectName}
+                        onEditChange={setEditProjectName}
+                        onEditSave={() => handleEditProject(p.id)}
+                        onEditCancel={() => setEditingProjectId(null)}
+                        accounts={accounts}
+                        onMoveToAccount={(accName) => handleMoveProjectToAccount(p.id, accName)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -1053,9 +1112,10 @@ export default function ProjectsTasksTab() {
                 Tasks in &ldquo;{selectedProject.project_name}&rdquo;
                 <span className="text-stone font-normal normal-case ml-1">({sortedAssignments.length})</span>
               </h4>
+              <p className="text-[10px] text-stone">Select tasks on the left, then click &ldquo;Assign&rdquo; in the action bar above.</p>
               {sortedAssignments.length === 0 ? (
                 <p className="text-[10px] text-stone text-center py-2 bg-parchment rounded-lg">
-                  No tasks assigned. Select tasks on the left and click Assign.
+                  No tasks assigned yet.
                 </p>
               ) : (
                 <div className="space-y-0.5">
@@ -1073,81 +1133,6 @@ export default function ProjectsTasksTab() {
                   ))}
                 </div>
               )}
-            </div>
-          )}
-        </div>
-
-        {/* ═══ COLUMN 3: Accounts ═══ */}
-        <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
-          <div className="flex items-center justify-between sticky top-0 bg-white pb-1 z-10">
-            <h3 className="text-xs font-bold text-espresso uppercase tracking-wide flex items-center gap-1.5">
-              <AccountIcon />
-              Accounts
-              <span className="text-stone font-normal normal-case">({accounts.length})</span>
-            </h3>
-          </div>
-
-          {/* Accounts list */}
-          <div className="space-y-1">
-            {accounts.length === 0 ? (
-              <p className="text-[11px] text-stone text-center py-4">No accounts.</p>
-            ) : (
-              accounts.map((acc) => {
-                const accProjects = projectsByAccount.get(acc.name) ?? [];
-                const isCollapsed = collapsedAccounts.has(acc.id);
-                const isSelected = selectedAccount?.id === acc.id;
-                return (
-                  <div key={acc.id} className="space-y-0.5">
-                    <div
-                      className={`rounded-lg border p-1.5 flex items-center gap-1.5 transition-all text-xs cursor-pointer ${
-                        isSelected
-                          ? "border-terracotta bg-terracotta-soft/30 ring-1 ring-terracotta/30"
-                          : "border-sand bg-white hover:border-terracotta/40"
-                      }`}
-                      onClick={() => setSelectedAccount(isSelected ? null : acc)}
-                    >
-                      <button
-                        onClick={(e) => { e.stopPropagation(); toggleAccountCollapse(acc.id); }}
-                        className="shrink-0 cursor-pointer"
-                      >
-                        <ChevronDown open={!isCollapsed} />
-                      </button>
-                      <span className="font-semibold text-espresso flex-1 truncate">{acc.name}</span>
-                      <span className="text-[9px] text-stone shrink-0">{accProjects.length} project{accProjects.length !== 1 ? "s" : ""}</span>
-                    </div>
-                    {!isCollapsed && accProjects.length > 0 && (
-                      <div className="pl-4 space-y-0.5">
-                        {accProjects.map((p) => (
-                          <div key={p.id} className="rounded border border-sand/60 p-1 flex items-center gap-1.5 text-[11px] bg-parchment/50">
-                            <span className="flex-1 text-bark truncate">{p.project_name}</span>
-                            <button
-                              onClick={() => handleUnassignProjectFromAccount(p.id)}
-                              className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer shrink-0"
-                              title="Remove from account"
-                            >
-                              <XIcon />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Unassigned projects */}
-          {unassignedProjects.length > 0 && (
-            <div className="border-t border-sand pt-2 space-y-1">
-              <span className="text-[11px] font-bold text-stone uppercase tracking-wide">Unassigned Projects ({unassignedProjects.length})</span>
-              <div className="space-y-0.5">
-                {unassignedProjects.map((p) => (
-                  <div key={p.id} className="rounded border border-dashed border-stone/30 p-1 text-[11px] text-stone truncate">
-                    {p.project_name}
-                  </div>
-                ))}
-              </div>
             </div>
           )}
         </div>
@@ -1257,6 +1242,120 @@ function TaskRow({
               )}
             </div>
           )}
+          <button onClick={onEdit} className="p-0.5 rounded text-stone hover:text-espresso cursor-pointer" title="Rename"><EditIcon /></button>
+          <button onClick={onDelete} className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer" title="Delete"><TrashIcon /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Project Row Sub-Component ────────────────────────────── */
+
+function ProjectRow({
+  project,
+  selected,
+  isActiveProject,
+  onToggleSelect,
+  onClickProject,
+  onEdit,
+  onDelete,
+  editing,
+  editValue,
+  onEditChange,
+  onEditSave,
+  onEditCancel,
+  accounts,
+  onMoveToAccount,
+}: {
+  project: ProjectTag;
+  selected: boolean;
+  isActiveProject: boolean;
+  onToggleSelect: () => void;
+  onClickProject: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  editing: boolean;
+  editValue: string;
+  onEditChange: (v: string) => void;
+  onEditSave: () => void;
+  onEditCancel: () => void;
+  accounts: Account[];
+  onMoveToAccount: (accName: string | null) => void;
+}) {
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
+
+  return (
+    <div
+      className={`px-2.5 py-1.5 flex items-center gap-1.5 text-xs transition-all cursor-pointer group ${
+        isActiveProject
+          ? "bg-terracotta-soft/40 ring-1 ring-terracotta/20"
+          : "hover:bg-parchment/40"
+      } ${selected ? "bg-sage-soft/30" : ""}`}
+      onClick={() => {
+        if (!editing) onClickProject();
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={selected}
+        onChange={(e) => { e.stopPropagation(); onToggleSelect(); }}
+        onClick={(e) => e.stopPropagation()}
+        className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+      />
+      <ProjectIcon />
+      <div className="flex-1 min-w-0">
+        {editing ? (
+          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <input
+              value={editValue}
+              onChange={(e) => onEditChange(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") onEditSave(); if (e.key === "Escape") onEditCancel(); }}
+              className="flex-1 rounded border border-terracotta px-1.5 py-0.5 text-xs text-espresso outline-none"
+              autoFocus
+            />
+            <button onClick={onEditSave} className="text-[10px] font-semibold text-sage cursor-pointer">Save</button>
+            <button onClick={onEditCancel} className="text-[10px] text-stone cursor-pointer">Cancel</button>
+          </div>
+        ) : (
+          <span className={`truncate ${isActiveProject ? "font-semibold text-terracotta" : "text-espresso"}`}>
+            {project.project_name}
+          </span>
+        )}
+      </div>
+      {!editing && (
+        <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+          {/* Move to different account */}
+          <div className="relative">
+            <button
+              onClick={() => setShowMoveMenu(!showMoveMenu)}
+              className="p-0.5 rounded text-stone hover:text-espresso cursor-pointer"
+              title="Move to account"
+            >
+              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+              </svg>
+            </button>
+            {showMoveMenu && (
+              <div className="absolute right-0 top-6 z-20 bg-white border border-sand rounded-lg shadow-lg py-1 min-w-[140px]">
+                <button
+                  onClick={() => { onMoveToAccount(null); setShowMoveMenu(false); }}
+                  className={`w-full text-left px-2.5 py-1 text-[11px] hover:bg-parchment cursor-pointer ${project.account === null ? "font-bold text-terracotta" : "text-espresso"}`}
+                >
+                  Unassigned
+                </button>
+                {accounts.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => { onMoveToAccount(a.name); setShowMoveMenu(false); }}
+                    className={`w-full text-left px-2.5 py-1 text-[11px] hover:bg-parchment cursor-pointer ${project.account === a.name ? "font-bold text-terracotta" : "text-espresso"}`}
+                  >
+                    {a.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button onClick={onEdit} className="p-0.5 rounded text-stone hover:text-espresso cursor-pointer" title="Rename"><EditIcon /></button>
           <button onClick={onDelete} className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer" title="Delete"><TrashIcon /></button>
         </div>
