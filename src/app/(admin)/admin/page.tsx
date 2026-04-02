@@ -237,6 +237,8 @@ export default function AdminPage() {
   const [screenshotUrls, setScreenshotUrls] = useState<Record<number, string>>({});
   const [screenshotFilter, setScreenshotFilter] = useState<string>("all");
   const [screenshotDateFilter, setScreenshotDateFilter] = useState<string>("today");
+  const [screenshotCustomStart, setScreenshotCustomStart] = useState<string>("");
+  const [screenshotCustomEnd, setScreenshotCustomEnd] = useState<string>("");
   const [loadingUrls, setLoadingUrls] = useState(false);
 
   // Message state
@@ -281,6 +283,7 @@ export default function AdminPage() {
     const supabase = createClient();
 
     let screenshotDateStart = today;
+    let screenshotDateEnd: string | null = null;
     if (screenshotDateFilter === "week") {
       const d = new Date();
       d.setDate(d.getDate() - 7);
@@ -293,6 +296,13 @@ export default function AdminPage() {
       screenshotDateStart = d.toISOString();
     } else if (screenshotDateFilter === "all-time") {
       screenshotDateStart = "2020-01-01T00:00:00.000Z";
+    } else if (screenshotDateFilter === "custom") {
+      if (screenshotCustomStart) {
+        screenshotDateStart = new Date(screenshotCustomStart + "T00:00:00").toISOString();
+      }
+      if (screenshotCustomEnd) {
+        screenshotDateEnd = new Date(screenshotCustomEnd + "T23:59:59.999").toISOString();
+      }
     }
 
     const [
@@ -310,12 +320,14 @@ export default function AdminPage() {
       supabase.from("profiles").select("*"),
       supabase.from("sessions").select("*"),
       supabase.from("time_logs").select("*").gte("start_time", today),
-      supabase
-        .from("task_screenshots")
-        .select("*")
-        .gte("created_at", screenshotDateStart)
-        .order("created_at", { ascending: false })
-        .limit(200),
+      (() => {
+        let q = supabase
+          .from("task_screenshots")
+          .select("*")
+          .gte("created_at", screenshotDateStart);
+        if (screenshotDateEnd) q = q.lte("created_at", screenshotDateEnd);
+        return q.order("created_at", { ascending: false }).limit(200);
+      })(),
       supabase
         .from("time_logs")
         .select("*")
@@ -355,7 +367,7 @@ export default function AdminPage() {
     }
 
     setLoading(false);
-  }, [screenshotDateFilter]);
+  }, [screenshotDateFilter, screenshotCustomStart, screenshotCustomEnd]);
 
   useEffect(() => {
     fetchData();
@@ -941,6 +953,10 @@ export default function AdminPage() {
               setScreenshotFilter={setScreenshotFilter}
               screenshotDateFilter={screenshotDateFilter}
               setScreenshotDateFilter={setScreenshotDateFilter}
+              screenshotCustomStart={screenshotCustomStart}
+              setScreenshotCustomStart={setScreenshotCustomStart}
+              screenshotCustomEnd={screenshotCustomEnd}
+              setScreenshotCustomEnd={setScreenshotCustomEnd}
               screenshotUrls={screenshotUrls}
               loadingUrls={loadingUrls}
               setSelectedScreenshot={setSelectedScreenshot}
@@ -1212,6 +1228,10 @@ function ScreenshotsTab({
   setScreenshotFilter,
   screenshotDateFilter,
   setScreenshotDateFilter,
+  screenshotCustomStart,
+  setScreenshotCustomStart,
+  screenshotCustomEnd,
+  setScreenshotCustomEnd,
   screenshotUrls,
   loadingUrls,
   setSelectedScreenshot,
@@ -1225,6 +1245,10 @@ function ScreenshotsTab({
   setScreenshotFilter: (v: string) => void;
   screenshotDateFilter: string;
   setScreenshotDateFilter: (v: string) => void;
+  screenshotCustomStart: string;
+  setScreenshotCustomStart: (v: string) => void;
+  screenshotCustomEnd: string;
+  setScreenshotCustomEnd: (v: string) => void;
   screenshotUrls: Record<number, string>;
   loadingUrls: boolean;
   setSelectedScreenshot: (ss: TaskScreenshot) => void;
@@ -1253,7 +1277,25 @@ function ScreenshotsTab({
             <option value="week">Last 7 Days</option>
             <option value="month">Last 30 Days</option>
             <option value="all-time">All Time</option>
+            <option value="custom">Custom Range</option>
           </select>
+          {screenshotDateFilter === "custom" && (
+            <>
+              <input
+                type="date"
+                value={screenshotCustomStart}
+                onChange={(e) => setScreenshotCustomStart(e.target.value)}
+                className="rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+              />
+              <span className="text-[11px] text-bark">to</span>
+              <input
+                type="date"
+                value={screenshotCustomEnd}
+                onChange={(e) => setScreenshotCustomEnd(e.target.value)}
+                className="rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+              />
+            </>
+          )}
           <span className="ml-2 text-[11px] text-bark">
             {filteredScreenshots.length} screenshots
           </span>
