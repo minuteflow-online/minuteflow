@@ -132,6 +132,8 @@ export default function DashboardPage() {
   const { isActive: screenShareActive, requestStream, captureFrame, stopStream } = useScreenCapture();
   const captureTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const activeLogIdRef = useRef<number | null>(null);
+  const captureWorkerRef = useRef<Worker | null>(null);
+  const silentCaptureRef = useRef<((logId: number, screenshotType: 'start' | 'progress' | 'end' | 'manual') => Promise<boolean>) | null>(null);
 
   // ─── Auth ──────────────────────────────────────────────────
 
@@ -627,6 +629,9 @@ export default function DashboardPage() {
       // Stop screen sharing and clear capture timers on clock out
       captureTimersRef.current.forEach((t) => clearTimeout(t));
       captureTimersRef.current = [];
+      if (captureWorkerRef.current) {
+        captureWorkerRef.current.postMessage({ type: "stop" });
+      }
       stopStream();
       activeLogIdRef.current = null;
     }
@@ -1117,17 +1122,61 @@ export default function DashboardPage() {
     [captureFrame, uploadScreenshot]
   );
 
-  /** Clear all scheduled auto-capture timers */
+  /** Clear all scheduled auto-capture timers and stop worker */
   const clearCaptureTimers = useCallback(() => {
+    // Clear fallback timers
     captureTimersRef.current.forEach((t) => clearTimeout(t));
     captureTimersRef.current = [];
+    // Stop worker timers
+    if (captureWorkerRef.current) {
+      captureWorkerRef.current.postMessage({ type: "stop" });
+    }
   }, []);
 
-  /** Schedule the auto-capture sequence: immediate, 1 min, 3 min, then random 3-8 min intervals */
+  // Keep silentCaptureRef in sync so the Worker listener can call it
+  useEffect(() => {
+    silentCaptureRef.current = silentCapture;
+  }, [silentCapture]);
+
+  // Initialize Web Worker for capture timers (not throttled in background tabs)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const worker = new Worker("/capture-worker.js");
+      worker.onmessage = (e: MessageEvent) => {
+        const { type, logId, screenshotType } = e.data;
+        if (type === "capture" && silentCaptureRef.current) {
+          silentCaptureRef.current(logId, screenshotType);
+        }
+      };
+      worker.onerror = () => {
+        // Worker failed to load — fallback timers will be used instead
+        captureWorkerRef.current = null;
+      };
+      captureWorkerRef.current = worker;
+    } catch {
+      // Web Workers not supported — fallback timers will be used
+      captureWorkerRef.current = null;
+    }
+    return () => {
+      captureWorkerRef.current?.terminate();
+      captureWorkerRef.current = null;
+    };
+  }, []);
+
+  /** Schedule the auto-capture sequence using Web Worker (with setTimeout fallback) */
   const scheduleCaptureSequence = useCallback(
     (logId: number) => {
       clearCaptureTimers();
       activeLogIdRef.current = logId;
+
+      // Use Web Worker if available (timers won't be throttled in background tabs)
+      if (captureWorkerRef.current) {
+        captureWorkerRef.current.postMessage({ type: "start", logId });
+        return;
+      }
+
+      // ── Fallback: main-thread timers (throttled in background tabs) ──
 
       // Immediate start screenshot
       silentCapture(logId, "start");
@@ -1394,11 +1443,12 @@ export default function DashboardPage() {
     }
   }, [activeTask, captureScreenshot]);
 
-  // Clean up capture timers on unmount
+  // Clean up capture timers and worker on unmount
   useEffect(() => {
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps
       captureTimersRef.current.forEach((t) => clearTimeout(t));
+      captureWorkerRef.current?.terminate();
     };
   }, []);
 
