@@ -1341,11 +1341,9 @@ function ProjectRow({
             <span className={`truncate ${isActiveProject ? "font-semibold text-terracotta" : "text-espresso"}`}>
               {project.project_name}
             </span>
-            {taskCount > 0 && (
-              <span className="shrink-0 text-[10px] bg-sage-soft text-sage min-w-[18px] text-center px-1 py-0.5 rounded-full font-semibold leading-none">
-                {taskCount}
-              </span>
-            )}
+            <span className={`shrink-0 text-[10px] min-w-[18px] text-center px-1 py-0.5 rounded-full font-semibold leading-none ${taskCount > 0 ? "bg-sage-soft text-sage" : "bg-gray-100 text-gray-400"}`}>
+              {taskCount}
+            </span>
           </div>
         )}
       </div>
