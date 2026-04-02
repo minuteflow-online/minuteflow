@@ -188,35 +188,52 @@ export default function ReportsPage() {
     [screenshots, selectedVA]
   );
 
-  /* ── Computed stats ──────────────────────────────────────── */
+  /* ── Computed stats (matches Activity Log summary) ──────── */
 
-  const totalHoursMs = useMemo(
-    () =>
-      filteredLogs
-        .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
-    [filteredLogs]
-  );
+  const reportSummary = useMemo(() => {
+    let totalMs = 0;
+    let personalMs = 0;
+    let wizardMs = 0;
+    const categoryMs: Record<string, number> = {};
 
-  const billableMs = useMemo(
-    () =>
-      filteredLogs
-        .filter((l) => l.billable)
-        .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
-    [filteredLogs]
-  );
+    filteredLogs.forEach((l) => {
+      totalMs += l.duration_ms || 0;
+      wizardMs += l.form_fill_ms || 0;
 
-  const breakMs = useMemo(
-    () =>
-      filteredLogs
-        .filter((l) => l.category === "Break")
-        .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
-    [filteredLogs]
-  );
+      const cat = l.category || "Task";
+      categoryMs[cat] = (categoryMs[cat] || 0) + (l.duration_ms || 0);
 
-  const tasksCompleted = useMemo(
-    () => filteredLogs.filter((l) => l.end_time && l.category !== "Break").length,
-    [filteredLogs]
-  );
+      if (cat.toLowerCase() === "personal") {
+        personalMs += l.duration_ms || 0;
+      }
+    });
+
+    const billableMs = totalMs - personalMs;
+
+    // Build sorted category entries (alphabetical, Personal last)
+    const categories = Object.entries(categoryMs)
+      .filter(([, ms]) => ms > 0)
+      .sort(([a], [b]) => {
+        if (a.toLowerCase() === "personal") return 1;
+        if (b.toLowerCase() === "personal") return -1;
+        return a.localeCompare(b);
+      })
+      .map(([name, ms]) => ({ name, ms }));
+
+    return {
+      totalMs,
+      billableMs,
+      wizardMs,
+      entries: filteredLogs.length,
+      categories,
+    };
+  }, [filteredLogs]);
+
+  // Keep these for the daily chart and financial summary
+  const totalHoursMs = reportSummary.totalMs;
+  const billableMs = reportSummary.billableMs;
+  const breakMs = reportSummary.categories.find((c) => c.name === "Break")?.ms || 0;
+  const tasksCompleted = filteredLogs.filter((l) => l.end_time && l.category !== "Break").length;
 
   /* ── Daily chart data ────────────────────────────────────── */
 
@@ -581,37 +598,56 @@ export default function ReportsPage() {
       )}
 
       {loading ? (
-        <div className="grid grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
+        <div className="flex flex-wrap gap-4">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
             <div
               key={i}
-              className="h-28 animate-pulse rounded-xl border border-sand bg-white"
+              className="h-28 w-40 animate-pulse rounded-xl border border-sand bg-white"
             />
           ))}
         </div>
       ) : (
         <>
-          {/* Big Stats */}
-          <div className="mb-6 grid grid-cols-4 gap-4">
+          {/* Big Stats — matches Activity Log summary */}
+          <div className="mb-6 flex flex-wrap gap-4">
             <BigStat
-              value={formatDuration(totalHoursMs)}
-              label="Total Hours"
+              value={formatDuration(reportSummary.totalMs)}
+              label="Total Logged"
               color="default"
             />
             <BigStat
-              value={formatDuration(billableMs)}
-              label="Billable Hours"
+              value={formatDuration(reportSummary.billableMs)}
+              label="Billable"
               color="green"
             />
+            {reportSummary.categories.map((cat) => {
+              const colorMap: Record<string, "terra" | "gold" | "blue" | "rose" | "default"> = {
+                task: "terra",
+                break: "gold",
+                message: "blue",
+                meeting: "rose",
+                personal: "rose",
+                "sorting tasks": "gold",
+                collaboration: "terra",
+              };
+              return (
+                <BigStat
+                  key={cat.name}
+                  value={formatDuration(cat.ms)}
+                  label={cat.name}
+                  color={colorMap[cat.name.toLowerCase()] || "default"}
+                />
+              );
+            })}
             <BigStat
-              value={tasksCompleted}
-              label="Tasks Completed"
-              color="terra"
+              value={formatDuration(reportSummary.wizardMs)}
+              label="Wizard Time"
+              color="walnut"
             />
             <BigStat
-              value={formatDuration(breakMs)}
-              label="Total Breaks"
-              color="gold"
+              value={reportSummary.entries}
+              label="Entries"
+              color="default"
             />
           </div>
 
@@ -846,12 +882,15 @@ function BigStat({
 }: {
   value: string | number;
   label: string;
-  color: "green" | "terra" | "gold" | "default";
+  color: "green" | "terra" | "gold" | "blue" | "rose" | "walnut" | "default";
 }) {
   const colorClass = {
     green: "text-sage",
     terra: "text-terracotta",
     gold: "text-amber",
+    blue: "text-slate-blue",
+    rose: "text-clay-rose",
+    walnut: "text-walnut",
     default: "text-espresso",
   }[color];
 
