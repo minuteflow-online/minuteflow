@@ -97,6 +97,7 @@ export default function ProjectsTasksTab() {
   const [libraryTasks, setLibraryTasks] = useState<TaskLibraryItem[]>([]);
   const [categories, setCategories] = useState<TaskCategory[]>([]);
   const [assignments, setAssignments] = useState<ProjectTaskAssignment[]>([]);
+  const [projectTaskCounts, setProjectTaskCounts] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
 
   /* ── State: selections ─────── */
@@ -172,10 +173,16 @@ export default function ProjectsTasksTab() {
     setAssignments(data.assignments ?? []);
   }, []);
 
+  const fetchProjectTaskCounts = useCallback(async () => {
+    const res = await fetch("/api/project-task-assignments/counts");
+    const data = await res.json();
+    setProjectTaskCounts(data.counts ?? {});
+  }, []);
+
   useEffect(() => {
-    Promise.all([fetchAccounts(), fetchProjects(), fetchLibraryTasks(), fetchCategories()])
+    Promise.all([fetchAccounts(), fetchProjects(), fetchLibraryTasks(), fetchCategories(), fetchProjectTaskCounts()])
       .then(() => setLoading(false));
-  }, [fetchAccounts, fetchProjects, fetchLibraryTasks, fetchCategories]);
+  }, [fetchAccounts, fetchProjects, fetchLibraryTasks, fetchCategories, fetchProjectTaskCounts]);
 
   useEffect(() => {
     if (selectedProject) {
@@ -447,11 +454,13 @@ export default function ProjectsTasksTab() {
     setSelectedTaskIds(new Set());
     setAssigning(false);
     if (selectedProject) fetchAssignments(selectedProject.id);
+    fetchProjectTaskCounts();
   };
 
   const handleUnassignTask = async (assignmentId: number) => {
     await fetch(`/api/project-task-assignments?id=${assignmentId}`, { method: "DELETE" });
     if (selectedProject) fetchAssignments(selectedProject.id);
+    fetchProjectTaskCounts();
   };
 
   const handleMoveProjectToAccount = async (projectId: number, accountName: string | null) => {
@@ -1039,6 +1048,7 @@ export default function ProjectsTasksTab() {
                             onEditCancel={() => setEditingProjectId(null)}
                             accounts={accounts}
                             onMoveToAccount={(accName) => handleMoveProjectToAccount(p.id, accName)}
+                            taskCount={projectTaskCounts[p.id] ?? 0}
                           />
                         ))}
                       </div>
@@ -1103,6 +1113,7 @@ export default function ProjectsTasksTab() {
                         onEditCancel={() => setEditingProjectId(null)}
                         accounts={accounts}
                         onMoveToAccount={(accName) => handleMoveProjectToAccount(p.id, accName)}
+                        taskCount={projectTaskCounts[p.id] ?? 0}
                       />
                     ))}
                   </div>
@@ -1273,6 +1284,7 @@ function ProjectRow({
   onEditCancel,
   accounts,
   onMoveToAccount,
+  taskCount,
 }: {
   project: ProjectTag;
   selected: boolean;
@@ -1288,6 +1300,7 @@ function ProjectRow({
   onEditCancel: () => void;
   accounts: Account[];
   onMoveToAccount: (accName: string | null) => void;
+  taskCount: number;
 }) {
   const [showMoveMenu, setShowMoveMenu] = useState(false);
 
@@ -1324,9 +1337,16 @@ function ProjectRow({
             <button onClick={onEditCancel} className="text-[10px] text-stone cursor-pointer">Cancel</button>
           </div>
         ) : (
-          <span className={`truncate ${isActiveProject ? "font-semibold text-terracotta" : "text-espresso"}`}>
-            {project.project_name}
-          </span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className={`truncate ${isActiveProject ? "font-semibold text-terracotta" : "text-espresso"}`}>
+              {project.project_name}
+            </span>
+            {taskCount > 0 && (
+              <span className="shrink-0 text-[10px] bg-sage-soft text-sage min-w-[18px] text-center px-1 py-0.5 rounded-full font-semibold leading-none">
+                {taskCount}
+              </span>
+            )}
+          </div>
         )}
       </div>
       {!editing && (
