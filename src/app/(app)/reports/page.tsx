@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Profile, TimeLog, TaskScreenshot, UserRole, Client } from "@/types/database";
+import type { Profile, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
 import {
   formatDuration,
   getInitials,
@@ -34,10 +34,16 @@ type PersonHours = {
   taskCount: number;
 };
 
-type ClientFinancial = {
-  clientName: string;
-  payableToVA: number;
-  billableToClient: number;
+type ProjectSummaryItem = {
+  name: string;
+  totalMs: number;
+  count: number;
+};
+
+type TaskSummaryItem = {
+  name: string;
+  totalMs: number;
+  count: number;
 };
 
 /* ── Page Component ───────────────────────────────────────── */
@@ -46,7 +52,6 @@ export default function ReportsPage() {
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [screenshots, setScreenshots] = useState<TaskScreenshot[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
   const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
   const [dateRange, setDateRange] = useState<DateRange>("week");
   const [selectedVA, setSelectedVA] = useState<string>("all");
@@ -119,7 +124,7 @@ export default function ReportsPage() {
         setRole(userRole);
       }
 
-      const [logsRes, profilesRes, screenshotsRes, clientsRes] = await Promise.all([
+      const [logsRes, profilesRes, screenshotsRes] = await Promise.all([
         supabase
           .from("time_logs")
           .select("*")
@@ -132,12 +137,10 @@ export default function ReportsPage() {
           .select("*")
           .gte("created_at", qStart)
           .lte("created_at", qEnd),
-        supabase.from("clients").select("*"),
       ]);
 
       setLogs((logsRes.data ?? []) as TimeLog[]);
       setProfiles((profilesRes.data ?? []) as Profile[]);
-      setClients((clientsRes.data ?? []) as Client[]);
       const ssData = (screenshotsRes.data ?? []) as TaskScreenshot[];
       setScreenshots(ssData);
 
@@ -354,47 +357,37 @@ export default function ReportsPage() {
       .sort((a, b) => b.totalMs - a.totalMs);
   }, [filteredLogs, profiles]);
 
-  /* ── Client financials (for Financial Summary) ───────────── */
+  /* ── Project & Task Summary ──────────────────────────────── */
 
-  const clientFinancials: ClientFinancial[] = useMemo(() => {
-    // Group billable logs by client_name, then by user_id within each client
-    const clientMap: Record<string, Record<string, number>> = {};
+  const projectSummary: ProjectSummaryItem[] = useMemo(() => {
+    const map: Record<string, { totalMs: number; count: number }> = {};
     filteredLogs
-      .filter((l) => l.billable && l.client_name)
+      .filter((l) => l.end_time && l.category !== "Break" && l.category !== "Personal")
       .forEach((l) => {
-        const cn = l.client_name!;
-        if (!clientMap[cn]) clientMap[cn] = {};
-        clientMap[cn][l.user_id] = (clientMap[cn][l.user_id] || 0) + (l.duration_ms || 0);
+        const proj = l.project || "No Project";
+        if (!map[proj]) map[proj] = { totalMs: 0, count: 0 };
+        map[proj].totalMs += l.duration_ms || 0;
+        map[proj].count += 1;
       });
+    return Object.entries(map)
+      .map(([name, data]) => ({ name, totalMs: data.totalMs, count: data.count }))
+      .sort((a, b) => b.totalMs - a.totalMs);
+  }, [filteredLogs]);
 
-    return Object.entries(clientMap)
-      .map(([clientName, userMs]) => {
-        let payableToVA = 0;
-        let billableToClient = 0;
-
-        // Find client record for billing rate
-        const clientRecord = clients.find((c) => c.name === clientName);
-        const clientRate = clientRecord?.default_hourly_rate || null;
-
-        Object.entries(userMs).forEach(([uid, ms]) => {
-          const profile = profiles.find((p) => p.id === uid);
-          const vaRate = profile?.pay_rate || 0;
-          const vaRateType = profile?.pay_rate_type || "hourly";
-          const hours = ms / 3600000;
-
-          // Payable to VA: always use VA's own rate
-          if (vaRateType === "hourly") payableToVA += hours * Number(vaRate);
-          else if (vaRateType === "daily") payableToVA += (hours / 8) * Number(vaRate);
-
-          // Billable to Client: use client rate if set, otherwise VA rate
-          const billingRate = clientRate !== null ? clientRate : Number(vaRate);
-          billableToClient += hours * billingRate;
-        });
-
-        return { clientName, payableToVA, billableToClient };
-      })
-      .sort((a, b) => b.billableToClient - a.billableToClient);
-  }, [filteredLogs, profiles, clients]);
+  const taskSummary: TaskSummaryItem[] = useMemo(() => {
+    const map: Record<string, { totalMs: number; count: number }> = {};
+    filteredLogs
+      .filter((l) => l.end_time && l.category !== "Break" && l.category !== "Personal")
+      .forEach((l) => {
+        const task = l.task_name || "Untitled Task";
+        if (!map[task]) map[task] = { totalMs: 0, count: 0 };
+        map[task].totalMs += l.duration_ms || 0;
+        map[task].count += 1;
+      });
+    return Object.entries(map)
+      .map(([name, data]) => ({ name, totalMs: data.totalMs, count: data.count }))
+      .sort((a, b) => b.totalMs - a.totalMs);
+  }, [filteredLogs]);
 
   /* ── Export CSV ───────────────────────────────────────────── */
 
@@ -757,8 +750,8 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Hours by Account + Financial Summary (admin) */}
-          <div className={`mb-6 grid gap-5 ${role === "admin" ? "grid-cols-2" : "grid-cols-1"}`}>
+          {/* Hours by Account + Project & Task Summary */}
+          <div className="mb-6 grid gap-5 grid-cols-2">
             {/* Hours by Account */}
             <div className="rounded-xl border border-sand bg-white">
               <div className="border-b border-parchment px-5 py-4">
@@ -809,87 +802,90 @@ export default function ReportsPage() {
               </div>
             </div>
 
-            {/* Financial Summary (admin only) */}
-            {role === "admin" && (
-              <div className="rounded-xl border border-sand bg-white">
-                <div className="border-b border-parchment px-5 py-4">
-                  <h3 className="text-sm font-bold text-espresso">
-                    Financial Summary
-                  </h3>
-                </div>
-                <div className="px-5 py-4">
-                  {clientFinancials.length === 0 ? (
-                    <p className="text-[13px] text-bark">No billable data yet</p>
-                  ) : (
-                    <>
-                      {/* Header row */}
-                      <div className="flex items-center gap-3 border-b border-parchment pb-3 mb-1">
-                        <div className="flex-1 text-[11px] font-semibold uppercase tracking-wide text-bark">
-                          Client
-                        </div>
-                        <div className="w-[110px] text-right text-[11px] font-semibold uppercase tracking-wide text-bark">
-                          Payable to VA
-                        </div>
-                        <div className="w-[110px] text-right text-[11px] font-semibold uppercase tracking-wide text-bark">
-                          Billable to Client
-                        </div>
-                      </div>
-
-                      {/* Client rows */}
-                      {clientFinancials.map((cf) => (
-                        <div
-                          key={cf.clientName}
-                          className="flex items-center gap-3 border-b border-parchment py-3 last:border-b-0"
-                        >
-                          <div className="flex-1 text-[13px] font-semibold text-espresso">
-                            {cf.clientName}
-                          </div>
-                          <div className="w-[110px] text-right font-serif text-sm font-bold text-terracotta">
-                            {cf.payableToVA.toLocaleString("en-US", {
-                              style: "currency",
-                              currency: "USD",
-                              minimumFractionDigits: 2,
-                            })}
-                          </div>
-                          <div className="w-[110px] text-right font-serif text-sm font-bold text-sage">
-                            {cf.billableToClient.toLocaleString("en-US", {
-                              style: "currency",
-                              currency: "USD",
-                              minimumFractionDigits: 2,
-                            })}
-                          </div>
-                        </div>
-                      ))}
-
-                      {/* Total row */}
-                      <div className="flex items-center gap-3 border-t-2 border-espresso pt-3 mt-1">
-                        <div className="flex-1 text-[13px] font-bold text-espresso">
-                          Total
-                        </div>
-                        <div className="w-[110px] text-right font-serif text-base font-bold text-terracotta">
-                          {clientFinancials
-                            .reduce((sum, cf) => sum + cf.payableToVA, 0)
-                            .toLocaleString("en-US", {
-                              style: "currency",
-                              currency: "USD",
-                              minimumFractionDigits: 2,
-                            })}
-                        </div>
-                        <div className="w-[110px] text-right font-serif text-base font-bold text-sage">
-                          {clientFinancials
-                            .reduce((sum, cf) => sum + cf.billableToClient, 0)
-                            .toLocaleString("en-US", {
-                              style: "currency",
-                              currency: "USD",
-                              minimumFractionDigits: 2,
-                            })}
-                        </div>
-                      </div>
-                    </>
-                  )}
+            {/* Project & Task Summary */}
+            <div className="rounded-xl border border-sand bg-white">
+              <div className="border-b border-parchment px-5 py-4">
+                <h3 className="text-sm font-bold text-espresso">
+                  Project &amp; Task Summary
+                </h3>
+                <div className="mt-1 flex gap-4 text-[11px] text-bark">
+                  <span><strong className="text-espresso">{projectSummary.length}</strong> projects</span>
+                  <span><strong className="text-espresso">{taskSummary.reduce((sum, t) => sum + t.count, 0)}</strong> tasks completed</span>
                 </div>
               </div>
-            )}
+              <div className="px-5 py-4">
+                {projectSummary.length === 0 && taskSummary.length === 0 ? (
+                  <p className="text-[13px] text-bark">No completed tasks yet</p>
+                ) : (
+                  <>
+                    {/* Projects section */}
+                    {projectSummary.length > 0 && (
+                      <>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-bark mb-2">
+                          By Project
+                        </div>
+                        {projectSummary.map((p) => (
+                          <div
+                            key={p.name}
+                            className="flex items-center gap-3 border-b border-parchment py-2.5 last:border-b-0"
+                          >
+                            <div className="flex-1 text-[13px] font-semibold text-espresso">
+                              {p.name}
+                            </div>
+                            <div className="text-[11px] text-bark mr-2">
+                              {p.count} {p.count === 1 ? "entry" : "entries"}
+                            </div>
+                            <div className="w-[70px] text-right font-serif text-sm font-bold text-sage">
+                              {formatDuration(p.totalMs)}
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+
+                    {/* Tasks section */}
+                    {taskSummary.length > 0 && (
+                      <>
+                        <div className={`text-[11px] font-semibold uppercase tracking-wide text-bark mb-2 ${projectSummary.length > 0 ? "mt-4" : ""}`}>
+                          By Task
+                        </div>
+                        {taskSummary.map((t) => (
+                          <div
+                            key={t.name}
+                            className="flex items-center gap-3 border-b border-parchment py-2.5 last:border-b-0"
+                          >
+                            <div className="flex-1 text-[13px] font-semibold text-espresso truncate">
+                              {t.name}
+                            </div>
+                            <div className="text-[11px] text-bark mr-2 shrink-0">
+                              {t.count}x
+                            </div>
+                            <div className="w-[70px] text-right font-serif text-sm font-bold text-terracotta shrink-0">
+                              {formatDuration(t.totalMs)}
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+
+                    {/* Grand Total */}
+                    <div className="flex items-center gap-3 border-t-2 border-espresso pt-3 mt-3">
+                      <div className="flex-1 text-[13px] font-bold text-espresso">
+                        Grand Total
+                      </div>
+                      <div className="text-[11px] font-semibold text-bark mr-2">
+                        {taskSummary.reduce((sum, t) => sum + t.count, 0)} tasks
+                      </div>
+                      <div className="w-[70px] text-right font-serif text-base font-bold text-espresso">
+                        {formatDuration(
+                          taskSummary.reduce((sum, t) => sum + t.totalMs, 0)
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Screenshot Gallery */}
