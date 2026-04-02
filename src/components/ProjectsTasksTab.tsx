@@ -118,15 +118,20 @@ export default function ProjectsTasksTab() {
 
   /* ── State: add forms ─────── */
   const [showAddTask, setShowAddTask] = useState(false);
+  const [bulkTaskMode, setBulkTaskMode] = useState(false);
   const [newTaskName, setNewTaskName] = useState("");
+  const [bulkTaskText, setBulkTaskText] = useState("");
   const [newTaskCategoryId, setNewTaskCategoryId] = useState<number | null>(null);
   const [addingTask, setAddingTask] = useState(false);
   const [showAddProject, setShowAddProject] = useState(false);
+  const [bulkProjectMode, setBulkProjectMode] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
+  const [bulkProjectText, setBulkProjectText] = useState("");
   const [addingProject, setAddingProject] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [addingCategory, setAddingCategory] = useState(false);
+  const [bulkCategoryTarget, setBulkCategoryTarget] = useState<number | null | "none">("none");
 
   /* ── State: editing ─────── */
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
@@ -225,21 +230,40 @@ export default function ProjectsTasksTab() {
 
   /* ── Task CRUD ─────── */
   const handleAddTask = async () => {
-    if (!newTaskName.trim()) return;
-    setAddingTask(true);
-    const res = await fetch("/api/task-library", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        task_name: newTaskName.trim(),
-        ...(newTaskCategoryId ? { category_id: newTaskCategoryId } : {}),
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      alert(err.error || "Failed to add task");
+    if (bulkTaskMode) {
+      const names = bulkTaskText.split("\n").map((n) => n.trim()).filter(Boolean);
+      if (names.length === 0) return;
+      setAddingTask(true);
+      const res = await fetch("/api/task-library", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          names,
+          ...(newTaskCategoryId ? { category_id: newTaskCategoryId } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "Failed to add tasks");
+      }
+      setBulkTaskText("");
+    } else {
+      if (!newTaskName.trim()) return;
+      setAddingTask(true);
+      const res = await fetch("/api/task-library", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_name: newTaskName.trim(),
+          ...(newTaskCategoryId ? { category_id: newTaskCategoryId } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "Failed to add task");
+      }
+      setNewTaskName("");
     }
-    setNewTaskName("");
     setShowAddTask(false);
     setAddingTask(false);
     fetchLibraryTasks();
@@ -273,20 +297,53 @@ export default function ProjectsTasksTab() {
     fetchLibraryTasks();
   };
 
+  const handleBulkMoveToCategory = async (categoryId: number | null) => {
+    if (selectedTaskIds.size === 0) return;
+    setAssigning(true);
+    const promises = Array.from(selectedTaskIds).map((taskId) =>
+      fetch("/api/task-library", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: taskId, category_id: categoryId }),
+      })
+    );
+    await Promise.all(promises);
+    setSelectedTaskIds(new Set());
+    setBulkCategoryTarget("none");
+    setAssigning(false);
+    fetchLibraryTasks();
+  };
+
   /* ── Project CRUD ─────── */
   const handleAddProject = async () => {
-    if (!newProjectName.trim()) return;
-    setAddingProject(true);
-    const res = await fetch("/api/project-tags", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project_name: newProjectName.trim() }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      alert(err.error || "Failed to add project");
+    if (bulkProjectMode) {
+      const names = bulkProjectText.split("\n").map((n) => n.trim()).filter(Boolean);
+      if (names.length === 0) return;
+      setAddingProject(true);
+      const res = await fetch("/api/project-tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "Failed to add projects");
+      }
+      setBulkProjectText("");
+    } else {
+      if (!newProjectName.trim()) return;
+      setAddingProject(true);
+      const res = await fetch("/api/project-tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_name: newProjectName.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "Failed to add project");
+      }
+      setNewProjectName("");
     }
-    setNewProjectName("");
     setShowAddProject(false);
     setAddingProject(false);
     fetchProjects();
@@ -432,18 +489,57 @@ export default function ProjectsTasksTab() {
   return (
     <div className="space-y-3">
       {/* Action bar */}
-      {selectedTaskIds.size > 0 && selectedProject && (
-        <div className="rounded-lg bg-sage-soft border border-sage/30 px-3 py-2 flex items-center gap-2 text-xs">
+      {selectedTaskIds.size > 0 && (
+        <div className="rounded-lg bg-sage-soft border border-sage/30 px-3 py-2 flex items-center gap-2 text-xs flex-wrap">
           <span className="text-sage font-semibold">
             {selectedTaskIds.size} task(s) selected
           </span>
-          <span className="text-stone">→</span>
+          {selectedProject && (
+            <>
+              <span className="text-stone">→</span>
+              <button
+                onClick={handleAssignTasksToProject}
+                disabled={assigning}
+                className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                {assigning ? "Assigning..." : `Assign to "${selectedProject.project_name}"`}
+              </button>
+            </>
+          )}
+          {categories.length > 0 && (
+            <>
+              <span className="text-stone">|</span>
+              <span className="text-stone text-[11px]">Move to:</span>
+              <select
+                value={bulkCategoryTarget === null ? "__uncategorized__" : bulkCategoryTarget === "none" ? "" : String(bulkCategoryTarget)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "__uncategorized__") setBulkCategoryTarget(null);
+                  else if (val === "") setBulkCategoryTarget("none");
+                  else setBulkCategoryTarget(Number(val));
+                }}
+                className="rounded-lg border border-sage/30 px-2 py-0.5 text-xs text-espresso outline-none bg-white"
+              >
+                <option value="">Pick category...</option>
+                <option value="__uncategorized__">Uncategorized</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.category_name}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => handleBulkMoveToCategory(bulkCategoryTarget === "none" ? null : bulkCategoryTarget as number | null)}
+                disabled={assigning || bulkCategoryTarget === "none"}
+                className="px-3 py-1 rounded-lg bg-espresso text-white font-semibold hover:bg-bark disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                {assigning ? "Moving..." : "Move"}
+              </button>
+            </>
+          )}
           <button
-            onClick={handleAssignTasksToProject}
-            disabled={assigning}
-            className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
+            onClick={() => setSelectedTaskIds(new Set())}
+            className="ml-auto px-2 py-0.5 rounded-lg text-stone hover:text-espresso cursor-pointer text-[11px]"
           >
-            {assigning ? "Assigning..." : `Assign to "${selectedProject.project_name}"`}
+            Clear
           </button>
         </div>
       )}
@@ -464,11 +560,6 @@ export default function ProjectsTasksTab() {
       )}
 
       {/* Hint bars */}
-      {selectedTaskIds.size > 0 && !selectedProject && (
-        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
-          Click a project in the middle column to assign the selected tasks →
-        </div>
-      )}
       {selectedProjectIds.size > 0 && !selectedAccount && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
           Click an account in the right column to assign the selected projects →
@@ -532,15 +623,34 @@ export default function ProjectsTasksTab() {
           {/* Add task form */}
           {showAddTask && (
             <div className="rounded-lg border border-sand bg-parchment p-2.5 space-y-1.5">
-              <span className="text-[11px] font-semibold text-espresso">New Task</span>
-              <input
-                value={newTaskName}
-                onChange={(e) => setNewTaskName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAddTask()}
-                placeholder="Task name"
-                className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
-                autoFocus
-              />
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-espresso">{bulkTaskMode ? "Bulk Add Tasks" : "New Task"}</span>
+                <button
+                  onClick={() => setBulkTaskMode(!bulkTaskMode)}
+                  className="text-[10px] font-semibold text-sage hover:text-[#5a7a5e] cursor-pointer"
+                >
+                  {bulkTaskMode ? "Single mode" : "Bulk mode"}
+                </button>
+              </div>
+              {bulkTaskMode ? (
+                <textarea
+                  value={bulkTaskText}
+                  onChange={(e) => setBulkTaskText(e.target.value)}
+                  placeholder={"Paste task names (one per line):\nTask 1\nTask 2\nTask 3"}
+                  rows={5}
+                  className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta resize-y"
+                  autoFocus
+                />
+              ) : (
+                <input
+                  value={newTaskName}
+                  onChange={(e) => setNewTaskName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddTask()}
+                  placeholder="Task name"
+                  className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
+                  autoFocus
+                />
+              )}
               <select
                 value={newTaskCategoryId ?? ""}
                 onChange={(e) => setNewTaskCategoryId(e.target.value ? Number(e.target.value) : null)}
@@ -551,15 +661,20 @@ export default function ProjectsTasksTab() {
                   <option key={c.id} value={c.id}>{c.category_name}</option>
                 ))}
               </select>
+              {bulkTaskMode && bulkTaskText.trim() && (
+                <p className="text-[10px] text-stone">
+                  {bulkTaskText.split("\n").map((n) => n.trim()).filter(Boolean).length} task(s) to add
+                </p>
+              )}
               <div className="flex gap-1.5">
                 <button
                   onClick={handleAddTask}
-                  disabled={addingTask || !newTaskName.trim()}
+                  disabled={addingTask || (bulkTaskMode ? !bulkTaskText.trim() : !newTaskName.trim())}
                   className="flex-1 py-1 rounded-lg bg-terracotta text-white text-xs font-semibold disabled:opacity-50 cursor-pointer hover:bg-[#a85840] transition-colors"
                 >
-                  {addingTask ? "Adding..." : "Add"}
+                  {addingTask ? "Adding..." : bulkTaskMode ? "Add All" : "Add"}
                 </button>
-                <button onClick={() => { setShowAddTask(false); setNewTaskName(""); }} className="px-2 py-1 rounded-lg text-xs text-stone hover:text-espresso cursor-pointer">Cancel</button>
+                <button onClick={() => { setShowAddTask(false); setNewTaskName(""); setBulkTaskText(""); }} className="px-2 py-1 rounded-lg text-xs text-stone hover:text-espresso cursor-pointer">Cancel</button>
               </div>
             </div>
           )}
@@ -706,24 +821,48 @@ export default function ProjectsTasksTab() {
           {/* Add project form */}
           {showAddProject && (
             <div className="rounded-lg border border-sand bg-parchment p-2.5 space-y-1.5">
-              <span className="text-[11px] font-semibold text-espresso">New Project</span>
-              <input
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAddProject()}
-                placeholder="Project name"
-                className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
-                autoFocus
-              />
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-espresso">{bulkProjectMode ? "Bulk Add Projects" : "New Project"}</span>
+                <button
+                  onClick={() => setBulkProjectMode(!bulkProjectMode)}
+                  className="text-[10px] font-semibold text-sage hover:text-[#5a7a5e] cursor-pointer"
+                >
+                  {bulkProjectMode ? "Single mode" : "Bulk mode"}
+                </button>
+              </div>
+              {bulkProjectMode ? (
+                <textarea
+                  value={bulkProjectText}
+                  onChange={(e) => setBulkProjectText(e.target.value)}
+                  placeholder={"Paste project names (one per line):\nProject A\nProject B\nProject C"}
+                  rows={5}
+                  className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta resize-y"
+                  autoFocus
+                />
+              ) : (
+                <input
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddProject()}
+                  placeholder="Project name"
+                  className="w-full rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
+                  autoFocus
+                />
+              )}
+              {bulkProjectMode && bulkProjectText.trim() && (
+                <p className="text-[10px] text-stone">
+                  {bulkProjectText.split("\n").map((n) => n.trim()).filter(Boolean).length} project(s) to add
+                </p>
+              )}
               <div className="flex gap-1.5">
                 <button
                   onClick={handleAddProject}
-                  disabled={addingProject || !newProjectName.trim()}
+                  disabled={addingProject || (bulkProjectMode ? !bulkProjectText.trim() : !newProjectName.trim())}
                   className="flex-1 py-1 rounded-lg bg-terracotta text-white text-xs font-semibold disabled:opacity-50 cursor-pointer hover:bg-[#a85840] transition-colors"
                 >
-                  {addingProject ? "Adding..." : "Add"}
+                  {addingProject ? "Adding..." : bulkProjectMode ? "Add All" : "Add"}
                 </button>
-                <button onClick={() => { setShowAddProject(false); setNewProjectName(""); }} className="px-2 py-1 rounded-lg text-xs text-stone hover:text-espresso cursor-pointer">Cancel</button>
+                <button onClick={() => { setShowAddProject(false); setNewProjectName(""); setBulkProjectText(""); }} className="px-2 py-1 rounded-lg text-xs text-stone hover:text-espresso cursor-pointer">Cancel</button>
               </div>
             </div>
           )}
