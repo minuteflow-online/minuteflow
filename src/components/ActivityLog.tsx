@@ -238,10 +238,9 @@ export default function ActivityLog({
     return Array.from(map.values());
   }, [logs]);
 
-  // Unique categories and accounts
-  const uniqueCategories = useMemo(() => {
-    return [...new Set(logs.map((l) => l.category))].filter(Boolean);
-  }, [logs]);
+  // Static category list (always show all options in filter)
+  const ALL_CATEGORIES = ["Task", "Message", "Meeting", "Sorting Tasks", "Collaboration", "Personal", "Break"];
+  const uniqueCategories = ALL_CATEGORIES;
 
   const uniqueAccounts = useMemo(() => {
     return [...new Set(logs.map((l) => l.account).filter(Boolean))] as string[];
@@ -279,27 +278,32 @@ export default function ActivityLog({
   const summary = useMemo(() => {
     let totalMs = 0;
     let billableMs = 0;
-    let personalMs = 0;
+    let nonBillableMs = 0;
     let breakMs = 0;
+    let sortingMs = 0;
     let wizardMs = 0;
 
     filteredLogs.forEach((log) => {
       totalMs += log.duration_ms;
       wizardMs += log.form_fill_ms || 0;
+      if (log.category.toLowerCase() === "sorting tasks") {
+        sortingMs += log.duration_ms;
+      }
       if (log.billable) {
         billableMs += log.duration_ms;
       } else if (log.category.toLowerCase() === "break") {
         breakMs += log.duration_ms;
       } else {
-        personalMs += log.duration_ms;
+        nonBillableMs += log.duration_ms;
       }
     });
 
     return {
       total: formatHoursMinutes(totalMs),
       billable: formatHoursMinutes(billableMs),
-      personal: formatHoursMinutes(personalMs),
+      nonBillable: formatHoursMinutes(nonBillableMs),
       breaks: formatHoursMinutes(breakMs),
+      sorting: formatHoursMinutes(sortingMs),
       wizard: formatHoursMinutes(wizardMs),
       entries: filteredLogs.length,
     };
@@ -805,10 +809,10 @@ export default function ActivityLog({
           </div>
           <div>
             <div className="font-serif text-lg font-bold tabular-nums text-clay-rose">
-              {summary.personal}
+              {summary.nonBillable}
             </div>
             <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-              Personal
+              Non-Billable
             </div>
           </div>
           <div>
@@ -817,6 +821,14 @@ export default function ActivityLog({
             </div>
             <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
               Breaks
+            </div>
+          </div>
+          <div>
+            <div className="font-serif text-lg font-bold tabular-nums text-bark">
+              {summary.sorting}
+            </div>
+            <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
+              Sorting
             </div>
           </div>
           <div>
