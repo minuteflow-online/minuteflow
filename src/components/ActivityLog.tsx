@@ -274,11 +274,10 @@ export default function ActivityLog({
     });
   }, [logs, selectedUsers, search, categoryFilter, accountFilter]);
 
-  // Summary
+  // Summary — everything is billable except Personal
   const summary = useMemo(() => {
     let totalMs = 0;
-    let billableMs = 0;
-    let nonBillableMs = 0;
+    let personalMs = 0;
     let breakMs = 0;
     let sortingMs = 0;
     let wizardMs = 0;
@@ -286,22 +285,24 @@ export default function ActivityLog({
     filteredLogs.forEach((log) => {
       totalMs += log.duration_ms;
       wizardMs += log.form_fill_ms || 0;
-      if (log.category.toLowerCase() === "sorting tasks") {
+      const cat = log.category.toLowerCase();
+      if (cat === "sorting tasks") {
         sortingMs += log.duration_ms;
       }
-      if (log.billable) {
-        billableMs += log.duration_ms;
-      } else if (log.category.toLowerCase() === "break") {
+      if (cat === "break") {
         breakMs += log.duration_ms;
-      } else {
-        nonBillableMs += log.duration_ms;
+      }
+      if (cat === "personal") {
+        personalMs += log.duration_ms;
       }
     });
+
+    const billableMs = totalMs - personalMs;
 
     return {
       total: formatHoursMinutes(totalMs),
       billable: formatHoursMinutes(billableMs),
-      nonBillable: formatHoursMinutes(nonBillableMs),
+      personal: formatHoursMinutes(personalMs),
       breaks: formatHoursMinutes(breakMs),
       sorting: formatHoursMinutes(sortingMs),
       wizard: formatHoursMinutes(wizardMs),
@@ -809,10 +810,10 @@ export default function ActivityLog({
           </div>
           <div>
             <div className="font-serif text-lg font-bold tabular-nums text-clay-rose">
-              {summary.nonBillable}
+              {summary.personal}
             </div>
             <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-              Non-Billable
+              Personal
             </div>
           </div>
           <div>
