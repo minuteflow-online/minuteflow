@@ -276,3 +276,22 @@ export interface InvoicePayment {
   recorded_by: string | null;
   created_at: string;
 }
+
+export interface TaskLibraryItem {
+  id: number;
+  task_name: string;
+  is_active: boolean;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ProjectTaskAssignment {
+  id: number;
+  task_library_id: number;
+  project_tag_id: number;
+  sort_order: number;
+  assigned_by: string | null;
+  assigned_at: string;
+  task_library?: TaskLibraryItem;
+}
