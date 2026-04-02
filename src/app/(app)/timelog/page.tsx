@@ -613,7 +613,7 @@ export default function TimeLogPage() {
               className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
             >
               <option value="">All VAs</option>
-              {profiles.map((p) => (
+              {profiles.filter((p) => p.is_active !== false).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.full_name}
                 </option>
