@@ -52,6 +52,12 @@ export default function ProjectsTasksTab() {
   const [bulkTaskNames, setBulkTaskNames] = useState("");
   const [addingTask, setAddingTask] = useState(false);
 
+  /* ── State: bulk selection ─────── */
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const [bulkDeletingProjects, setBulkDeletingProjects] = useState(false);
+  const [bulkDeletingTasks, setBulkDeletingTasks] = useState(false);
+
   /* ── State: inline editing ─────── */
   const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
   const [editProjectName, setEditProjectName] = useState("");
@@ -87,12 +93,15 @@ export default function ProjectsTasksTab() {
       fetchProjects(selectedAccount);
       setSelectedProject(null);
       setTasks([]);
+      setSelectedProjectIds(new Set());
+      setSelectedTaskIds(new Set());
     }
   }, [selectedAccount, fetchProjects]);
 
   useEffect(() => {
     if (selectedProject) {
       fetchTasks(selectedProject.id);
+      setSelectedTaskIds(new Set());
     }
   }, [selectedProject, fetchTasks]);
 
@@ -169,6 +178,32 @@ export default function ProjectsTasksTab() {
     if (selectedAccount) fetchProjects(selectedAccount);
   };
 
+  const handleBulkDeleteProjects = async () => {
+    if (selectedProjectIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedProjectIds.size} selected project${selectedProjectIds.size !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setBulkDeletingProjects(true);
+    const ids = Array.from(selectedProjectIds).join(",");
+    await fetch(`/api/project-tags?ids=${ids}`, { method: "DELETE" });
+    setSelectedProjectIds(new Set());
+    setBulkDeletingProjects(false);
+    if (selectedAccount) fetchProjects(selectedAccount);
+  };
+
+  const toggleProjectSelection = (id: number) => {
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllProjects = (allIds: number[]) => {
+    setSelectedProjectIds((prev) =>
+      prev.size === allIds.length ? new Set() : new Set(allIds)
+    );
+  };
+
   /* ── Task CRUD ─────── */
   const handleAddTask = async () => {
     if (!selectedProject) return;
@@ -240,6 +275,32 @@ export default function ProjectsTasksTab() {
     if (!window.confirm(`Delete task "${t.task_name}"? This cannot be undone.`)) return;
     await fetch(`/api/task-templates?id=${t.id}`, { method: "DELETE" });
     if (selectedProject) fetchTasks(selectedProject.id);
+  };
+
+  const handleBulkDeleteTasks = async () => {
+    if (selectedTaskIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedTaskIds.size} selected task${selectedTaskIds.size !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setBulkDeletingTasks(true);
+    const ids = Array.from(selectedTaskIds).join(",");
+    await fetch(`/api/task-templates?ids=${ids}`, { method: "DELETE" });
+    setSelectedTaskIds(new Set());
+    setBulkDeletingTasks(false);
+    if (selectedProject) fetchTasks(selectedProject.id);
+  };
+
+  const toggleTaskSelection = (id: number) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllTasks = (allIds: number[]) => {
+    setSelectedTaskIds((prev) =>
+      prev.size === allIds.length ? new Set() : new Set(allIds)
+    );
   };
 
   /* ── Render: loading ─────── */
@@ -377,6 +438,30 @@ export default function ProjectsTasksTab() {
           </div>
         )}
 
+        {/* Bulk actions bar */}
+        {sortedProjects.length > 0 && (
+          <div className="flex items-center gap-3 px-1">
+            <label className="flex items-center gap-2 cursor-pointer text-[12px] text-bark select-none">
+              <input
+                type="checkbox"
+                checked={selectedProjectIds.size === sortedProjects.length && sortedProjects.length > 0}
+                onChange={() => toggleAllProjects(sortedProjects.map((p) => p.id))}
+                className="h-3.5 w-3.5 rounded border-sand text-terracotta accent-terracotta cursor-pointer"
+              />
+              Select All
+            </label>
+            {selectedProjectIds.size > 0 && (
+              <button
+                onClick={handleBulkDeleteProjects}
+                disabled={bulkDeletingProjects}
+                className="text-[12px] font-semibold text-red-600 hover:text-red-700 cursor-pointer disabled:opacity-50"
+              >
+                {bulkDeletingProjects ? "Deleting..." : `Delete Selected (${selectedProjectIds.size})`}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Projects list */}
         <div className="space-y-2">
           {sortedProjects.map((p, index) => (
@@ -384,8 +469,16 @@ export default function ProjectsTasksTab() {
               key={p.id}
               className={`rounded-xl border bg-white p-3 flex items-center gap-3 transition-all ${
                 p.is_active ? "border-sand hover:border-terracotta hover:shadow-sm" : "border-sand/50 opacity-50"
-              }`}
+              } ${selectedProjectIds.has(p.id) ? "ring-2 ring-terracotta/30" : ""}`}
             >
+              {/* Checkbox */}
+              <input
+                type="checkbox"
+                checked={selectedProjectIds.has(p.id)}
+                onChange={() => toggleProjectSelection(p.id)}
+                className="h-3.5 w-3.5 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+              />
+
               {/* Reorder buttons */}
               <div className="flex flex-col gap-0.5">
                 <button
@@ -560,6 +653,30 @@ export default function ProjectsTasksTab() {
         </div>
       )}
 
+      {/* Bulk actions bar */}
+      {sortedTasks.length > 0 && (
+        <div className="flex items-center gap-3 px-1">
+          <label className="flex items-center gap-2 cursor-pointer text-[12px] text-bark select-none">
+            <input
+              type="checkbox"
+              checked={selectedTaskIds.size === sortedTasks.length && sortedTasks.length > 0}
+              onChange={() => toggleAllTasks(sortedTasks.map((t) => t.id))}
+              className="h-3.5 w-3.5 rounded border-sand text-terracotta accent-terracotta cursor-pointer"
+            />
+            Select All
+          </label>
+          {selectedTaskIds.size > 0 && (
+            <button
+              onClick={handleBulkDeleteTasks}
+              disabled={bulkDeletingTasks}
+              className="text-[12px] font-semibold text-red-600 hover:text-red-700 cursor-pointer disabled:opacity-50"
+            >
+              {bulkDeletingTasks ? "Deleting..." : `Delete Selected (${selectedTaskIds.size})`}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Tasks list */}
       <div className="space-y-2">
         {sortedTasks.map((t, index) => (
@@ -567,8 +684,16 @@ export default function ProjectsTasksTab() {
             key={t.id}
             className={`rounded-xl border bg-white p-3 flex items-center gap-3 transition-all ${
               t.is_active ? "border-sand" : "border-sand/50 opacity-50"
-            }`}
+            } ${selectedTaskIds.has(t.id) ? "ring-2 ring-terracotta/30" : ""}`}
           >
+            {/* Checkbox */}
+            <input
+              type="checkbox"
+              checked={selectedTaskIds.has(t.id)}
+              onChange={() => toggleTaskSelection(t.id)}
+              className="h-3.5 w-3.5 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+            />
+
             {/* Reorder buttons */}
             <div className="flex flex-col gap-0.5">
               <button

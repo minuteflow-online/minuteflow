@@ -199,9 +199,23 @@ export async function DELETE(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
+  const ids = searchParams.get("ids"); // comma-separated for bulk delete
 
-  if (!id) {
-    return Response.json({ error: "id is required" }, { status: 400 });
+  if (!id && !ids) {
+    return Response.json({ error: "id or ids is required" }, { status: 400 });
+  }
+
+  if (ids) {
+    // Bulk delete
+    const idList = ids.split(",").map((i) => parseInt(i.trim())).filter((i) => !isNaN(i));
+    if (idList.length === 0) {
+      return Response.json({ error: "No valid ids provided" }, { status: 400 });
+    }
+    const { error } = await supabase.from("task_templates").delete().in("id", idList);
+    if (error) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    return Response.json({ success: true, deleted: idList.length });
   }
 
   const { error } = await supabase.from("task_templates").delete().eq("id", id);
