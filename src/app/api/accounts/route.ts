@@ -70,17 +70,18 @@ export async function PATCH(request: Request) {
   }
 
   const body = await request.json();
-  const { id, name, active, linkClientId, unlinkClientId } = body;
+  const { id, name, active, billing_rate, linkClientId, unlinkClientId } = body;
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
   }
 
-  // Update name/active
-  if (name !== undefined || active !== undefined) {
+  // Update name/active/billing_rate
+  if (name !== undefined || active !== undefined || billing_rate !== undefined) {
     const updates: Record<string, unknown> = {};
     if (name !== undefined) updates.name = name.trim();
     if (active !== undefined) updates.active = active;
+    if (billing_rate !== undefined) updates.billing_rate = billing_rate;
 
     const { error } = await supabase
       .from("accounts")
