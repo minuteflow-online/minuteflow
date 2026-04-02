@@ -419,28 +419,34 @@ export default function ProjectsTasksTab() {
   };
 
   /* ── Assignment: tasks → project ─────── */
-  const handleAssignTasksToProject = async () => {
-    if (!selectedProject || selectedTaskIds.size === 0) return;
+  const handleAssignTasksToProjects = async () => {
+    if (selectedProjectIds.size === 0 || selectedTaskIds.size === 0) return;
     setAssigning(true);
-    const alreadyAssigned = new Set(assignments.map((a) => a.task_library_id));
-    const toAssign = Array.from(selectedTaskIds).filter((id) => !alreadyAssigned.has(id));
-    if (toAssign.length === 0) {
-      alert("All selected tasks are already assigned to this project.");
-      setAssigning(false);
-      return;
+    const taskIds = Array.from(selectedTaskIds);
+    const projectIds = Array.from(selectedProjectIds);
+
+    try {
+      for (const pid of projectIds) {
+        // Fetch existing assignments for this project
+        const res = await fetch(`/api/project-task-assignments?project_tag_id=${pid}`);
+        const data = await res.json();
+        const existing = new Set((data.assignments ?? []).map((a: ProjectTaskAssignment) => a.task_library_id));
+        const toAssign = taskIds.filter((id) => !existing.has(id));
+        if (toAssign.length === 0) continue;
+
+        await fetch("/api/project-task-assignments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_tag_id: pid, task_library_ids: toAssign }),
+        });
+      }
+    } catch (err) {
+      alert("Failed to assign tasks to some projects.");
     }
-    const res = await fetch("/api/project-task-assignments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project_tag_id: selectedProject.id, task_library_ids: toAssign }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      alert(err.error || "Failed to assign tasks");
-    }
+
     setSelectedTaskIds(new Set());
     setAssigning(false);
-    fetchAssignments(selectedProject.id);
+    if (selectedProject) fetchAssignments(selectedProject.id);
   };
 
   const handleUnassignTask = async (assignmentId: number) => {
@@ -528,15 +534,15 @@ export default function ProjectsTasksTab() {
           <span className="text-sage font-semibold">
             {selectedTaskIds.size} task(s) selected
           </span>
-          {selectedProject && (
+          {selectedProjectIds.size > 0 && (
             <>
               <span className="text-stone">→</span>
               <button
-                onClick={handleAssignTasksToProject}
+                onClick={handleAssignTasksToProjects}
                 disabled={assigning}
                 className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
               >
-                {assigning ? "Assigning..." : `Assign to "${selectedProject.project_name}"`}
+                {assigning ? "Assigning..." : `Assign to ${selectedProjectIds.size} project(s)`}
               </button>
             </>
           )}
