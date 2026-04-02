@@ -274,15 +274,24 @@ export default function ActivityLog({
     });
   }, [logs, selectedUsers, search, categoryFilter, accountFilter]);
 
-  // Summary — everything is billable except Personal
+  // Summary — only today's logs, everything is billable except Personal
   // Dynamic category breakdown: collect all categories actually used
   const summary = useMemo(() => {
+    // Get today's date string in org timezone so we only sum today's logs
+    const tz = timezone || "America/New_York";
+    const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: tz }); // "YYYY-MM-DD"
+
+    const todayLogs = filteredLogs.filter((log) => {
+      const logDate = new Date(log.start_time).toLocaleDateString("en-CA", { timeZone: tz });
+      return logDate === todayStr;
+    });
+
     let totalMs = 0;
     let personalMs = 0;
     let wizardMs = 0;
     const categoryMs: Record<string, number> = {};
 
-    filteredLogs.forEach((log) => {
+    todayLogs.forEach((log) => {
       totalMs += log.duration_ms;
       wizardMs += log.form_fill_ms || 0;
 
@@ -311,10 +320,10 @@ export default function ActivityLog({
       total: formatHoursMinutes(totalMs),
       billable: formatHoursMinutes(billableMs),
       wizard: formatHoursMinutes(wizardMs),
-      entries: filteredLogs.length,
+      entries: todayLogs.length,
       categories: categoryEntries,
     };
-  }, [filteredLogs]);
+  }, [filteredLogs, timezone]);
 
   const toggleUser = (username: string) => {
     setSelectedUsers((prev) => {
