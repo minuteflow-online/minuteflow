@@ -275,38 +275,44 @@ export default function ActivityLog({
   }, [logs, selectedUsers, search, categoryFilter, accountFilter]);
 
   // Summary — everything is billable except Personal
+  // Dynamic category breakdown: collect all categories actually used
   const summary = useMemo(() => {
     let totalMs = 0;
     let personalMs = 0;
-    let breakMs = 0;
-    let sortingMs = 0;
     let wizardMs = 0;
+    const categoryMs: Record<string, number> = {};
 
     filteredLogs.forEach((log) => {
       totalMs += log.duration_ms;
       wizardMs += log.form_fill_ms || 0;
-      const cat = log.category.toLowerCase();
-      if (cat === "sorting tasks") {
-        sortingMs += log.duration_ms;
-      }
-      if (cat === "break") {
-        breakMs += log.duration_ms;
-      }
-      if (cat === "personal") {
+
+      // Accumulate per-category
+      const cat = log.category;
+      categoryMs[cat] = (categoryMs[cat] || 0) + log.duration_ms;
+
+      if (cat.toLowerCase() === "personal") {
         personalMs += log.duration_ms;
       }
     });
 
     const billableMs = totalMs - personalMs;
 
+    // Build sorted category entries (alphabetical, but Personal last)
+    const categoryEntries = Object.entries(categoryMs)
+      .filter(([, ms]) => ms > 0)
+      .sort(([a], [b]) => {
+        if (a.toLowerCase() === "personal") return 1;
+        if (b.toLowerCase() === "personal") return -1;
+        return a.localeCompare(b);
+      })
+      .map(([name, ms]) => ({ name, formatted: formatHoursMinutes(ms) }));
+
     return {
       total: formatHoursMinutes(totalMs),
       billable: formatHoursMinutes(billableMs),
-      personal: formatHoursMinutes(personalMs),
-      breaks: formatHoursMinutes(breakMs),
-      sorting: formatHoursMinutes(sortingMs),
       wizard: formatHoursMinutes(wizardMs),
       entries: filteredLogs.length,
+      categories: categoryEntries,
     };
   }, [filteredLogs]);
 
@@ -791,7 +797,7 @@ export default function ActivityLog({
         </div>
 
         {/* Summary */}
-        <div className="flex gap-9 py-4 px-5 border-t border-sand bg-parchment rounded-b-xl">
+        <div className="flex gap-9 py-4 px-5 border-t border-sand bg-parchment rounded-b-xl flex-wrap">
           <div>
             <div className="font-serif text-lg font-bold tabular-nums">
               {summary.total}
@@ -808,30 +814,30 @@ export default function ActivityLog({
               Billable
             </div>
           </div>
-          <div>
-            <div className="font-serif text-lg font-bold tabular-nums text-clay-rose">
-              {summary.personal}
-            </div>
-            <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-              Personal
-            </div>
-          </div>
-          <div>
-            <div className="font-serif text-lg font-bold tabular-nums text-amber">
-              {summary.breaks}
-            </div>
-            <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-              Breaks
-            </div>
-          </div>
-          <div>
-            <div className="font-serif text-lg font-bold tabular-nums text-bark">
-              {summary.sorting}
-            </div>
-            <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-              Sorting
-            </div>
-          </div>
+
+          {/* Dynamic category breakdown */}
+          {summary.categories.map((cat) => {
+            const colorClass =
+              cat.name.toLowerCase() === "task" ? "text-terracotta" :
+              cat.name.toLowerCase() === "break" ? "text-amber" :
+              cat.name.toLowerCase() === "message" ? "text-slate-blue" :
+              cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
+              cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
+              cat.name.toLowerCase() === "sorting tasks" ? "text-amber" :
+              cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
+              "text-bark";
+            return (
+              <div key={cat.name}>
+                <div className={`font-serif text-lg font-bold tabular-nums ${colorClass}`}>
+                  {cat.formatted}
+                </div>
+                <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
+                  {cat.name}
+                </div>
+              </div>
+            );
+          })}
+
           <div>
             <div className="font-serif text-lg font-bold tabular-nums text-walnut">
               {summary.wizard}
