@@ -57,17 +57,12 @@ export async function POST(request: Request) {
   const body = await request.json();
   const { account, project_name, names } = body;
 
-  if (!account?.trim()) {
-    return Response.json({ error: "Account is required" }, { status: 400 });
-  }
-
   // Bulk insert
   if (Array.isArray(names) && names.length > 0) {
-    // Get current max sort_order for this account
+    // Get current max sort_order
     const { data: existing } = await supabase
       .from("project_tags")
       .select("sort_order")
-      .eq("account", account.trim())
       .order("sort_order", { ascending: false })
       .limit(1);
 
@@ -77,7 +72,7 @@ export async function POST(request: Request) {
       .map((n: string) => n.trim())
       .filter(Boolean)
       .map((name: string) => ({
-        account: account.trim(),
+        ...(account?.trim() ? { account: account.trim() } : {}),
         project_name: name,
         sort_order: nextOrder++,
         created_by: user.id,
@@ -103,7 +98,6 @@ export async function POST(request: Request) {
   const { data: existing } = await supabase
     .from("project_tags")
     .select("sort_order")
-    .eq("account", account.trim())
     .order("sort_order", { ascending: false })
     .limit(1);
 
@@ -112,7 +106,7 @@ export async function POST(request: Request) {
   const { data, error } = await supabase
     .from("project_tags")
     .insert({
-      account: account.trim(),
+      ...(account?.trim() ? { account: account.trim() } : {}),
       project_name: project_name.trim(),
       sort_order: nextOrder,
       created_by: user.id,
@@ -159,7 +153,18 @@ export async function PATCH(request: Request) {
     return Response.json({ success: true });
   }
 
-  const { id, project_name, is_active } = body;
+  const { id, project_name, is_active, account: newAccount, bulk_assign_account, project_ids } = body;
+
+  // Bulk assign projects to an account
+  if (bulk_assign_account !== undefined && Array.isArray(project_ids)) {
+    for (const pid of project_ids) {
+      await supabase
+        .from("project_tags")
+        .update({ account: bulk_assign_account || null })
+        .eq("id", pid);
+    }
+    return Response.json({ success: true });
+  }
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
@@ -168,6 +173,7 @@ export async function PATCH(request: Request) {
   const updates: Record<string, unknown> = {};
   if (project_name !== undefined) updates.project_name = project_name.trim();
   if (is_active !== undefined) updates.is_active = is_active;
+  if (newAccount !== undefined) updates.account = newAccount || null;
 
   const { error } = await supabase
     .from("project_tags")

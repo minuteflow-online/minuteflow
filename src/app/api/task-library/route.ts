@@ -54,7 +54,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { task_name, names } = body;
+  const { task_name, names, category_id } = body;
 
   // Get next sort_order
   const { data: existing } = await supabase
@@ -74,6 +74,7 @@ export async function POST(request: Request) {
         task_name: name,
         sort_order: nextOrder++,
         created_by: user.id,
+        ...(category_id ? { category_id } : {}),
       }));
 
     const { data, error } = await supabase
@@ -106,6 +107,7 @@ export async function POST(request: Request) {
       task_name: task_name.trim(),
       sort_order: nextOrder,
       created_by: user.id,
+      ...(category_id ? { category_id } : {}),
     })
     .select()
     .single();
@@ -155,7 +157,7 @@ export async function PATCH(request: Request) {
     return Response.json({ success: true });
   }
 
-  const { id, task_name, is_active } = body;
+  const { id, task_name, is_active, category_id } = body;
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
@@ -164,6 +166,7 @@ export async function PATCH(request: Request) {
   const updates: Record<string, unknown> = {};
   if (task_name !== undefined) updates.task_name = task_name.trim();
   if (is_active !== undefined) updates.is_active = is_active;
+  if (category_id !== undefined) updates.category_id = category_id;
 
   const { error } = await supabase
     .from("task_library")

@@ -277,11 +277,21 @@ export interface InvoicePayment {
   created_at: string;
 }
 
+export interface TaskCategory {
+  id: number;
+  category_name: string;
+  sort_order: number;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface TaskLibraryItem {
   id: number;
   task_name: string;
   is_active: boolean;
   sort_order: number;
+  category_id: number | null;
   created_by: string | null;
   created_at: string;
 }
