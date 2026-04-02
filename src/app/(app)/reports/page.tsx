@@ -51,29 +51,30 @@ export default function ReportsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole>("va");
 
-  const { start, end, periodLabel } = useMemo(() => {
+  /* ── Compute date range as ISO strings (stable primitives) ── */
+
+  const { startISO, endISO, start, end, periodLabel } = useMemo(() => {
     const now = new Date();
     if (dateRange === "today") {
       const s = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
       const e = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
       const label = s.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-      return { start: s, end: e, periodLabel: label };
+      return { startISO: s.toISOString(), endISO: e.toISOString(), start: s, end: e, periodLabel: label };
     } else if (dateRange === "week") {
       const s = weekStart(now);
       const e = weekEnd(now);
       const label = `Week of ${s.toLocaleDateString("en-US", { month: "long", day: "numeric" })} \u2013 ${e.toLocaleDateString("en-US", { day: "numeric", year: "numeric" })}`;
-      return { start: s, end: e, periodLabel: label };
+      return { startISO: s.toISOString(), endISO: e.toISOString(), start: s, end: e, periodLabel: label };
+    } else if (dateRange === "custom" && appliedStart && appliedEnd) {
+      const s = new Date(appliedStart + "T00:00:00Z");
+      const e = new Date(appliedEnd + "T23:59:59Z");
+      const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} \u2013 ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`;
+      return { startISO: s.toISOString(), endISO: e.toISOString(), start: s, end: e, periodLabel: label };
     } else if (dateRange === "custom") {
-      if (appliedStart && appliedEnd) {
-        const s = new Date(appliedStart + "T00:00:00Z");
-        const e = new Date(appliedEnd + "T23:59:59Z");
-        const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} \u2013 ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`;
-        return { start: s, end: e, periodLabel: label };
-      }
-      // Fallback to current week if custom dates not set yet
-      const s = weekStart(now);
-      const e = weekEnd(now);
-      return { start: s, end: e, periodLabel: "Select date range" };
+      // Custom selected but no dates applied yet — don't fetch, show placeholder
+      const s = new Date(0);
+      const e = new Date(0);
+      return { startISO: "", endISO: "", start: s, end: e, periodLabel: "Select date range" };
     } else {
       const s = new Date(now.getFullYear(), now.getMonth(), 1);
       const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
@@ -81,11 +82,18 @@ export default function ReportsPage() {
         month: "long",
         year: "numeric",
       });
-      return { start: s, end: e, periodLabel: label };
+      return { startISO: s.toISOString(), endISO: e.toISOString(), start: s, end: e, periodLabel: label };
     }
   }, [dateRange, appliedStart, appliedEnd]);
 
-  const fetchData = useCallback(async () => {
+  /* ── Fetch data — uses ISO strings so deps are stable primitives ── */
+
+  const fetchData = useCallback(async (qStart: string, qEnd: string) => {
+    if (!qStart || !qEnd) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     const supabase = createClient();
 
     // Get current user and role
@@ -103,21 +111,19 @@ export default function ReportsPage() {
       setRole(userRole);
     }
 
-    // RLS handles filtering at DB level, but for VAs we also filter client-side
-    // to ensure consistency (RLS already restricts to own rows for VAs)
     const [logsRes, profilesRes, screenshotsRes] = await Promise.all([
       supabase
         .from("time_logs")
         .select("*")
-        .gte("start_time", start.toISOString())
-        .lte("start_time", end.toISOString())
+        .gte("start_time", qStart)
+        .lte("start_time", qEnd)
         .order("start_time", { ascending: true }),
       supabase.from("profiles").select("*"),
       supabase
         .from("task_screenshots")
         .select("*")
-        .gte("created_at", start.toISOString())
-        .lte("created_at", end.toISOString()),
+        .gte("created_at", qStart)
+        .lte("created_at", qEnd),
     ]);
 
     setLogs((logsRes.data ?? []) as TimeLog[]);
@@ -128,7 +134,7 @@ export default function ReportsPage() {
     // Generate signed URLs for screenshot thumbnails
     if (ssData.length > 0) {
       const urlBatch: Record<number, string> = {};
-      const toSign = ssData.slice(0, 12); // Only first 12 shown
+      const toSign = ssData.slice(0, 12);
       const results = await Promise.all(
         toSign.map(async (ss) => {
           const { data } = await supabase.storage
@@ -146,12 +152,18 @@ export default function ReportsPage() {
     }
 
     setLoading(false);
-  }, [start, end]);
+  }, []);
+
+  /* ── Auto-fetch when startISO/endISO change (for non-custom ranges) ── */
 
   useEffect(() => {
-    setLoading(true);
-    fetchData();
-  }, [fetchData]);
+    if (startISO && endISO) {
+      fetchData(startISO, endISO);
+    } else if (dateRange === "custom" && !appliedStart) {
+      // Just switched to custom, no dates yet — stop loading, show picker
+      setLoading(false);
+    }
+  }, [startISO, endISO, fetchData, dateRange, appliedStart]);
 
   /* ── Filter by selected VA ───────────────────────────────── */
 
@@ -550,6 +562,10 @@ export default function ReportsPage() {
               onClick={() => {
                 setAppliedStart(customStart);
                 setAppliedEnd(customEnd);
+                // Directly fetch with the new dates — don't rely solely on effect chain
+                const qStart = new Date(customStart + "T00:00:00Z").toISOString();
+                const qEnd = new Date(customEnd + "T23:59:59Z").toISOString();
+                fetchData(qStart, qEnd);
               }}
               className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
             >
