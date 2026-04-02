@@ -498,6 +498,14 @@ export default function DashboardPage() {
     );
 
     if (!error) {
+      // Persist mood to mood_logs for historical tracking
+      if (mood) {
+        const moodDate = session?.session_date || new Date().toISOString().split("T")[0];
+        await supabase.from("mood_logs").upsert(
+          { user_id: userId, session_date: moodDate, mood },
+          { onConflict: "user_id,session_date" }
+        );
+      }
       // Create a "Clocked Out" time_log entry to mark the boundary
       if (profile) {
         const { data: clockOutLog } = await supabase

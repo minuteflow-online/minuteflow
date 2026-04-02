@@ -84,6 +84,9 @@ export default function TeamPage() {
   // Member selection state
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
 
+  // Mood data: { [userId]: { [session_date_YYYY-MM-DD]: mood } }
+  const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
+
   // Check role on mount and redirect VAs
   useEffect(() => {
     async function checkRole() {
@@ -144,7 +147,10 @@ export default function TeamPage() {
     const startISO = rangeStart.toISOString();
     const endISO = rangeEnd.toISOString();
 
-    const [profilesRes, sessionsRes, logsRes, screenshotsRes] =
+    const moodStart = rangeStart.toISOString().split("T")[0];
+    const moodEnd = rangeEnd.toISOString().split("T")[0];
+
+    const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes] =
       await Promise.all([
         supabase.from("profiles").select("*"),
         supabase.from("sessions").select("*"),
@@ -158,6 +164,11 @@ export default function TeamPage() {
           .select("*")
           .gte("created_at", startISO)
           .lte("created_at", endISO),
+        supabase
+          .from("mood_logs")
+          .select("user_id, session_date, mood")
+          .gte("session_date", moodStart)
+          .lte("session_date", moodEnd),
       ]);
 
     const allProfiles = (profilesRes.data ?? []) as Profile[];
@@ -165,6 +176,16 @@ export default function TeamPage() {
     const sessions = (sessionsRes.data ?? []) as Session[];
     const logs = (logsRes.data ?? []) as TimeLog[];
     const screenshots = (screenshotsRes.data ?? []) as TaskScreenshot[];
+
+    // Build mood lookup: { userId: { "YYYY-MM-DD": mood } }
+    const moodLookup: Record<string, Record<string, string>> = {};
+    if (moodRes.data) {
+      (moodRes.data as { user_id: string; session_date: string; mood: string }[]).forEach((row) => {
+        if (!moodLookup[row.user_id]) moodLookup[row.user_id] = {};
+        moodLookup[row.user_id][row.session_date] = row.mood;
+      });
+    }
+    setMoodData(moodLookup);
 
     const teamMembers: TeamMember[] = profiles.map((profile) => {
       const session =
@@ -576,6 +597,7 @@ export default function TeamPage() {
                   isToday={isToday}
                   onForceLogout={isAdmin ? handleForceLogout : undefined}
                   onDeselect={() => toggleMember(member.profile.id)}
+                  userMoods={moodData[member.profile.id] || {}}
                 />
               ))}
             </div>
@@ -803,12 +825,13 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
 
 /* ── Expanded Member Card (Full Width) ───────────────────── */
 
-function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselect }: {
+function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselect, userMoods }: {
   member: TeamMember;
   isAdmin: boolean;
   isToday: boolean;
   onForceLogout?: (userId: string, fullName: string) => void;
   onDeselect: () => void;
+  userMoods: Record<string, string>; // { "YYYY-MM-DD": mood }
 }) {
   const { profile, status, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
@@ -857,20 +880,23 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   }, [member.todayLogs]);
 
   // Daily breakdown for multi-day ranges
+  const moodEmoji: Record<string, string> = { bad: "\uD83D\uDE1E", neutral: "\uD83D\uDE10", good: "\uD83D\uDE0A" };
+
   const dailyBreakdown = useMemo(() => {
     if (isToday) return [];
-    const byDate: Record<string, { logs: TimeLog[]; dateSort: number }> = {};
+    const byDate: Record<string, { logs: TimeLog[]; dateSort: number; isoDate: string }> = {};
     member.todayLogs.forEach((log) => {
       const d = new Date(log.start_time);
       const key = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
       const dateSort = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-      if (!byDate[key]) byDate[key] = { logs: [], dateSort };
+      const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (!byDate[key]) byDate[key] = { logs: [], dateSort, isoDate };
       byDate[key].logs.push(log);
     });
 
     return Object.entries(byDate)
       .sort((a, b) => b[1].dateSort - a[1].dateSort) // newest first
-      .map(([dateLabel, { logs: dayLogs }]) => {
+      .map(([dateLabel, { logs: dayLogs, isoDate }]) => {
         const nonBreakLogs = dayLogs.filter(l => l.category !== "Break");
         const totalMs = dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
         const dayPayable = computePayable(totalMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
@@ -889,9 +915,12 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
             ? new Date(Math.max(...logsWithEnd.map(l => new Date(l.end_time!).getTime())))
             : null;
 
-        return { dateLabel, totalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: dayLogs };
+        // Look up mood for this date
+        const mood = userMoods[isoDate] || null;
+
+        return { dateLabel, totalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: dayLogs, mood };
       });
-  }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type]);
+  }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type, userMoods]);
 
   const showDateGroups = !isToday && Object.keys(logsByDate).length > 1;
 
@@ -1022,7 +1051,10 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
             {dailyBreakdown.map((day) => (
               <div key={day.dateLabel} className="flex items-center justify-between rounded-lg bg-parchment/30 px-4 py-2.5">
                 <div className="flex items-center gap-4">
-                  <span className="text-[12px] font-bold text-terracotta min-w-[100px]">{day.dateLabel}</span>
+                  <span className="text-[12px] font-bold text-terracotta min-w-[100px]">
+                    {day.dateLabel}
+                    {day.mood && <span className="ml-1.5" title={day.mood}>{moodEmoji[day.mood] || ""}</span>}
+                  </span>
                   <span className="text-[11px] text-bark">
                     {day.clockIn
                       ? day.clockIn.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })

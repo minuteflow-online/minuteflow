@@ -239,6 +239,15 @@ export default function TopNav({ user }: TopNavProps) {
         { onConflict: "user_id" }
       );
 
+      // Persist mood to mood_logs for historical tracking
+      if (logoutMood) {
+        const moodDate = sessionForBreaks?.session_date || new Date().toISOString().split("T")[0];
+        await supabase.from("mood_logs").upsert(
+          { user_id: authUser.id, session_date: moodDate, mood: logoutMood },
+          { onConflict: "user_id,session_date" }
+        );
+      }
+
       // --- Billable Break Allowance: recalculate at clock-out ---
       const clockInTime = sessionForBreaks?.clock_in_time;
       const sessionDate = sessionForBreaks?.session_date || new Date().toISOString().split("T")[0];

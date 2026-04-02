@@ -140,6 +140,10 @@ export default function TimeLogPage() {
   const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
+  /* ── Mood data ────────────────────────────────────────────── */
+  const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
+  // moodData: { [userId]: { [session_date]: mood } }
+
   const isAdminOrManager = role === "admin" || role === "manager";
 
   /* ── Fetch current user & profiles ─────────────────────── */
@@ -257,6 +261,35 @@ export default function TimeLogPage() {
           }
         });
         setScreenshots(grouped);
+      }
+    }
+
+    // Fetch mood data from mood_logs for the date range
+    {
+      const moodStart = (viewMode === "day" ? weekStart(anchorDate) : rangeStart).toISOString().split("T")[0];
+      const moodEnd = (viewMode === "day" ? weekEnd(anchorDate) : rangeEnd).toISOString().split("T")[0];
+
+      let moodQuery = supabase
+        .from("mood_logs")
+        .select("user_id, session_date, mood")
+        .gte("session_date", moodStart)
+        .lte("session_date", moodEnd);
+
+      if (!isAdminOrManager) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) moodQuery = moodQuery.eq("user_id", user.id);
+      } else if (selectedVA) {
+        moodQuery = moodQuery.eq("user_id", selectedVA);
+      }
+
+      const { data: moodRows } = await moodQuery;
+      if (moodRows) {
+        const grouped: Record<string, Record<string, string>> = {};
+        (moodRows as { user_id: string; session_date: string; mood: string }[]).forEach((row) => {
+          if (!grouped[row.user_id]) grouped[row.user_id] = {};
+          grouped[row.user_id][row.session_date] = row.mood;
+        });
+        setMoodData(grouped);
       }
     }
 
@@ -389,26 +422,76 @@ export default function TimeLogPage() {
     return grouped;
   }, [filteredLogs]);
 
-  /* ── Day summary stats ─────────────────────────────────── */
+  /* ── Day summary stats (dynamic categories) ──────────────── */
 
   const daySummary = useMemo(() => {
-    const totalMs = filteredLogs
-      .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+    let totalMs = 0;
+    let personalMs = 0;
+    let wizardMs = 0;
+    const categoryMs: Record<string, number> = {};
 
-    const billableMs = filteredLogs
-      .filter((l) => l.billable && l.category !== "Break")
-      .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+    filteredLogs.forEach((l) => {
+      totalMs += l.duration_ms || 0;
+      wizardMs += l.form_fill_ms || 0;
 
-    const breakMs = filteredLogs
-      .filter((l) => l.category === "Break")
-      .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+      const cat = l.category || "Other";
+      categoryMs[cat] = (categoryMs[cat] || 0) + (l.duration_ms || 0);
 
+      if (cat.toLowerCase() === "personal") {
+        personalMs += l.duration_ms || 0;
+      }
+    });
+
+    const billableMs = totalMs - personalMs;
     const entryCount = filteredLogs.length;
 
-    const wizardMs = filteredLogs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0);
+    // Build sorted category entries (alphabetical, Personal last)
+    const categories = Object.entries(categoryMs)
+      .filter(([, ms]) => ms > 0)
+      .sort(([a], [b]) => {
+        if (a.toLowerCase() === "personal") return 1;
+        if (b.toLowerCase() === "personal") return -1;
+        return a.localeCompare(b);
+      })
+      .map(([name, ms]) => ({ name, formatted: formatDuration(ms) }));
 
-    return { totalMs, billableMs, breakMs, entryCount, wizardMs };
+    return { totalMs, billableMs, wizardMs, entryCount, categories };
   }, [filteredLogs]);
+
+  /* ── Mood summary for footer ────────────────────────────── */
+
+  const moodSummary = useMemo(() => {
+    const moodEmoji: Record<string, string> = { bad: "\uD83D\uDE1E", neutral: "\uD83D\uDE10", good: "\uD83D\uDE0A" };
+    const allMoods: string[] = [];
+
+    // Collect all moods from moodData for the current date range
+    Object.values(moodData).forEach((dateMap) => {
+      Object.entries(dateMap).forEach(([dateStr]) => {
+        const d = new Date(dateStr + "T12:00:00");
+        if (d >= rangeStart && d <= rangeEnd) {
+          allMoods.push(dateMap[dateStr]);
+        }
+      });
+    });
+
+    if (allMoods.length === 0) return null;
+
+    // If single VA selected (or VA viewing own data): show the emoji directly
+    const userIds = Object.keys(moodData);
+    if (userIds.length === 1) {
+      // Single user — show latest mood emoji
+      const latestMood = allMoods[allMoods.length - 1];
+      return { type: "single" as const, emoji: moodEmoji[latestMood] || "", mood: latestMood };
+    }
+
+    // Multiple VAs — show count per mood
+    const counts: Record<string, number> = {};
+    allMoods.forEach((m) => { counts[m] = (counts[m] || 0) + 1; });
+    const parts = (["good", "neutral", "bad"] as string[])
+      .filter((m) => counts[m])
+      .map((m) => `${counts[m]} ${moodEmoji[m]}`);
+    return { type: "multi" as const, display: parts.join("  ") };
+  }, [moodData, rangeStart, rangeEnd]);
 
   /* ── Export CSV ─────────────────────────────────────────── */
 
@@ -882,7 +965,7 @@ export default function TimeLogPage() {
 
             {/* Day Summary Footer */}
             {filteredLogs.length > 0 && (
-              <div className="flex flex-wrap gap-7 border-t border-sand bg-parchment px-5 py-4 rounded-b-xl">
+              <div className="flex flex-wrap items-end gap-7 border-t border-sand bg-parchment px-5 py-4 rounded-b-xl">
                 <SummaryItem
                   value={formatDuration(daySummary.totalMs)}
                   label="Total"
@@ -893,11 +976,28 @@ export default function TimeLogPage() {
                   label="Billable"
                   colorClass="text-sage"
                 />
-                <SummaryItem
-                  value={formatDurationShort(daySummary.breakMs)}
-                  label="Breaks"
-                  colorClass="text-amber"
-                />
+
+                {/* Dynamic category breakdown */}
+                {daySummary.categories.map((cat) => {
+                  const colorClass =
+                    cat.name.toLowerCase() === "task" ? "text-terracotta" :
+                    cat.name.toLowerCase() === "break" ? "text-amber" :
+                    cat.name.toLowerCase() === "message" ? "text-slate-blue" :
+                    cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
+                    cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
+                    cat.name.toLowerCase() === "sorting tasks" ? "text-amber" :
+                    cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
+                    "text-bark";
+                  return (
+                    <SummaryItem
+                      key={cat.name}
+                      value={cat.formatted}
+                      label={cat.name}
+                      colorClass={colorClass}
+                    />
+                  );
+                })}
+
                 <SummaryItem
                   value={formatDuration(daySummary.wizardMs)}
                   label="Wizard Time"
@@ -908,6 +1008,23 @@ export default function TimeLogPage() {
                   label="Entries"
                   colorClass="text-espresso"
                 />
+
+                {/* Mood indicator */}
+                {moodSummary && (
+                  <div className="ml-auto">
+                    {moodSummary.type === "single" ? (
+                      <div className="text-center">
+                        <div className="text-2xl">{moodSummary.emoji}</div>
+                        <div className="mt-0.5 text-[10px] font-semibold text-bark">Mood</div>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <div className="text-sm font-semibold text-espresso">{moodSummary.display}</div>
+                        <div className="mt-0.5 text-[10px] font-semibold text-bark">Team Mood</div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
