@@ -72,6 +72,10 @@ export default function ProjectsTasksTab() {
   /* ── State: assigning ─────── */
   const [assigning, setAssigning] = useState(false);
 
+  /* ── State: bulk selection (assigned tasks) ─────── */
+  const [selectedAssignmentIds, setSelectedAssignmentIds] = useState<Set<number>>(new Set());
+  const [bulkUnassigning, setBulkUnassigning] = useState(false);
+
   /* ── State: bulk selection (projects) ─────── */
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set());
   const [bulkDeletingProjects, setBulkDeletingProjects] = useState(false);
@@ -119,6 +123,7 @@ export default function ProjectsTasksTab() {
   useEffect(() => {
     if (selectedProject) {
       fetchAssignments(selectedProject.id);
+      setSelectedAssignmentIds(new Set());
     }
   }, [selectedProject, fetchAssignments]);
 
@@ -219,6 +224,32 @@ export default function ProjectsTasksTab() {
   const handleUnassignTask = async (assignmentId: number) => {
     await fetch(`/api/project-task-assignments?id=${assignmentId}`, { method: "DELETE" });
     if (selectedProject) fetchAssignments(selectedProject.id);
+  };
+
+  const handleBulkUnassignTasks = async () => {
+    if (selectedAssignmentIds.size === 0) return;
+    if (!window.confirm(`Remove ${selectedAssignmentIds.size} task(s) from this project?`)) return;
+    setBulkUnassigning(true);
+    const ids = Array.from(selectedAssignmentIds).join(",");
+    await fetch(`/api/project-task-assignments?ids=${ids}`, { method: "DELETE" });
+    setSelectedAssignmentIds(new Set());
+    setBulkUnassigning(false);
+    if (selectedProject) fetchAssignments(selectedProject.id);
+  };
+
+  const toggleAssignmentSelection = (id: number) => {
+    setSelectedAssignmentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllAssignments = (allIds: number[]) => {
+    setSelectedAssignmentIds((prev) =>
+      prev.size === allIds.length ? new Set() : new Set(allIds)
+    );
   };
 
   const handleMoveAssignment = async (index: number, direction: "up" | "down") => {
@@ -766,6 +797,30 @@ export default function ProjectsTasksTab() {
                 </h4>
               </div>
 
+              {/* Select all + bulk remove for assigned tasks */}
+              {sortedAssignments.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-bark select-none">
+                    <input
+                      type="checkbox"
+                      checked={selectedAssignmentIds.size === sortedAssignments.length && sortedAssignments.length > 0}
+                      onChange={() => toggleAllAssignments(sortedAssignments.map((a) => a.id))}
+                      className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer"
+                    />
+                    Select All
+                  </label>
+                  {selectedAssignmentIds.size > 0 && (
+                    <button
+                      onClick={handleBulkUnassignTasks}
+                      disabled={bulkUnassigning}
+                      className="text-[11px] font-semibold text-red-600 hover:text-red-700 cursor-pointer disabled:opacity-50"
+                    >
+                      {bulkUnassigning ? "Removing..." : `Remove (${selectedAssignmentIds.size})`}
+                    </button>
+                  )}
+                </div>
+              )}
+
               {sortedAssignments.length === 0 ? (
                 <p className="text-[11px] text-stone text-center py-3 bg-parchment rounded-lg">
                   No tasks assigned yet. Select tasks on the left and click &ldquo;Assign&rdquo;.
@@ -775,8 +830,16 @@ export default function ProjectsTasksTab() {
                   {sortedAssignments.map((a, index) => (
                     <div
                       key={a.id}
-                      className="rounded-lg border border-sand bg-white p-2 flex items-center gap-2 text-xs"
+                      className={`rounded-lg border p-2 flex items-center gap-2 text-xs ${
+                        selectedAssignmentIds.has(a.id) ? "border-red-300 bg-red-50/30 ring-1 ring-red-200" : "border-sand bg-white"
+                      }`}
                     >
+                      <input
+                        type="checkbox"
+                        checked={selectedAssignmentIds.has(a.id)}
+                        onChange={() => toggleAssignmentSelection(a.id)}
+                        className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+                      />
                       {/* Reorder */}
                       <div className="flex flex-col gap-0">
                         <button onClick={() => handleMoveAssignment(index, "up")} disabled={index === 0} className="text-[9px] text-stone hover:text-espresso disabled:opacity-25 cursor-pointer leading-none">&#9650;</button>
