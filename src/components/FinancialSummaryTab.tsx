@@ -148,9 +148,9 @@ export default function FinancialSummaryTab() {
     [accounts]
   );
 
-  // VA profiles (only active va and manager, exclude admin and inactive)
+  // VA profiles (all active team members, regardless of role)
   const vaProfiles = useMemo(
-    () => profiles.filter((p) => (p.role === "va" || p.role === "manager") && p.is_active !== false),
+    () => profiles.filter((p) => p.is_active !== false),
     [profiles]
   );
 

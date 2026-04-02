@@ -542,7 +542,7 @@ export default function ReportsPage() {
             >
               <option value="all">All Team</option>
               {profiles
-                .filter((p) => (p.role === "va" || p.role === "manager") && p.is_active !== false)
+                .filter((p) => p.is_active !== false)
                 .sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""))
                 .map((p) => (
                   <option key={p.id} value={p.id}>
