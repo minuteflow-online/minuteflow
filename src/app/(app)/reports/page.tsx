@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Profile, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
+import type { Profile, TimeLog, TaskScreenshot, UserRole, Client } from "@/types/database";
 import {
   formatDuration,
   getInitials,
@@ -34,12 +34,19 @@ type PersonHours = {
   taskCount: number;
 };
 
+type ClientFinancial = {
+  clientName: string;
+  payableToVA: number;
+  billableToClient: number;
+};
+
 /* ── Page Component ───────────────────────────────────────── */
 
 export default function ReportsPage() {
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [screenshots, setScreenshots] = useState<TaskScreenshot[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
   const [dateRange, setDateRange] = useState<DateRange>("week");
   const [selectedVA, setSelectedVA] = useState<string>("all");
@@ -112,7 +119,7 @@ export default function ReportsPage() {
         setRole(userRole);
       }
 
-      const [logsRes, profilesRes, screenshotsRes] = await Promise.all([
+      const [logsRes, profilesRes, screenshotsRes, clientsRes] = await Promise.all([
         supabase
           .from("time_logs")
           .select("*")
@@ -125,10 +132,12 @@ export default function ReportsPage() {
           .select("*")
           .gte("created_at", qStart)
           .lte("created_at", qEnd),
+        supabase.from("clients").select("*"),
       ]);
 
       setLogs((logsRes.data ?? []) as TimeLog[]);
       setProfiles((profilesRes.data ?? []) as Profile[]);
+      setClients((clientsRes.data ?? []) as Client[]);
       const ssData = (screenshotsRes.data ?? []) as TaskScreenshot[];
       setScreenshots(ssData);
 
@@ -344,6 +353,48 @@ export default function ReportsPage() {
       }))
       .sort((a, b) => b.totalMs - a.totalMs);
   }, [filteredLogs, profiles]);
+
+  /* ── Client financials (for Financial Summary) ───────────── */
+
+  const clientFinancials: ClientFinancial[] = useMemo(() => {
+    // Group billable logs by client_name, then by user_id within each client
+    const clientMap: Record<string, Record<string, number>> = {};
+    filteredLogs
+      .filter((l) => l.billable && l.client_name)
+      .forEach((l) => {
+        const cn = l.client_name!;
+        if (!clientMap[cn]) clientMap[cn] = {};
+        clientMap[cn][l.user_id] = (clientMap[cn][l.user_id] || 0) + (l.duration_ms || 0);
+      });
+
+    return Object.entries(clientMap)
+      .map(([clientName, userMs]) => {
+        let payableToVA = 0;
+        let billableToClient = 0;
+
+        // Find client record for billing rate
+        const clientRecord = clients.find((c) => c.name === clientName);
+        const clientRate = clientRecord?.default_hourly_rate || null;
+
+        Object.entries(userMs).forEach(([uid, ms]) => {
+          const profile = profiles.find((p) => p.id === uid);
+          const vaRate = profile?.pay_rate || 0;
+          const vaRateType = profile?.pay_rate_type || "hourly";
+          const hours = ms / 3600000;
+
+          // Payable to VA: always use VA's own rate
+          if (vaRateType === "hourly") payableToVA += hours * Number(vaRate);
+          else if (vaRateType === "daily") payableToVA += (hours / 8) * Number(vaRate);
+
+          // Billable to Client: use client rate if set, otherwise VA rate
+          const billingRate = clientRate !== null ? clientRate : Number(vaRate);
+          billableToClient += hours * billingRate;
+        });
+
+        return { clientName, payableToVA, billableToClient };
+      })
+      .sort((a, b) => b.billableToClient - a.billableToClient);
+  }, [filteredLogs, profiles, clients]);
 
   /* ── Export CSV ───────────────────────────────────────────── */
 
@@ -766,49 +817,76 @@ export default function ReportsPage() {
                     Financial Summary
                   </h3>
                 </div>
-                <div className="px-5 py-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] text-bark">Billable Hours</span>
-                    <span className="font-serif text-lg font-bold text-sage">
-                      {formatDuration(billableMs)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] text-bark">Total Work Hours</span>
-                    <span className="font-serif text-lg font-bold text-espresso">
-                      {formatDuration(totalHoursMs)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] text-bark">Break Time</span>
-                    <span className="font-serif text-lg font-bold text-amber">
-                      {formatDuration(breakMs)}
-                    </span>
-                  </div>
-                  <div className="border-t border-parchment pt-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[13px] font-semibold text-espresso">
-                        Est. Internal Cost
-                      </span>
-                      <span className="font-serif text-lg font-bold text-terracotta">
-                        {(() => {
-                          let cost = 0;
-                          personHours.forEach((ph) => {
-                            const rate = ph.profile.pay_rate || 0;
-                            const rateType = ph.profile.pay_rate_type || "hourly";
-                            const hours = ph.totalMs / 3600000;
-                            if (rateType === "hourly") cost += hours * rate;
-                            else if (rateType === "daily") cost += (hours / 8) * rate;
-                          });
-                          return cost.toLocaleString("en-US", {
-                            style: "currency",
-                            currency: "USD",
-                            minimumFractionDigits: 2,
-                          });
-                        })()}
-                      </span>
-                    </div>
-                  </div>
+                <div className="px-5 py-4">
+                  {clientFinancials.length === 0 ? (
+                    <p className="text-[13px] text-bark">No billable data yet</p>
+                  ) : (
+                    <>
+                      {/* Header row */}
+                      <div className="flex items-center gap-3 border-b border-parchment pb-3 mb-1">
+                        <div className="flex-1 text-[11px] font-semibold uppercase tracking-wide text-bark">
+                          Client
+                        </div>
+                        <div className="w-[110px] text-right text-[11px] font-semibold uppercase tracking-wide text-bark">
+                          Payable to VA
+                        </div>
+                        <div className="w-[110px] text-right text-[11px] font-semibold uppercase tracking-wide text-bark">
+                          Billable to Client
+                        </div>
+                      </div>
+
+                      {/* Client rows */}
+                      {clientFinancials.map((cf) => (
+                        <div
+                          key={cf.clientName}
+                          className="flex items-center gap-3 border-b border-parchment py-3 last:border-b-0"
+                        >
+                          <div className="flex-1 text-[13px] font-semibold text-espresso">
+                            {cf.clientName}
+                          </div>
+                          <div className="w-[110px] text-right font-serif text-sm font-bold text-terracotta">
+                            {cf.payableToVA.toLocaleString("en-US", {
+                              style: "currency",
+                              currency: "USD",
+                              minimumFractionDigits: 2,
+                            })}
+                          </div>
+                          <div className="w-[110px] text-right font-serif text-sm font-bold text-sage">
+                            {cf.billableToClient.toLocaleString("en-US", {
+                              style: "currency",
+                              currency: "USD",
+                              minimumFractionDigits: 2,
+                            })}
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* Total row */}
+                      <div className="flex items-center gap-3 border-t-2 border-espresso pt-3 mt-1">
+                        <div className="flex-1 text-[13px] font-bold text-espresso">
+                          Total
+                        </div>
+                        <div className="w-[110px] text-right font-serif text-base font-bold text-terracotta">
+                          {clientFinancials
+                            .reduce((sum, cf) => sum + cf.payableToVA, 0)
+                            .toLocaleString("en-US", {
+                              style: "currency",
+                              currency: "USD",
+                              minimumFractionDigits: 2,
+                            })}
+                        </div>
+                        <div className="w-[110px] text-right font-serif text-base font-bold text-sage">
+                          {clientFinancials
+                            .reduce((sum, cf) => sum + cf.billableToClient, 0)
+                            .toLocaleString("en-US", {
+                              style: "currency",
+                              currency: "USD",
+                              minimumFractionDigits: 2,
+                            })}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
