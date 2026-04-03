@@ -134,6 +134,8 @@ export default function DashboardPage() {
   const activeLogIdRef = useRef<number | null>(null);
   const captureWorkerRef = useRef<Worker | null>(null);
   const silentCaptureRef = useRef<((logId: number, screenshotType: 'start' | 'progress' | 'end' | 'manual') => Promise<boolean>) | null>(null);
+  const isCapturingRef = useRef(false);
+  const lastCaptureTimeRef = useRef(0);
 
   // ─── Auth ──────────────────────────────────────────────────
 
@@ -1114,10 +1116,23 @@ export default function DashboardPage() {
   /** Capture a frame silently from the persistent stream. Returns true if captured. */
   const silentCapture = useCallback(
     async (logId: number, screenshotType: 'start' | 'progress' | 'end' | 'manual'): Promise<boolean> => {
-      const blob = await captureFrame();
-      if (!blob) return false;
-      await uploadScreenshot(blob, logId, screenshotType);
-      return true;
+      // Guard: skip if a capture is already in progress
+      if (isCapturingRef.current) return false;
+      // Guard: enforce 45-second cooldown between captures (skip for 'end' and 'manual' — those are intentional)
+      if (screenshotType !== 'end' && screenshotType !== 'manual') {
+        const now = Date.now();
+        if (now - lastCaptureTimeRef.current < 45_000) return false;
+      }
+      isCapturingRef.current = true;
+      try {
+        const blob = await captureFrame();
+        if (!blob) return false;
+        await uploadScreenshot(blob, logId, screenshotType);
+        lastCaptureTimeRef.current = Date.now();
+        return true;
+      } finally {
+        isCapturingRef.current = false;
+      }
     },
     [captureFrame, uploadScreenshot]
   );
