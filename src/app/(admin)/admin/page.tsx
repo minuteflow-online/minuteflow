@@ -371,7 +371,6 @@ export default function AdminPage() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 15000);
 
     const supabase = createClient();
     const channel = supabase
@@ -382,7 +381,6 @@ export default function AdminPage() {
       .subscribe();
 
     return () => {
-      clearInterval(interval);
       supabase.removeChannel(channel);
     };
   }, [fetchData]);
@@ -939,6 +937,7 @@ export default function AdminPage() {
               handleCaptureNow={handleCaptureNow}
               handleForceClockOut={handleForceClockOut}
               setMessageTarget={setMessageTarget}
+              onRefresh={fetchData}
             />
           )}
 
@@ -1111,6 +1110,7 @@ function OverviewTab({
   handleCaptureNow,
   handleForceClockOut,
   setMessageTarget,
+  onRefresh,
 }: {
   stats: { activeCount: number; todayHoursMs: number; todayScreenshots: number; todayTasks: number; wizardTimeMs: number };
   profiles: Profile[];
@@ -1137,6 +1137,7 @@ function OverviewTab({
   handleCaptureNow: (id: string) => void;
   handleForceClockOut: (id: string) => void;
   setMessageTarget: (id: string) => void;
+  onRefresh: () => void;
 }) {
   return (
     <>
@@ -1153,7 +1154,7 @@ function OverviewTab({
       <div className="mb-6 rounded-xl border border-sand bg-white">
         <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
           <h2 className="text-sm font-bold text-espresso">Live Team Monitor</h2>
-          <span className="text-[11px] text-bark">Auto-refresh every 15s</span>
+          <button onClick={() => onRefresh()} className="rounded-md bg-sand px-3 py-1 text-[11px] font-medium text-espresso hover:bg-parchment transition-colors">↻ Refresh</button>
         </div>
         <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
           {monitorMembers.map((member) => (

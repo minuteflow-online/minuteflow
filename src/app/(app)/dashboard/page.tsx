@@ -1179,6 +1179,9 @@ export default function DashboardPage() {
     };
   }, []);
 
+  // No visibility change listener needed — screenshots are taken on a fixed
+  // 9-minute schedule regardless of tab activity/inactivity.
+
   /** Schedule the auto-capture sequence using Web Worker (with setTimeout fallback) */
   const scheduleCaptureSequence = useCallback(
     (logId: number) => {
@@ -1196,36 +1199,35 @@ export default function DashboardPage() {
       // Immediate start screenshot
       silentCapture(logId, "start");
 
-      // 1 minute progress check
+      // 3 minute progress
       const t1 = setTimeout(() => {
-        if (activeLogIdRef.current === logId) {
-          silentCapture(logId, "progress");
-        }
-      }, 60_000);
-
-      // 3 minute progress check
-      const t2 = setTimeout(() => {
         if (activeLogIdRef.current === logId) {
           silentCapture(logId, "progress");
         }
       }, 180_000);
 
+      // 9 minute progress (6 min after the 3-min mark)
+      const t2 = setTimeout(() => {
+        if (activeLogIdRef.current === logId) {
+          silentCapture(logId, "progress");
+        }
+      }, 540_000);
+
       captureTimersRef.current = [t1, t2];
 
-      // After 3 minutes, start random 3-8 minute intervals
-      const scheduleRandom = (afterMs: number) => {
-        const randomDelay = (3 + Math.random() * 5) * 60_000; // 3-8 minutes
+      // After 9 minutes, every 9 minutes consistently (even if inactive)
+      const scheduleRepeating = (afterMs: number) => {
         const t = setTimeout(() => {
           if (activeLogIdRef.current === logId) {
             silentCapture(logId, "progress");
-            scheduleRandom(0); // Schedule next random capture
+            scheduleRepeating(540_000); // Next one in 9 min
           }
-        }, afterMs + randomDelay);
+        }, afterMs);
         captureTimersRef.current.push(t);
       };
 
-      // First random capture starts after the 3-minute mark
-      scheduleRandom(180_000);
+      // First repeating capture at 18 min (9 + 9)
+      scheduleRepeating(1_080_000);
     },
     [clearCaptureTimers, silentCapture]
   );

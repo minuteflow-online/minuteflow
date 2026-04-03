@@ -5,6 +5,12 @@
  * is in the background. Sends "capture" messages back to the main thread
  * at the scheduled intervals.
  *
+ * Schedule:
+ *   - Immediate "start" screenshot on task begin
+ *   - 3 minutes: "progress"
+ *   - 9 minutes (6 min after the 3-min mark): "progress"
+ *   - Then every 9 minutes consistently forever (even if inactive)
+ *
  * Protocol:
  *   Main -> Worker: { type: "start", logId: number }
  *   Main -> Worker: { type: "stop" }
@@ -24,13 +30,12 @@ function requestCapture(logId, screenshotType) {
   self.postMessage({ type: "capture", logId, screenshotType });
 }
 
-function scheduleRandom(logId, afterMs) {
-  const randomDelay = (3 + Math.random() * 5) * 60000; // 3-8 minutes
+function scheduleRepeating(logId, afterMs) {
   const t = setTimeout(() => {
     if (currentLogId !== logId) return;
     requestCapture(logId, "progress");
-    scheduleRandom(logId, 0); // Chain next random capture
-  }, afterMs + randomDelay);
+    scheduleRepeating(logId, 540000); // Every 9 minutes
+  }, afterMs);
   timers.push(t);
 }
 
@@ -44,20 +49,20 @@ self.onmessage = function (e) {
     // Immediate start screenshot
     requestCapture(logId, "start");
 
-    // 1 minute progress
+    // 3 minute progress
     const t1 = setTimeout(() => {
       requestCapture(logId, "progress");
-    }, 60000);
+    }, 180000); // 3 min
 
-    // 3 minute progress
+    // 9 minute progress (6 min after the 3-min mark)
     const t2 = setTimeout(() => {
       requestCapture(logId, "progress");
-    }, 180000);
+    }, 540000); // 9 min
 
     timers = [t1, t2];
 
-    // After 3 minutes, random 3-8 minute intervals
-    scheduleRandom(logId, 180000);
+    // After the 9-minute mark, every 9 minutes consistently
+    scheduleRepeating(logId, 1080000); // 18 min = 9 + 9
   }
 
   if (type === "stop") {
