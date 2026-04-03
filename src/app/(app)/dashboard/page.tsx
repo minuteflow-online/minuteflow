@@ -2177,6 +2177,9 @@ export default function DashboardPage() {
     window.dispatchEvent(
       new CustomEvent("minuteflow-prefill", {
         detail: {
+          task_name: task.task_name,
+          account: task.account || "",
+          category: "Task",
           client_memo: task.task_name,
         },
       })
