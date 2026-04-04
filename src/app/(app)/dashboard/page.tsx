@@ -753,6 +753,8 @@ export default function DashboardPage() {
         is_manual: false,
         form_fill_ms: 0,
         progress: null,
+        billing_type: "hourly",
+        task_rate: null,
         created_at: activeTask.start_time,
       };
       setLiveSessionData(taskAsLog);
@@ -1271,8 +1273,10 @@ export default function DashboardPage() {
       const isBillable =
         formData.category !== "Personal";
 
-      // If memos were for the old task (wizard flow), don't put them on the new task
-      const newTaskClientMemo = formData.task_status ? null : formData.client_memo || null;
+      // If memos were for the old task (wizard flow), use new_task_client_memo for the new task
+      const newTaskClientMemo = formData.task_status
+        ? (formData.new_task_client_memo || null)
+        : (formData.client_memo || null);
       const newTaskInternalMemo = formData.task_status ? null : formData.internal_memo || null;
 
       // Insert time log
@@ -1688,9 +1692,7 @@ export default function DashboardPage() {
     window.dispatchEvent(
       new CustomEvent("minuteflow-prefill", {
         detail: {
-          task_name: task.task_name,
-          account: task.account || "",
-          category: "Task",
+          client_memo: task.task_name,
         },
       })
     );

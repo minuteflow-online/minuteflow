@@ -48,6 +48,7 @@ export interface TaskFormData {
   internal_memo: string;
   task_status?: string;
   form_fill_ms?: number;
+  new_task_client_memo?: string;
 }
 
 interface ProjectTag {
@@ -262,6 +263,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       internal_memo: closeInternalMemo,
       task_status: status || undefined,
       form_fill_ms: formFillMs,
+      // When wizard is used, carry the form's Client Notes to the NEW task separately
+      new_task_client_memo: status ? (clientMemo.trim() || undefined) : undefined,
     });
 
     // Reset everything

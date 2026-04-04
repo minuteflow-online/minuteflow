@@ -11,6 +11,9 @@ export const dynamic = "force-dynamic";
  * - tasks grouped by project_tag_id (from project_task_assignments + task_library)
  * - account-client mappings
  *
+ * For VA users: tasks are filtered to only those in categories assigned to the VA
+ * via va_category_assignments. Admins/managers see everything.
+ *
  * Optional query params:
  *   ?account=X   — filter projects/tasks to one account
  */
@@ -25,6 +28,28 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const filterAccount = searchParams.get("account");
+
+  // Check user role for VA filtering
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  const isVA = profile?.role === "va";
+
+  // If VA, fetch their assigned category IDs
+  let assignedCategoryIds: Set<number> | null = null;
+  if (isVA) {
+    const { data: vaCats } = await supabase
+      .from("va_category_assignments")
+      .select("category_id")
+      .eq("va_id", user.id);
+    if (vaCats && vaCats.length > 0) {
+      assignedCategoryIds = new Set(vaCats.map((c) => c.category_id));
+    }
+    // If VA has no assignments, assignedCategoryIds stays null → they see all tasks (graceful fallback)
+  }
 
   // 1. Fetch active projects (with account info)
   let projectQuery = supabase
@@ -51,7 +76,7 @@ export async function GET(request: Request) {
   }
   const accounts = Array.from(accountSet).sort();
 
-  // 3. Fetch task assignments with task names
+  // 3. Fetch task assignments with task names + category_id for VA filtering
   const projectIds = (projects ?? []).map((p) => p.id);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,7 +86,7 @@ export async function GET(request: Request) {
     const { data: assignData, error: assignError } = await supabase
       .from("project_task_assignments")
       .select(
-        "id, task_library_id, project_tag_id, sort_order, task_library(id, task_name, is_active)"
+        "id, task_library_id, project_tag_id, sort_order, billing_type, task_rate, task_library(id, task_name, is_active, category_id, billing_type, default_rate)"
       )
       .in("project_tag_id", projectIds)
       .order("sort_order");
@@ -72,10 +97,16 @@ export async function GET(request: Request) {
     assignments = assignData ?? [];
   }
 
-  // 4. Build tasks grouped by project_tag_id (only active tasks)
+  // 4. Build tasks grouped by project_tag_id (only active tasks, filtered by VA assignments)
   const tasksByProject: Record<
     number,
-    Array<{ id: number; task_library_id: number; task_name: string }>
+    Array<{
+      id: number;
+      task_library_id: number;
+      task_name: string;
+      billing_type: string;
+      task_rate: number | null;
+    }>
   > = {};
 
   for (const a of assignments) {
@@ -83,13 +114,25 @@ export async function GET(request: Request) {
     const lib = Array.isArray(a.task_library) ? a.task_library[0] : a.task_library;
     if (!lib || !lib.is_active) continue;
 
+    // VA filtering: if VA has assignments, only show tasks in assigned categories
+    if (assignedCategoryIds && lib.category_id && !assignedCategoryIds.has(lib.category_id)) {
+      continue;
+    }
+
     if (!tasksByProject[a.project_tag_id]) {
       tasksByProject[a.project_tag_id] = [];
     }
+
+    // Effective billing: assignment-level overrides task-level
+    const effectiveBilling = a.billing_type ?? lib.billing_type ?? "hourly";
+    const effectiveRate = a.task_rate ?? lib.default_rate ?? null;
+
     tasksByProject[a.project_tag_id].push({
       id: a.id,
       task_library_id: a.task_library_id,
       task_name: lib.task_name,
+      billing_type: effectiveBilling,
+      task_rate: effectiveRate,
     });
   }
 

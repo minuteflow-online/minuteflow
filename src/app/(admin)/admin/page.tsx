@@ -1440,6 +1440,20 @@ function TeamManagementTab({
   const [deletingUser, setDeletingUser] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
+  // VA category assignments (read-only summary)
+  const [vaCatAssignments, setVaCatAssignments] = useState<Array<{ va_id: string; task_categories: { category_name: string } | null }>>([]);
+  useEffect(() => {
+    fetch("/api/va-category-assignments")
+      .then((r) => r.json())
+      .then((d) => setVaCatAssignments(d.assignments ?? []))
+      .catch(() => {});
+  }, []);
+  const getCategoryBadges = (userId: string) => {
+    return vaCatAssignments
+      .filter((a) => a.va_id === userId && a.task_categories)
+      .map((a) => a.task_categories!.category_name);
+  };
+
   const handleDeleteUser = async () => {
     if (!deleteTarget) return;
     setDeletingUser(true);
@@ -1894,6 +1908,7 @@ function TeamManagementTab({
                 <th className="px-3 py-3">Position</th>
                 <th className="px-3 py-3 text-right">Pay Rate</th>
                 <th className="px-3 py-3">Rate Type</th>
+                <th className="px-3 py-3">Assignments</th>
                 <th className="px-3 py-3">Joined</th>
                 <th className="px-3 py-3 text-center">Actions</th>
               </tr>
@@ -2061,6 +2076,22 @@ function TeamManagementTab({
                         {p.pay_rate_type || "hourly"}
                       </button>
                     )}
+                  </td>
+                  {/* Category Assignments */}
+                  <td className="px-3 py-3">
+                    {(() => {
+                      const cats = getCategoryBadges(p.id);
+                      if (cats.length === 0) return <span className="text-[10px] text-stone">&mdash;</span>;
+                      return (
+                        <div className="flex flex-wrap gap-0.5">
+                          {cats.map((c, i) => (
+                            <span key={i} className="inline-block bg-parchment text-bark px-1.5 py-0.5 rounded-full text-[9px] font-semibold">
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-3 py-3 text-[11px] text-stone whitespace-nowrap">
                     {new Date(p.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}

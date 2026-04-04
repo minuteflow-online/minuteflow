@@ -24,7 +24,7 @@ export async function GET(request: Request) {
 
   const { data, error } = await supabase
     .from("project_task_assignments")
-    .select("id, task_library_id, project_tag_id, sort_order, task_library(id, task_name, is_active)")
+    .select("id, task_library_id, project_tag_id, sort_order, billing_type, task_rate, task_library(id, task_name, is_active, billing_type, default_rate)")
     .eq("project_tag_id", parseInt(projectTagId))
     .order("sort_order");
 
@@ -84,7 +84,7 @@ export async function POST(request: Request) {
   const { data, error } = await supabase
     .from("project_task_assignments")
     .insert(rows)
-    .select("id, task_library_id, project_tag_id, sort_order, task_library(id, task_name, is_active)");
+    .select("id, task_library_id, project_tag_id, sort_order, billing_type, task_rate, task_library(id, task_name, is_active, billing_type, default_rate)");
 
   if (error) {
     if (error.code === "23505") {
@@ -130,7 +130,25 @@ export async function PATCH(request: Request) {
     return Response.json({ success: true });
   }
 
-  return Response.json({ error: "reorder[] is required" }, { status: 400 });
+  // Update billing_type and/or task_rate on a single assignment
+  const { id, billing_type, task_rate } = body;
+  if (id && (billing_type !== undefined || task_rate !== undefined)) {
+    const updates: Record<string, unknown> = {};
+    if (billing_type !== undefined) updates.billing_type = billing_type;
+    if (task_rate !== undefined) updates.task_rate = task_rate;
+
+    const { error } = await supabase
+      .from("project_task_assignments")
+      .update(updates)
+      .eq("id", id);
+
+    if (error) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    return Response.json({ success: true });
+  }
+
+  return Response.json({ error: "reorder[] or id with billing_type/task_rate is required" }, { status: 400 });
 }
 
 /** DELETE: Remove task assignment(s) from a project */

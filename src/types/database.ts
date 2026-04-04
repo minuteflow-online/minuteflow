@@ -84,6 +84,8 @@ export interface TimeLog {
   is_manual: boolean;
   form_fill_ms: number;
   progress: string | null;
+  billing_type: BillingType;
+  task_rate: number | null;
   created_at: string;
 }
 
@@ -286,12 +288,16 @@ export interface TaskCategory {
   created_at: string;
 }
 
+export type BillingType = 'hourly' | 'fixed';
+
 export interface TaskLibraryItem {
   id: number;
   task_name: string;
   is_active: boolean;
   sort_order: number;
   category_id: number | null;
+  billing_type: BillingType;
+  default_rate: number | null;
   created_by: string | null;
   created_at: string;
 }
@@ -301,7 +307,55 @@ export interface ProjectTaskAssignment {
   task_library_id: number;
   project_tag_id: number;
   sort_order: number;
+  billing_type: BillingType | null;
+  task_rate: number | null;
   assigned_by: string | null;
   assigned_at: string;
   task_library?: TaskLibraryItem;
+}
+
+export interface VaCategoryAssignment {
+  id: number;
+  va_id: string;
+  category_id: number;
+  assigned_by: string | null;
+  assigned_at: string;
+  task_categories?: TaskCategory;
+  profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>;
+}
+
+export interface VaProjectAssignment {
+  id: number;
+  va_id: string;
+  project_tag_id: number;
+  billing_type: BillingType;
+  rate: number | null;
+  assigned_by: string | null;
+  assigned_at: string;
+  profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>;
+  project_tags?: {
+    id: number;
+    account: string;
+    project_name: string;
+  };
+}
+
+export interface VaTaskAssignment {
+  id: number;
+  va_id: string;
+  project_task_assignment_id: number;
+  billing_type: BillingType;
+  rate: number | null;
+  assigned_by: string | null;
+  assigned_at: string;
+  profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>;
+  project_task_assignments?: {
+    id: number;
+    task_library_id: number;
+    project_tag_id: number;
+    billing_type: BillingType | null;
+    task_rate: number | null;
+    task_library?: { id: number; task_name: string };
+    project_tags?: { id: number; account: string; project_name: string };
+  };
 }
