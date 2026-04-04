@@ -210,6 +210,9 @@ export default function ProjectsTasksTab() {
   /* All assignments for expanded project tasks */
   const [expandedProjectAssignments, setExpandedProjectAssignments] = useState<Record<number, ProjectTaskAssignment[]>>({});
 
+  /* ── State: selected tasks inside expanded projects (for batch remove) ─────── */
+  const [selectedExpandedTaskIds, setSelectedExpandedTaskIds] = useState<Set<number>>(new Set());
+
   /* ── State: search ─────── */
   const [taskSearch, setTaskSearch] = useState("");
 
@@ -589,6 +592,23 @@ export default function ProjectsTasksTab() {
     fetchProjectTaskCounts();
     // Refresh expanded project tasks if we know which project
     if (projectTagId && expandedProjectIds.has(projectTagId)) {
+      fetchExpandedProjectTasks(projectTagId);
+    }
+  };
+
+  const handleBulkRemoveTasksFromProject = async (projectTagId: number) => {
+    if (selectedExpandedTaskIds.size === 0) return;
+    if (!window.confirm(`Remove ${selectedExpandedTaskIds.size} task(s) from this project?`)) return;
+    setAssigning(true);
+    const promises = Array.from(selectedExpandedTaskIds).map((assignmentId) =>
+      fetch(`/api/project-task-assignments?id=${assignmentId}`, { method: "DELETE" })
+    );
+    await Promise.all(promises);
+    setSelectedExpandedTaskIds(new Set());
+    setAssigning(false);
+    if (selectedProject) fetchAssignments(selectedProject.id);
+    fetchProjectTaskCounts();
+    if (expandedProjectIds.has(projectTagId)) {
       fetchExpandedProjectTasks(projectTagId);
     }
   };
@@ -1411,55 +1431,125 @@ export default function ProjectsTasksTab() {
                                   {projectTasks.length === 0 ? (
                                     <p className="text-[10px] text-stone italic py-1">No tasks assigned to this project yet.</p>
                                   ) : (
-                                    projectTasks.map((a) => {
-                                      const taskVAs = vaTaskAssignments.filter((vta) => vta.project_task_assignment_id === a.id);
-                                      return (
-                                        <div key={a.id} className="rounded border border-sand/60 bg-white p-1.5 text-[11px]">
-                                          <div className="flex items-center gap-1.5 flex-wrap">
-                                            <span className="text-espresso truncate flex-1">{a.task_library?.task_name ?? "Unknown"}</span>
-                                            {/* VA badges */}
-                                            {taskVAs.map((tv) => (
-                                              <span key={tv.id} className="text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0">
-                                                {tv.profiles?.full_name?.split(" ")[0] ?? "VA"}
-                                                <button onClick={() => handleUnassignVAFromTask(tv.id)} className="hover:text-red-600 cursor-pointer"><XIcon /></button>
-                                              </span>
-                                            ))}
-                                            {/* Assign VA to this task */}
-                                            <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
-                                              <button
-                                                onClick={() => setVaAssignDropdownTask(vaAssignDropdownTask === a.id ? null : a.id)}
-                                                className="text-[9px] text-sage hover:text-[#5a7a5e] cursor-pointer px-1 py-0.5 rounded bg-sage-soft/30 hover:bg-sage-soft"
-                                              >
-                                                + VA
-                                              </button>
-                                              {vaAssignDropdownTask === a.id && (
-                                                <div className="absolute right-0 bottom-full mb-1 z-30 bg-white border border-sand rounded-lg shadow-lg py-1 min-w-[140px]">
-                                                  {vaList.filter((v) => !taskVAs.some((tv) => tv.va_id === v.id)).map((v) => (
-                                                    <button
-                                                      key={v.id}
-                                                      onClick={() => handleAssignVAToTask(v.id, a.id)}
-                                                      className="w-full text-left px-2 py-1 text-[11px] text-espresso hover:bg-parchment cursor-pointer"
-                                                      disabled={assigningVAToTask}
-                                                    >
-                                                      {v.full_name}
-                                                    </button>
-                                                  ))}
-                                                  <button onClick={() => setVaAssignDropdownTask(null)} className="w-full text-center text-[10px] text-stone hover:text-espresso cursor-pointer py-1 border-t border-sand">Close</button>
-                                                </div>
-                                              )}
-                                            </div>
-                                            {/* Remove task from project */}
-                                            <button
-                                              onClick={() => handleUnassignTask(a.id, p.id)}
-                                              className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer shrink-0"
-                                              title="Remove task from project"
-                                            >
-                                              <XIcon />
-                                            </button>
+                                    <>
+                                      {/* Select all + batch action bar */}
+                                      {(() => {
+                                        const thisProjectTaskIds = projectTasks.map((a) => a.id);
+                                        const selectedInThisProject = thisProjectTaskIds.filter((id) => selectedExpandedTaskIds.has(id));
+                                        const allSelected = thisProjectTaskIds.length > 0 && selectedInThisProject.length === thisProjectTaskIds.length;
+                                        const someSelected = selectedInThisProject.length > 0;
+                                        return (
+                                          <div className="flex items-center gap-1.5 py-1 px-1">
+                                            <input
+                                              type="checkbox"
+                                              checked={allSelected}
+                                              ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                                              onChange={() => {
+                                                setSelectedExpandedTaskIds((prev) => {
+                                                  const next = new Set(prev);
+                                                  if (allSelected) {
+                                                    thisProjectTaskIds.forEach((id) => next.delete(id));
+                                                  } else {
+                                                    thisProjectTaskIds.forEach((id) => next.add(id));
+                                                  }
+                                                  return next;
+                                                });
+                                              }}
+                                              className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+                                              title="Select all tasks in this project"
+                                            />
+                                            <span className="text-[10px] text-stone">
+                                              {someSelected ? `${selectedInThisProject.length} selected` : "Select all"}
+                                            </span>
+                                            {someSelected && (
+                                              <>
+                                                <button
+                                                  onClick={() => handleBulkRemoveTasksFromProject(p.id)}
+                                                  disabled={assigning}
+                                                  className="ml-auto px-2 py-0.5 rounded bg-red-500 text-white text-[10px] font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
+                                                >
+                                                  {assigning ? "Removing..." : `Remove ${selectedInThisProject.length}`}
+                                                </button>
+                                                <button
+                                                  onClick={() => {
+                                                    setSelectedExpandedTaskIds((prev) => {
+                                                      const next = new Set(prev);
+                                                      thisProjectTaskIds.forEach((id) => next.delete(id));
+                                                      return next;
+                                                    });
+                                                  }}
+                                                  className="px-1.5 py-0.5 rounded text-[10px] text-stone hover:text-espresso cursor-pointer"
+                                                >
+                                                  Clear
+                                                </button>
+                                              </>
+                                            )}
                                           </div>
-                                        </div>
-                                      );
-                                    })
+                                        );
+                                      })()}
+                                      {projectTasks.map((a) => {
+                                        const taskVAs = vaTaskAssignments.filter((vta) => vta.project_task_assignment_id === a.id);
+                                        return (
+                                          <div key={a.id} className="rounded border border-sand/60 bg-white p-1.5 text-[11px]">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              <input
+                                                type="checkbox"
+                                                checked={selectedExpandedTaskIds.has(a.id)}
+                                                onChange={() => {
+                                                  setSelectedExpandedTaskIds((prev) => {
+                                                    const next = new Set(prev);
+                                                    if (next.has(a.id)) next.delete(a.id);
+                                                    else next.add(a.id);
+                                                    return next;
+                                                  });
+                                                }}
+                                                className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
+                                              />
+                                              <span className="text-espresso truncate flex-1">{a.task_library?.task_name ?? "Unknown"}</span>
+                                              {/* VA badges */}
+                                              {taskVAs.map((tv) => (
+                                                <span key={tv.id} className="text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0">
+                                                  {tv.profiles?.full_name?.split(" ")[0] ?? "VA"}
+                                                  <button onClick={() => handleUnassignVAFromTask(tv.id)} className="hover:text-red-600 cursor-pointer"><XIcon /></button>
+                                                </span>
+                                              ))}
+                                              {/* Assign VA to this task */}
+                                              <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+                                                <button
+                                                  onClick={() => setVaAssignDropdownTask(vaAssignDropdownTask === a.id ? null : a.id)}
+                                                  className="text-[9px] text-sage hover:text-[#5a7a5e] cursor-pointer px-1 py-0.5 rounded bg-sage-soft/30 hover:bg-sage-soft"
+                                                >
+                                                  + VA
+                                                </button>
+                                                {vaAssignDropdownTask === a.id && (
+                                                  <div className="absolute right-0 bottom-full mb-1 z-30 bg-white border border-sand rounded-lg shadow-lg py-1 min-w-[140px]">
+                                                    {vaList.filter((v) => !taskVAs.some((tv) => tv.va_id === v.id)).map((v) => (
+                                                      <button
+                                                        key={v.id}
+                                                        onClick={() => handleAssignVAToTask(v.id, a.id)}
+                                                        className="w-full text-left px-2 py-1 text-[11px] text-espresso hover:bg-parchment cursor-pointer"
+                                                        disabled={assigningVAToTask}
+                                                      >
+                                                        {v.full_name}
+                                                      </button>
+                                                    ))}
+                                                    <button onClick={() => setVaAssignDropdownTask(null)} className="w-full text-center text-[10px] text-stone hover:text-espresso cursor-pointer py-1 border-t border-sand">Close</button>
+                                                  </div>
+                                                )}
+                                              </div>
+                                              {/* Remove task from project */}
+                                              <button
+                                                onClick={() => handleUnassignTask(a.id, p.id)}
+                                                className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer shrink-0"
+                                                title="Remove task from project"
+                                              >
+                                                <XIcon />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </>
                                   )}
                                 </div>
                               )}
