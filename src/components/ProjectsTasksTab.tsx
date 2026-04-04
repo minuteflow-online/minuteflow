@@ -25,12 +25,16 @@ interface TaskCategory {
   is_active: boolean;
 }
 
+type BillingType = 'hourly' | 'fixed';
+
 interface TaskLibraryItem {
   id: number;
   task_name: string;
   is_active: boolean;
   sort_order: number;
   category_id: number | null;
+  billing_type: BillingType;
+  default_rate: number | null;
 }
 
 interface ProjectTaskAssignment {
@@ -38,7 +42,54 @@ interface ProjectTaskAssignment {
   task_library_id: number;
   project_tag_id: number;
   sort_order: number;
+  billing_type: BillingType | null;
+  task_rate: number | null;
   task_library: TaskLibraryItem;
+}
+
+interface VaProfile {
+  id: string;
+  full_name: string;
+  username: string;
+}
+
+interface VaCategoryAssignment {
+  id: number;
+  va_id: string;
+  category_id: number;
+  assigned_at: string;
+  task_categories: { id: number; category_name: string } | null;
+  profiles: { id: string; full_name: string; username: string } | null;
+}
+
+interface VaProjectAssignment {
+  id: number;
+  va_id: string;
+  project_tag_id: number;
+  billing_type: BillingType;
+  rate: number | null;
+  assigned_at: string;
+  profiles: { id: string; full_name: string; username: string } | null;
+  project_tags: { id: number; account: string; project_name: string } | null;
+}
+
+interface VaTaskAssignment {
+  id: number;
+  va_id: string;
+  project_task_assignment_id: number;
+  billing_type: BillingType;
+  rate: number | null;
+  assigned_at: string;
+  profiles: { id: string; full_name: string; username: string } | null;
+  project_task_assignments: {
+    id: number;
+    task_library_id: number;
+    project_tag_id: number;
+    billing_type: BillingType | null;
+    task_rate: number | null;
+    task_library: { id: number; task_name: string } | null;
+    project_tags: { id: number; account: string; project_name: string } | null;
+  } | null;
 }
 
 /* ── Icons ───────────────────────────────────────────────── */
@@ -136,6 +187,29 @@ export default function ProjectsTasksTab() {
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
   const [editCategoryName, setEditCategoryName] = useState("");
 
+  /* ── State: billing (add-task) ─────── */
+  const [newTaskBillingType, setNewTaskBillingType] = useState<BillingType>("hourly");
+  const [newTaskDefaultRate, setNewTaskDefaultRate] = useState("");
+
+  /* ── State: VA category assignments ─────── */
+  const [vaList, setVaList] = useState<VaProfile[]>([]);
+  const [vaCatAssignments, setVaCatAssignments] = useState<VaCategoryAssignment[]>([]);
+  const [selectedCategoryForVA, setSelectedCategoryForVA] = useState<number | null>(null);
+  const [assigningVA, setAssigningVA] = useState(false);
+
+  /* ─�� State: VA project/task assignments (NEW) ─────── */
+  const [vaProjectAssignments, setVaProjectAssignments] = useState<VaProjectAssignment[]>([]);
+  const [vaTaskAssignments, setVaTaskAssignments] = useState<VaTaskAssignment[]>([]);
+  const [expandedVAIds, setExpandedVAIds] = useState<Set<string>>(new Set());
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(new Set());
+  const [assigningVAToProject, setAssigningVAToProject] = useState(false);
+  const [assigningVAToTask, setAssigningVAToTask] = useState(false);
+  /* Which project/task is showing VA assign dropdown */
+  const [vaAssignDropdownProject, setVaAssignDropdownProject] = useState<number | null>(null);
+  const [vaAssignDropdownTask, setVaAssignDropdownTask] = useState<number | null>(null);
+  /* All assignments for expanded project tasks */
+  const [expandedProjectAssignments, setExpandedProjectAssignments] = useState<Record<number, ProjectTaskAssignment[]>>({});
+
   /* ── State: search ─────── */
   const [taskSearch, setTaskSearch] = useState("");
 
@@ -179,10 +253,54 @@ export default function ProjectsTasksTab() {
     setProjectTaskCounts(data.counts ?? {});
   }, []);
 
+  const fetchVaList = useCallback(async () => {
+    const res = await fetch("/api/profiles?active=true");
+    if (res.ok) {
+      const data = await res.json();
+      setVaList((data.profiles ?? []).map((p: { id: string; full_name: string; username: string }) => ({
+        id: p.id,
+        full_name: p.full_name,
+        username: p.username,
+      })));
+    }
+  }, []);
+
+  const fetchVaCatAssignments = useCallback(async () => {
+    const res = await fetch("/api/va-category-assignments");
+    if (res.ok) {
+      const data = await res.json();
+      setVaCatAssignments(data.assignments ?? []);
+    }
+  }, []);
+
+  const fetchVaProjectAssignments = useCallback(async () => {
+    const res = await fetch("/api/va-project-assignments");
+    if (res.ok) {
+      const data = await res.json();
+      setVaProjectAssignments(data.assignments ?? []);
+    }
+  }, []);
+
+  const fetchVaTaskAssignments = useCallback(async () => {
+    const res = await fetch("/api/va-task-assignments");
+    if (res.ok) {
+      const data = await res.json();
+      setVaTaskAssignments(data.assignments ?? []);
+    }
+  }, []);
+
+  const fetchExpandedProjectTasks = useCallback(async (projectTagId: number) => {
+    const res = await fetch(`/api/project-task-assignments?project_tag_id=${projectTagId}`);
+    if (res.ok) {
+      const data = await res.json();
+      setExpandedProjectAssignments((prev) => ({ ...prev, [projectTagId]: data.assignments ?? [] }));
+    }
+  }, []);
+
   useEffect(() => {
-    Promise.all([fetchAccounts(), fetchProjects(), fetchLibraryTasks(), fetchCategories(), fetchProjectTaskCounts()])
+    Promise.all([fetchAccounts(), fetchProjects(), fetchLibraryTasks(), fetchCategories(), fetchProjectTaskCounts(), fetchVaList(), fetchVaCatAssignments(), fetchVaProjectAssignments(), fetchVaTaskAssignments()])
       .then(() => setLoading(false));
-  }, [fetchAccounts, fetchProjects, fetchLibraryTasks, fetchCategories, fetchProjectTaskCounts]);
+  }, [fetchAccounts, fetchProjects, fetchLibraryTasks, fetchCategories, fetchProjectTaskCounts, fetchVaList, fetchVaCatAssignments, fetchVaProjectAssignments, fetchVaTaskAssignments]);
 
   useEffect(() => {
     if (selectedProject) {
@@ -231,6 +349,10 @@ export default function ProjectsTasksTab() {
 
   /* ── Task CRUD ─────── */
   const handleAddTask = async () => {
+    const billingPayload = {
+      billing_type: newTaskBillingType,
+      ...(newTaskDefaultRate ? { default_rate: parseFloat(newTaskDefaultRate) } : {}),
+    };
     if (bulkTaskMode) {
       const names = bulkTaskText.split("\n").map((n) => n.trim()).filter(Boolean);
       if (names.length === 0) return;
@@ -241,6 +363,7 @@ export default function ProjectsTasksTab() {
         body: JSON.stringify({
           names,
           ...(newTaskCategoryId ? { category_id: newTaskCategoryId } : {}),
+          ...billingPayload,
         }),
       });
       if (!res.ok) {
@@ -257,6 +380,7 @@ export default function ProjectsTasksTab() {
         body: JSON.stringify({
           task_name: newTaskName.trim(),
           ...(newTaskCategoryId ? { category_id: newTaskCategoryId } : {}),
+          ...billingPayload,
         }),
       });
       if (!res.ok) {
@@ -267,6 +391,8 @@ export default function ProjectsTasksTab() {
     }
     setShowAddTask(false);
     setAddingTask(false);
+    setNewTaskBillingType("hourly");
+    setNewTaskDefaultRate("");
     fetchLibraryTasks();
   };
 
@@ -472,6 +598,96 @@ export default function ProjectsTasksTab() {
     fetchProjects();
   };
 
+  /* ── VA Category Assignment handlers ─────── */
+  const handleAssignVAToCategory = async (vaId: string, categoryId: number) => {
+    setAssigningVA(true);
+    await fetch("/api/va-category-assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category_id: categoryId, va_ids: [vaId] }),
+    });
+    setAssigningVA(false);
+    fetchVaCatAssignments();
+  };
+
+  const handleUnassignVAFromCategory = async (assignmentId: number) => {
+    await fetch(`/api/va-category-assignments?id=${assignmentId}`, { method: "DELETE" });
+    fetchVaCatAssignments();
+  };
+
+  /* ── VA Project/Task Assignment handlers (NEW) ─────── */
+  const handleAssignVAToProject = async (vaId: string, projectTagId: number) => {
+    setAssigningVAToProject(true);
+    await fetch("/api/va-project-assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ va_id: vaId, project_tag_id: projectTagId }),
+    });
+    setAssigningVAToProject(false);
+    setVaAssignDropdownProject(null);
+    fetchVaProjectAssignments();
+  };
+
+  const handleUnassignVAFromProject = async (assignmentId: number) => {
+    await fetch(`/api/va-project-assignments?id=${assignmentId}`, { method: "DELETE" });
+    fetchVaProjectAssignments();
+  };
+
+  const handleAssignVAToTask = async (vaId: string, ptaId: number) => {
+    setAssigningVAToTask(true);
+    await fetch("/api/va-task-assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ va_id: vaId, project_task_assignment_id: ptaId }),
+    });
+    setAssigningVAToTask(false);
+    setVaAssignDropdownTask(null);
+    fetchVaTaskAssignments();
+  };
+
+  const handleUnassignVAFromTask = async (assignmentId: number) => {
+    await fetch(`/api/va-task-assignments?id=${assignmentId}`, { method: "DELETE" });
+    fetchVaTaskAssignments();
+  };
+
+  const handleUpdateVAProjectRate = async (assignmentId: number, billingType?: string, rate?: number | null) => {
+    const body: Record<string, unknown> = { id: assignmentId };
+    if (billingType !== undefined) body.billing_type = billingType;
+    if (rate !== undefined) body.rate = rate;
+    await fetch("/api/va-project-assignments", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    fetchVaProjectAssignments();
+  };
+
+  const handleUpdateVATaskRate = async (assignmentId: number, billingType?: string, rate?: number | null) => {
+    const body: Record<string, unknown> = { id: assignmentId };
+    if (billingType !== undefined) body.billing_type = billingType;
+    if (rate !== undefined) body.rate = rate;
+    await fetch("/api/va-task-assignments", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    fetchVaTaskAssignments();
+  };
+
+  const toggleExpandProject = (projectId: number) => {
+    setExpandedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+        // Fetch tasks for this project when expanding
+        fetchExpandedProjectTasks(projectId);
+      }
+      return next;
+    });
+  };
+
   /* ── Helpers ─────── */
   const toggleTaskSelection = (id: number) => {
     setSelectedTaskIds((prev) => {
@@ -655,8 +871,8 @@ export default function ProjectsTasksTab() {
         </div>
       )}
 
-      {/* Two-column grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      {/* Three-column grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
 
         {/* ═══ COLUMN 1: Task Library ═══ */}
         <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
@@ -750,6 +966,32 @@ export default function ProjectsTasksTab() {
                   <option key={c.id} value={c.id}>{c.category_name}</option>
                 ))}
               </select>
+              {/* Billing type + default rate */}
+              <div className="flex gap-2 items-center">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-stone">Billing:</span>
+                  <button
+                    type="button"
+                    onClick={() => setNewTaskBillingType("hourly")}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold cursor-pointer transition-colors ${newTaskBillingType === "hourly" ? "bg-sage text-white" : "bg-gray-100 text-stone hover:bg-gray-200"}`}
+                  >
+                    Hourly
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewTaskBillingType("fixed")}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold cursor-pointer transition-colors ${newTaskBillingType === "fixed" ? "bg-terracotta text-white" : "bg-gray-100 text-stone hover:bg-gray-200"}`}
+                  >
+                    Fixed
+                  </button>
+                </div>
+                <input
+                  value={newTaskDefaultRate}
+                  onChange={(e) => setNewTaskDefaultRate(e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="Default rate"
+                  className="w-24 rounded-lg border border-sand px-2 py-0.5 text-[10px] text-espresso outline-none focus:border-terracotta"
+                />
+              </div>
               {bulkTaskMode && bulkTaskText.trim() && (
                 <p className="text-[10px] text-stone">
                   {bulkTaskText.split("\n").map((n) => n.trim()).filter(Boolean).length} task(s) to add
@@ -1028,29 +1270,127 @@ export default function ProjectsTasksTab() {
                       </div>
                     )}
 
-                    {/* Projects list under this account */}
+                    {/* Projects list under this account (expandable) */}
                     {!isCollapsed && accProjects.length > 0 && (
                       <div className="border-t border-sand divide-y divide-sand/50">
-                        {accProjects.map((p) => (
-                          <ProjectRow
-                            key={p.id}
-                            project={p}
-                            selected={selectedProjectIds.has(p.id)}
-                            isActiveProject={selectedProject?.id === p.id}
-                            onToggleSelect={() => toggleProjectSelection(p.id)}
-                            onClickProject={() => setSelectedProject(selectedProject?.id === p.id ? null : p)}
-                            onEdit={() => { setEditingProjectId(p.id); setEditProjectName(p.project_name); }}
-                            onDelete={() => handleDeleteProject(p)}
-                            editing={editingProjectId === p.id}
-                            editValue={editProjectName}
-                            onEditChange={setEditProjectName}
-                            onEditSave={() => handleEditProject(p.id)}
-                            onEditCancel={() => setEditingProjectId(null)}
-                            accounts={accounts}
-                            onMoveToAccount={(accName) => handleMoveProjectToAccount(p.id, accName)}
-                            taskCount={projectTaskCounts[p.id] ?? 0}
-                          />
-                        ))}
+                        {accProjects.map((p) => {
+                          const isExpanded = expandedProjectIds.has(p.id);
+                          const projectTasks = expandedProjectAssignments[p.id] ?? [];
+                          const projectVAs = vaProjectAssignments.filter((a) => a.project_tag_id === p.id);
+                          return (
+                            <div key={p.id}>
+                              <div className="flex items-center">
+                                <div className="flex-1">
+                                  <ProjectRow
+                                    project={p}
+                                    selected={selectedProjectIds.has(p.id)}
+                                    isActiveProject={selectedProject?.id === p.id}
+                                    onToggleSelect={() => toggleProjectSelection(p.id)}
+                                    onClickProject={() => toggleExpandProject(p.id)}
+                                    onEdit={() => { setEditingProjectId(p.id); setEditProjectName(p.project_name); }}
+                                    onDelete={() => handleDeleteProject(p)}
+                                    editing={editingProjectId === p.id}
+                                    editValue={editProjectName}
+                                    onEditChange={setEditProjectName}
+                                    onEditSave={() => handleEditProject(p.id)}
+                                    onEditCancel={() => setEditingProjectId(null)}
+                                    accounts={accounts}
+                                    onMoveToAccount={(accName) => handleMoveProjectToAccount(p.id, accName)}
+                                    taskCount={projectTaskCounts[p.id] ?? 0}
+                                    isExpanded={isExpanded}
+                                  />
+                                </div>
+                                {/* VA assign button for project */}
+                                <div className="relative shrink-0 pr-2" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    onClick={() => setVaAssignDropdownProject(vaAssignDropdownProject === p.id ? null : p.id)}
+                                    className="text-[9px] font-semibold text-sage hover:text-[#5a7a5e] cursor-pointer px-1.5 py-0.5 rounded bg-sage-soft/50 hover:bg-sage-soft"
+                                    title="Assign VA"
+                                  >
+                                    {projectVAs.length > 0 ? `👤 ${projectVAs.length}` : "+ VA"}
+                                  </button>
+                                  {vaAssignDropdownProject === p.id && (
+                                    <div className="absolute right-0 top-6 z-30 bg-white border border-sand rounded-lg shadow-lg py-1 min-w-[160px]">
+                                      <div className="px-2 py-1 text-[10px] font-bold text-espresso border-b border-sand">Assign VA to Project</div>
+                                      {/* Show currently assigned VAs */}
+                                      {projectVAs.map((va) => (
+                                        <div key={va.id} className="px-2 py-1 flex items-center justify-between text-[11px]">
+                                          <span className="text-sage font-semibold">{va.profiles?.full_name ?? "Unknown"}</span>
+                                          <button onClick={() => handleUnassignVAFromProject(va.id)} className="text-red-400 hover:text-red-600 cursor-pointer text-[9px]">Remove</button>
+                                        </div>
+                                      ))}
+                                      {/* Add new VA */}
+                                      {vaList.filter((v) => !projectVAs.some((pv) => pv.va_id === v.id)).length > 0 && (
+                                        <select
+                                          onChange={(e) => { if (e.target.value) handleAssignVAToProject(e.target.value, p.id); e.target.value = ""; }}
+                                          className="mx-1.5 my-1 rounded border border-sand px-1.5 py-0.5 text-[10px] text-espresso outline-none bg-white cursor-pointer w-[calc(100%-12px)]"
+                                          disabled={assigningVAToProject}
+                                          value=""
+                                        >
+                                          <option value="">Add VA...</option>
+                                          {vaList.filter((v) => !projectVAs.some((pv) => pv.va_id === v.id)).map((v) => (
+                                            <option key={v.id} value={v.id}>{v.full_name}</option>
+                                          ))}
+                                        </select>
+                                      )}
+                                      <button onClick={() => setVaAssignDropdownProject(null)} className="w-full text-center text-[10px] text-stone hover:text-espresso cursor-pointer py-1 border-t border-sand">Close</button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {/* Expanded tasks inside project */}
+                              {isExpanded && (
+                                <div className="pl-8 pr-2 pb-2 space-y-0.5 bg-parchment/30">
+                                  {projectTasks.length === 0 ? (
+                                    <p className="text-[10px] text-stone italic py-1">No tasks assigned to this project yet.</p>
+                                  ) : (
+                                    projectTasks.map((a) => {
+                                      const taskVAs = vaTaskAssignments.filter((vta) => vta.project_task_assignment_id === a.id);
+                                      return (
+                                        <div key={a.id} className="rounded border border-sand/60 bg-white p-1.5 text-[11px]">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="text-espresso truncate">{a.task_library?.task_name ?? "Unknown"}</span>
+                                            {/* VA badges */}
+                                            {taskVAs.map((tv) => (
+                                              <span key={tv.id} className="text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0">
+                                                {tv.profiles?.full_name?.split(" ")[0] ?? "VA"}
+                                                <button onClick={() => handleUnassignVAFromTask(tv.id)} className="hover:text-red-600 cursor-pointer"><XIcon /></button>
+                                              </span>
+                                            ))}
+                                            {/* Assign VA to this task */}
+                                            <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+                                              <button
+                                                onClick={() => setVaAssignDropdownTask(vaAssignDropdownTask === a.id ? null : a.id)}
+                                                className="text-[9px] text-sage hover:text-[#5a7a5e] cursor-pointer px-1 py-0.5 rounded bg-sage-soft/30 hover:bg-sage-soft"
+                                              >
+                                                + VA
+                                              </button>
+                                              {vaAssignDropdownTask === a.id && (
+                                                <div className="absolute right-0 bottom-full mb-1 z-30 bg-white border border-sand rounded-lg shadow-lg py-1 min-w-[140px]">
+                                                  {vaList.filter((v) => !taskVAs.some((tv) => tv.va_id === v.id)).map((v) => (
+                                                    <button
+                                                      key={v.id}
+                                                      onClick={() => handleAssignVAToTask(v.id, a.id)}
+                                                      className="w-full text-left px-2 py-1 text-[11px] text-espresso hover:bg-parchment cursor-pointer"
+                                                      disabled={assigningVAToTask}
+                                                    >
+                                                      {v.full_name}
+                                                    </button>
+                                                  ))}
+                                                  <button onClick={() => setVaAssignDropdownTask(null)} className="w-full text-center text-[10px] text-stone hover:text-espresso cursor-pointer py-1 border-t border-sand">Close</button>
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
 
@@ -1103,7 +1443,7 @@ export default function ProjectsTasksTab() {
                         selected={selectedProjectIds.has(p.id)}
                         isActiveProject={selectedProject?.id === p.id}
                         onToggleSelect={() => toggleProjectSelection(p.id)}
-                        onClickProject={() => setSelectedProject(selectedProject?.id === p.id ? null : p)}
+                        onClickProject={() => toggleExpandProject(p.id)}
                         onEdit={() => { setEditingProjectId(p.id); setEditProjectName(p.project_name); }}
                         onDelete={() => handleDeleteProject(p)}
                         editing={editingProjectId === p.id}
@@ -1114,6 +1454,7 @@ export default function ProjectsTasksTab() {
                         accounts={accounts}
                         onMoveToAccount={(accName) => handleMoveProjectToAccount(p.id, accName)}
                         taskCount={projectTaskCounts[p.id] ?? 0}
+                        isExpanded={expandedProjectIds.has(p.id)}
                       />
                     ))}
                   </div>
@@ -1129,30 +1470,395 @@ export default function ProjectsTasksTab() {
                 Tasks in &ldquo;{selectedProject.project_name}&rdquo;
                 <span className="text-stone font-normal normal-case ml-1">({sortedAssignments.length})</span>
               </h4>
-              <p className="text-[10px] text-stone">Select tasks on the left, then click &ldquo;Assign&rdquo; in the action bar above.</p>
+              <p className="text-[10px] text-stone">Select tasks on the left, then click &ldquo;Assign&rdquo; in the action bar. Hover a row to set billing type &amp; rate override.</p>
               {sortedAssignments.length === 0 ? (
                 <p className="text-[10px] text-stone text-center py-2 bg-parchment rounded-lg">
                   No tasks assigned yet.
                 </p>
               ) : (
                 <div className="space-y-0.5">
-                  {sortedAssignments.map((a) => (
-                    <div key={a.id} className="rounded-lg border border-sand p-1.5 flex items-center gap-1.5 text-xs bg-white">
-                      <span className="flex-1 text-espresso truncate">{a.task_library?.task_name ?? "Unknown"}</span>
-                      <button
-                        onClick={() => handleUnassignTask(a.id)}
-                        className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer shrink-0"
-                        title="Remove"
-                      >
-                        <XIcon />
-                      </button>
-                    </div>
-                  ))}
+                  {sortedAssignments.map((a) => {
+                    const effectiveBilling = a.billing_type ?? a.task_library?.billing_type ?? "hourly";
+                    const effectiveRate = a.task_rate ?? a.task_library?.default_rate ?? null;
+                    return (
+                      <div key={a.id} className="rounded-lg border border-sand p-1.5 flex items-center gap-1.5 text-xs bg-white group">
+                        <span className="flex-1 text-espresso truncate">{a.task_library?.task_name ?? "Unknown"}</span>
+                        {/* Billing badge */}
+                        <span className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full font-semibold ${effectiveBilling === "fixed" ? "bg-terracotta-soft text-terracotta" : "bg-gray-100 text-stone"}`}>
+                          {effectiveBilling === "fixed" ? (effectiveRate ? `$${effectiveRate}` : "Fixed") : "Hourly"}
+                        </span>
+                        {/* Inline rate override */}
+                        <input
+                          type="text"
+                          placeholder="Rate"
+                          defaultValue={a.task_rate ?? ""}
+                          className="w-14 rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none focus:border-terracotta opacity-0 group-hover:opacity-100 transition-opacity"
+                          onBlur={async (e) => {
+                            const val = e.target.value.trim();
+                            const rate = val ? parseFloat(val) : null;
+                            if (rate === a.task_rate) return;
+                            await fetch("/api/project-task-assignments", {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ id: a.id, task_rate: rate }),
+                            });
+                            if (selectedProject) fetchAssignments(selectedProject.id);
+                          }}
+                          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <select
+                          value={a.billing_type ?? ""}
+                          onChange={async (e) => {
+                            const val = e.target.value || null;
+                            await fetch("/api/project-task-assignments", {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ id: a.id, billing_type: val }),
+                            });
+                            if (selectedProject) fetchAssignments(selectedProject.id);
+                          }}
+                          className="rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none bg-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                        >
+                          <option value="">Inherit</option>
+                          <option value="hourly">Hourly</option>
+                          <option value="fixed">Fixed</option>
+                        </select>
+                        <button
+                          onClick={() => handleUnassignTask(a.id)}
+                          className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer shrink-0"
+                          title="Remove"
+                        >
+                          <XIcon />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
           )}
         </div>
+
+        {/* ═══ COLUMN 3: VA Assignments & Rates ═══ */}
+        <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
+          <div className="flex items-center justify-between sticky top-0 bg-white pb-1 z-10">
+            <h3 className="text-xs font-bold text-espresso uppercase tracking-wide flex items-center gap-1.5">
+              <svg className="h-3.5 w-3.5 text-terracotta" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 00-3-3.87" />
+                <path d="M16 3.13a4 4 0 010 7.75" />
+              </svg>
+              Team
+            </h3>
+          </div>
+
+          {/* Expandable list of all team members */}
+          <div className="space-y-1">
+            {vaList.map((va) => {
+              const isExpanded = expandedVAIds.has(va.id);
+              const myProjectAssignments = vaProjectAssignments.filter((a) => a.va_id === va.id);
+              const myTaskAssignments = vaTaskAssignments.filter((a) => a.va_id === va.id);
+              const totalAssignments = myProjectAssignments.length + myTaskAssignments.length;
+
+              // Group task assignments by project
+              const tasksByProjectId = new Map<number, VaTaskAssignment[]>();
+              for (const ta of myTaskAssignments) {
+                const ptId = ta.project_task_assignments?.project_tag_id;
+                if (ptId !== undefined && ptId !== null) {
+                  if (!tasksByProjectId.has(ptId)) tasksByProjectId.set(ptId, []);
+                  tasksByProjectId.get(ptId)!.push(ta);
+                }
+              }
+
+              // Collect all project IDs
+              const allProjectIds = new Set<number>();
+              myProjectAssignments.forEach((a) => allProjectIds.add(a.project_tag_id));
+              myTaskAssignments.forEach((a) => {
+                const ptId = a.project_task_assignments?.project_tag_id;
+                if (ptId !== undefined && ptId !== null) allProjectIds.add(ptId);
+              });
+
+              return (
+                <div key={va.id} className="rounded-lg border border-sand overflow-hidden">
+                  {/* VA row - click to expand */}
+                  <button
+                    onClick={() => {
+                      setExpandedVAIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(va.id)) next.delete(va.id); else next.add(va.id);
+                        return next;
+                      });
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 bg-parchment/40 hover:bg-parchment/70 transition-colors cursor-pointer"
+                  >
+                    <ChevronDown open={isExpanded} />
+                    <svg className="h-3.5 w-3.5 text-sage shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                    <span className="text-[11px] font-semibold text-espresso flex-1 text-left truncate">{va.full_name}</span>
+                    {totalAssignments > 0 && (
+                      <span className="text-[9px] bg-sage-soft text-sage px-1.5 py-0.5 rounded-full font-semibold shrink-0">
+                        {totalAssignments}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* Expanded content */}
+                  {isExpanded && (
+                    <div className="border-t border-sand bg-white p-2 space-y-2">
+                      {allProjectIds.size === 0 ? (
+                        <p className="text-[10px] text-stone text-center py-3 bg-parchment/30 rounded-lg">
+                          No assignments yet. Assign from Accounts &amp; Projects.
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {Array.from(allProjectIds).map((projectId) => {
+                            const projAssignment = myProjectAssignments.find((a) => a.project_tag_id === projectId);
+                            const projTasks = tasksByProjectId.get(projectId) ?? [];
+                            const projectInfo = projAssignment?.project_tags ?? projTasks[0]?.project_task_assignments?.project_tags;
+                            const projectName = projectInfo?.project_name ?? "Unknown Project";
+                            const accountName = projectInfo?.account ?? "Unknown Account";
+
+                            return (
+                              <div key={projectId} className="rounded-lg border border-sand/80 overflow-hidden">
+                                {/* Project header */}
+                                <div className="bg-parchment/40 px-2 py-1.5 space-y-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <ProjectIcon />
+                                    <div className="flex-1 min-w-0">
+                                      <span className="text-[11px] font-semibold text-espresso truncate block">{projectName}</span>
+                                      <span className="text-[9px] text-stone">{accountName}</span>
+                                    </div>
+                                    {projAssignment && (
+                                      <span className="text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold shrink-0">Project</span>
+                                    )}
+                                  </div>
+                                  {/* Project-level rate controls */}
+                                  {projAssignment && (
+                                    <div className="flex items-center gap-1.5 mt-1">
+                                      <select
+                                        value={projAssignment.billing_type}
+                                        onChange={(e) => handleUpdateVAProjectRate(projAssignment.id, e.target.value)}
+                                        className="rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none bg-white cursor-pointer"
+                                      >
+                                        <option value="hourly">Hourly</option>
+                                        <option value="fixed">Fixed</option>
+                                      </select>
+                                      <input
+                                        type="text"
+                                        placeholder="Rate"
+                                        defaultValue={projAssignment.rate ?? ""}
+                                        key={`proj-rate-${projAssignment.id}-${projAssignment.rate}`}
+                                        className="w-16 rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none focus:border-terracotta"
+                                        onBlur={(e) => {
+                                          const val = e.target.value.trim();
+                                          const rate = val ? parseFloat(val) : null;
+                                          if (rate !== projAssignment.rate) handleUpdateVAProjectRate(projAssignment.id, undefined, rate);
+                                        }}
+                                        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                                      />
+                                      <button
+                                        onClick={() => handleUnassignVAFromProject(projAssignment.id)}
+                                        className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer ml-auto"
+                                        title="Unassign from project"
+                                      >
+                                        <XIcon />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                                {/* Task assignments */}
+                                {projTasks.length > 0 && (
+                                  <div className="border-t border-sand divide-y divide-sand/50">
+                                    {projTasks.map((ta) => {
+                                      const taskName = ta.project_task_assignments?.task_library?.task_name ?? "Unknown Task";
+                                      return (
+                                        <div key={ta.id} className="px-2 py-1.5 flex items-center gap-1.5 text-[11px]">
+                                          <span className="flex-1 text-espresso truncate pl-3">{taskName}</span>
+                                          <select
+                                            value={ta.billing_type}
+                                            onChange={(e) => handleUpdateVATaskRate(ta.id, e.target.value)}
+                                            className="rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none bg-white cursor-pointer"
+                                          >
+                                            <option value="hourly">Hourly</option>
+                                            <option value="fixed">Fixed</option>
+                                          </select>
+                                          <input
+                                            type="text"
+                                            placeholder="Rate"
+                                            defaultValue={ta.rate ?? ""}
+                                            key={`task-rate-${ta.id}-${ta.rate}`}
+                                            className="w-14 rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none focus:border-terracotta"
+                                            onBlur={(e) => {
+                                              const val = e.target.value.trim();
+                                              const rate = val ? parseFloat(val) : null;
+                                              if (rate !== ta.rate) handleUpdateVATaskRate(ta.id, undefined, rate);
+                                            }}
+                                            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                                          />
+                                          <button
+                                            onClick={() => handleUnassignVAFromTask(ta.id)}
+                                            className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer shrink-0"
+                                            title="Unassign task"
+                                          >
+                                            <XIcon />
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ VA Category Assignments ═══ */}
+      <div className="rounded-xl border border-sand bg-white p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide flex items-center gap-1.5">
+            <svg className="h-3.5 w-3.5 text-terracotta" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 00-3-3.87" />
+              <path d="M16 3.13a4 4 0 010 7.75" />
+            </svg>
+            VA Assignments
+            <span className="text-stone font-normal normal-case">
+              ({vaCatAssignments.length} assignment{vaCatAssignments.length !== 1 ? "s" : ""})
+            </span>
+          </h3>
+        </div>
+        <p className="text-[10px] text-stone">
+          Assign VAs to task categories. VAs will only see tasks from their assigned categories.
+        </p>
+
+        {/* Category selector */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[11px] text-espresso font-semibold">Category:</span>
+          {categories.map((cat) => {
+            const count = vaCatAssignments.filter((a) => a.category_id === cat.id).length;
+            return (
+              <button
+                key={cat.id}
+                onClick={() => setSelectedCategoryForVA(selectedCategoryForVA === cat.id ? null : cat.id)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${
+                  selectedCategoryForVA === cat.id
+                    ? "bg-terracotta text-white"
+                    : "bg-parchment text-espresso hover:bg-sand"
+                }`}
+              >
+                {cat.category_name}
+                {count > 0 && (
+                  <span className={`ml-1 text-[9px] ${selectedCategoryForVA === cat.id ? "text-white/80" : "text-stone"}`}>
+                    ({count} VA{count !== 1 ? "s" : ""})
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* VA list for selected category */}
+        {selectedCategoryForVA && (() => {
+          const catName = categories.find((c) => c.id === selectedCategoryForVA)?.category_name ?? "Category";
+          const assignedVaIds = new Set(
+            vaCatAssignments
+              .filter((a) => a.category_id === selectedCategoryForVA)
+              .map((a) => a.va_id)
+          );
+          const assignedList = vaCatAssignments.filter((a) => a.category_id === selectedCategoryForVA);
+          const unassignedVAs = vaList.filter((v) => !assignedVaIds.has(v.id));
+          return (
+            <div className="rounded-lg border border-sand p-2.5 space-y-2">
+              <h4 className="text-[11px] font-bold text-espresso">
+                VAs assigned to &ldquo;{catName}&rdquo;
+              </h4>
+
+              {/* Currently assigned */}
+              {assignedList.length === 0 ? (
+                <p className="text-[10px] text-stone italic">No VAs assigned yet.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {assignedList.map((a) => (
+                    <span key={a.id} className="inline-flex items-center gap-1 bg-sage-soft text-sage px-2 py-0.5 rounded-full text-[11px] font-semibold">
+                      {a.profiles?.full_name ?? a.profiles?.username ?? "Unknown"}
+                      <button
+                        onClick={() => handleUnassignVAFromCategory(a.id)}
+                        className="hover:text-red-600 cursor-pointer"
+                        title="Remove"
+                      >
+                        <XIcon />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Add VA */}
+              {unassignedVAs.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-stone">Add VA:</span>
+                  <select
+                    onChange={(e) => {
+                      const vaId = e.target.value;
+                      if (!vaId) return;
+                      handleAssignVAToCategory(vaId, selectedCategoryForVA);
+                      e.target.value = "";
+                    }}
+                    className="rounded-lg border border-sand px-2 py-0.5 text-[11px] text-espresso outline-none bg-white cursor-pointer"
+                    disabled={assigningVA}
+                    value=""
+                  >
+                    <option value="">Select VA...</option>
+                    {unassignedVAs.map((v) => (
+                      <option key={v.id} value={v.id}>{v.full_name}</option>
+                    ))}
+                  </select>
+                  {assigningVA && <span className="text-[10px] text-stone animate-pulse">Assigning...</span>}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Summary: all assignments grouped by VA */}
+        {vaCatAssignments.length > 0 && !selectedCategoryForVA && (
+          <div className="space-y-1">
+            <h4 className="text-[11px] font-bold text-stone uppercase tracking-wide">All Assignments</h4>
+            {(() => {
+              const byVa = new Map<string, { name: string; cats: string[] }>();
+              for (const a of vaCatAssignments) {
+                const vaName = a.profiles?.full_name ?? "Unknown";
+                const catName = a.task_categories?.category_name ?? "Unknown";
+                if (!byVa.has(a.va_id)) byVa.set(a.va_id, { name: vaName, cats: [] });
+                byVa.get(a.va_id)!.cats.push(catName);
+              }
+              return Array.from(byVa.entries()).map(([vaId, info]) => (
+                <div key={vaId} className="flex items-center gap-2 text-[11px]">
+                  <span className="font-semibold text-espresso w-32 truncate">{info.name}</span>
+                  <div className="flex flex-wrap gap-1">
+                    {info.cats.map((c, i) => (
+                      <span key={i} className="bg-parchment text-stone px-1.5 py-0.5 rounded-full text-[10px]">{c}</span>
+                    ))}
+                  </div>
+                </div>
+              ));
+            })()}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1219,6 +1925,9 @@ function TaskRow({
         ) : (
           <div className="flex items-center gap-1">
             <span className="text-espresso truncate">{task.task_name}</span>
+            <span className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full font-semibold ${task.billing_type === "fixed" ? "bg-terracotta-soft text-terracotta" : "bg-gray-100 text-stone"}`}>
+              {task.billing_type === "fixed" ? (task.default_rate ? `$${task.default_rate}` : "Fixed") : "Hourly"}
+            </span>
             {assigned && (
               <span className="shrink-0 text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold">assigned</span>
             )}
@@ -1285,6 +1994,7 @@ function ProjectRow({
   accounts,
   onMoveToAccount,
   taskCount,
+  isExpanded,
 }: {
   project: ProjectTag;
   selected: boolean;
@@ -1301,6 +2011,7 @@ function ProjectRow({
   accounts: Account[];
   onMoveToAccount: (accName: string | null) => void;
   taskCount: number;
+  isExpanded?: boolean;
 }) {
   const [showMoveMenu, setShowMoveMenu] = useState(false);
 
@@ -1322,6 +2033,7 @@ function ProjectRow({
         onClick={(e) => e.stopPropagation()}
         className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
       />
+      {isExpanded !== undefined && <ChevronDown open={isExpanded} />}
       <ProjectIcon />
       <div className="flex-1 min-w-0">
         {editing ? (
