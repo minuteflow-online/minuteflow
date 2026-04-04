@@ -583,10 +583,14 @@ export default function ProjectsTasksTab() {
     fetchProjectTaskCounts();
   };
 
-  const handleUnassignTask = async (assignmentId: number) => {
+  const handleUnassignTask = async (assignmentId: number, projectTagId?: number) => {
     await fetch(`/api/project-task-assignments?id=${assignmentId}`, { method: "DELETE" });
     if (selectedProject) fetchAssignments(selectedProject.id);
     fetchProjectTaskCounts();
+    // Refresh expanded project tasks if we know which project
+    if (projectTagId && expandedProjectIds.has(projectTagId)) {
+      fetchExpandedProjectTasks(projectTagId);
+    }
   };
 
   const handleMoveProjectToAccount = async (projectId: number, accountName: string | null) => {
@@ -648,6 +652,42 @@ export default function ProjectsTasksTab() {
   const handleUnassignVAFromTask = async (assignmentId: number) => {
     await fetch(`/api/va-task-assignments?id=${assignmentId}`, { method: "DELETE" });
     fetchVaTaskAssignments();
+  };
+
+  const handleBatchAssignVAToProjects = async (vaId: string) => {
+    if (selectedProjectIds.size === 0 || !vaId) return;
+    setAssigning(true);
+    const projectIds = Array.from(selectedProjectIds);
+    // Only assign to projects where this VA isn't already assigned
+    const alreadyAssigned = new Set(
+      vaProjectAssignments.filter((a) => a.va_id === vaId).map((a) => a.project_tag_id)
+    );
+    const toAssign = projectIds.filter((pid) => !alreadyAssigned.has(pid));
+    const promises = toAssign.map((pid) =>
+      fetch("/api/va-project-assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ va_id: vaId, project_tag_id: pid }),
+      })
+    );
+    await Promise.all(promises);
+    setAssigning(false);
+    setSelectedProjectIds(new Set());
+    fetchVaProjectAssignments();
+  };
+
+  const handleBatchUnassignVAFromProjects = async (vaId: string) => {
+    if (selectedProjectIds.size === 0 || !vaId) return;
+    setAssigning(true);
+    const projectIds = new Set(Array.from(selectedProjectIds));
+    const toRemove = vaProjectAssignments.filter((a) => a.va_id === vaId && projectIds.has(a.project_tag_id));
+    const promises = toRemove.map((a) =>
+      fetch(`/api/va-project-assignments?id=${a.id}`, { method: "DELETE" })
+    );
+    await Promise.all(promises);
+    setAssigning(false);
+    setSelectedProjectIds(new Set());
+    fetchVaProjectAssignments();
   };
 
   const handleUpdateVAProjectRate = async (assignmentId: number, billingType?: string, rate?: number | null) => {
@@ -852,6 +892,33 @@ export default function ProjectsTasksTab() {
             <option value="__unassigned__">Unassigned</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.name}>{a.name}</option>
+            ))}
+          </select>
+          {/* Batch assign VA to selected projects */}
+          <span className="text-stone">|</span>
+          <span className="text-stone text-[11px]">Assign VA:</span>
+          <select
+            onChange={(e) => { if (e.target.value) handleBatchAssignVAToProjects(e.target.value); e.target.value = ""; }}
+            className="rounded-lg border border-terracotta/30 px-2 py-0.5 text-xs text-espresso outline-none bg-white"
+            disabled={assigning}
+            value=""
+          >
+            <option value="">Pick team member...</option>
+            {vaList.map((v) => (
+              <option key={v.id} value={v.id}>{v.full_name}</option>
+            ))}
+          </select>
+          {/* Batch unassign VA from selected projects */}
+          <span className="text-stone text-[11px]">Unassign VA:</span>
+          <select
+            onChange={(e) => { if (e.target.value) handleBatchUnassignVAFromProjects(e.target.value); e.target.value = ""; }}
+            className="rounded-lg border border-terracotta/30 px-2 py-0.5 text-xs text-espresso outline-none bg-white"
+            disabled={assigning}
+            value=""
+          >
+            <option value="">Pick team member...</option>
+            {vaList.map((v) => (
+              <option key={v.id} value={v.id}>{v.full_name}</option>
             ))}
           </select>
           <span className="text-stone">|</span>
@@ -1349,7 +1416,7 @@ export default function ProjectsTasksTab() {
                                       return (
                                         <div key={a.id} className="rounded border border-sand/60 bg-white p-1.5 text-[11px]">
                                           <div className="flex items-center gap-1.5 flex-wrap">
-                                            <span className="text-espresso truncate">{a.task_library?.task_name ?? "Unknown"}</span>
+                                            <span className="text-espresso truncate flex-1">{a.task_library?.task_name ?? "Unknown"}</span>
                                             {/* VA badges */}
                                             {taskVAs.map((tv) => (
                                               <span key={tv.id} className="text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0">
@@ -1381,6 +1448,14 @@ export default function ProjectsTasksTab() {
                                                 </div>
                                               )}
                                             </div>
+                                            {/* Remove task from project */}
+                                            <button
+                                              onClick={() => handleUnassignTask(a.id, p.id)}
+                                              className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer shrink-0"
+                                              title="Remove task from project"
+                                            >
+                                              <XIcon />
+                                            </button>
                                           </div>
                                         </div>
                                       );
@@ -1925,9 +2000,6 @@ function TaskRow({
         ) : (
           <div className="flex items-center gap-1">
             <span className="text-espresso truncate">{task.task_name}</span>
-            <span className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full font-semibold ${task.billing_type === "fixed" ? "bg-terracotta-soft text-terracotta" : "bg-gray-100 text-stone"}`}>
-              {task.billing_type === "fixed" ? (task.default_rate ? `$${task.default_rate}` : "Fixed") : "Hourly"}
-            </span>
             {assigned && (
               <span className="shrink-0 text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold">assigned</span>
             )}
