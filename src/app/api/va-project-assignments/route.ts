@@ -20,12 +20,18 @@ export async function GET(request: Request) {
   const vaId = searchParams.get("va_id");
   const projectTagId = searchParams.get("project_tag_id");
 
+  const assignmentType = searchParams.get("assignment_type"); // 'include' | 'exclude'
+
   let query = supabase
     .from("va_project_assignments")
     .select(
-      "id, va_id, project_tag_id, billing_type, rate, assigned_by, assigned_at, profiles!va_project_assignments_va_id_fkey(id, full_name, username), project_tags(id, account, project_name)"
+      "id, va_id, project_tag_id, billing_type, rate, assignment_type, assigned_by, assigned_at, profiles!va_project_assignments_va_id_fkey(id, full_name, username), project_tags(id, account, project_name)"
     )
     .order("assigned_at", { ascending: false });
+
+  if (assignmentType) {
+    query = query.eq("assignment_type", assignmentType);
+  }
 
   if (vaId) {
     query = query.eq("va_id", vaId);
@@ -67,7 +73,8 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { va_id, project_tag_ids, project_tag_id, va_ids, billing_type, rate } = body;
+  const { va_id, project_tag_ids, project_tag_id, va_ids, billing_type, rate, assignment_type } = body;
+  const effectiveType = assignment_type === "exclude" ? "exclude" : "include";
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let rows: any[] = [];
@@ -79,6 +86,7 @@ export async function POST(request: Request) {
       project_tag_id: ptId,
       billing_type: billing_type ?? "hourly",
       rate: rate ?? null,
+      assignment_type: effectiveType,
       assigned_by: user.id,
     }));
   }
@@ -89,6 +97,7 @@ export async function POST(request: Request) {
       project_tag_id,
       billing_type: billing_type ?? "hourly",
       rate: rate ?? null,
+      assignment_type: effectiveType,
       assigned_by: user.id,
     }));
   }
@@ -100,6 +109,7 @@ export async function POST(request: Request) {
         project_tag_id,
         billing_type: billing_type ?? "hourly",
         rate: rate ?? null,
+        assignment_type: effectiveType,
         assigned_by: user.id,
       },
     ];
@@ -117,7 +127,7 @@ export async function POST(request: Request) {
     .from("va_project_assignments")
     .upsert(rows, { onConflict: "va_id,project_tag_id", ignoreDuplicates: false })
     .select(
-      "id, va_id, project_tag_id, billing_type, rate, assigned_at, profiles!va_project_assignments_va_id_fkey(id, full_name, username), project_tags(id, account, project_name)"
+      "id, va_id, project_tag_id, billing_type, rate, assignment_type, assigned_at, profiles!va_project_assignments_va_id_fkey(id, full_name, username), project_tags(id, account, project_name)"
     );
 
   if (error) {
@@ -127,8 +137,8 @@ export async function POST(request: Request) {
   return Response.json({ assignments: data }, { status: 201 });
 }
 
-/** PATCH: Update billing_type and/or rate on existing assignment
- *  Body: { id, billing_type?, rate? }
+/** PATCH: Update billing_type, rate, and/or assignment_type on existing assignment
+ *  Body: { id, billing_type?, rate?, assignment_type? }
  */
 export async function PATCH(request: Request) {
   const supabase = await createClient();
@@ -149,7 +159,7 @@ export async function PATCH(request: Request) {
   }
 
   const body = await request.json();
-  const { id, billing_type, rate } = body;
+  const { id, billing_type, rate, assignment_type } = body;
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
@@ -158,6 +168,7 @@ export async function PATCH(request: Request) {
   const updates: Record<string, unknown> = {};
   if (billing_type !== undefined) updates.billing_type = billing_type;
   if (rate !== undefined) updates.rate = rate;
+  if (assignment_type !== undefined) updates.assignment_type = assignment_type;
 
   if (Object.keys(updates).length === 0) {
     return Response.json({ error: "Nothing to update" }, { status: 400 });
@@ -168,7 +179,7 @@ export async function PATCH(request: Request) {
     .update(updates)
     .eq("id", id)
     .select(
-      "id, va_id, project_tag_id, billing_type, rate, assigned_at, profiles!va_project_assignments_va_id_fkey(id, full_name, username), project_tags(id, account, project_name)"
+      "id, va_id, project_tag_id, billing_type, rate, assignment_type, assigned_at, profiles!va_project_assignments_va_id_fkey(id, full_name, username), project_tags(id, account, project_name)"
     )
     .single();
 

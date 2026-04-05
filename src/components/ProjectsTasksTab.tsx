@@ -62,12 +62,15 @@ interface VaCategoryAssignment {
   profiles: { id: string; full_name: string; username: string } | null;
 }
 
+type AssignmentType = 'include' | 'exclude';
+
 interface VaProjectAssignment {
   id: number;
   va_id: string;
   project_tag_id: number;
   billing_type: BillingType;
   rate: number | null;
+  assignment_type: AssignmentType;
   assigned_at: string;
   profiles: { id: string; full_name: string; username: string } | null;
   project_tags: { id: number; account: string; project_name: string } | null;
@@ -79,6 +82,7 @@ interface VaTaskAssignment {
   project_task_assignment_id: number;
   billing_type: BillingType;
   rate: number | null;
+  assignment_type: AssignmentType;
   assigned_at: string;
   profiles: { id: string; full_name: string; username: string } | null;
   project_task_assignments: {
@@ -747,50 +751,34 @@ export default function ProjectsTasksTab() {
     const vaIds = Array.from(selectedVAIds);
     const allPromises: Promise<Response>[] = [];
 
-    // Assign to projects
+    // Assign to projects (include — exclusive access)
     if (selectedProjectIds.size > 0) {
       const projectIds = Array.from(selectedProjectIds);
-      const alreadyProj = new Map<string, Set<number>>();
-      for (const va of vaProjectAssignments) {
-        if (!alreadyProj.has(va.va_id)) alreadyProj.set(va.va_id, new Set());
-        alreadyProj.get(va.va_id)!.add(va.project_tag_id);
-      }
       for (const vaId of vaIds) {
-        const existing = alreadyProj.get(vaId) ?? new Set();
         for (const pid of projectIds) {
-          if (!existing.has(pid)) {
-            allPromises.push(
-              fetch("/api/va-project-assignments", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ va_id: vaId, project_tag_id: pid }),
-              })
-            );
-          }
+          allPromises.push(
+            fetch("/api/va-project-assignments", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ va_id: vaId, project_tag_id: pid, assignment_type: "include" }),
+            })
+          );
         }
       }
     }
 
-    // Assign to tasks
+    // Assign to tasks (include — exclusive access)
     if (selectedExpandedTaskIds.size > 0) {
       const taskIds = Array.from(selectedExpandedTaskIds);
-      const alreadyTask = new Map<string, Set<number>>();
-      for (const vta of vaTaskAssignments) {
-        if (!alreadyTask.has(vta.va_id)) alreadyTask.set(vta.va_id, new Set());
-        alreadyTask.get(vta.va_id)!.add(vta.project_task_assignment_id);
-      }
       for (const vaId of vaIds) {
-        const existing = alreadyTask.get(vaId) ?? new Set();
         for (const ptaId of taskIds) {
-          if (!existing.has(ptaId)) {
-            allPromises.push(
-              fetch("/api/va-task-assignments", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ va_id: vaId, project_task_assignment_id: ptaId }),
-              })
-            );
-          }
+          allPromises.push(
+            fetch("/api/va-task-assignments", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ va_id: vaId, project_task_assignment_id: ptaId, assignment_type: "include" }),
+            })
+          );
         }
       }
     }
@@ -802,7 +790,54 @@ export default function ProjectsTasksTab() {
     fetchVaTaskAssignments();
   };
 
-  const handleUnassignVA = async () => {
+  const handleExcludeVA = async () => {
+    if (selectedVAIds.size === 0) return;
+    if (selectedProjectIds.size === 0 && selectedExpandedTaskIds.size === 0) return;
+    setAssigning(true);
+
+    const vaIds = Array.from(selectedVAIds);
+    const allPromises: Promise<Response>[] = [];
+
+    // Unassign from projects (exclude — hidden from selected VAs, everyone else still sees them)
+    if (selectedProjectIds.size > 0) {
+      const projectIds = Array.from(selectedProjectIds);
+      for (const vaId of vaIds) {
+        for (const pid of projectIds) {
+          allPromises.push(
+            fetch("/api/va-project-assignments", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ va_id: vaId, project_tag_id: pid, assignment_type: "exclude" }),
+            })
+          );
+        }
+      }
+    }
+
+    // Unassign from tasks (exclude — hidden from selected VAs, everyone else still sees them)
+    if (selectedExpandedTaskIds.size > 0) {
+      const taskIds = Array.from(selectedExpandedTaskIds);
+      for (const vaId of vaIds) {
+        for (const ptaId of taskIds) {
+          allPromises.push(
+            fetch("/api/va-task-assignments", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ va_id: vaId, project_task_assignment_id: ptaId, assignment_type: "exclude" }),
+            })
+          );
+        }
+      }
+    }
+
+    await Promise.all(allPromises);
+    setSelectedVAIds(new Set());
+    setAssigning(false);
+    fetchVaProjectAssignments();
+    fetchVaTaskAssignments();
+  };
+
+  const handleRemoveVAAssignment = async () => {
     if (selectedVAIds.size === 0) return;
     if (selectedProjectIds.size === 0 && selectedExpandedTaskIds.size === 0) return;
     setAssigning(true);
@@ -810,14 +845,14 @@ export default function ProjectsTasksTab() {
     const vaIdSet = new Set(Array.from(selectedVAIds));
     const allPromises: Promise<Response>[] = [];
 
-    // Unassign from projects
+    // Remove from projects (delete the record entirely — restores default visibility)
     if (selectedProjectIds.size > 0) {
       const projectIdSet = new Set(Array.from(selectedProjectIds));
       const toRemove = vaProjectAssignments.filter((a) => vaIdSet.has(a.va_id) && projectIdSet.has(a.project_tag_id));
       allPromises.push(...toRemove.map((a) => fetch(`/api/va-project-assignments?id=${a.id}`, { method: "DELETE" })));
     }
 
-    // Unassign from tasks
+    // Remove from tasks (delete the record entirely — restores default visibility)
     if (selectedExpandedTaskIds.size > 0) {
       const taskIdSet = new Set(Array.from(selectedExpandedTaskIds));
       const toRemove = vaTaskAssignments.filter((a) => vaIdSet.has(a.va_id) && taskIdSet.has(a.project_task_assignment_id));
@@ -1113,15 +1148,25 @@ export default function ProjectsTasksTab() {
                     onClick={handleAssignVA}
                     disabled={assigning}
                     className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
+                    title="Assign VA — only assigned VAs will see these items (exclusive)"
                   >
-                    {assigning ? "Assigning..." : "Assign VA"}
+                    {assigning ? "..." : "Assign VA"}
                   </button>
                   <button
-                    onClick={handleUnassignVA}
+                    onClick={handleExcludeVA}
+                    disabled={assigning}
+                    className="px-3 py-1 rounded-lg bg-amber-500 text-white font-semibold hover:bg-amber-600 disabled:opacity-50 cursor-pointer transition-colors"
+                    title="Unassign VA — hide these items from selected VAs (everyone else still sees them)"
+                  >
+                    {assigning ? "..." : "Unassign VA"}
+                  </button>
+                  <button
+                    onClick={handleRemoveVAAssignment}
                     disabled={assigning}
                     className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
+                    title="Remove assignment or exclusion — restores default visibility (everyone sees it)"
                   >
-                    {assigning ? "Unassigning..." : "Unassign VA"}
+                    {assigning ? "..." : "Remove"}
                   </button>
                 </>
               ) : (
@@ -1573,12 +1618,25 @@ export default function ProjectsTasksTab() {
                                     isExpanded={isExpanded}
                                   />
                                 </div>
-                                {/* VA count badge (read-only) */}
-                                {projectVAs.length > 0 && (
-                                  <span className="text-[9px] bg-sage-soft text-sage px-1.5 py-0.5 rounded-full font-semibold shrink-0 mr-2">
-                                    {projectVAs.length} VA{projectVAs.length !== 1 ? "s" : ""}
-                                  </span>
-                                )}
+                                {/* VA count badges (read-only) — show assigned and unassigned separately */}
+                                {projectVAs.length > 0 && (() => {
+                                  const includes = projectVAs.filter((a) => a.assignment_type === "include");
+                                  const excludes = projectVAs.filter((a) => a.assignment_type === "exclude");
+                                  return (
+                                    <span className="flex items-center gap-1 shrink-0 mr-2">
+                                      {includes.length > 0 && (
+                                        <span className="text-[9px] bg-sage-soft text-sage px-1.5 py-0.5 rounded-full font-semibold" title={`Assigned: ${includes.map(a => a.profiles?.full_name?.split(" ")[0]).join(", ")}`}>
+                                          {includes.length} VA{includes.length !== 1 ? "s" : ""}
+                                        </span>
+                                      )}
+                                      {excludes.length > 0 && (
+                                        <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold" title={`Unassigned: ${excludes.map(a => a.profiles?.full_name?.split(" ")[0]).join(", ")}`}>
+                                          ✕{excludes.length}
+                                        </span>
+                                      )}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                               {/* Expanded tasks inside project */}
                               {isExpanded && (
@@ -1665,8 +1723,8 @@ export default function ProjectsTasksTab() {
                                               {taskVAs.length > 0 && (
                                                 <ScrollableVAPills>
                                                   {taskVAs.map((tv) => (
-                                                    <span key={tv.id} className="text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0 whitespace-nowrap">
-                                                      {tv.profiles?.full_name?.split(" ")[0] ?? "VA"}
+                                                    <span key={tv.id} className={`text-[9px] px-1 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0 whitespace-nowrap ${tv.assignment_type === "exclude" ? "bg-amber-100 text-amber-700" : "bg-sage-soft text-sage"}`}>
+                                                      {tv.assignment_type === "exclude" ? "✕ " : ""}{tv.profiles?.full_name?.split(" ")[0] ?? "VA"}
                                                       <button onClick={() => handleUnassignVAFromTask(tv.id)} className="hover:text-red-600 cursor-pointer"><XIcon /></button>
                                                     </span>
                                                   ))}
@@ -1978,7 +2036,9 @@ export default function ProjectsTasksTab() {
                                       <span className="text-[9px] text-stone">{accountName}</span>
                                     </div>
                                     {projAssignment && (
-                                      <span className="text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold shrink-0">Project</span>
+                                      <span className={`text-[9px] px-1 py-0.5 rounded-full font-semibold shrink-0 ${projAssignment.assignment_type === "exclude" ? "bg-amber-100 text-amber-700" : "bg-sage-soft text-sage"}`}>
+                                        {projAssignment.assignment_type === "exclude" ? "Unassigned" : "Assigned"}
+                                      </span>
                                     )}
                                   </div>
                                   {/* Project-level rate controls */}

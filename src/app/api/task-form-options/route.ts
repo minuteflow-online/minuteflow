@@ -38,8 +38,17 @@ export async function GET(request: Request) {
 
   const isVA = profile?.role === "va";
 
-  // If VA, fetch their assigned category IDs
+  // If VA, fetch their assigned category IDs + project/task visibility data
   let assignedCategoryIds: Set<number> | null = null;
+  // Maps for project-level visibility: include set, exclude set
+  let projectIncludes: Set<number> | null = null; // project IDs with 'include' assignments (any VA)
+  let myProjectIncludes: Set<number> | null = null; // project IDs where THIS VA is included
+  let myProjectExcludes: Set<number> | null = null; // project IDs where THIS VA is excluded
+  // Maps for task-level visibility
+  let taskIncludes: Set<number> | null = null; // project_task_assignment IDs with 'include' assignments (any VA)
+  let myTaskIncludes: Set<number> | null = null; // task IDs where THIS VA is included
+  let myTaskExcludes: Set<number> | null = null; // task IDs where THIS VA is excluded
+
   if (isVA) {
     const { data: vaCats } = await supabase
       .from("va_category_assignments")
@@ -48,7 +57,46 @@ export async function GET(request: Request) {
     if (vaCats && vaCats.length > 0) {
       assignedCategoryIds = new Set(vaCats.map((c) => c.category_id));
     }
-    // If VA has no assignments, assignedCategoryIds stays null → they see all tasks (graceful fallback)
+
+    // Fetch ALL project assignments (to know which projects have any include assignments)
+    const { data: allProjAssign } = await supabase
+      .from("va_project_assignments")
+      .select("va_id, project_tag_id, assignment_type");
+
+    if (allProjAssign && allProjAssign.length > 0) {
+      projectIncludes = new Set<number>();
+      myProjectIncludes = new Set<number>();
+      myProjectExcludes = new Set<number>();
+      for (const a of allProjAssign) {
+        if (a.assignment_type === "include") {
+          projectIncludes.add(a.project_tag_id);
+          if (a.va_id === user.id) myProjectIncludes.add(a.project_tag_id);
+        }
+        if (a.assignment_type === "exclude" && a.va_id === user.id) {
+          myProjectExcludes.add(a.project_tag_id);
+        }
+      }
+    }
+
+    // Fetch ALL task assignments
+    const { data: allTaskAssign } = await supabase
+      .from("va_task_assignments")
+      .select("va_id, project_task_assignment_id, assignment_type");
+
+    if (allTaskAssign && allTaskAssign.length > 0) {
+      taskIncludes = new Set<number>();
+      myTaskIncludes = new Set<number>();
+      myTaskExcludes = new Set<number>();
+      for (const a of allTaskAssign) {
+        if (a.assignment_type === "include") {
+          taskIncludes.add(a.project_task_assignment_id);
+          if (a.va_id === user.id) myTaskIncludes.add(a.project_task_assignment_id);
+        }
+        if (a.assignment_type === "exclude" && a.va_id === user.id) {
+          myTaskExcludes.add(a.project_task_assignment_id);
+        }
+      }
+    }
   }
 
   // 1. Fetch active projects (with account info)
@@ -69,15 +117,31 @@ export async function GET(request: Request) {
     return Response.json({ error: projError.message }, { status: 500 });
   }
 
-  // 2. Get distinct accounts from projects
+  // 2. Filter projects by VA visibility, then get distinct accounts
+  let visibleProjects = projects ?? [];
+  if (isVA && (projectIncludes || myProjectExcludes)) {
+    visibleProjects = visibleProjects.filter((p) => {
+      // Rule 1: If project has include assignments, VA must be in the include list
+      if (projectIncludes && projectIncludes.has(p.id)) {
+        return myProjectIncludes ? myProjectIncludes.has(p.id) : false;
+      }
+      // Rule 2: If VA is excluded from this project, hide it
+      if (myProjectExcludes && myProjectExcludes.has(p.id)) {
+        return false;
+      }
+      // Rule 3: Default — visible to everyone
+      return true;
+    });
+  }
+
   const accountSet = new Set<string>();
-  for (const p of projects ?? []) {
+  for (const p of visibleProjects) {
     if (p.account) accountSet.add(p.account);
   }
   const accounts = Array.from(accountSet).sort();
 
   // 3. Fetch task assignments with task names + category_id for VA filtering
-  const projectIds = (projects ?? []).map((p) => p.id);
+  const projectIds = visibleProjects.map((p) => p.id);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let assignments: any[] = [];
@@ -114,9 +178,22 @@ export async function GET(request: Request) {
     const lib = Array.isArray(a.task_library) ? a.task_library[0] : a.task_library;
     if (!lib || !lib.is_active) continue;
 
-    // VA filtering: if VA has assignments, only show tasks in assigned categories
+    // VA filtering: category-based
     if (assignedCategoryIds && lib.category_id && !assignedCategoryIds.has(lib.category_id)) {
       continue;
+    }
+
+    // VA filtering: task-level include/exclude
+    if (isVA && (taskIncludes || myTaskExcludes)) {
+      // Rule 1: If task has include assignments, VA must be in the include list
+      if (taskIncludes && taskIncludes.has(a.id)) {
+        if (!myTaskIncludes || !myTaskIncludes.has(a.id)) continue;
+      }
+      // Rule 2: If VA is excluded from this task, hide it
+      else if (myTaskExcludes && myTaskExcludes.has(a.id)) {
+        continue;
+      }
+      // Rule 3: Default — visible to everyone
     }
 
     if (!tasksByProject[a.project_tag_id]) {
@@ -168,7 +245,7 @@ export async function GET(request: Request) {
 
   return Response.json({
     accounts,
-    projects: projects ?? [],
+    projects: visibleProjects,
     tasksByProject,
     clientMap,
   });
