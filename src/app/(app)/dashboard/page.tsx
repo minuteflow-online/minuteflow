@@ -426,6 +426,7 @@ export default function DashboardPage() {
         client_name: "Toni Colina",
         start_time: now,
         billable: true,
+        billing_type: "hourly",
       })
       .select()
       .single();
@@ -443,6 +444,7 @@ export default function DashboardPage() {
       duration_ms: 0,
       logId: sortingLog?.id?.toString() || "",
       _startMs: Date.now(),
+      billing_type: "hourly",
     };
 
     const { error } = await supabase.from("sessions").upsert(
@@ -753,8 +755,8 @@ export default function DashboardPage() {
         is_manual: false,
         form_fill_ms: 0,
         progress: null,
-        billing_type: "hourly",
-        task_rate: null,
+        billing_type: activeTask.billing_type || "hourly",
+        task_rate: activeTask.task_rate ?? null,
         created_at: activeTask.start_time,
       };
       setLiveSessionData(taskAsLog);
@@ -802,6 +804,7 @@ export default function DashboardPage() {
         client_name: "Toni Colina",
         start_time: now,
         billable: true,
+        billing_type: "hourly",
       })
       .select()
       .single();
@@ -820,6 +823,7 @@ export default function DashboardPage() {
       logId: logData?.id?.toString() || "",
       _startMs: Date.now(),
       isBreak: true,
+      billing_type: "hourly",
     };
 
     await supabase.from("sessions").upsert(
@@ -929,6 +933,8 @@ export default function DashboardPage() {
         client_name: preBreakTask.client_name || null,
         start_time: now,
         billable: isBillable,
+        billing_type: preBreakTask.billing_type || "hourly",
+        task_rate: preBreakTask.task_rate ?? null,
       })
       .select()
       .single();
@@ -991,6 +997,8 @@ export default function DashboardPage() {
         client_name: log.client_name || null,
         start_time: now,
         billable: isBillable,
+        billing_type: log.billing_type || "hourly",
+        task_rate: log.task_rate ?? null,
       })
       .select()
       .single();
@@ -1009,6 +1017,8 @@ export default function DashboardPage() {
       logId: logData?.id?.toString() || "",
       _startMs: Date.now(),
       isBreak: false,
+      billing_type: log.billing_type || "hourly",
+      task_rate: log.task_rate ?? null,
     };
 
     await supabase.from("sessions").upsert(
@@ -1298,6 +1308,8 @@ export default function DashboardPage() {
           client_memo: newTaskClientMemo,
           internal_memo: newTaskInternalMemo,
           form_fill_ms: formData.form_fill_ms || 0,
+          billing_type: formData.billing_type || "hourly",
+          task_rate: formData.task_rate ?? null,
         })
         .select()
         .single();
@@ -1326,6 +1338,8 @@ export default function DashboardPage() {
         duration_ms: 0,
         logId: logData?.id?.toString() || "",
         _startMs: Date.now(),
+        billing_type: formData.billing_type || "hourly",
+        task_rate: formData.task_rate ?? null,
       };
 
       // Auto-clock in if idle
@@ -1507,6 +1521,8 @@ export default function DashboardPage() {
         logId: liveLog.id.toString(),
         _startMs: new Date(liveLog.start_time).getTime(),
         isBreak: liveLog.category === "Break",
+        billing_type: liveLog.billing_type || "hourly",
+        task_rate: liveLog.task_rate ?? null,
       };
 
       setActiveTask(task);

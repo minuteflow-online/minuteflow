@@ -61,6 +61,8 @@ export interface ActiveTask {
   logId: string;
   _startMs: number;
   isBreak?: boolean;
+  billing_type?: BillingType;
+  task_rate?: number | null;
 }
 
 export interface TimeLog {

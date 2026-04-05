@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import type { BillingType } from "@/types/database";
 
 const CATEGORIES = [
   { label: "Task", value: "Task" },
@@ -49,6 +50,8 @@ export interface TaskFormData {
   task_status?: string;
   form_fill_ms?: number;
   new_task_client_memo?: string;
+  billing_type?: BillingType;
+  task_rate?: number | null;
 }
 
 interface ProjectTag {
@@ -62,6 +65,8 @@ interface ProjectTask {
   id: number;
   task_library_id: number;
   task_name: string;
+  billing_type?: BillingType;
+  task_rate?: number | null;
 }
 
 interface TaskEntryFormProps {
@@ -83,6 +88,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const [clientMemo, setClientMemo] = useState("");
   const [category, setCategory] = useState("Task");
   const [client, setClient] = useState("");
+  const [selectedBillingType, setSelectedBillingType] = useState<BillingType>("hourly");
+  const [selectedTaskRate, setSelectedTaskRate] = useState<number | null>(null);
 
   // ─── Cascading Data ───
   const [allAccounts, setAllAccounts] = useState<string[]>(FALLBACK_ACCOUNTS);
@@ -265,6 +272,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       form_fill_ms: formFillMs,
       // When wizard is used, carry the form's Client Notes to the NEW task separately
       new_task_client_memo: status ? (clientMemo.trim() || undefined) : undefined,
+      billing_type: selectedBillingType,
+      task_rate: selectedTaskRate,
     });
 
     // Reset everything
@@ -275,6 +284,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     setProject("");
     setProjectTagId(null);
     setClientMemo("");
+    setSelectedBillingType("hourly");
+    setSelectedTaskRate(null);
     setWizardStep("form");
     setTaskStatus("");
     setClientMemoText("");
@@ -338,10 +349,18 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const handleTaskChange = (value: string) => {
     if (!value) {
       setTaskName("");
+      setSelectedBillingType("hourly");
+      setSelectedTaskRate(null);
       return;
     }
     // value is the task_name directly
     setTaskName(value);
+    // Look up billing_type and task_rate from the selected task
+    const selectedTask = filteredTasks.find((t) => t.task_name === value);
+    if (selectedTask) {
+      setSelectedBillingType(selectedTask.billing_type || "hourly");
+      setSelectedTaskRate(selectedTask.task_rate ?? null);
+    }
   };
 
   return (
