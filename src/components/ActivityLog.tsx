@@ -63,7 +63,8 @@ function getCategoryTag(category: string): { bg: string; text: string } {
   }
 }
 
-function formatDuration(ms: number): string {
+function formatDuration(ms: number, billingType?: string): string {
+  if (billingType === "fixed") return "Fixed";
   if (ms <= 0) return "0:00";
   const totalMinutes = Math.floor(ms / 60000);
   const hours = Math.floor(totalMinutes / 60);
@@ -159,6 +160,37 @@ export default function ActivityLog({
 
   // Memo popup
   const [memoPopup, setMemoPopup] = useState<number | null>(null);
+
+  // Inline memo editing
+  const [editingMemoLogId, setEditingMemoLogId] = useState<number | null>(null);
+  const [editClientMemo, setEditClientMemo] = useState("");
+  const [editInternalMemo, setEditInternalMemo] = useState("");
+  const [savingMemo, setSavingMemo] = useState(false);
+  const supabaseClient = createClient();
+
+  const startEditMemo = useCallback((log: TimeLog, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingMemoLogId(log.id);
+    setEditClientMemo(log.client_memo || "");
+    setEditInternalMemo(log.internal_memo || "");
+  }, []);
+
+  const cancelEditMemo = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingMemoLogId(null);
+  }, []);
+
+  const saveMemo = useCallback(async (logId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSavingMemo(true);
+    await supabaseClient.from("time_logs").update({
+      client_memo: editClientMemo || null,
+      internal_memo: editInternalMemo || null,
+    }).eq("id", logId);
+    setSavingMemo(false);
+    setEditingMemoLogId(null);
+    if (onRefresh) onRefresh();
+  }, [supabaseClient, editClientMemo, editInternalMemo, onRefresh]);
 
   // Expanded row (shows full text for long fields + memos)
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
@@ -638,21 +670,80 @@ export default function ActivityLog({
                           </span>
                         )}
                       </div>
-                      {/* Expanded: show memos inline */}
-                      {isExpanded && hasMemos && (
-                        <div className="mt-2 space-y-1.5 text-[11px]">
-                          {log.client_memo && (
-                            <div className="p-2 rounded bg-slate-blue-soft/50 border border-slate-blue/20">
-                              <span className="font-semibold text-slate-blue text-[9px] uppercase tracking-wide">Client</span>
-                              <p className="text-espresso mt-0.5 whitespace-pre-wrap">{log.client_memo}</p>
-                            </div>
+                      {/* Expanded: show memos inline (editable) */}
+                      {isExpanded && (hasMemos || editingMemoLogId === log.id) && (
+                        <div className="mt-2 space-y-1.5 text-[11px]" onClick={(e) => e.stopPropagation()}>
+                          {editingMemoLogId === log.id ? (
+                            <>
+                              <div className="p-2 rounded bg-slate-blue-soft/50 border border-slate-blue/20">
+                                <span className="font-semibold text-slate-blue text-[9px] uppercase tracking-wide">Client</span>
+                                <textarea
+                                  value={editClientMemo}
+                                  onChange={(e) => setEditClientMemo(e.target.value)}
+                                  placeholder="Add client notes..."
+                                  className="w-full mt-1 p-1.5 rounded text-[11px] text-espresso bg-white/80 border border-slate-blue/20 resize-none focus:outline-none focus:ring-1 focus:ring-slate-blue/40"
+                                  rows={2}
+                                />
+                              </div>
+                              <div className="p-2 rounded bg-amber-soft/50 border border-amber/20">
+                                <span className="font-semibold text-walnut text-[9px] uppercase tracking-wide">Internal</span>
+                                <textarea
+                                  value={editInternalMemo}
+                                  onChange={(e) => setEditInternalMemo(e.target.value)}
+                                  placeholder="Add internal notes..."
+                                  className="w-full mt-1 p-1.5 rounded text-[11px] text-espresso bg-white/80 border border-amber/20 resize-none focus:outline-none focus:ring-1 focus:ring-amber/40"
+                                  rows={2}
+                                />
+                              </div>
+                              <div className="flex gap-2 mt-1">
+                                <button
+                                  onClick={(e) => saveMemo(log.id, e)}
+                                  disabled={savingMemo}
+                                  className="px-3 py-1 rounded text-[10px] font-semibold bg-sage text-white hover:bg-sage/80 transition-colors disabled:opacity-50"
+                                >
+                                  {savingMemo ? "Saving..." : "Save"}
+                                </button>
+                                <button
+                                  onClick={cancelEditMemo}
+                                  className="px-3 py-1 rounded text-[10px] font-semibold bg-stone/20 text-bark hover:bg-stone/30 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              {log.client_memo && (
+                                <div className="p-2 rounded bg-slate-blue-soft/50 border border-slate-blue/20">
+                                  <span className="font-semibold text-slate-blue text-[9px] uppercase tracking-wide">Client</span>
+                                  <p className="text-espresso mt-0.5 whitespace-pre-wrap">{log.client_memo}</p>
+                                </div>
+                              )}
+                              {log.internal_memo && (
+                                <div className="p-2 rounded bg-amber-soft/50 border border-amber/20">
+                                  <span className="font-semibold text-walnut text-[9px] uppercase tracking-wide">Internal</span>
+                                  <p className="text-espresso mt-0.5 whitespace-pre-wrap">{log.internal_memo}</p>
+                                </div>
+                              )}
+                              <button
+                                onClick={(e) => startEditMemo(log, e)}
+                                className="flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium text-bark hover:bg-parchment transition-colors"
+                              >
+                                <PencilIcon className="w-3 h-3" /> Edit Notes
+                              </button>
+                            </>
                           )}
-                          {log.internal_memo && (
-                            <div className="p-2 rounded bg-amber-soft/50 border border-amber/20">
-                              <span className="font-semibold text-walnut text-[9px] uppercase tracking-wide">Internal</span>
-                              <p className="text-espresso mt-0.5 whitespace-pre-wrap">{log.internal_memo}</p>
-                            </div>
-                          )}
+                        </div>
+                      )}
+                      {/* Show edit button even when no memos yet */}
+                      {isExpanded && !hasMemos && editingMemoLogId !== log.id && (
+                        <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={(e) => startEditMemo(log, e)}
+                            className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium text-bark hover:bg-parchment transition-colors"
+                          >
+                            <PencilIcon className="w-3 h-3" /> Add Notes
+                          </button>
                         </div>
                       )}
                     </td>
@@ -689,7 +780,7 @@ export default function ActivityLog({
                       ) : (
                         <div>
                           <span className={`font-semibold tabular-nums text-[12px] ${getDurationClass(log)}`}>
-                            {formatDuration(log.duration_ms)}
+                            {formatDuration(log.duration_ms, log.billing_type)}
                           </span>
                           <div className="text-[10px] text-stone mt-0.5 tabular-nums">
                             {formatTime(log.start_time, timezone)}

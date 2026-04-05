@@ -3,21 +3,22 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import type {
-  Profile,
-  Session,
-  TimeLog,
-  TaskScreenshot,
-  ExtensionHeartbeat,
-  TimeCorrectionRequest,
-  BreakCorrectionRequest,
-  OrganizationSettings,
-  SortingReview,
-  TeamAssignment,
-  Client,
-  Invoice,
-  InvoiceLineItem,
-  InvoicePayment,
+import {
+  VA_POSITION_OPTIONS,
+  type Profile,
+  type Session,
+  type TimeLog,
+  type TaskScreenshot,
+  type ExtensionHeartbeat,
+  type TimeCorrectionRequest,
+  type BreakCorrectionRequest,
+  type OrganizationSettings,
+  type SortingReview,
+  type TeamAssignment,
+  type Client,
+  type Invoice,
+  type InvoiceLineItem,
+  type InvoicePayment,
 } from "@/types/database";
 import {
   formatDuration,
@@ -1766,13 +1767,16 @@ function TeamManagementTab({
             </div>
             <div>
               <label className="block text-[11px] font-semibold text-walnut mb-1">Position</label>
-              <input
-                type="text"
+              <select
                 value={newPosition}
                 onChange={(e) => setNewPosition(e.target.value)}
                 className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
-                placeholder="Optional"
-              />
+              >
+                <option value="">Select position...</option>
+                {VA_POSITION_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
             </div>
             <div className="flex gap-2">
               <div className="flex-1">
@@ -2007,13 +2011,17 @@ function TeamManagementTab({
                   <td className="px-3 py-3">
                     {editingCell?.userId === p.id && editingCell.field === "position" ? (
                       <div className="flex items-center gap-1">
-                        <input
+                        <select
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
-                          className="w-24 rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
+                          className="rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
                           autoFocus
-                          onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
-                        />
+                        >
+                          <option value="">None</option>
+                          {VA_POSITION_OPTIONS.map((opt) => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
                         <button onClick={saveEdit} disabled={savingEdit} className="text-sage text-sm font-bold">{savingEdit ? "..." : "OK"}</button>
                         <button onClick={cancelEdit} className="text-bark hover:text-terracotta text-sm">&times;</button>
                       </div>

@@ -1,5 +1,15 @@
 export type UserRole = 'admin' | 'manager' | 'va';
 
+export const VA_POSITION_OPTIONS = [
+  "Full-time VA",
+  "Part-time VA",
+  "Project Based VA",
+  "Per Task VA",
+  "Admin",
+] as const;
+
+export type VaPosition = typeof VA_POSITION_OPTIONS[number];
+
 export interface Profile {
   id: string;
   username: string;
