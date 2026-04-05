@@ -841,204 +841,184 @@ export default function ProjectsTasksTab() {
 
   return (
     <div className="space-y-3">
-      {/* Task action bar */}
-      {selectedTaskIds.size > 0 && (
-        <div className="rounded-lg bg-sage-soft border border-sage/30 px-3 py-2 flex items-center gap-2 text-xs flex-wrap">
-          <span className="text-sage font-semibold">
-            {selectedTaskIds.size} task(s) selected
-          </span>
-          {selectedProjectIds.size > 0 && (
+      {/* ═══ UNIFIED ACTION BAR ═══ */}
+      {(selectedTaskIds.size > 0 || selectedProjectIds.size > 0 || selectedVAIds.size > 0) && (
+        <div className="rounded-lg bg-espresso/5 border border-espresso/20 px-3 py-2 flex items-center gap-2 text-xs flex-wrap">
+          {/* ── Selection summary ── */}
+          <div className="flex items-center gap-1.5">
+            {selectedTaskIds.size > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-sage/15 text-sage font-semibold">
+                {selectedTaskIds.size} task{selectedTaskIds.size > 1 ? "s" : ""}
+              </span>
+            )}
+            {selectedProjectIds.size > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-terracotta/15 text-terracotta font-semibold">
+                {selectedProjectIds.size} project{selectedProjectIds.size > 1 ? "s" : ""}
+              </span>
+            )}
+            {selectedVAIds.size > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">
+                {selectedVAIds.size} VA{selectedVAIds.size > 1 ? "s" : ""}
+              </span>
+            )}
+            {selectedExpandedTaskIds.size > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">
+                {selectedExpandedTaskIds.size} expanded task{selectedExpandedTaskIds.size > 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+
+          <span className="text-stone/40">│</span>
+
+          {/* ── Task actions: assign to projects, move category, delete ── */}
+          {selectedTaskIds.size > 0 && (
             <>
-              <span className="text-stone">→</span>
+              {selectedProjectIds.size > 0 && (
+                <button
+                  onClick={handleAssignTasksToProjects}
+                  disabled={assigning}
+                  className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
+                >
+                  {assigning ? "Assigning..." : `Add to ${selectedProjectIds.size} project(s)`}
+                </button>
+              )}
+              {categories.length > 0 && (
+                <>
+                  <span className="text-stone text-[11px]">Move to:</span>
+                  <select
+                    value={bulkCategoryTarget === null ? "__uncategorized__" : bulkCategoryTarget === "none" ? "" : String(bulkCategoryTarget)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "__uncategorized__") setBulkCategoryTarget(null);
+                      else if (val === "") setBulkCategoryTarget("none");
+                      else setBulkCategoryTarget(Number(val));
+                    }}
+                    className="rounded-lg border border-espresso/20 px-2 py-0.5 text-xs text-espresso outline-none bg-white"
+                  >
+                    <option value="">Pick category...</option>
+                    <option value="__uncategorized__">Uncategorized</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.category_name}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => handleBulkMoveToCategory(bulkCategoryTarget === "none" ? null : bulkCategoryTarget as number | null)}
+                    disabled={assigning || bulkCategoryTarget === "none"}
+                    className="px-3 py-1 rounded-lg bg-espresso text-white font-semibold hover:bg-bark disabled:opacity-50 cursor-pointer transition-colors"
+                  >
+                    {assigning ? "Moving..." : "Move"}
+                  </button>
+                </>
+              )}
               <button
-                onClick={handleAssignTasksToProjects}
+                onClick={handleBulkDeleteTasks}
                 disabled={assigning}
-                className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
+                className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
               >
-                {assigning ? "Assigning..." : `Assign to ${selectedProjectIds.size} project(s)`}
+                {assigning ? "Deleting..." : "Delete Tasks"}
               </button>
+              {(selectedProjectIds.size > 0 || selectedVAIds.size > 0) && <span className="text-stone/40">│</span>}
             </>
           )}
-          {categories.length > 0 && (
+
+          {/* ── Project actions: move to account, delete ── */}
+          {selectedProjectIds.size > 0 && (
             <>
-              <span className="text-stone">|</span>
-              <span className="text-stone text-[11px]">Move to:</span>
+              <span className="text-stone text-[11px]">Account:</span>
               <select
-                value={bulkCategoryTarget === null ? "__uncategorized__" : bulkCategoryTarget === "none" ? "" : String(bulkCategoryTarget)}
                 onChange={(e) => {
                   const val = e.target.value;
-                  if (val === "__uncategorized__") setBulkCategoryTarget(null);
-                  else if (val === "") setBulkCategoryTarget("none");
-                  else setBulkCategoryTarget(Number(val));
+                  if (!val) return;
+                  const accountName = val === "__unassigned__" ? null : val;
+                  setAssigning(true);
+                  const promises = Array.from(selectedProjectIds).map((id) =>
+                    fetch("/api/project-tags", {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id, account: accountName }),
+                    })
+                  );
+                  Promise.all(promises).then(() => {
+                    setSelectedProjectIds(new Set());
+                    setAssigning(false);
+                    fetchProjects();
+                  });
                 }}
-                className="rounded-lg border border-sage/30 px-2 py-0.5 text-xs text-espresso outline-none bg-white"
+                className="rounded-lg border border-espresso/20 px-2 py-0.5 text-xs text-espresso outline-none bg-white"
+                value=""
               >
-                <option value="">Pick category...</option>
-                <option value="__uncategorized__">Uncategorized</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.category_name}</option>
+                <option value="">Move to...</option>
+                <option value="__unassigned__">Unassigned</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.name}>{a.name}</option>
                 ))}
               </select>
               <button
-                onClick={() => handleBulkMoveToCategory(bulkCategoryTarget === "none" ? null : bulkCategoryTarget as number | null)}
-                disabled={assigning || bulkCategoryTarget === "none"}
-                className="px-3 py-1 rounded-lg bg-espresso text-white font-semibold hover:bg-bark disabled:opacity-50 cursor-pointer transition-colors"
+                onClick={handleBulkDeleteProjects}
+                disabled={assigning}
+                className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
               >
-                {assigning ? "Moving..." : "Move"}
+                {assigning ? "Deleting..." : "Delete Projects"}
               </button>
+              {selectedVAIds.size > 0 && <span className="text-stone/40">│</span>}
             </>
           )}
-          <span className="text-stone">|</span>
-          <button
-            onClick={handleBulkDeleteTasks}
-            disabled={assigning}
-            className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
-          >
-            {assigning ? "Deleting..." : "Delete"}
-          </button>
-          <button
-            onClick={() => setSelectedTaskIds(new Set())}
-            className="ml-auto px-2 py-0.5 rounded-lg text-stone hover:text-espresso cursor-pointer text-[11px]"
-          >
-            Clear
-          </button>
-        </div>
-      )}
 
-      {/* Project action bar */}
-      {selectedProjectIds.size > 0 && (
-        <div className="rounded-lg bg-terracotta-soft border border-terracotta/30 px-3 py-2 flex items-center gap-2 text-xs flex-wrap">
-          <span className="text-terracotta font-semibold">
-            {selectedProjectIds.size} project(s) selected
-          </span>
-          {/* Move to account */}
-          <span className="text-stone">|</span>
-          <span className="text-stone text-[11px]">Move to:</span>
-          <select
-            onChange={(e) => {
-              const val = e.target.value;
-              if (!val) return;
-              const accountName = val === "__unassigned__" ? null : val;
-              setAssigning(true);
-              const promises = Array.from(selectedProjectIds).map((id) =>
-                fetch("/api/project-tags", {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ id, account: accountName }),
-                })
-              );
-              Promise.all(promises).then(() => {
-                setSelectedProjectIds(new Set());
-                setAssigning(false);
-                fetchProjects();
-              });
-            }}
-            className="rounded-lg border border-terracotta/30 px-2 py-0.5 text-xs text-espresso outline-none bg-white"
-            value=""
-          >
-            <option value="">Pick account...</option>
-            <option value="__unassigned__">Unassigned</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.name}>{a.name}</option>
-            ))}
-          </select>
+          {/* ── VA assignment actions ── */}
           {selectedVAIds.size > 0 && (
             <>
-              <span className="text-stone">|</span>
-              <span className="text-[11px] text-terracotta font-semibold">{selectedVAIds.size} VA(s)</span>
-              <button
-                onClick={handleAssignSelectedVAsToProjects}
-                disabled={assigning}
-                className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
-              >
-                {assigning ? "Assigning..." : "Assign VA"}
-              </button>
-              <button
-                onClick={handleUnassignSelectedVAsFromProjects}
-                disabled={assigning}
-                className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
-              >
-                {assigning ? "Unassigning..." : "Unassign VA"}
-              </button>
+              {selectedProjectIds.size > 0 && (
+                <>
+                  <button
+                    onClick={handleAssignSelectedVAsToProjects}
+                    disabled={assigning}
+                    className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
+                  >
+                    {assigning ? "Assigning..." : "Assign VA → Projects"}
+                  </button>
+                  <button
+                    onClick={handleUnassignSelectedVAsFromProjects}
+                    disabled={assigning}
+                    className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
+                  >
+                    {assigning ? "Unassigning..." : "Unassign VA"}
+                  </button>
+                </>
+              )}
+              {selectedExpandedTaskIds.size > 0 && (
+                <>
+                  <button
+                    onClick={handleAssignSelectedVAsToTasks}
+                    disabled={assigning}
+                    className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
+                  >
+                    {assigning ? "Assigning..." : "Assign VA → Tasks"}
+                  </button>
+                  <button
+                    onClick={handleUnassignSelectedVAsFromTasks}
+                    disabled={assigning}
+                    className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
+                  >
+                    {assigning ? "Unassigning..." : "Unassign VA from Tasks"}
+                  </button>
+                </>
+              )}
+              {selectedProjectIds.size === 0 && selectedExpandedTaskIds.size === 0 && (
+                <span className="text-stone text-[11px]">Select projects or tasks to assign VAs</span>
+              )}
             </>
           )}
-          <span className="text-stone">|</span>
-          <button
-            onClick={handleBulkDeleteProjects}
-            disabled={assigning}
-            className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
-          >
-            {assigning ? "Deleting..." : "Delete"}
-          </button>
-          <button
-            onClick={() => setSelectedProjectIds(new Set())}
-            className="ml-auto px-2 py-0.5 rounded-lg text-stone hover:text-espresso cursor-pointer text-[11px]"
-          >
-            Clear
-          </button>
-        </div>
-      )}
 
-      {/* VA assignment action bar */}
-      {selectedVAIds.size > 0 && (
-        <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 flex items-center gap-2 text-xs flex-wrap">
-          <svg className="h-3.5 w-3.5 text-blue-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-            <circle cx="9" cy="7" r="4" />
-            <path d="M23 21v-2a4 4 0 00-3-3.87" />
-            <path d="M16 3.13a4 4 0 010 7.75" />
-          </svg>
-          <span className="text-blue-700 font-semibold">
-            {selectedVAIds.size} team member(s) selected
-          </span>
-          {selectedProjectIds.size > 0 && (
-            <>
-              <span className="text-stone">→</span>
-              <span className="text-terracotta font-semibold">{selectedProjectIds.size} project(s)</span>
-              <button
-                onClick={handleAssignSelectedVAsToProjects}
-                disabled={assigning}
-                className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
-              >
-                {assigning ? "Assigning..." : "Assign"}
-              </button>
-              <button
-                onClick={handleUnassignSelectedVAsFromProjects}
-                disabled={assigning}
-                className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
-              >
-                {assigning ? "Unassigning..." : "Unassign"}
-              </button>
-            </>
-          )}
-          {selectedExpandedTaskIds.size > 0 && (
-            <>
-              <span className="text-stone">{selectedProjectIds.size > 0 ? "|" : "→"}</span>
-              <span className="text-terracotta font-semibold">{selectedExpandedTaskIds.size} task(s)</span>
-              <button
-                onClick={handleAssignSelectedVAsToTasks}
-                disabled={assigning}
-                className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
-              >
-                {assigning ? "Assigning..." : "Assign to Tasks"}
-              </button>
-              <button
-                onClick={handleUnassignSelectedVAsFromTasks}
-                disabled={assigning}
-                className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
-              >
-                {assigning ? "Unassigning..." : "Unassign from Tasks"}
-              </button>
-            </>
-          )}
-          {selectedProjectIds.size === 0 && selectedExpandedTaskIds.size === 0 && (
-            <span className="text-blue-500 text-[11px]">Select projects or tasks to assign/unassign</span>
-          )}
+          {/* ── Clear all ── */}
           <button
-            onClick={() => setSelectedVAIds(new Set())}
+            onClick={() => {
+              setSelectedTaskIds(new Set());
+              setSelectedProjectIds(new Set());
+              setSelectedVAIds(new Set());
+            }}
             className="ml-auto px-2 py-0.5 rounded-lg text-stone hover:text-espresso cursor-pointer text-[11px]"
           >
-            Clear
+            Clear All
           </button>
         </div>
       )}
@@ -1515,29 +1495,8 @@ export default function ProjectsTasksTab() {
                                             <span className="text-[10px] text-stone">
                                               {someSelected ? `${selectedInThisProject.length} selected` : "Select all"}
                                             </span>
-                                            {someSelected && selectedVAIds.size > 0 && (
-                                              <>
-                                                <span className="text-stone text-[10px]">|</span>
-                                                <span className="text-[10px] text-terracotta font-semibold">{selectedVAIds.size} VA(s)</span>
-                                                <button
-                                                  onClick={handleAssignSelectedVAsToTasks}
-                                                  disabled={assigning}
-                                                  className="px-2 py-0.5 rounded bg-sage text-white text-[10px] font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
-                                                >
-                                                  Assign VA
-                                                </button>
-                                                <button
-                                                  onClick={handleUnassignSelectedVAsFromTasks}
-                                                  disabled={assigning}
-                                                  className="px-2 py-0.5 rounded bg-red-500 text-white text-[10px] font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
-                                                >
-                                                  Unassign VA
-                                                </button>
-                                              </>
-                                            )}
                                             {someSelected && (
                                               <>
-                                                <span className="text-stone text-[10px]">{selectedVAIds.size > 0 ? "|" : ""}</span>
                                                 <button
                                                   onClick={() => handleBulkRemoveTasksFromProject(p.id)}
                                                   disabled={assigning}
