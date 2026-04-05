@@ -29,14 +29,15 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const filterAccount = searchParams.get("account");
 
-  // Check user role for VA filtering
+  // Check user role + position for VA filtering
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, position")
     .eq("id", user.id)
     .single();
 
   const isVA = profile?.role === "va";
+  const isProjectBasedVA = isVA && profile?.position === "Project Based VA";
 
   // If VA, fetch their assigned category IDs + project/task visibility data
   let assignedCategoryIds: Set<number> | null = null;
@@ -119,19 +120,27 @@ export async function GET(request: Request) {
 
   // 2. Filter projects by VA visibility, then get distinct accounts
   let visibleProjects = projects ?? [];
-  if (isVA && (projectIncludes || myProjectExcludes)) {
-    visibleProjects = visibleProjects.filter((p) => {
-      // Rule 1: If project has include assignments, VA must be in the include list
-      if (projectIncludes && projectIncludes.has(p.id)) {
+  if (isVA) {
+    if (isProjectBasedVA) {
+      // STRICT MODE: Project Based VAs ONLY see projects they are explicitly included in.
+      // No assignment = no access.
+      visibleProjects = visibleProjects.filter((p) => {
         return myProjectIncludes ? myProjectIncludes.has(p.id) : false;
-      }
-      // Rule 2: If VA is excluded from this project, hide it
-      if (myProjectExcludes && myProjectExcludes.has(p.id)) {
-        return false;
-      }
-      // Rule 3: Default — visible to everyone
-      return true;
-    });
+      });
+    } else if (projectIncludes || myProjectExcludes) {
+      visibleProjects = visibleProjects.filter((p) => {
+        // Rule 1: If project has include assignments, VA must be in the include list
+        if (projectIncludes && projectIncludes.has(p.id)) {
+          return myProjectIncludes ? myProjectIncludes.has(p.id) : false;
+        }
+        // Rule 2: If VA is excluded from this project, hide it
+        if (myProjectExcludes && myProjectExcludes.has(p.id)) {
+          return false;
+        }
+        // Rule 3: Default — visible to everyone
+        return true;
+      });
+    }
   }
 
   const accountSet = new Set<string>();
@@ -183,26 +192,34 @@ export async function GET(request: Request) {
       continue;
     }
 
+    // Compute effective billing early so we can use it for filtering
+    const effectiveBilling = a.billing_type ?? lib.billing_type ?? "hourly";
+    const effectiveRate = a.task_rate ?? lib.default_rate ?? null;
+
     // VA filtering: task-level include/exclude
-    if (isVA && (taskIncludes || myTaskExcludes)) {
-      // Rule 1: If task has include assignments, VA must be in the include list
-      if (taskIncludes && taskIncludes.has(a.id)) {
+    if (isVA) {
+      // Fixed tasks: ALWAYS require explicit include assignment for the VA.
+      // If a fixed task has no include assignment for this VA, hide it.
+      if (effectiveBilling === "fixed") {
         if (!myTaskIncludes || !myTaskIncludes.has(a.id)) continue;
       }
-      // Rule 2: If VA is excluded from this task, hide it
-      else if (myTaskExcludes && myTaskExcludes.has(a.id)) {
-        continue;
+      // Hourly tasks: standard include/exclude logic
+      else if (taskIncludes || myTaskExcludes) {
+        // Rule 1: If task has include assignments, VA must be in the include list
+        if (taskIncludes && taskIncludes.has(a.id)) {
+          if (!myTaskIncludes || !myTaskIncludes.has(a.id)) continue;
+        }
+        // Rule 2: If VA is excluded from this task, hide it
+        else if (myTaskExcludes && myTaskExcludes.has(a.id)) {
+          continue;
+        }
+        // Rule 3: Default — visible to everyone
       }
-      // Rule 3: Default — visible to everyone
     }
 
     if (!tasksByProject[a.project_tag_id]) {
       tasksByProject[a.project_tag_id] = [];
     }
-
-    // Effective billing: assignment-level overrides task-level
-    const effectiveBilling = a.billing_type ?? lib.billing_type ?? "hourly";
-    const effectiveRate = a.task_rate ?? lib.default_rate ?? null;
 
     tasksByProject[a.project_tag_id].push({
       id: a.id,
