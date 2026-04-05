@@ -298,11 +298,12 @@ export default function ActivityLog({
     return new Date().toLocaleDateString("en-CA", { timeZone: tz }); // "YYYY-MM-DD"
   }, [timezone]);
 
-  // Separate today's logs and past in-progress logs
-  const { todayLogs: allTodayLogs, pastInProgressLogs } = useMemo(() => {
+  // Separate today's logs, past in-progress logs, and past on-hold logs
+  const { todayLogs: allTodayLogs, pastInProgressLogs, pastOnHoldLogs } = useMemo(() => {
     const tz = timezone || "America/New_York";
     const today: TimeLog[] = [];
     const pastIP: TimeLog[] = [];
+    const pastOH: TimeLog[] = [];
 
     logs.forEach((log) => {
       const logDate = new Date(log.start_time).toLocaleDateString("en-CA", { timeZone: tz });
@@ -310,10 +311,12 @@ export default function ActivityLog({
         today.push(log);
       } else if (log.progress === "in_progress") {
         pastIP.push(log);
+      } else if (log.progress === "on_hold") {
+        pastOH.push(log);
       }
     });
 
-    return { todayLogs: today, pastInProgressLogs: pastIP };
+    return { todayLogs: today, pastInProgressLogs: pastIP, pastOnHoldLogs: pastOH };
   }, [logs, todayStr, timezone]);
 
   // Apply filters + sort (live entries first, then by most recent)
@@ -364,6 +367,26 @@ export default function ActivityLog({
       return true;
     }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
   }, [pastInProgressLogs, selectedUsers, search, categoryFilter, accountFilter]);
+
+  // Filter past on-hold logs with same filters
+  const filteredPastOnHold = useMemo(() => {
+    return pastOnHoldLogs.filter((log) => {
+      if (selectedUsers.size > 0 && !selectedUsers.has(log.username)) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        const match =
+          log.task_name.toLowerCase().includes(q) ||
+          log.username.toLowerCase().includes(q) ||
+          log.full_name.toLowerCase().includes(q) ||
+          (log.account || "").toLowerCase().includes(q) ||
+          (log.project || "").toLowerCase().includes(q);
+        if (!match) return false;
+      }
+      if (categoryFilter && log.category !== categoryFilter) return false;
+      if (accountFilter && log.account !== accountFilter) return false;
+      return true;
+    }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  }, [pastOnHoldLogs, selectedUsers, search, categoryFilter, accountFilter]);
 
   // Summary — today's logs only, with fixed/hourly & status breakdowns
   const summary = useMemo(() => {
@@ -1192,6 +1215,91 @@ export default function ActivityLog({
                           >
                             ✓ Complete
                           </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Past On-Hold Tasks (from previous days) */}
+      {filteredPastOnHold.length > 0 && (
+        <div className="bg-white border border-[#d4a843]/30 rounded-xl mb-6">
+          <div className="py-3 px-5 border-b border-[#d4a843]/20 bg-[#d4a843]/5 rounded-t-xl flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-[#d4a843]"></span>
+              <h3 className="text-[12px] font-bold text-espresso">On Hold from Previous Days</h3>
+            </div>
+            <span className="text-[10px] text-bark">{filteredPastOnHold.length} {filteredPastOnHold.length === 1 ? "task" : "tasks"}</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse min-w-[600px]">
+              <thead>
+                <tr>
+                  {isAdminOrManager && (
+                    <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">User</th>
+                  )}
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Date</th>
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Task</th>
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Account</th>
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Duration</th>
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPastOnHold.map((log) => (
+                  <tr key={log.id} className="hover:bg-parchment/30 transition-colors">
+                    {isAdminOrManager && (
+                      <td className="py-2 px-3 text-[12px] border-b border-parchment">
+                        <div className="flex items-center gap-1.5">
+                          <div
+                            className="w-[20px] h-[20px] rounded-full text-[8px] font-bold text-white flex items-center justify-center shrink-0"
+                            style={{ backgroundColor: getUserColor(log.username) }}
+                          >
+                            {log.username[0]?.toUpperCase()}
+                          </div>
+                          <span className="text-[11px] text-espresso">{log.username}</span>
+                        </div>
+                      </td>
+                    )}
+                    <td className="py-2 px-3 text-[11px] text-bark border-b border-parchment whitespace-nowrap">
+                      {formatDate(log.start_time, timezone)}
+                    </td>
+                    <td className="py-2 px-3 text-[12px] font-semibold text-espresso border-b border-parchment">
+                      {log.task_name}
+                    </td>
+                    <td className="py-2 px-3 text-[12px] text-espresso border-b border-parchment">
+                      {log.account || <span className="text-stone">&mdash;</span>}
+                    </td>
+                    <td className="py-2 px-3 text-[12px] font-semibold text-[#d4a843] border-b border-parchment whitespace-nowrap">
+                      {formatDuration(log.duration_ms, log.billing_type)}
+                    </td>
+                    <td className="py-2 px-3 border-b border-parchment">
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#d4a843]/15 text-[#d4a843]">
+                          On Hold
+                        </span>
+                        {onUpdateProgress && (
+                          <>
+                            <button
+                              onClick={() => onUpdateProgress(log.id, "in_progress")}
+                              className="text-[9px] font-semibold text-terracotta hover:text-terracotta/80 transition-colors"
+                              title="Resume task"
+                            >
+                              ▶ Resume
+                            </button>
+                            <button
+                              onClick={() => onUpdateProgress(log.id, "completed")}
+                              className="text-[9px] font-semibold text-sage hover:text-sage/80 transition-colors"
+                              title="Mark as completed"
+                            >
+                              ✓ Complete
+                            </button>
+                          </>
                         )}
                       </div>
                     </td>
