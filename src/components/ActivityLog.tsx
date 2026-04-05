@@ -17,6 +17,7 @@ interface ActivityLogProps {
   onRefresh?: () => void;
   timezone?: string;
   onResumeTask?: (log: TimeLog) => void;
+  onUpdateProgress?: (logId: number, progress: string) => void;
 }
 
 const AVATAR_COLORS: Record<string, string> = {};
@@ -139,6 +140,7 @@ export default function ActivityLog({
   onRefresh,
   timezone,
   onResumeTask,
+  onUpdateProgress,
 }: ActivityLogProps) {
   const isAdminOrManager = role === "admin" || role === "manager";
   const [search, setSearch] = useState("");
@@ -160,6 +162,17 @@ export default function ActivityLog({
 
   // Expanded row (shows full text for long fields + memos)
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+
+  // Progress dropdown (clickable status labels)
+  const [progressDropdown, setProgressDropdown] = useState<number | null>(null);
+
+  // Close progress dropdown on click outside
+  useEffect(() => {
+    if (!progressDropdown) return;
+    const handleClick = () => setProgressDropdown(null);
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, [progressDropdown]);
 
   // Screenshot signed URLs + lightbox
   const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
@@ -690,17 +703,53 @@ export default function ActivityLog({
 
                     {/* Progress */}
                     <td className="py-2.5 px-3 text-[12px] border-b border-parchment align-top">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 relative">
                         {log.progress && (
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                            log.progress === "completed"
-                              ? "bg-sage/15 text-sage"
-                              : log.progress === "on_hold"
-                              ? "bg-amber/15 text-amber-700"
-                              : "bg-terracotta/15 text-terracotta"
-                          }`}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onUpdateProgress) {
+                                setProgressDropdown(progressDropdown === log.id ? null : log.id);
+                              }
+                            }}
+                            className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold transition-all ${
+                              onUpdateProgress ? "cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-terracotta/30" : ""
+                            } ${
+                              log.progress === "completed"
+                                ? "bg-sage/15 text-sage"
+                                : log.progress === "on_hold"
+                                ? "bg-amber/15 text-amber-700"
+                                : "bg-terracotta/15 text-terracotta"
+                            }`}
+                            title={onUpdateProgress ? "Click to change status" : undefined}
+                          >
                             {log.progress === "in_progress" ? "In Progress" : log.progress === "on_hold" ? "On Hold" : "Completed"}
-                          </span>
+                          </button>
+                        )}
+                        {/* Progress dropdown */}
+                        {progressDropdown === log.id && onUpdateProgress && (
+                          <div className="absolute top-6 left-0 z-20 bg-white border border-sand rounded-lg shadow-lg py-1 min-w-[120px]">
+                            {[
+                              { value: "in_progress", label: "In Progress", color: "text-terracotta" },
+                              { value: "completed", label: "Completed", color: "text-sage" },
+                              { value: "on_hold", label: "On Hold", color: "text-amber-700" },
+                            ].map((opt) => (
+                              <button
+                                key={opt.value}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onUpdateProgress(log.id, opt.value);
+                                  setProgressDropdown(null);
+                                }}
+                                className={`w-full text-left px-3 py-1.5 text-xs font-semibold cursor-pointer hover:bg-parchment transition-all ${
+                                  log.progress === opt.value ? `${opt.color} bg-parchment` : "text-bark"
+                                }`}
+                              >
+                                {opt.label}
+                                {log.progress === opt.value && " ✓"}
+                              </button>
+                            ))}
+                          </div>
                         )}
                         {log.progress === "on_hold" && onResumeTask && (
                           <button

@@ -52,6 +52,7 @@ export interface TaskFormData {
   new_task_client_memo?: string;
   billing_type?: BillingType;
   task_rate?: number | null;
+  _isFixedTaskLog?: boolean;
 }
 
 interface ProjectTag {
@@ -73,11 +74,12 @@ interface TaskEntryFormProps {
   onStartTask: (data: TaskFormData) => void;
   hasActiveTask?: boolean;
   role?: string;
+  sessionState?: "idle" | "clocked-in" | "on-break";
 }
 
-type WizardStep = "form" | "close-old";
+type WizardStep = "form" | "close-old" | "log-fixed";
 
-export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va" }: TaskEntryFormProps) {
+export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle" }: TaskEntryFormProps) {
   const isAdmin = role === "admin" || role === "manager";
 
   // ─── Form Fields ───
@@ -97,9 +99,32 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const [tasksByProject, setTasksByProject] = useState<Record<number, ProjectTask[]>>({});
   const [accountClientMap, setAccountClientMap] = useState<Record<string, string>>(FALLBACK_ACCOUNT_CLIENT_MAP);
 
-  // Filtered lists
-  const filteredProjects = allProjects.filter((p) => p.account === account);
-  const filteredTasks = projectTagId ? (tasksByProject[projectTagId] ?? []) : [];
+  // ─── Idle-state filtering: before clock-in, only show fixed-rate paths ───
+  const isIdle = sessionState === "idle";
+
+  // Helper: does a project have at least one fixed task?
+  const projectHasFixedTask = (pid: number) =>
+    (tasksByProject[pid] ?? []).some((t) => t.billing_type === "fixed");
+
+  // Accounts: when idle, only show accounts that have ≥1 project with a fixed task
+  const filteredAccounts = isIdle
+    ? allAccounts.filter((acct) =>
+        allProjects.some((p) => p.account === acct && projectHasFixedTask(p.id))
+      )
+    : allAccounts;
+
+  // Projects: filter by account, and when idle also require ≥1 fixed task
+  const filteredProjects = allProjects.filter((p) => {
+    if (p.account !== account) return false;
+    if (isIdle && !projectHasFixedTask(p.id)) return false;
+    return true;
+  });
+
+  // Tasks: when idle, only fixed tasks
+  const allTasksForProject = projectTagId ? (tasksByProject[projectTagId] ?? []) : [];
+  const filteredTasks = isIdle
+    ? allTasksForProject.filter((t) => t.billing_type === "fixed")
+    : allTasksForProject;
 
   // ─── Fetch cascading data ───
   const fetchFormOptions = useCallback(async () => {
@@ -228,7 +253,12 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     setShowValidation(true);
     if (!isValid) return;
 
-    if (hasActiveTask) {
+    const isFixedTask = selectedBillingType === "fixed";
+
+    if (isFixedTask) {
+      // Fixed tasks always show the wizard to collect status + memos for the NEW task
+      setWizardStep("log-fixed");
+    } else if (hasActiveTask) {
       if (category === "Meeting") {
         setShowClientMemo(true);
         setShowInternalMemo(true);
@@ -239,11 +269,56 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     }
   };
 
-  // Submit after closing old task
+  // Submit after closing old task (hourly wizard)
   const handleCloseOldAndStart = () => {
     if (!taskStatus) return;
     if (!clientMemoText.trim() && !internalMemoText.trim()) return;
     submitTask(taskStatus, clientMemoText.trim(), internalMemoText.trim());
+  };
+
+  // Submit fixed task (memos + status go to the NEW task, not the old)
+  const handleLogFixedTask = () => {
+    if (!taskStatus) return;
+    const formFillMs = formStartTimeRef.current
+      ? Date.now() - formStartTimeRef.current
+      : 0;
+
+    onStartTask({
+      task_name: taskName.trim(),
+      category,
+      account: isPersonalOrBreak && category === "Personal" ? "" : account,
+      client_name: isPersonalOrBreak && category === "Personal" ? "" : client,
+      project: project.trim(),
+      // For fixed tasks: memos go to the NEW task
+      client_memo: clientMemoText.trim() || clientMemo.trim(),
+      internal_memo: internalMemoText.trim(),
+      task_status: taskStatus || undefined,
+      form_fill_ms: formFillMs,
+      billing_type: "fixed",
+      task_rate: selectedTaskRate,
+      // Signal this is a fixed task log (dashboard uses this)
+      _isFixedTaskLog: true,
+    });
+
+    // Reset everything
+    setTaskName("");
+    setCategory("Task");
+    setAccount("");
+    setClient("");
+    setProject("");
+    setProjectTagId(null);
+    setClientMemo("");
+    setSelectedBillingType("hourly");
+    setSelectedTaskRate(null);
+    setWizardStep("form");
+    setTaskStatus("");
+    setClientMemoText("");
+    setInternalMemoText("");
+    setShowClientMemo(false);
+    setShowInternalMemo(false);
+    setShowValidation(false);
+    formStartTimeRef.current = null;
+    setFormFillElapsed(0);
   };
 
   // Final submit
@@ -401,7 +476,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                   className={`w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] disabled:opacity-60 disabled:bg-parchment ${fieldError(!account)}`}
                 >
                   <option value="">Select account...</option>
-                  {allAccounts.map((a) => (
+                  {filteredAccounts.map((a) => (
                     <option key={a} value={a}>{a}</option>
                   ))}
                 </select>
@@ -437,7 +512,15 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
               <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
                 Task <span className="text-terracotta">*</span>
               </label>
-              {isPersonalOrBreak || filteredTasks.length === 0 ? (
+              {isIdle && !isPersonalOrBreak && filteredTasks.length === 0 ? (
+                /* Before clock-in with no fixed tasks: show a disabled hint */
+                <select
+                  disabled
+                  className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-stone bg-parchment outline-none opacity-60"
+                >
+                  <option>No fixed tasks — clock in first</option>
+                </select>
+              ) : isPersonalOrBreak || filteredTasks.length === 0 ? (
                 <input
                   type="text"
                   value={taskName}
@@ -624,6 +707,126 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                   className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Close &amp; Start New Task
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Log Fixed Task Modal (status + memo for NEW task) ─── */}
+      {wizardStep === "log-fixed" && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-lg mx-4">
+            <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-espresso">Log Fixed Task</h3>
+                <p className="text-[11px] text-stone mt-0.5">
+                  {taskName} &middot; {account}
+                </p>
+              </div>
+              <button onClick={cancelWizard} className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer">&times;</button>
+            </div>
+            <div className="p-5">
+              {/* Task Status */}
+              <div className="mb-4">
+                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">Task Status</p>
+                <div className="flex gap-2">
+                  {["In Progress", "Completed", "On Hold"].map((status) => (
+                    <button
+                      key={status}
+                      onClick={() => setTaskStatus(status)}
+                      className={`flex-1 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                        taskStatus === status
+                          ? status === "Completed"
+                            ? "bg-sage text-white border border-sage"
+                            : status === "On Hold"
+                            ? "bg-amber text-white border border-amber"
+                            : "bg-terracotta text-white border border-terracotta"
+                          : "border border-sand bg-white text-bark hover:border-terracotta"
+                      }`}
+                    >
+                      {status}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Memos */}
+              <div className="mb-3">
+                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
+                  Add Comments <span className="text-stone font-normal">(optional)</span>
+                </p>
+
+                {/* Client Memo */}
+                <div className="mb-3">
+                  <button
+                    onClick={() => setShowClientMemo(!showClientMemo)}
+                    className={`w-full flex items-center justify-between py-2.5 px-3.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      showClientMemo || clientMemoText
+                        ? "bg-slate-blue text-white border border-slate-blue"
+                        : "border border-slate-blue/30 bg-slate-blue-soft text-slate-blue hover:border-slate-blue"
+                    }`}
+                  >
+                    <span>Client Memo</span>
+                    <span className="text-[10px] opacity-75">
+                      {clientMemoText ? "filled" : showClientMemo ? "collapse" : "expand"}
+                    </span>
+                  </button>
+                  {showClientMemo && (
+                    <textarea
+                      value={clientMemoText}
+                      onChange={(e) => setClientMemoText(e.target.value)}
+                      placeholder="Notes visible to the client..."
+                      rows={2}
+                      autoFocus
+                      className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
+                    />
+                  )}
+                </div>
+
+                {/* Internal Memo */}
+                <div>
+                  <button
+                    onClick={() => setShowInternalMemo(!showInternalMemo)}
+                    className={`w-full flex items-center justify-between py-2.5 px-3.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      showInternalMemo || internalMemoText
+                        ? "bg-walnut text-white border border-walnut"
+                        : "border border-walnut/30 bg-amber-soft text-walnut hover:border-walnut"
+                    }`}
+                  >
+                    <span>Internal Memo</span>
+                    <span className="text-[10px] opacity-75">
+                      {internalMemoText ? "filled" : showInternalMemo ? "collapse" : "expand"}
+                    </span>
+                  </button>
+                  {showInternalMemo && (
+                    <textarea
+                      value={internalMemoText}
+                      onChange={(e) => setInternalMemoText(e.target.value)}
+                      placeholder="Internal notes (not visible to client)..."
+                      rows={2}
+                      autoFocus
+                      className="w-full mt-1.5 py-2.5 px-[13px] border border-walnut/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-walnut focus:shadow-[0_0_0_3px_rgba(93,75,60,0.08)] placeholder:text-stone resize-none"
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Submit */}
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={cancelWizard}
+                  className="flex-1 py-2.5 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleLogFixedTask}
+                  disabled={!taskStatus}
+                  className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Log Task
                 </button>
               </div>
             </div>

@@ -1039,6 +1039,16 @@ export default function DashboardPage() {
     }
   }, [userId, profile, supabase, session, activeTask, stopCurrentTask]);
 
+  // ─── Update progress status on a time_log (clickable badge) ───
+  const updateLogProgress = useCallback(async (logId: number, progress: string) => {
+    await supabase.from("time_logs").update({ progress }).eq("id", logId);
+    setTimeLogs((prev) =>
+      prev.map((log) =>
+        log.id === logId ? { ...log, progress } as TimeLog : log
+      )
+    );
+  }, [supabase]);
+
   // Post-break memo step (when choosing "Start New Task")
   const [postBreakMemoStep, setPostBreakMemoStep] = useState(false);
   const [postBreakClientMemo, setPostBreakClientMemo] = useState("");
@@ -1250,6 +1260,45 @@ export default function DashboardPage() {
     async (formData: TaskFormData) => {
       if (!userId || !profile) return;
       const now = new Date().toISOString();
+
+      // ─── Fixed Task Log: instant insert, no timer, no screenshots ───
+      if (formData._isFixedTaskLog) {
+        const progressValue = formData.task_status
+          ? formData.task_status.toLowerCase().replace(" ", "_")
+          : "in_progress";
+
+        const { data: logData } = await supabase
+          .from("time_logs")
+          .insert({
+            user_id: userId,
+            username: profile.username,
+            full_name: profile.full_name,
+            department: profile.department,
+            position: profile.position,
+            task_name: formData.task_name,
+            category: formData.category,
+            project: formData.project || null,
+            account: formData.account || null,
+            client_name: formData.client_name || null,
+            start_time: now,
+            end_time: now,
+            duration_ms: 0,
+            billable: formData.category !== "Personal",
+            client_memo: formData.client_memo || null,
+            internal_memo: formData.internal_memo || null,
+            form_fill_ms: formData.form_fill_ms || 0,
+            billing_type: "fixed",
+            task_rate: formData.task_rate ?? null,
+            progress: progressValue,
+          })
+          .select()
+          .single();
+
+        if (logData) {
+          setTimeLogs((prev) => [logData as TimeLog, ...prev]);
+        }
+        return; // No timer, no active task, no screenshots
+      }
 
       // Capture end screenshot for the previous task before stopping it
       if (activeTask?.logId && screenShareActive) {
@@ -1943,6 +1992,7 @@ export default function DashboardPage() {
           onStartTask={handleCheckAndStartTask}
           hasActiveTask={!!activeTask || sessionState === "clocked-in" || sessionState === "on-break"}
           role={role}
+          sessionState={sessionState}
         />
         {userId && (
           <DailyTaskPlanner
@@ -1969,6 +2019,7 @@ export default function DashboardPage() {
         profiles={teamMembers.map((m) => m.profile)}
         timezone={orgTimezone}
         onResumeTask={resumeOnHoldTask}
+        onUpdateProgress={updateLogProgress}
         onRefresh={async () => {
           // Re-fetch logs after edit/create/correction
           const { data } = await supabase
