@@ -738,6 +738,99 @@ export default function ProjectsTasksTab() {
     fetchVaTaskAssignments();
   };
 
+  /* ── Combined assign / unassign VA (projects + tasks in one click) ── */
+  const handleAssignVA = async () => {
+    if (selectedVAIds.size === 0) return;
+    if (selectedProjectIds.size === 0 && selectedExpandedTaskIds.size === 0) return;
+    setAssigning(true);
+
+    const vaIds = Array.from(selectedVAIds);
+    const allPromises: Promise<Response>[] = [];
+
+    // Assign to projects
+    if (selectedProjectIds.size > 0) {
+      const projectIds = Array.from(selectedProjectIds);
+      const alreadyProj = new Map<string, Set<number>>();
+      for (const va of vaProjectAssignments) {
+        if (!alreadyProj.has(va.va_id)) alreadyProj.set(va.va_id, new Set());
+        alreadyProj.get(va.va_id)!.add(va.project_tag_id);
+      }
+      for (const vaId of vaIds) {
+        const existing = alreadyProj.get(vaId) ?? new Set();
+        for (const pid of projectIds) {
+          if (!existing.has(pid)) {
+            allPromises.push(
+              fetch("/api/va-project-assignments", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ va_id: vaId, project_tag_id: pid }),
+              })
+            );
+          }
+        }
+      }
+    }
+
+    // Assign to tasks
+    if (selectedExpandedTaskIds.size > 0) {
+      const taskIds = Array.from(selectedExpandedTaskIds);
+      const alreadyTask = new Map<string, Set<number>>();
+      for (const vta of vaTaskAssignments) {
+        if (!alreadyTask.has(vta.va_id)) alreadyTask.set(vta.va_id, new Set());
+        alreadyTask.get(vta.va_id)!.add(vta.project_task_assignment_id);
+      }
+      for (const vaId of vaIds) {
+        const existing = alreadyTask.get(vaId) ?? new Set();
+        for (const ptaId of taskIds) {
+          if (!existing.has(ptaId)) {
+            allPromises.push(
+              fetch("/api/va-task-assignments", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ va_id: vaId, project_task_assignment_id: ptaId }),
+              })
+            );
+          }
+        }
+      }
+    }
+
+    await Promise.all(allPromises);
+    setSelectedVAIds(new Set());
+    setAssigning(false);
+    fetchVaProjectAssignments();
+    fetchVaTaskAssignments();
+  };
+
+  const handleUnassignVA = async () => {
+    if (selectedVAIds.size === 0) return;
+    if (selectedProjectIds.size === 0 && selectedExpandedTaskIds.size === 0) return;
+    setAssigning(true);
+
+    const vaIdSet = new Set(Array.from(selectedVAIds));
+    const allPromises: Promise<Response>[] = [];
+
+    // Unassign from projects
+    if (selectedProjectIds.size > 0) {
+      const projectIdSet = new Set(Array.from(selectedProjectIds));
+      const toRemove = vaProjectAssignments.filter((a) => vaIdSet.has(a.va_id) && projectIdSet.has(a.project_tag_id));
+      allPromises.push(...toRemove.map((a) => fetch(`/api/va-project-assignments?id=${a.id}`, { method: "DELETE" })));
+    }
+
+    // Unassign from tasks
+    if (selectedExpandedTaskIds.size > 0) {
+      const taskIdSet = new Set(Array.from(selectedExpandedTaskIds));
+      const toRemove = vaTaskAssignments.filter((a) => vaIdSet.has(a.va_id) && taskIdSet.has(a.project_task_assignment_id));
+      allPromises.push(...toRemove.map((a) => fetch(`/api/va-task-assignments?id=${a.id}`, { method: "DELETE" })));
+    }
+
+    await Promise.all(allPromises);
+    setSelectedVAIds(new Set());
+    setAssigning(false);
+    fetchVaProjectAssignments();
+    fetchVaTaskAssignments();
+  };
+
   const handleUpdateVAProjectRate = async (assignmentId: number, billingType?: string, rate?: number | null) => {
     const body: Record<string, unknown> = { id: assignmentId };
     if (billingType !== undefined) body.billing_type = billingType;
@@ -788,7 +881,54 @@ export default function ProjectsTasksTab() {
   const toggleProjectSelection = (id: number) => {
     setSelectedProjectIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      const wasSelected = next.has(id);
+
+      if (wasSelected) {
+        // Deselecting project → also deselect its child tasks
+        next.delete(id);
+        const projectTasks = expandedProjectAssignments[id] ?? [];
+        if (projectTasks.length > 0) {
+          setSelectedExpandedTaskIds((prev2) => {
+            const next2 = new Set(prev2);
+            projectTasks.forEach((t) => next2.delete(t.id));
+            return next2;
+          });
+        }
+      } else {
+        // Selecting project → expand it (if not already) and select all its child tasks
+        next.add(id);
+        if (!expandedProjectIds.has(id)) {
+          // Expand the project and fetch tasks, then select them once loaded
+          setExpandedProjectIds((prevExp) => {
+            const nextExp = new Set(prevExp);
+            nextExp.add(id);
+            return nextExp;
+          });
+          // Fetch tasks and select them after load
+          fetch(`/api/project-task-assignments?project_tag_id=${id}`)
+            .then((res) => res.ok ? res.json() : null)
+            .then((data) => {
+              if (data?.assignments) {
+                setExpandedProjectAssignments((prevA) => ({ ...prevA, [id]: data.assignments }));
+                setSelectedExpandedTaskIds((prev2) => {
+                  const next2 = new Set(prev2);
+                  data.assignments.forEach((t: { id: number }) => next2.add(t.id));
+                  return next2;
+                });
+              }
+            });
+        } else {
+          // Already expanded — select all its tasks
+          const projectTasks = expandedProjectAssignments[id] ?? [];
+          if (projectTasks.length > 0) {
+            setSelectedExpandedTaskIds((prev2) => {
+              const next2 = new Set(prev2);
+              projectTasks.forEach((t) => next2.add(t.id));
+              return next2;
+            });
+          }
+        }
+      }
       return next;
     });
   };
@@ -967,43 +1107,24 @@ export default function ProjectsTasksTab() {
           {/* ── VA assignment actions ── */}
           {selectedVAIds.size > 0 && (
             <>
-              {selectedProjectIds.size > 0 && (
+              {(selectedProjectIds.size > 0 || selectedExpandedTaskIds.size > 0) ? (
                 <>
                   <button
-                    onClick={handleAssignSelectedVAsToProjects}
+                    onClick={handleAssignVA}
                     disabled={assigning}
                     className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
                   >
-                    {assigning ? "Assigning..." : "Assign VA → Projects"}
+                    {assigning ? "Assigning..." : "Assign VA"}
                   </button>
                   <button
-                    onClick={handleUnassignSelectedVAsFromProjects}
+                    onClick={handleUnassignVA}
                     disabled={assigning}
                     className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
                   >
                     {assigning ? "Unassigning..." : "Unassign VA"}
                   </button>
                 </>
-              )}
-              {selectedExpandedTaskIds.size > 0 && (
-                <>
-                  <button
-                    onClick={handleAssignSelectedVAsToTasks}
-                    disabled={assigning}
-                    className="px-3 py-1 rounded-lg bg-sage text-white font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
-                  >
-                    {assigning ? "Assigning..." : "Assign VA → Tasks"}
-                  </button>
-                  <button
-                    onClick={handleUnassignSelectedVAsFromTasks}
-                    disabled={assigning}
-                    className="px-3 py-1 rounded-lg bg-red-500 text-white font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
-                  >
-                    {assigning ? "Unassigning..." : "Unassign VA from Tasks"}
-                  </button>
-                </>
-              )}
-              {selectedProjectIds.size === 0 && selectedExpandedTaskIds.size === 0 && (
+              ) : (
                 <span className="text-stone text-[11px]">Select projects or tasks to assign VAs</span>
               )}
             </>
