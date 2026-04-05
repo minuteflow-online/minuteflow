@@ -37,6 +37,7 @@ interface EditTimeLogModalProps {
   log?: TimeLog | null; // null = create mode
   profiles: Profile[];
   currentUserId: string;
+  currentUserRole?: string; // 'admin' | 'manager' | 'va'
   onClose: () => void;
   onSaved: () => void;
 }
@@ -61,10 +62,13 @@ export default function EditTimeLogModal({
   log,
   profiles,
   currentUserId,
+  currentUserRole,
   onClose,
   onSaved,
 }: EditTimeLogModalProps) {
   const isCreate = !log;
+  const isVA = currentUserRole === "va";
+  const isAdminOrManager = currentUserRole === "admin" || currentUserRole === "manager";
 
   const [taskName, setTaskName] = useState(log?.task_name || "");
   const [category, setCategory] = useState(log?.category || "Task");
@@ -80,7 +84,8 @@ export default function EditTimeLogModal({
   const [clientMemo, setClientMemo] = useState(log?.client_memo || "");
   const [internalMemo, setInternalMemo] = useState(log?.internal_memo || "");
   const [progress, setProgress] = useState(log?.progress || "");
-  const [selectedUserId, setSelectedUserId] = useState(log?.user_id || "");
+  // VAs can only add time for themselves
+  const [selectedUserId, setSelectedUserId] = useState(log?.user_id || (isVA ? currentUserId : ""));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [dbAccounts, setDbAccounts] = useState<string[]>(ACCOUNTS);
@@ -147,6 +152,10 @@ export default function EditTimeLogModal({
         return;
       }
 
+      // VAs need approval for manual entries; admins/managers are auto-approved
+      const isVaSubmission = currentUserRole === "va";
+      const manualStatus = isVaSubmission ? "pending" : "approved";
+
       const { error: insertError } = await supabase.from("time_logs").insert({
         user_id: selectedUserId,
         username: userProfile.username,
@@ -165,6 +174,7 @@ export default function EditTimeLogModal({
         client_memo: clientMemo || null,
         internal_memo: internalMemo || null,
         is_manual: true,
+        manual_status: manualStatus,
       });
 
       if (insertError) {
@@ -259,7 +269,7 @@ export default function EditTimeLogModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
           <h2 className="text-sm font-bold text-espresso">
-            {isCreate ? "Add Manual Time Entry" : "Edit Time Entry"}
+            {isCreate ? (isVA ? "Request Manual Time Entry" : "Add Manual Time Entry") : "Edit Time Entry"}
           </h2>
           <button
             onClick={onClose}
@@ -271,8 +281,15 @@ export default function EditTimeLogModal({
 
         {/* Form */}
         <div className="px-5 py-4 space-y-4">
-          {/* User selector (create mode only) */}
-          {isCreate && (
+          {/* Pending approval notice for VAs */}
+          {isCreate && isVA && (
+            <div className="rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber font-medium">
+              ⏳ Manual entries require admin approval before they count toward your logged time.
+            </div>
+          )}
+
+          {/* User selector (create mode, admin/manager only — VAs auto-set to self) */}
+          {isCreate && isAdminOrManager && (
             <div>
               <label className="block text-[11px] font-semibold text-bark mb-1">
                 User
@@ -471,7 +488,7 @@ export default function EditTimeLogModal({
             disabled={saving}
             className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50"
           >
-            {saving ? "Saving..." : isCreate ? "Add Entry" : "Save Changes"}
+            {saving ? "Saving..." : isCreate ? (isVA ? "Submit for Approval" : "Add Entry") : "Save Changes"}
           </button>
         </div>
       </div>

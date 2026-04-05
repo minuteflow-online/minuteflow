@@ -843,6 +843,12 @@ export default function TimeLogPage() {
                               {isManual && (
                                 <span className="shrink-0 inline-block py-[1px] px-1 rounded text-[8px] font-semibold bg-slate-blue-soft text-slate-blue">M</span>
                               )}
+                              {log.manual_status === "pending" && (
+                                <span className="shrink-0 inline-block py-[1px] px-1.5 rounded text-[8px] font-semibold bg-amber-soft text-amber">⏳ Pending</span>
+                              )}
+                              {log.manual_status === "denied" && (
+                                <span className="shrink-0 inline-block py-[1px] px-1.5 rounded text-[8px] font-semibold bg-terracotta-soft text-terracotta">✕ Denied</span>
+                              )}
                               {isEdited && (
                                 <span className="shrink-0 inline-block py-[1px] px-1 rounded text-[8px] font-semibold bg-amber-soft text-amber">E</span>
                               )}
@@ -1086,6 +1092,7 @@ export default function TimeLogPage() {
           log={editingLog}
           profiles={profiles}
           currentUserId={currentUserId}
+          currentUserRole={role}
           onClose={() => {
             setEditingLog(null);
             setShowCreateModal(false);

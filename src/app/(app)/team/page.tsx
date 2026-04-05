@@ -696,6 +696,12 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
     (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
   );
 
+  // Progress status counts
+  const nonBreakLogs = sortedLogs.filter(l => l.category !== "Break" && l.category !== "Clock In");
+  const inProgressCount = nonBreakLogs.filter(l => l.progress === "in_progress" || (!l.end_time && !l.progress)).length;
+  const completedCount = nonBreakLogs.filter(l => l.progress === "completed").length;
+  const onHoldCount = nonBreakLogs.filter(l => l.progress === "on_hold").length;
+
   return (
     <div
       className={`overflow-hidden rounded-xl border bg-white transition-all hover:shadow-[0_4px_16px_rgba(0,0,0,.06)] ${
@@ -743,6 +749,30 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
           {currentTaskMeta || "No recent activity"}
         </div>
       </div>
+
+      {/* Progress Status Badges */}
+      {(inProgressCount > 0 || completedCount > 0 || onHoldCount > 0) && (
+        <div className="px-5 pb-3 flex flex-wrap gap-1.5">
+          {inProgressCount > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-[3px] text-[10px] font-semibold text-blue-600">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+              {inProgressCount} In Progress
+            </span>
+          )}
+          {completedCount > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2.5 py-[3px] text-[10px] font-semibold text-sage">
+              <span className="w-1.5 h-1.5 rounded-full bg-sage" />
+              {completedCount} Completed
+            </span>
+          )}
+          {onHoldCount > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-soft px-2.5 py-[3px] text-[10px] font-semibold text-amber">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber" />
+              {onHoldCount} On Hold
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Expandable Task List Toggle */}
       {sortedLogs.length > 0 && (
@@ -835,6 +865,16 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
 }) {
   const { profile, status, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
+
+  const toggleDate = useCallback((dateLabel: string) => {
+    setExpandedDates(prev => {
+      const next = new Set(prev);
+      if (next.has(dateLabel)) next.delete(dateLabel);
+      else next.add(dateLabel);
+      return next;
+    });
+  }, []);
 
   const statusConfig = {
     working: { label: "Working", bgClass: "bg-sage-soft", textClass: "text-sage" },
@@ -853,20 +893,11 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
     (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
   );
 
-  // Group logs by date for multi-day ranges
-  const logsByDate = useMemo(() => {
-    const grouped: Record<string, TimeLog[]> = {};
-    sortedLogs.forEach((log) => {
-      const dateKey = new Date(log.start_time).toLocaleDateString("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-      });
-      if (!grouped[dateKey]) grouped[dateKey] = [];
-      grouped[dateKey].push(log);
-    });
-    return grouped;
-  }, [sortedLogs]);
+  // Progress status counts (exclude breaks and clock-in entries)
+  const progressLogs = sortedLogs.filter(l => l.category !== "Break" && l.category !== "Clock In");
+  const inProgressCount = progressLogs.filter(l => l.progress === "in_progress" || (!l.end_time && !l.progress)).length;
+  const completedCount = progressLogs.filter(l => l.progress === "completed").length;
+  const onHoldCount = progressLogs.filter(l => l.progress === "on_hold").length;
 
   // Hours per account breakdown
   const accountBreakdown = useMemo(() => {
@@ -918,11 +949,14 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         // Look up mood for this date
         const mood = userMoods[isoDate] || null;
 
-        return { dateLabel, totalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: dayLogs, mood };
+        // Progress counts for this day
+        const dayInProgress = nonBreakLogs.filter(l => l.progress === "in_progress" || (!l.end_time && !l.progress)).length;
+        const dayCompleted = nonBreakLogs.filter(l => l.progress === "completed").length;
+        const dayOnHold = nonBreakLogs.filter(l => l.progress === "on_hold").length;
+
+        return { dateLabel, totalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: dayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
       });
   }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type, userMoods]);
-
-  const showDateGroups = !isToday && Object.keys(logsByDate).length > 1;
 
   // Category totals - only show non-zero
   const categoryTotals = useMemo(() => {
@@ -1004,7 +1038,31 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
           )}
         </div>
 
-        {/* Row 2: Category Totals */}
+        {/* Row 2: Progress Status */}
+        {(inProgressCount > 0 || completedCount > 0 || onHoldCount > 0) && (
+          <div className="flex flex-wrap gap-2 mb-4">
+            {inProgressCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-600">
+                <span className="w-2 h-2 rounded-full bg-blue-500" />
+                {inProgressCount} In Progress
+              </span>
+            )}
+            {completedCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-sage-soft px-3 py-1.5 text-[11px] font-semibold text-sage">
+                <span className="w-2 h-2 rounded-full bg-sage" />
+                {completedCount} Completed
+              </span>
+            )}
+            {onHoldCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-soft px-3 py-1.5 text-[11px] font-semibold text-amber">
+                <span className="w-2 h-2 rounded-full bg-amber" />
+                {onHoldCount} On Hold
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Row 3: Category Breakdown */}
         {categoryTotals.length > 0 && (
           <div className="mb-4">
             <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-2">Category Breakdown</div>
@@ -1043,62 +1101,115 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         )}
       </div>
 
-      {/* Daily Breakdown (multi-day ranges only) */}
-      {dailyBreakdown.length > 0 && (
-        <div className="px-6 py-5 border-b border-parchment">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-3">Daily Breakdown</div>
-          <div className="space-y-2">
-            {dailyBreakdown.map((day) => (
-              <div key={day.dateLabel} className="flex items-center justify-between rounded-lg bg-parchment/30 px-4 py-2.5">
-                <div className="flex items-center gap-4">
-                  <span className="text-[12px] font-bold text-terracotta min-w-[100px]">
-                    {day.dateLabel}
-                    {day.mood && <span className="ml-1.5" title={day.mood}>{moodEmoji[day.mood] || ""}</span>}
-                  </span>
-                  <span className="text-[11px] text-bark">
-                    {day.clockIn
-                      ? day.clockIn.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
-                      : "\u2014"}
-                    {" \u2192 "}
-                    {day.hasActiveLog
-                      ? "Still active"
-                      : day.clockOut
-                        ? day.clockOut.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
-                        : "\u2014"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[11px] text-bark">{day.taskCount} tasks</span>
-                  <span className="text-[12px] font-bold text-espresso">{formatDuration(day.totalMs)}</span>
-                  {isAdmin && profile.pay_rate > 0 && (
-                    <span className="text-[12px] font-semibold text-sage">{formatCurrency(day.dayPayable)}</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Task Log */}
+      {/* Expandable Daily Breakdown / Task Log */}
       <div className="px-6 py-5">
-        <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.5px] text-bark">
-          Task Log ({sortedLogs.length} entries)
+        <div className="text-[10px] font-semibold uppercase tracking-[0.5px] text-bark mb-3">
+          {dailyBreakdown.length > 0 ? "Daily Breakdown" : `Task Log (${sortedLogs.length} entries)`}
         </div>
+
         {sortedLogs.length === 0 ? (
           <div className="text-[13px] text-stone py-4">No tasks recorded in this period.</div>
-        ) : showDateGroups ? (
-          <div className="space-y-4 max-h-[400px] overflow-y-auto">
-            {Object.entries(logsByDate).map(([dateLabel, dateLogs]) => (
-              <div key={dateLabel}>
-                <div className="text-[10px] font-semibold text-terracotta uppercase tracking-wide mb-1.5">{dateLabel}</div>
-                <TaskLogList logs={dateLogs} />
-              </div>
-            ))}
+        ) : dailyBreakdown.length > 0 ? (
+          /* Multi-day: expandable date rows */
+          <div className="space-y-2">
+            {dailyBreakdown.map((day) => {
+              const isExpanded = expandedDates.has(day.dateLabel);
+              return (
+                <div key={day.dateLabel} className="rounded-xl border border-sand overflow-hidden">
+                  {/* Date header — clickable */}
+                  <button
+                    onClick={() => toggleDate(day.dateLabel)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-parchment/30 hover:bg-parchment/60 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-[9px] text-bark">{isExpanded ? "\u25BC" : "\u25B6"}</span>
+                      <span className="text-[12px] font-bold text-terracotta min-w-[100px]">
+                        {day.dateLabel}
+                        {day.mood && <span className="ml-1.5" title={day.mood}>{moodEmoji[day.mood] || ""}</span>}
+                      </span>
+                      <span className="text-[11px] text-bark">
+                        {day.clockIn
+                          ? day.clockIn.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+                          : "\u2014"}
+                        {" \u2192 "}
+                        {day.hasActiveLog
+                          ? "Still active"
+                          : day.clockOut
+                            ? day.clockOut.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+                            : "\u2014"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* Mini status badges */}
+                      {day.dayInProgress > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-[2px] text-[9px] font-semibold text-blue-600">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />{day.dayInProgress}
+                        </span>
+                      )}
+                      {day.dayCompleted > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-[2px] text-[9px] font-semibold text-sage">
+                          <span className="w-1.5 h-1.5 rounded-full bg-sage" />{day.dayCompleted}
+                        </span>
+                      )}
+                      {day.dayOnHold > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-soft px-2 py-[2px] text-[9px] font-semibold text-amber">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber" />{day.dayOnHold}
+                        </span>
+                      )}
+                      <span className="text-[11px] text-bark">{day.taskCount} tasks</span>
+                      <span className="text-[12px] font-bold text-espresso">{formatDuration(day.totalMs)}</span>
+                      {isAdmin && profile.pay_rate > 0 && (
+                        <span className="text-[12px] font-semibold text-sage">{formatCurrency(day.dayPayable)}</span>
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Expanded: task list for this date */}
+                  {isExpanded && (
+                    <div className="px-4 py-3 border-t border-sand bg-white">
+                      <TaskLogList logs={day.logs} showProgress />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
-          <div className="max-h-[400px] overflow-y-auto">
-            <TaskLogList logs={sortedLogs} />
+          /* Today / single day: expandable single section */
+          <div className="rounded-xl border border-sand overflow-hidden">
+            <button
+              onClick={() => toggleDate("today")}
+              className="w-full flex items-center justify-between px-4 py-3 bg-parchment/30 hover:bg-parchment/60 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-[9px] text-bark">{expandedDates.has("today") ? "\u25BC" : "\u25B6"}</span>
+                <span className="text-[12px] font-bold text-terracotta">Today&apos;s Tasks</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {inProgressCount > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-[2px] text-[9px] font-semibold text-blue-600">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />{inProgressCount}
+                  </span>
+                )}
+                {completedCount > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-[2px] text-[9px] font-semibold text-sage">
+                    <span className="w-1.5 h-1.5 rounded-full bg-sage" />{completedCount}
+                  </span>
+                )}
+                {onHoldCount > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-soft px-2 py-[2px] text-[9px] font-semibold text-amber">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber" />{onHoldCount}
+                  </span>
+                )}
+                <span className="text-[11px] text-bark">{sortedLogs.length} entries</span>
+                <span className="text-[12px] font-bold text-espresso">{formatDuration(member.todayHoursMs)}</span>
+              </div>
+            </button>
+            {expandedDates.has("today") && (
+              <div className="px-4 py-3 border-t border-sand bg-white max-h-[400px] overflow-y-auto">
+                <TaskLogList logs={sortedLogs} showProgress />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1108,7 +1219,13 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
 
 /* ── Task Log List (shared between compact & expanded) ───── */
 
-function TaskLogList({ logs }: { logs: TimeLog[] }) {
+function TaskLogList({ logs, showProgress }: { logs: TimeLog[]; showProgress?: boolean }) {
+  const progressConfig: Record<string, { label: string; bg: string; text: string; dot: string }> = {
+    in_progress: { label: "In Progress", bg: "bg-blue-50", text: "text-blue-600", dot: "bg-blue-500" },
+    completed: { label: "Completed", bg: "bg-sage-soft", text: "text-sage", dot: "bg-sage" },
+    on_hold: { label: "On Hold", bg: "bg-amber-soft", text: "text-amber", dot: "bg-amber" },
+  };
+
   return (
     <div className="mt-2 space-y-1.5">
       {logs.map((log) => {
@@ -1123,6 +1240,8 @@ function TaskLogList({ logs }: { logs: TimeLog[] }) {
             ? formatDuration(new Date(log.end_time).getTime() - new Date(log.start_time).getTime())
             : "active";
         const isActive = !log.end_time;
+        const progress = log.progress || (isActive ? "in_progress" : null);
+        const pConfig = progress ? progressConfig[progress] : null;
 
         return (
           <div
@@ -1138,8 +1257,16 @@ function TaskLogList({ logs }: { logs: TimeLog[] }) {
               "bg-sage"
             }`} />
             <div className="flex-1 min-w-0">
-              <div className="text-[12px] font-semibold text-espresso truncate">
-                {log.task_name}
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-semibold text-espresso truncate">
+                  {log.task_name}
+                </span>
+                {showProgress && pConfig && log.category !== "Break" && log.category !== "Clock In" && (
+                  <span className={`inline-flex items-center gap-1 shrink-0 rounded-full px-2 py-[1px] text-[9px] font-semibold ${pConfig.bg} ${pConfig.text}`}>
+                    <span className={`w-1 h-1 rounded-full ${pConfig.dot}`} />
+                    {pConfig.label}
+                  </span>
+                )}
               </div>
               <div className="text-[10px] text-bark truncate">
                 {[log.account, log.category].filter(Boolean).join(" \u00B7 ")}

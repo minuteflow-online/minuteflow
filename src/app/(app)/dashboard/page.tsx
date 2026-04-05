@@ -753,6 +753,7 @@ export default function DashboardPage() {
         client_memo: activeTask.client_memo || null,
         internal_memo: activeTask.internal_memo || null,
         is_manual: false,
+        manual_status: null,
         form_fill_ms: 0,
         progress: null,
         billing_type: activeTask.billing_type || "hourly",

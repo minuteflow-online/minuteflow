@@ -467,15 +467,13 @@ export default function ActivityLog({
             <span className="text-[10px] font-medium text-bark bg-parchment px-2 py-0.5 rounded-full">Today</span>
           </div>
           <div className="flex gap-2 items-center">
-            {isAdminOrManager && (
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-terracotta px-3 py-1.5 text-[11px] font-semibold text-white transition-all hover:bg-[#a85840]"
-              >
-                <span className="text-sm leading-none">+</span>
-                Add Time Entry
-              </button>
-            )}
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-terracotta px-3 py-1.5 text-[11px] font-semibold text-white transition-all hover:bg-[#a85840] cursor-pointer"
+            >
+              <span className="text-sm leading-none">+</span>
+              {isAdminOrManager ? "Add Time Entry" : "Request Time Entry"}
+            </button>
             <span className="text-[11px] text-bark">
               {filteredLogs.length} entries today
             </span>
@@ -742,6 +740,12 @@ export default function ActivityLog({
                         </span>
                         {isManual && (
                           <span className="shrink-0 inline-block py-[1px] px-1 rounded text-[8px] font-semibold bg-slate-blue-soft text-slate-blue">M</span>
+                        )}
+                        {log.manual_status === "pending" && (
+                          <span className="shrink-0 inline-block py-[1px] px-1.5 rounded text-[8px] font-semibold bg-amber-soft text-amber">⏳ Pending</span>
+                        )}
+                        {log.manual_status === "denied" && (
+                          <span className="shrink-0 inline-block py-[1px] px-1.5 rounded text-[8px] font-semibold bg-terracotta-soft text-terracotta">✕ Denied</span>
                         )}
                         {isEdited && (
                           <span className="shrink-0 inline-block py-[1px] px-1 rounded text-[8px] font-semibold bg-amber-soft text-amber">E</span>
@@ -1205,6 +1209,7 @@ export default function ActivityLog({
           log={editingLog}
           profiles={profiles}
           currentUserId={currentUserId}
+          currentUserRole={role}
           onClose={() => {
             setEditingLog(null);
             setShowCreateModal(false);

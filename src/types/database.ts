@@ -98,6 +98,7 @@ export interface TimeLog {
   progress: string | null;
   billing_type: BillingType;
   task_rate: number | null;
+  manual_status: 'pending' | 'approved' | 'denied' | null;
   created_at: string;
 }
 
