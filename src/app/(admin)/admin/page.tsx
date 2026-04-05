@@ -253,6 +253,10 @@ export default function AdminPage() {
   const [breakReviewNotes, setBreakReviewNotes] = useState<Record<number, string>>({});
   const [breakCustomMs, setBreakCustomMs] = useState<Record<number, string>>({});
 
+  // Manual entry approvals
+  const [pendingManualEntries, setPendingManualEntries] = useState<TimeLog[]>([]);
+  const [manualReviewNotes, setManualReviewNotes] = useState<Record<number, string>>({});
+
   // Sorting review
   const [sortingReviews, setSortingReviews] = useState<SortingReview[]>([]);
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
@@ -317,6 +321,7 @@ export default function AdminPage() {
       correctionsRes,
       sortingRes,
       breakCorrectionsRes,
+      manualEntriesRes,
     ] = await Promise.all([
       supabase.from("profiles").select("*"),
       supabase.from("sessions").select("*"),
@@ -351,6 +356,12 @@ export default function AdminPage() {
         .select("*")
         .eq("status", "pending")
         .order("created_at", { ascending: false }),
+      supabase
+        .from("time_logs")
+        .select("*")
+        .eq("is_manual", true)
+        .eq("manual_status", "pending")
+        .order("created_at", { ascending: false }),
     ]);
 
     setProfiles((profilesRes.data ?? []) as Profile[]);
@@ -362,6 +373,7 @@ export default function AdminPage() {
     setCorrectionRequests((correctionsRes.data ?? []) as TimeCorrectionRequest[]);
     setSortingReviews((sortingRes.data ?? []) as SortingReview[]);
     setBreakCorrectionRequests((breakCorrectionsRes.data ?? []) as BreakCorrectionRequest[]);
+    setPendingManualEntries((manualEntriesRes.data ?? []) as TimeLog[]);
 
     if (authRes.data?.user) {
       setCurrentUserId(authRes.data.user.id);
@@ -824,6 +836,36 @@ export default function AdminPage() {
     fetchData();
   };
 
+  /* ── Manual Entry Approval Handlers ─────────────────────── */
+
+  const handleApproveManualEntry = async (entry: TimeLog) => {
+    if (!currentUserId) return;
+    const supabase = createClient();
+
+    await supabase
+      .from("time_logs")
+      .update({
+        manual_status: "approved",
+      })
+      .eq("id", entry.id);
+
+    fetchData();
+  };
+
+  const handleDenyManualEntry = async (entry: TimeLog) => {
+    if (!currentUserId) return;
+    const supabase = createClient();
+
+    await supabase
+      .from("time_logs")
+      .update({
+        manual_status: "denied",
+      })
+      .eq("id", entry.id);
+
+    fetchData();
+  };
+
   /* ── Render ─────────────────────────────────────────────── */
 
   if (loading) {
@@ -857,8 +899,8 @@ export default function AdminPage() {
         <nav className="flex-1 py-2 px-2 space-y-0.5">
           {SIDEBAR_TABS.map((tab) => {
             const isActive = activeTab === tab.id;
-            const hasBadge = (tab.id === "corrections" && (correctionRequests.length + breakCorrectionRequests.length) > 0) || (tab.id === "sorting" && sortingReviews.length > 0);
-            const badgeCount = tab.id === "corrections" ? correctionRequests.length + breakCorrectionRequests.length : tab.id === "sorting" ? sortingReviews.length : 0;
+            const hasBadge = (tab.id === "corrections" && (correctionRequests.length + breakCorrectionRequests.length + pendingManualEntries.length) > 0) || (tab.id === "sorting" && sortingReviews.length > 0);
+            const badgeCount = tab.id === "corrections" ? correctionRequests.length + breakCorrectionRequests.length + pendingManualEntries.length : tab.id === "sorting" ? sortingReviews.length : 0;
             return (
               <button
                 key={tab.id}
@@ -911,7 +953,7 @@ export default function AdminPage() {
                 {activeTab === "clients" && "Manage clients"}
                 {activeTab === "invoices" && "Generate and manage client invoices"}
                 {activeTab === "organization" && "Edit organization settings"}
-                {activeTab === "corrections" && "Review pending time and break correction requests"}
+                {activeTab === "corrections" && "Review pending corrections and manual time entry requests"}
                 {activeTab === "sorting" && "Review sorting task entries and assign billing"}
                 {activeTab === "password" && "Update your admin password"}
               </p>
@@ -1014,6 +1056,14 @@ export default function AdminPage() {
                 setBreakCustomMs={setBreakCustomMs}
                 handleApproveBreakCorrection={handleApproveBreakCorrection}
                 handleDenyBreakCorrection={handleDenyBreakCorrection}
+              />
+              <ManualEntriesSection
+                pendingManualEntries={pendingManualEntries}
+                profileMap={profileMap}
+                manualReviewNotes={manualReviewNotes}
+                setManualReviewNotes={setManualReviewNotes}
+                handleApproveManualEntry={handleApproveManualEntry}
+                handleDenyManualEntry={handleDenyManualEntry}
               />
             </div>
           )}
@@ -3756,6 +3806,146 @@ function BreakCorrectionsSection({
                     Deny
                   </button>
                 </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── Manual Entries Approval Section ──────────────────────── */
+
+function ManualEntriesSection({
+  pendingManualEntries,
+  profileMap,
+  manualReviewNotes,
+  setManualReviewNotes,
+  handleApproveManualEntry,
+  handleDenyManualEntry,
+}: {
+  pendingManualEntries: TimeLog[];
+  profileMap: Map<string, Profile>;
+  manualReviewNotes: Record<number, string>;
+  setManualReviewNotes: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  handleApproveManualEntry: (entry: TimeLog) => void;
+  handleDenyManualEntry: (entry: TimeLog) => void;
+}) {
+  if (pendingManualEntries.length === 0) {
+    return (
+      <div className="rounded-xl border border-sand bg-white px-5 py-12 text-center">
+        <p className="text-sm text-bark">No pending manual time entries.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-sand bg-white">
+      <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
+        <h2 className="text-sm font-bold text-espresso">
+          Pending Manual Time Entries
+        </h2>
+        <span className="rounded-full bg-slate-blue-soft px-2.5 py-[2px] text-[11px] font-semibold text-slate-blue">
+          {pendingManualEntries.length}
+        </span>
+      </div>
+      <div className="divide-y divide-parchment">
+        {pendingManualEntries.map((entry) => {
+          const entryProfile = profileMap.get(entry.user_id);
+          const startDate = new Date(entry.start_time);
+          const endDate = entry.end_time ? new Date(entry.end_time) : null;
+          const durationMin = entry.duration_ms ? Math.round(entry.duration_ms / 60000) : 0;
+          const durationHr = Math.floor(durationMin / 60);
+          const durationRemMin = durationMin % 60;
+          const durationStr = durationHr > 0 ? `${durationHr}h ${durationRemMin}m` : `${durationRemMin}m`;
+
+          return (
+            <div key={entry.id} className="px-5 py-4">
+              <div className="flex items-start gap-3 mb-3">
+                {entryProfile && (
+                  <div
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                    style={{ backgroundColor: getAvatarColor(entryProfile.id) }}
+                  >
+                    {getInitials(entryProfile.full_name)}
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-semibold text-espresso">
+                    {entryProfile?.full_name || entry.full_name || "Unknown"}{" "}
+                    <span className="font-normal text-bark">
+                      submitted a manual time entry
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-stone">
+                    Submitted {startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </div>
+
+                  {/* Entry details */}
+                  <div className="mt-2 rounded-lg bg-cream/50 px-3 py-2 border border-sand/40">
+                    <div className="text-[10px] font-semibold text-bark mb-1">
+                      Entry Details:
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px] text-espresso">
+                      <div><span className="font-medium">Task:</span> {entry.task_name}</div>
+                      <div><span className="font-medium">Category:</span> {entry.category}</div>
+                      <div><span className="font-medium">Account:</span> {entry.account || "—"}</div>
+                      <div><span className="font-medium">Client:</span> {entry.client_name || "—"}</div>
+                      <div><span className="font-medium">Project:</span> {entry.project || "—"}</div>
+                      <div><span className="font-medium">Billable:</span> {entry.billable ? "Yes" : "No"}</div>
+                      <div>
+                        <span className="font-medium">Start:</span>{" "}
+                        {startDate.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}
+                      </div>
+                      <div>
+                        <span className="font-medium">End:</span>{" "}
+                        {endDate ? endDate.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "—"}
+                      </div>
+                      <div>
+                        <span className="font-medium">Duration:</span>{" "}
+                        <span className="text-terracotta font-semibold">{durationStr}</span>
+                      </div>
+                      <div><span className="font-medium">Progress:</span> {entry.progress || "—"}</div>
+                      {entry.client_memo && (
+                        <div className="col-span-2"><span className="font-medium">Client Memo:</span> {entry.client_memo}</div>
+                      )}
+                      {entry.internal_memo && (
+                        <div className="col-span-2"><span className="font-medium">Internal Memo:</span> {entry.internal_memo}</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] text-stone shrink-0">
+                  {startDate.toLocaleDateString()}
+                </span>
+              </div>
+              {/* Review notes + actions */}
+              <div className="ml-10 flex items-end gap-2">
+                <input
+                  type="text"
+                  value={manualReviewNotes[entry.id] || ""}
+                  onChange={(e) =>
+                    setManualReviewNotes((prev) => ({
+                      ...prev,
+                      [entry.id]: e.target.value,
+                    }))
+                  }
+                  placeholder="Review notes (optional)..."
+                  className="flex-1 rounded-lg border border-sand px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+                />
+                <button
+                  onClick={() => handleApproveManualEntry(entry)}
+                  className="rounded-lg bg-sage px-3 py-1.5 text-[11px] font-semibold text-white transition-all hover:bg-[#5a7a5a]"
+                >
+                  Approve
+                </button>
+                <button
+                  onClick={() => handleDenyManualEntry(entry)}
+                  className="rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta"
+                >
+                  Deny
+                </button>
               </div>
             </div>
           );
