@@ -148,6 +148,7 @@ export default function ActivityLog({
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState("");
   const [accountFilter, setAccountFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>(""); // "in_progress" | "completed" | "on_hold" | ""
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [showAccountDropdown, setShowAccountDropdown] = useState(false);
 
@@ -291,9 +292,62 @@ export default function ActivityLog({
     return [...new Set(logs.map((l) => l.account).filter(Boolean))] as string[];
   }, [logs]);
 
+  // Today's date string for filtering
+  const todayStr = useMemo(() => {
+    const tz = timezone || "America/New_York";
+    return new Date().toLocaleDateString("en-CA", { timeZone: tz }); // "YYYY-MM-DD"
+  }, [timezone]);
+
+  // Separate today's logs and past in-progress logs
+  const { todayLogs: allTodayLogs, pastInProgressLogs } = useMemo(() => {
+    const tz = timezone || "America/New_York";
+    const today: TimeLog[] = [];
+    const pastIP: TimeLog[] = [];
+
+    logs.forEach((log) => {
+      const logDate = new Date(log.start_time).toLocaleDateString("en-CA", { timeZone: tz });
+      if (logDate === todayStr) {
+        today.push(log);
+      } else if (log.progress === "in_progress") {
+        pastIP.push(log);
+      }
+    });
+
+    return { todayLogs: today, pastInProgressLogs: pastIP };
+  }, [logs, todayStr, timezone]);
+
   // Apply filters + sort (live entries first, then by most recent)
   const filteredLogs = useMemo(() => {
-    const filtered = logs.filter((log) => {
+    const filtered = allTodayLogs.filter((log) => {
+      if (selectedUsers.size > 0 && !selectedUsers.has(log.username)) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        const match =
+          log.task_name.toLowerCase().includes(q) ||
+          log.username.toLowerCase().includes(q) ||
+          log.full_name.toLowerCase().includes(q) ||
+          (log.account || "").toLowerCase().includes(q) ||
+          (log.project || "").toLowerCase().includes(q);
+        if (!match) return false;
+      }
+      if (categoryFilter && log.category !== categoryFilter) return false;
+      if (accountFilter && log.account !== accountFilter) return false;
+      if (statusFilter && log.progress !== statusFilter) return false;
+      return true;
+    });
+
+    // Sort: live (no end_time) first, then by start_time descending
+    return filtered.sort((a, b) => {
+      const aLive = !a.end_time ? 1 : 0;
+      const bLive = !b.end_time ? 1 : 0;
+      if (aLive !== bLive) return bLive - aLive;
+      return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
+    });
+  }, [allTodayLogs, selectedUsers, search, categoryFilter, accountFilter, statusFilter]);
+
+  // Filter past in-progress logs with same filters
+  const filteredPastIP = useMemo(() => {
+    return pastInProgressLogs.filter((log) => {
       if (selectedUsers.size > 0 && !selectedUsers.has(log.username)) return false;
       if (search) {
         const q = search.toLowerCase();
@@ -308,35 +362,22 @@ export default function ActivityLog({
       if (categoryFilter && log.category !== categoryFilter) return false;
       if (accountFilter && log.account !== accountFilter) return false;
       return true;
-    });
+    }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  }, [pastInProgressLogs, selectedUsers, search, categoryFilter, accountFilter]);
 
-    // Sort: live (no end_time) first, then by start_time descending
-    return filtered.sort((a, b) => {
-      const aLive = !a.end_time ? 1 : 0;
-      const bLive = !b.end_time ? 1 : 0;
-      if (aLive !== bLive) return bLive - aLive;
-      return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
-    });
-  }, [logs, selectedUsers, search, categoryFilter, accountFilter]);
-
-  // Summary — only today's logs, everything is billable except Personal
-  // Dynamic category breakdown: collect all categories actually used
+  // Summary — today's logs only, with fixed/hourly & status breakdowns
   const summary = useMemo(() => {
-    // Get today's date string in org timezone so we only sum today's logs
-    const tz = timezone || "America/New_York";
-    const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: tz }); // "YYYY-MM-DD"
-
-    const todayLogs = filteredLogs.filter((log) => {
-      const logDate = new Date(log.start_time).toLocaleDateString("en-CA", { timeZone: tz });
-      return logDate === todayStr;
-    });
-
     let totalMs = 0;
     let personalMs = 0;
     let wizardMs = 0;
+    let fixedCount = 0;
+    let hourlyCount = 0;
+    let inProgressCount = 0;
+    let completedCount = 0;
+    let onHoldCount = 0;
     const categoryMs: Record<string, number> = {};
 
-    todayLogs.forEach((log) => {
+    filteredLogs.forEach((log) => {
       totalMs += log.duration_ms;
       wizardMs += log.form_fill_ms || 0;
 
@@ -347,6 +388,15 @@ export default function ActivityLog({
       if (cat.toLowerCase() === "personal") {
         personalMs += log.duration_ms;
       }
+
+      // Fixed vs hourly
+      if (log.billing_type === "fixed") fixedCount++;
+      else hourlyCount++;
+
+      // Progress status
+      if (log.progress === "in_progress") inProgressCount++;
+      else if (log.progress === "completed") completedCount++;
+      else if (log.progress === "on_hold") onHoldCount++;
     });
 
     const billableMs = totalMs - personalMs;
@@ -365,10 +415,15 @@ export default function ActivityLog({
       total: formatHoursMinutes(totalMs),
       billable: formatHoursMinutes(billableMs),
       wizard: formatHoursMinutes(wizardMs),
-      entries: todayLogs.length,
+      entries: filteredLogs.length,
       categories: categoryEntries,
+      fixedCount,
+      hourlyCount,
+      inProgressCount,
+      completedCount,
+      onHoldCount,
     };
-  }, [filteredLogs, timezone]);
+  }, [filteredLogs]);
 
   const toggleUser = (username: string) => {
     setSelectedUsers((prev) => {
@@ -387,10 +442,11 @@ export default function ActivityLog({
     setSelectedUsers(new Set());
     setCategoryFilter("");
     setAccountFilter("");
+    setStatusFilter("");
   };
 
   const hasActiveFilters =
-    search || selectedUsers.size > 0 || categoryFilter || accountFilter;
+    search || selectedUsers.size > 0 || categoryFilter || accountFilter || statusFilter;
 
   const handleModalSaved = () => {
     setEditingLog(null);
@@ -406,7 +462,10 @@ export default function ActivityLog({
       <div className="bg-white border border-sand rounded-xl mb-6">
         {/* Header */}
         <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
-          <h3 className="text-sm font-bold text-espresso">Activity Log</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-bold text-espresso">Activity Log</h3>
+            <span className="text-[10px] font-medium text-bark bg-parchment px-2 py-0.5 rounded-full">Today</span>
+          </div>
           <div className="flex gap-2 items-center">
             {isAdminOrManager && (
               <button
@@ -418,7 +477,7 @@ export default function ActivityLog({
               </button>
             )}
             <span className="text-[11px] text-bark">
-              {filteredLogs.length} entries
+              {filteredLogs.length} entries today
             </span>
           </div>
         </div>
@@ -561,6 +620,29 @@ export default function ActivityLog({
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Status filter pills */}
+          <div className="flex gap-1">
+            {[
+              { value: "in_progress", label: "In Progress", color: "terracotta" },
+              { value: "completed", label: "Completed", color: "sage" },
+              { value: "on_hold", label: "On Hold", color: "amber" },
+            ].map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setStatusFilter(statusFilter === opt.value ? "" : opt.value)}
+                className={`py-1.5 px-2.5 border rounded-full text-[10px] font-semibold cursor-pointer transition-all ${
+                  statusFilter === opt.value
+                    ? opt.color === "terracotta" ? "border-terracotta bg-terracotta/10 text-terracotta"
+                    : opt.color === "sage" ? "border-sage bg-sage/10 text-sage"
+                    : "border-amber bg-amber/10 text-amber-700"
+                    : "border-sand bg-white text-bark hover:border-terracotta hover:text-terracotta"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
 
           {hasActiveFilters && (
@@ -946,65 +1028,176 @@ export default function ActivityLog({
         </div>
 
         {/* Summary */}
-        <div className="flex gap-9 py-4 px-5 border-t border-sand bg-parchment rounded-b-xl flex-wrap">
-          <div>
-            <div className="font-serif text-lg font-bold tabular-nums">
-              {summary.total}
-            </div>
-            <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-              Total Logged
-            </div>
-          </div>
-          <div>
-            <div className="font-serif text-lg font-bold tabular-nums text-sage">
-              {summary.billable}
-            </div>
-            <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-              Billable
-            </div>
-          </div>
-
-          {/* Dynamic category breakdown */}
-          {summary.categories.map((cat) => {
-            const colorClass =
-              cat.name.toLowerCase() === "task" ? "text-terracotta" :
-              cat.name.toLowerCase() === "break" ? "text-amber" :
-              cat.name.toLowerCase() === "message" ? "text-slate-blue" :
-              cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
-              cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
-              cat.name.toLowerCase() === "sorting tasks" ? "text-amber" :
-              cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
-              "text-bark";
-            return (
-              <div key={cat.name}>
-                <div className={`font-serif text-lg font-bold tabular-nums ${colorClass}`}>
-                  {cat.formatted}
-                </div>
-                <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-                  {cat.name}
-                </div>
+        <div className="py-4 px-5 border-t border-sand bg-parchment rounded-b-xl">
+          {/* Row 1: Time totals */}
+          <div className="flex gap-7 flex-wrap">
+            <div>
+              <div className="font-serif text-lg font-bold tabular-nums">
+                {summary.total}
               </div>
-            );
-          })}
-
-          <div>
-            <div className="font-serif text-lg font-bold tabular-nums text-walnut">
-              {summary.wizard}
+              <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
+                Total Logged
+              </div>
             </div>
-            <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-              Wizard Time
+            <div>
+              <div className="font-serif text-lg font-bold tabular-nums text-sage">
+                {summary.billable}
+              </div>
+              <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
+                Billable
+              </div>
+            </div>
+
+            {/* Dynamic category breakdown */}
+            {summary.categories.map((cat) => {
+              const colorClass =
+                cat.name.toLowerCase() === "task" ? "text-terracotta" :
+                cat.name.toLowerCase() === "break" ? "text-amber" :
+                cat.name.toLowerCase() === "message" ? "text-slate-blue" :
+                cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
+                cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
+                cat.name.toLowerCase() === "sorting tasks" ? "text-amber" :
+                cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
+                "text-bark";
+              return (
+                <div key={cat.name}>
+                  <div className={`font-serif text-lg font-bold tabular-nums ${colorClass}`}>
+                    {cat.formatted}
+                  </div>
+                  <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
+                    {cat.name}
+                  </div>
+                </div>
+              );
+            })}
+
+            <div>
+              <div className="font-serif text-lg font-bold tabular-nums text-walnut">
+                {summary.wizard}
+              </div>
+              <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
+                Wizard Time
+              </div>
+            </div>
+            <div>
+              <div className="font-serif text-lg font-bold tabular-nums">
+                {summary.entries}
+              </div>
+              <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
+                Entries
+              </div>
             </div>
           </div>
-          <div>
-            <div className="font-serif text-lg font-bold tabular-nums">
-              {summary.entries}
+
+          {/* Row 2: Task type & status breakdown */}
+          <div className="flex gap-4 mt-3 pt-3 border-t border-sand/60 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-sage"></span>
+              <span className="text-[11px] font-semibold text-espresso">{summary.hourlyCount}</span>
+              <span className="text-[10px] text-bark">Hourly</span>
             </div>
-            <div className="text-[10px] font-semibold text-bark mt-0.5 tracking-wide">
-              Entries
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-slate-blue"></span>
+              <span className="text-[11px] font-semibold text-espresso">{summary.fixedCount}</span>
+              <span className="text-[10px] text-bark">Fixed</span>
             </div>
+            <div className="w-px h-4 bg-sand/80 self-center"></div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-terracotta"></span>
+              <span className="text-[11px] font-semibold text-espresso">{summary.inProgressCount}</span>
+              <span className="text-[10px] text-bark">In Progress</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-sage"></span>
+              <span className="text-[11px] font-semibold text-espresso">{summary.completedCount}</span>
+              <span className="text-[10px] text-bark">Completed</span>
+            </div>
+            {summary.onHoldCount > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-amber"></span>
+                <span className="text-[11px] font-semibold text-espresso">{summary.onHoldCount}</span>
+                <span className="text-[10px] text-bark">On Hold</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Past In-Progress Tasks (from previous days) */}
+      {filteredPastIP.length > 0 && (
+        <div className="bg-white border border-amber/30 rounded-xl mb-6">
+          <div className="py-3 px-5 border-b border-amber/20 bg-amber/5 rounded-t-xl flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-amber animate-pulse"></span>
+              <h3 className="text-[12px] font-bold text-espresso">In Progress from Previous Days</h3>
+            </div>
+            <span className="text-[10px] text-bark">{filteredPastIP.length} {filteredPastIP.length === 1 ? "task" : "tasks"}</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse min-w-[600px]">
+              <thead>
+                <tr>
+                  {isAdminOrManager && (
+                    <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">User</th>
+                  )}
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Date</th>
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Task</th>
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Account</th>
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Duration</th>
+                  <th className="py-2 px-3 text-left text-[10px] font-semibold text-bark bg-parchment/50 border-b border-sand whitespace-nowrap">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPastIP.map((log) => (
+                  <tr key={log.id} className="hover:bg-parchment/30 transition-colors">
+                    {isAdminOrManager && (
+                      <td className="py-2 px-3 text-[12px] border-b border-parchment">
+                        <div className="flex items-center gap-1.5">
+                          <div
+                            className="w-[20px] h-[20px] rounded-full text-[8px] font-bold text-white flex items-center justify-center shrink-0"
+                            style={{ backgroundColor: getUserColor(log.username) }}
+                          >
+                            {log.username[0]?.toUpperCase()}
+                          </div>
+                          <span className="text-[11px] text-espresso">{log.username}</span>
+                        </div>
+                      </td>
+                    )}
+                    <td className="py-2 px-3 text-[11px] text-bark border-b border-parchment whitespace-nowrap">
+                      {formatDate(log.start_time, timezone)}
+                    </td>
+                    <td className="py-2 px-3 text-[12px] font-semibold text-espresso border-b border-parchment">
+                      {log.task_name}
+                    </td>
+                    <td className="py-2 px-3 text-[12px] text-espresso border-b border-parchment">
+                      {log.account || <span className="text-stone">&mdash;</span>}
+                    </td>
+                    <td className="py-2 px-3 text-[12px] font-semibold text-terracotta border-b border-parchment whitespace-nowrap">
+                      {formatDuration(log.duration_ms, log.billing_type)}
+                    </td>
+                    <td className="py-2 px-3 border-b border-parchment">
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-terracotta/15 text-terracotta">
+                          In Progress
+                        </span>
+                        {onUpdateProgress && (
+                          <button
+                            onClick={() => onUpdateProgress(log.id, "completed")}
+                            className="text-[9px] font-semibold text-sage hover:text-sage/80 transition-colors"
+                            title="Mark as completed"
+                          >
+                            ✓ Complete
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Modals */}
       {(editingLog || showCreateModal) && (

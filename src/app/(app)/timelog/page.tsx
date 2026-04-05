@@ -422,12 +422,17 @@ export default function TimeLogPage() {
     return grouped;
   }, [filteredLogs]);
 
-  /* ── Day summary stats (dynamic categories) ──────────────── */
+  /* ── Day summary stats (dynamic categories + type/status) ──── */
 
   const daySummary = useMemo(() => {
     let totalMs = 0;
     let personalMs = 0;
     let wizardMs = 0;
+    let fixedCount = 0;
+    let hourlyCount = 0;
+    let inProgressCount = 0;
+    let completedCount = 0;
+    let onHoldCount = 0;
     const categoryMs: Record<string, number> = {};
 
     filteredLogs.forEach((l) => {
@@ -440,6 +445,15 @@ export default function TimeLogPage() {
       if (cat.toLowerCase() === "personal") {
         personalMs += l.duration_ms || 0;
       }
+
+      // Fixed vs hourly
+      if (l.billing_type === "fixed") fixedCount++;
+      else hourlyCount++;
+
+      // Progress status
+      if (l.progress === "in_progress") inProgressCount++;
+      else if (l.progress === "completed") completedCount++;
+      else if (l.progress === "on_hold") onHoldCount++;
     });
 
     const billableMs = totalMs - personalMs;
@@ -455,7 +469,7 @@ export default function TimeLogPage() {
       })
       .map(([name, ms]) => ({ name, formatted: formatDuration(ms) }));
 
-    return { totalMs, billableMs, wizardMs, entryCount, categories };
+    return { totalMs, billableMs, wizardMs, entryCount, categories, fixedCount, hourlyCount, inProgressCount, completedCount, onHoldCount };
   }, [filteredLogs]);
 
   /* ── Mood summary for footer ────────────────────────────── */
@@ -965,66 +979,100 @@ export default function TimeLogPage() {
 
             {/* Day Summary Footer */}
             {filteredLogs.length > 0 && (
-              <div className="flex flex-wrap items-end gap-7 border-t border-sand bg-parchment px-5 py-4 rounded-b-xl">
-                <SummaryItem
-                  value={formatDuration(daySummary.totalMs)}
-                  label="Total"
-                  colorClass="text-espresso"
-                />
-                <SummaryItem
-                  value={formatDuration(daySummary.billableMs)}
-                  label="Billable"
-                  colorClass="text-sage"
-                />
+              <div className="border-t border-sand bg-parchment px-5 py-4 rounded-b-xl">
+                <div className="flex flex-wrap items-end gap-7">
+                  <SummaryItem
+                    value={formatDuration(daySummary.totalMs)}
+                    label="Total"
+                    colorClass="text-espresso"
+                  />
+                  <SummaryItem
+                    value={formatDuration(daySummary.billableMs)}
+                    label="Billable"
+                    colorClass="text-sage"
+                  />
 
-                {/* Dynamic category breakdown */}
-                {daySummary.categories.map((cat) => {
-                  const colorClass =
-                    cat.name.toLowerCase() === "task" ? "text-terracotta" :
-                    cat.name.toLowerCase() === "break" ? "text-amber" :
-                    cat.name.toLowerCase() === "message" ? "text-slate-blue" :
-                    cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
-                    cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
-                    cat.name.toLowerCase() === "sorting tasks" ? "text-amber" :
-                    cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
-                    "text-bark";
-                  return (
-                    <SummaryItem
-                      key={cat.name}
-                      value={cat.formatted}
-                      label={cat.name}
-                      colorClass={colorClass}
-                    />
-                  );
-                })}
+                  {/* Dynamic category breakdown */}
+                  {daySummary.categories.map((cat) => {
+                    const colorClass =
+                      cat.name.toLowerCase() === "task" ? "text-terracotta" :
+                      cat.name.toLowerCase() === "break" ? "text-amber" :
+                      cat.name.toLowerCase() === "message" ? "text-slate-blue" :
+                      cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
+                      cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
+                      cat.name.toLowerCase() === "sorting tasks" ? "text-amber" :
+                      cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
+                      "text-bark";
+                    return (
+                      <SummaryItem
+                        key={cat.name}
+                        value={cat.formatted}
+                        label={cat.name}
+                        colorClass={colorClass}
+                      />
+                    );
+                  })}
 
-                <SummaryItem
-                  value={formatDuration(daySummary.wizardMs)}
-                  label="Wizard Time"
-                  colorClass="text-walnut"
-                />
-                <SummaryItem
-                  value={daySummary.entryCount.toString()}
-                  label="Entries"
-                  colorClass="text-espresso"
-                />
+                  <SummaryItem
+                    value={formatDuration(daySummary.wizardMs)}
+                    label="Wizard Time"
+                    colorClass="text-walnut"
+                  />
+                  <SummaryItem
+                    value={daySummary.entryCount.toString()}
+                    label="Entries"
+                    colorClass="text-espresso"
+                  />
 
-                {/* Mood indicator */}
-                {moodSummary && (
-                  <div className="ml-auto">
-                    {moodSummary.type === "single" ? (
-                      <div className="text-center">
-                        <div className="text-2xl">{moodSummary.emoji}</div>
-                        <div className="mt-0.5 text-[10px] font-semibold text-bark">Mood</div>
-                      </div>
-                    ) : (
-                      <div className="text-center">
-                        <div className="text-sm font-semibold text-espresso">{moodSummary.display}</div>
-                        <div className="mt-0.5 text-[10px] font-semibold text-bark">Team Mood</div>
-                      </div>
-                    )}
+                  {/* Mood indicator */}
+                  {moodSummary && (
+                    <div className="ml-auto">
+                      {moodSummary.type === "single" ? (
+                        <div className="text-center">
+                          <div className="text-2xl">{moodSummary.emoji}</div>
+                          <div className="mt-0.5 text-[10px] font-semibold text-bark">Mood</div>
+                        </div>
+                      ) : (
+                        <div className="text-center">
+                          <div className="text-sm font-semibold text-espresso">{moodSummary.display}</div>
+                          <div className="mt-0.5 text-[10px] font-semibold text-bark">Team Mood</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Task type & status breakdown */}
+                <div className="flex gap-4 mt-3 pt-3 border-t border-sand/60 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-sage"></span>
+                    <span className="text-[11px] font-semibold text-espresso">{daySummary.hourlyCount}</span>
+                    <span className="text-[10px] text-bark">Hourly</span>
                   </div>
-                )}
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-slate-blue"></span>
+                    <span className="text-[11px] font-semibold text-espresso">{daySummary.fixedCount}</span>
+                    <span className="text-[10px] text-bark">Fixed</span>
+                  </div>
+                  <div className="w-px h-4 bg-sand/80 self-center"></div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-terracotta"></span>
+                    <span className="text-[11px] font-semibold text-espresso">{daySummary.inProgressCount}</span>
+                    <span className="text-[10px] text-bark">In Progress</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-sage"></span>
+                    <span className="text-[11px] font-semibold text-espresso">{daySummary.completedCount}</span>
+                    <span className="text-[10px] text-bark">Completed</span>
+                  </div>
+                  {daySummary.onHoldCount > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-block w-2 h-2 rounded-full bg-amber"></span>
+                      <span className="text-[11px] font-semibold text-espresso">{daySummary.onHoldCount}</span>
+                      <span className="text-[10px] text-bark">On Hold</span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

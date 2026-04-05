@@ -200,12 +200,17 @@ export default function ReportsPage() {
     [screenshots, selectedVA]
   );
 
-  /* ── Computed stats (matches Activity Log summary) ──────── */
+  /* ── Computed stats (matches Activity Log summary + type/status) ── */
 
   const reportSummary = useMemo(() => {
     let totalMs = 0;
     let personalMs = 0;
     let wizardMs = 0;
+    let fixedCount = 0;
+    let hourlyCount = 0;
+    let inProgressCount = 0;
+    let completedCount = 0;
+    let onHoldCount = 0;
     const categoryMs: Record<string, number> = {};
 
     filteredLogs.forEach((l) => {
@@ -218,6 +223,15 @@ export default function ReportsPage() {
       if (cat.toLowerCase() === "personal") {
         personalMs += l.duration_ms || 0;
       }
+
+      // Fixed vs hourly
+      if (l.billing_type === "fixed") fixedCount++;
+      else hourlyCount++;
+
+      // Progress status
+      if (l.progress === "in_progress") inProgressCount++;
+      else if (l.progress === "completed") completedCount++;
+      else if (l.progress === "on_hold") onHoldCount++;
     });
 
     const billableMs = totalMs - personalMs;
@@ -238,6 +252,11 @@ export default function ReportsPage() {
       wizardMs,
       entries: filteredLogs.length,
       categories,
+      fixedCount,
+      hourlyCount,
+      inProgressCount,
+      completedCount,
+      onHoldCount,
     };
   }, [filteredLogs]);
 
@@ -652,47 +671,96 @@ export default function ReportsPage() {
         </div>
       ) : (
         <>
-          {/* Big Stats — matches Activity Log summary */}
-          <div className="mb-6 flex flex-wrap gap-4">
-            <BigStat
-              value={formatDuration(reportSummary.totalMs)}
-              label="Total Logged"
-              color="default"
-            />
-            <BigStat
-              value={formatDuration(reportSummary.billableMs)}
-              label="Billable"
-              color="green"
-            />
-            {reportSummary.categories.map((cat) => {
-              const colorMap: Record<string, "terra" | "gold" | "blue" | "rose" | "default"> = {
-                task: "terra",
-                break: "gold",
-                message: "blue",
-                meeting: "rose",
-                personal: "rose",
-                "sorting tasks": "gold",
-                collaboration: "terra",
-              };
-              return (
-                <BigStat
-                  key={cat.name}
-                  value={formatDuration(cat.ms)}
-                  label={cat.name}
-                  color={colorMap[cat.name.toLowerCase()] || "default"}
-                />
-              );
-            })}
-            <BigStat
-              value={formatDuration(reportSummary.wizardMs)}
-              label="Wizard Time"
-              color="walnut"
-            />
-            <BigStat
-              value={reportSummary.entries}
-              label="Entries"
-              color="default"
-            />
+          {/* Summary — compact grouped layout */}
+          <div className="mb-6 grid gap-4 grid-cols-3">
+            {/* Time Overview */}
+            <div className="rounded-xl border border-sand bg-white px-5 py-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">Time Overview</div>
+              <div className="flex gap-6">
+                <div>
+                  <div className="font-serif text-xl font-bold text-espresso">{formatDuration(reportSummary.totalMs)}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Total Logged</div>
+                </div>
+                <div>
+                  <div className="font-serif text-xl font-bold text-sage">{formatDuration(reportSummary.billableMs)}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Billable</div>
+                </div>
+                <div>
+                  <div className="font-serif text-xl font-bold text-walnut">{formatDuration(reportSummary.wizardMs)}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Wizard Time</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Category Breakdown */}
+            <div className="rounded-xl border border-sand bg-white px-5 py-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">Categories</div>
+              <div className="space-y-1.5">
+                {reportSummary.categories.map((cat) => {
+                  const colorClass: Record<string, string> = {
+                    task: "bg-terracotta",
+                    break: "bg-amber",
+                    message: "bg-slate-blue",
+                    meeting: "bg-clay-rose",
+                    personal: "bg-clay-rose",
+                    "sorting tasks": "bg-amber",
+                    collaboration: "bg-terracotta",
+                  };
+                  const barColor = colorClass[cat.name.toLowerCase()] || "bg-bark";
+                  const pct = reportSummary.totalMs > 0 ? (cat.ms / reportSummary.totalMs) * 100 : 0;
+                  return (
+                    <div key={cat.name} className="flex items-center gap-2">
+                      <span className="text-[11px] text-espresso w-[90px] truncate">{cat.name}</span>
+                      <div className="flex-1 h-1.5 rounded bg-parchment overflow-hidden">
+                        <div className={`h-full rounded ${barColor}`} style={{ width: `${Math.max(pct, 2)}%` }} />
+                      </div>
+                      <span className="text-[11px] font-semibold text-espresso w-[60px] text-right">{formatDuration(cat.ms)}</span>
+                    </div>
+                  );
+                })}
+                {reportSummary.categories.length === 0 && (
+                  <span className="text-[11px] text-bark">No data</span>
+                )}
+              </div>
+            </div>
+
+            {/* Task Types & Status */}
+            <div className="rounded-xl border border-sand bg-white px-5 py-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">Entries &amp; Status</div>
+              <div className="flex gap-6 mb-3">
+                <div>
+                  <div className="font-serif text-xl font-bold text-espresso">{reportSummary.entries}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Total Entries</div>
+                </div>
+                <div>
+                  <div className="font-serif text-xl font-bold text-sage">{reportSummary.hourlyCount}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Hourly</div>
+                </div>
+                <div>
+                  <div className="font-serif text-xl font-bold text-slate-blue">{reportSummary.fixedCount}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Fixed</div>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-3 border-t border-parchment">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-terracotta"></span>
+                  <span className="text-[11px] font-semibold">{reportSummary.inProgressCount}</span>
+                  <span className="text-[10px] text-bark">In Progress</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-sage"></span>
+                  <span className="text-[11px] font-semibold">{reportSummary.completedCount}</span>
+                  <span className="text-[10px] text-bark">Completed</span>
+                </div>
+                {reportSummary.onHoldCount > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber"></span>
+                    <span className="text-[11px] font-semibold">{reportSummary.onHoldCount}</span>
+                    <span className="text-[10px] text-bark">On Hold</span>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Daily Hours Chart */}
