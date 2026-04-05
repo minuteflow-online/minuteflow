@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -207,6 +208,8 @@ export default function ProjectsTasksTab() {
   /* Which project/task is showing VA assign dropdown */
   const [vaAssignDropdownProject, setVaAssignDropdownProject] = useState<number | null>(null);
   const [vaAssignDropdownTask, setVaAssignDropdownTask] = useState<number | null>(null);
+  /* Portal dropdown positions */
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
   /* All assignments for expanded project tasks */
   const [expandedProjectAssignments, setExpandedProjectAssignments] = useState<Record<number, ProjectTaskAssignment[]>>({});
 
@@ -708,6 +711,42 @@ export default function ProjectsTasksTab() {
     setAssigning(false);
     setSelectedProjectIds(new Set());
     fetchVaProjectAssignments();
+  };
+
+  const handleBatchAssignVAToTasks = async (vaId: string, projectTagId: number) => {
+    if (selectedExpandedTaskIds.size === 0 || !vaId) return;
+    setAssigning(true);
+    const taskIds = Array.from(selectedExpandedTaskIds);
+    // Only assign to tasks where this VA isn't already assigned
+    const alreadyAssigned = new Set(
+      vaTaskAssignments.filter((a) => a.va_id === vaId).map((a) => a.project_task_assignment_id)
+    );
+    const toAssign = taskIds.filter((id) => !alreadyAssigned.has(id));
+    const promises = toAssign.map((ptaId) =>
+      fetch("/api/va-task-assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ va_id: vaId, project_task_assignment_id: ptaId }),
+      })
+    );
+    await Promise.all(promises);
+    setAssigning(false);
+    setSelectedExpandedTaskIds(new Set());
+    fetchVaTaskAssignments();
+  };
+
+  const handleBatchUnassignVAFromTasks = async (vaId: string) => {
+    if (selectedExpandedTaskIds.size === 0 || !vaId) return;
+    setAssigning(true);
+    const taskIds = new Set(Array.from(selectedExpandedTaskIds));
+    const toRemove = vaTaskAssignments.filter((a) => a.va_id === vaId && taskIds.has(a.project_task_assignment_id));
+    const promises = toRemove.map((a) =>
+      fetch(`/api/va-task-assignments?id=${a.id}`, { method: "DELETE" })
+    );
+    await Promise.all(promises);
+    setAssigning(false);
+    setSelectedExpandedTaskIds(new Set());
+    fetchVaTaskAssignments();
   };
 
   const handleUpdateVAProjectRate = async (assignmentId: number, billingType?: string, rate?: number | null) => {
@@ -1390,14 +1429,27 @@ export default function ProjectsTasksTab() {
                                 {/* VA assign button for project */}
                                 <div className="relative shrink-0 pr-2" onClick={(e) => e.stopPropagation()}>
                                   <button
-                                    onClick={() => setVaAssignDropdownProject(vaAssignDropdownProject === p.id ? null : p.id)}
+                                    onClick={(e) => {
+                                      if (vaAssignDropdownProject === p.id) {
+                                        setVaAssignDropdownProject(null);
+                                        setDropdownPos(null);
+                                      } else {
+                                        const rect = (e.target as HTMLElement).getBoundingClientRect();
+                                        setDropdownPos({ top: rect.bottom + 2, left: Math.max(8, rect.right - 180), width: 180 });
+                                        setVaAssignDropdownProject(p.id);
+                                        setVaAssignDropdownTask(null);
+                                      }
+                                    }}
                                     className="text-[9px] font-semibold text-sage hover:text-[#5a7a5e] cursor-pointer px-1.5 py-0.5 rounded bg-sage-soft/50 hover:bg-sage-soft"
                                     title="Assign VA"
                                   >
-                                    {projectVAs.length > 0 ? `👤 ${projectVAs.length}` : "+ VA"}
+                                    {projectVAs.length > 0 ? `VA ${projectVAs.length}` : "+ VA"}
                                   </button>
-                                  {vaAssignDropdownProject === p.id && (
-                                    <div className="absolute right-0 top-6 z-30 bg-white border border-sand rounded-lg shadow-lg py-1 min-w-[160px]">
+                                  {vaAssignDropdownProject === p.id && dropdownPos && createPortal(
+                                    <div
+                                      style={{ position: "fixed", top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, zIndex: 9999 }}
+                                      className="bg-white border border-sand rounded-lg shadow-lg py-1"
+                                    >
                                       <div className="px-2 py-1 text-[10px] font-bold text-espresso border-b border-sand">Assign VA to Project</div>
                                       {/* Show currently assigned VAs */}
                                       {projectVAs.map((va) => (
@@ -1420,8 +1472,9 @@ export default function ProjectsTasksTab() {
                                           ))}
                                         </select>
                                       )}
-                                      <button onClick={() => setVaAssignDropdownProject(null)} className="w-full text-center text-[10px] text-stone hover:text-espresso cursor-pointer py-1 border-t border-sand">Close</button>
-                                    </div>
+                                      <button onClick={() => { setVaAssignDropdownProject(null); setDropdownPos(null); }} className="w-full text-center text-[10px] text-stone hover:text-espresso cursor-pointer py-1 border-t border-sand">Close</button>
+                                    </div>,
+                                    document.body
                                   )}
                                 </div>
                               </div>
@@ -1463,10 +1516,37 @@ export default function ProjectsTasksTab() {
                                             </span>
                                             {someSelected && (
                                               <>
+                                                {/* Batch assign VA to selected tasks */}
+                                                <span className="text-stone text-[10px] ml-auto">Assign VA:</span>
+                                                <select
+                                                  onChange={(e) => { if (e.target.value) handleBatchAssignVAToTasks(e.target.value, p.id); e.target.value = ""; }}
+                                                  className="rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none bg-white cursor-pointer"
+                                                  disabled={assigning}
+                                                  value=""
+                                                >
+                                                  <option value="">Pick VA...</option>
+                                                  {vaList.map((v) => (
+                                                    <option key={v.id} value={v.id}>{v.full_name}</option>
+                                                  ))}
+                                                </select>
+                                                {/* Batch unassign VA from selected tasks */}
+                                                <span className="text-stone text-[10px]">Unassign:</span>
+                                                <select
+                                                  onChange={(e) => { if (e.target.value) handleBatchUnassignVAFromTasks(e.target.value); e.target.value = ""; }}
+                                                  className="rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none bg-white cursor-pointer"
+                                                  disabled={assigning}
+                                                  value=""
+                                                >
+                                                  <option value="">Pick VA...</option>
+                                                  {vaList.map((v) => (
+                                                    <option key={v.id} value={v.id}>{v.full_name}</option>
+                                                  ))}
+                                                </select>
+                                                <span className="text-stone text-[10px]">|</span>
                                                 <button
                                                   onClick={() => handleBulkRemoveTasksFromProject(p.id)}
                                                   disabled={assigning}
-                                                  className="ml-auto px-2 py-0.5 rounded bg-red-500 text-white text-[10px] font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
+                                                  className="px-2 py-0.5 rounded bg-red-500 text-white text-[10px] font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
                                                 >
                                                   {assigning ? "Removing..." : `Remove ${selectedInThisProject.length}`}
                                                 </button>
@@ -1491,7 +1571,7 @@ export default function ProjectsTasksTab() {
                                         const taskVAs = vaTaskAssignments.filter((vta) => vta.project_task_assignment_id === a.id);
                                         return (
                                           <div key={a.id} className="rounded border border-sand/60 bg-white p-1.5 text-[11px]">
-                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                            <div className="flex items-center gap-1.5">
                                               <input
                                                 type="checkbox"
                                                 checked={selectedExpandedTaskIds.has(a.id)}
@@ -1505,36 +1585,66 @@ export default function ProjectsTasksTab() {
                                                 }}
                                                 className="h-3 w-3 rounded border-sand text-terracotta accent-terracotta cursor-pointer shrink-0"
                                               />
-                                              <span className="text-espresso truncate flex-1">{a.task_library?.task_name ?? "Unknown"}</span>
-                                              {/* VA badges */}
-                                              {taskVAs.map((tv) => (
-                                                <span key={tv.id} className="text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0">
-                                                  {tv.profiles?.full_name?.split(" ")[0] ?? "VA"}
-                                                  <button onClick={() => handleUnassignVAFromTask(tv.id)} className="hover:text-red-600 cursor-pointer"><XIcon /></button>
-                                                </span>
-                                              ))}
+                                              <span className="text-espresso truncate shrink-0 max-w-[40%]">{a.task_library?.task_name ?? "Unknown"}</span>
+                                              {/* VA badges — horizontal scrollable */}
+                                              {taskVAs.length > 0 && (
+                                                <ScrollableVAPills>
+                                                  {taskVAs.map((tv) => (
+                                                    <span key={tv.id} className="text-[9px] bg-sage-soft text-sage px-1 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0 whitespace-nowrap">
+                                                      {tv.profiles?.full_name?.split(" ")[0] ?? "VA"}
+                                                      <button onClick={() => handleUnassignVAFromTask(tv.id)} className="hover:text-red-600 cursor-pointer"><XIcon /></button>
+                                                    </span>
+                                                  ))}
+                                                </ScrollableVAPills>
+                                              )}
                                               {/* Assign VA to this task */}
                                               <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
                                                 <button
-                                                  onClick={() => setVaAssignDropdownTask(vaAssignDropdownTask === a.id ? null : a.id)}
+                                                  onClick={(e) => {
+                                                    if (vaAssignDropdownTask === a.id) {
+                                                      setVaAssignDropdownTask(null);
+                                                      setDropdownPos(null);
+                                                    } else {
+                                                      const rect = (e.target as HTMLElement).getBoundingClientRect();
+                                                      setDropdownPos({ top: Math.max(8, rect.top - 4), left: Math.max(8, rect.right - 180), width: 180 });
+                                                      setVaAssignDropdownTask(a.id);
+                                                      setVaAssignDropdownProject(null);
+                                                    }
+                                                  }}
                                                   className="text-[9px] text-sage hover:text-[#5a7a5e] cursor-pointer px-1 py-0.5 rounded bg-sage-soft/30 hover:bg-sage-soft"
                                                 >
                                                   + VA
                                                 </button>
-                                                {vaAssignDropdownTask === a.id && (
-                                                  <div className="absolute right-0 bottom-full mb-1 z-30 bg-white border border-sand rounded-lg shadow-lg py-1 min-w-[140px]">
-                                                    {vaList.filter((v) => !taskVAs.some((tv) => tv.va_id === v.id)).map((v) => (
-                                                      <button
-                                                        key={v.id}
-                                                        onClick={() => handleAssignVAToTask(v.id, a.id)}
-                                                        className="w-full text-left px-2 py-1 text-[11px] text-espresso hover:bg-parchment cursor-pointer"
-                                                        disabled={assigningVAToTask}
-                                                      >
-                                                        {v.full_name}
-                                                      </button>
+                                                {vaAssignDropdownTask === a.id && dropdownPos && createPortal(
+                                                  <div
+                                                    style={{ position: "fixed", top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, zIndex: 9999, transform: "translateY(-100%)" }}
+                                                    className="bg-white border border-sand rounded-lg shadow-lg py-1"
+                                                  >
+                                                    <div className="px-2 py-1 text-[10px] font-bold text-espresso border-b border-sand">Assign VA to Task</div>
+                                                    {/* Show currently assigned VAs */}
+                                                    {taskVAs.map((tv) => (
+                                                      <div key={tv.id} className="px-2 py-1 flex items-center justify-between text-[11px]">
+                                                        <span className="text-sage font-semibold">{tv.profiles?.full_name ?? "Unknown"}</span>
+                                                        <button onClick={() => handleUnassignVAFromTask(tv.id)} className="text-red-400 hover:text-red-600 cursor-pointer text-[9px]">Remove</button>
+                                                      </div>
                                                     ))}
-                                                    <button onClick={() => setVaAssignDropdownTask(null)} className="w-full text-center text-[10px] text-stone hover:text-espresso cursor-pointer py-1 border-t border-sand">Close</button>
-                                                  </div>
+                                                    {/* Add new VA */}
+                                                    {vaList.filter((v) => !taskVAs.some((tv) => tv.va_id === v.id)).length > 0 && (
+                                                      <select
+                                                        onChange={(e) => { if (e.target.value) handleAssignVAToTask(e.target.value, a.id); e.target.value = ""; }}
+                                                        className="mx-1.5 my-1 rounded border border-sand px-1.5 py-0.5 text-[10px] text-espresso outline-none bg-white cursor-pointer w-[calc(100%-12px)]"
+                                                        disabled={assigningVAToTask}
+                                                        value=""
+                                                      >
+                                                        <option value="">Add VA...</option>
+                                                        {vaList.filter((v) => !taskVAs.some((tv) => tv.va_id === v.id)).map((v) => (
+                                                          <option key={v.id} value={v.id}>{v.full_name}</option>
+                                                        ))}
+                                                      </select>
+                                                    )}
+                                                    <button onClick={() => { setVaAssignDropdownTask(null); setDropdownPos(null); }} className="w-full text-center text-[10px] text-stone hover:text-espresso cursor-pointer py-1 border-t border-sand">Close</button>
+                                                  </div>,
+                                                  document.body
                                                 )}
                                               </div>
                                               {/* Remove task from project */}
@@ -1890,141 +2000,6 @@ export default function ProjectsTasksTab() {
         </div>
       </div>
 
-      {/* ═══ VA Category Assignments ═══ */}
-      <div className="rounded-xl border border-sand bg-white p-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide flex items-center gap-1.5">
-            <svg className="h-3.5 w-3.5 text-terracotta" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M23 21v-2a4 4 0 00-3-3.87" />
-              <path d="M16 3.13a4 4 0 010 7.75" />
-            </svg>
-            VA Assignments
-            <span className="text-stone font-normal normal-case">
-              ({vaCatAssignments.length} assignment{vaCatAssignments.length !== 1 ? "s" : ""})
-            </span>
-          </h3>
-        </div>
-        <p className="text-[10px] text-stone">
-          Assign VAs to task categories. VAs will only see tasks from their assigned categories.
-        </p>
-
-        {/* Category selector */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] text-espresso font-semibold">Category:</span>
-          {categories.map((cat) => {
-            const count = vaCatAssignments.filter((a) => a.category_id === cat.id).length;
-            return (
-              <button
-                key={cat.id}
-                onClick={() => setSelectedCategoryForVA(selectedCategoryForVA === cat.id ? null : cat.id)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${
-                  selectedCategoryForVA === cat.id
-                    ? "bg-terracotta text-white"
-                    : "bg-parchment text-espresso hover:bg-sand"
-                }`}
-              >
-                {cat.category_name}
-                {count > 0 && (
-                  <span className={`ml-1 text-[9px] ${selectedCategoryForVA === cat.id ? "text-white/80" : "text-stone"}`}>
-                    ({count} VA{count !== 1 ? "s" : ""})
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* VA list for selected category */}
-        {selectedCategoryForVA && (() => {
-          const catName = categories.find((c) => c.id === selectedCategoryForVA)?.category_name ?? "Category";
-          const assignedVaIds = new Set(
-            vaCatAssignments
-              .filter((a) => a.category_id === selectedCategoryForVA)
-              .map((a) => a.va_id)
-          );
-          const assignedList = vaCatAssignments.filter((a) => a.category_id === selectedCategoryForVA);
-          const unassignedVAs = vaList.filter((v) => !assignedVaIds.has(v.id));
-          return (
-            <div className="rounded-lg border border-sand p-2.5 space-y-2">
-              <h4 className="text-[11px] font-bold text-espresso">
-                VAs assigned to &ldquo;{catName}&rdquo;
-              </h4>
-
-              {/* Currently assigned */}
-              {assignedList.length === 0 ? (
-                <p className="text-[10px] text-stone italic">No VAs assigned yet.</p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {assignedList.map((a) => (
-                    <span key={a.id} className="inline-flex items-center gap-1 bg-sage-soft text-sage px-2 py-0.5 rounded-full text-[11px] font-semibold">
-                      {a.profiles?.full_name ?? a.profiles?.username ?? "Unknown"}
-                      <button
-                        onClick={() => handleUnassignVAFromCategory(a.id)}
-                        className="hover:text-red-600 cursor-pointer"
-                        title="Remove"
-                      >
-                        <XIcon />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {/* Add VA */}
-              {unassignedVAs.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-stone">Add VA:</span>
-                  <select
-                    onChange={(e) => {
-                      const vaId = e.target.value;
-                      if (!vaId) return;
-                      handleAssignVAToCategory(vaId, selectedCategoryForVA);
-                      e.target.value = "";
-                    }}
-                    className="rounded-lg border border-sand px-2 py-0.5 text-[11px] text-espresso outline-none bg-white cursor-pointer"
-                    disabled={assigningVA}
-                    value=""
-                  >
-                    <option value="">Select VA...</option>
-                    {unassignedVAs.map((v) => (
-                      <option key={v.id} value={v.id}>{v.full_name}</option>
-                    ))}
-                  </select>
-                  {assigningVA && <span className="text-[10px] text-stone animate-pulse">Assigning...</span>}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* Summary: all assignments grouped by VA */}
-        {vaCatAssignments.length > 0 && !selectedCategoryForVA && (
-          <div className="space-y-1">
-            <h4 className="text-[11px] font-bold text-stone uppercase tracking-wide">All Assignments</h4>
-            {(() => {
-              const byVa = new Map<string, { name: string; cats: string[] }>();
-              for (const a of vaCatAssignments) {
-                const vaName = a.profiles?.full_name ?? "Unknown";
-                const catName = a.task_categories?.category_name ?? "Unknown";
-                if (!byVa.has(a.va_id)) byVa.set(a.va_id, { name: vaName, cats: [] });
-                byVa.get(a.va_id)!.cats.push(catName);
-              }
-              return Array.from(byVa.entries()).map(([vaId, info]) => (
-                <div key={vaId} className="flex items-center gap-2 text-[11px]">
-                  <span className="font-semibold text-espresso w-32 truncate">{info.name}</span>
-                  <div className="flex flex-wrap gap-1">
-                    {info.cats.map((c, i) => (
-                      <span key={i} className="bg-parchment text-stone px-1.5 py-0.5 rounded-full text-[10px]">{c}</span>
-                    ))}
-                  </div>
-                </div>
-              ));
-            })()}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -2257,6 +2232,56 @@ function ProjectRow({
           <button onClick={onEdit} className="p-0.5 rounded text-stone hover:text-espresso cursor-pointer" title="Rename"><EditIcon /></button>
           <button onClick={onDelete} className="p-0.5 rounded text-stone hover:text-red-600 cursor-pointer" title="Delete"><TrashIcon /></button>
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Scrollable VA Pills Sub-Component ──────────────────── */
+
+function ScrollableVAPills({ children }: { children: React.ReactNode }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const checkScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 0);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    checkScroll();
+    const el = scrollRef.current;
+    if (el) {
+      el.addEventListener("scroll", checkScroll);
+      const ro = new ResizeObserver(checkScroll);
+      ro.observe(el);
+      return () => { el.removeEventListener("scroll", checkScroll); ro.disconnect(); };
+    }
+  }, [checkScroll, children]);
+
+  const scroll = (dir: "left" | "right") => {
+    const el = scrollRef.current;
+    if (el) el.scrollBy({ left: dir === "left" ? -80 : 80, behavior: "smooth" });
+  };
+
+  return (
+    <div className="flex items-center gap-0.5 min-w-0 flex-1">
+      {canScrollLeft && (
+        <button onClick={() => scroll("left")} className="shrink-0 text-stone hover:text-espresso cursor-pointer p-0.5" type="button">
+          <svg className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6" /></svg>
+        </button>
+      )}
+      <div ref={scrollRef} className="flex items-center gap-1 overflow-x-auto min-w-0 flex-1" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
+        <style>{`.scrollbar-hide::-webkit-scrollbar { display: none; }`}</style>
+        {children}
+      </div>
+      {canScrollRight && (
+        <button onClick={() => scroll("right")} className="shrink-0 text-stone hover:text-espresso cursor-pointer p-0.5" type="button">
+          <svg className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
+        </button>
       )}
     </div>
   );
