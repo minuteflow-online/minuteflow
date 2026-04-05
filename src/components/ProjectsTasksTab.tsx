@@ -213,6 +213,10 @@ export default function ProjectsTasksTab() {
   /* ── State: selected tasks inside expanded projects (for batch remove) ─────── */
   const [selectedExpandedTaskIds, setSelectedExpandedTaskIds] = useState<Set<number>>(new Set());
 
+  /* ── State: bulk remove inside expanded VA panel ─────── */
+  const [selectedVAProjectAssignmentIds, setSelectedVAProjectAssignmentIds] = useState<Set<number>>(new Set());
+  const [selectedVATaskAssignmentIds, setSelectedVATaskAssignmentIds] = useState<Set<number>>(new Set());
+
   /* ── State: search ─────── */
   const [taskSearch, setTaskSearch] = useState("");
 
@@ -861,6 +865,26 @@ export default function ProjectsTasksTab() {
 
     await Promise.all(allPromises);
     setSelectedVAIds(new Set());
+    setAssigning(false);
+    fetchVaProjectAssignments();
+    fetchVaTaskAssignments();
+  };
+
+  /* ── Bulk remove selected assignments from inside the expanded VA panel ── */
+  const handleBulkRemoveFromVAPanel = async () => {
+    if (selectedVAProjectAssignmentIds.size === 0 && selectedVATaskAssignmentIds.size === 0) return;
+    if (!window.confirm(`Remove ${selectedVAProjectAssignmentIds.size + selectedVATaskAssignmentIds.size} assignment(s)? This restores default visibility.`)) return;
+    setAssigning(true);
+    const allPromises: Promise<Response>[] = [];
+    for (const id of selectedVAProjectAssignmentIds) {
+      allPromises.push(fetch(`/api/va-project-assignments?id=${id}`, { method: "DELETE" }));
+    }
+    for (const id of selectedVATaskAssignmentIds) {
+      allPromises.push(fetch(`/api/va-task-assignments?id=${id}`, { method: "DELETE" }));
+    }
+    await Promise.all(allPromises);
+    setSelectedVAProjectAssignmentIds(new Set());
+    setSelectedVATaskAssignmentIds(new Set());
     setAssigning(false);
     fetchVaProjectAssignments();
     fetchVaTaskAssignments();
@@ -2010,8 +2034,67 @@ export default function ProjectsTasksTab() {
                   </div>
 
                   {/* Expanded content */}
-                  {isExpanded && (
+                  {isExpanded && (() => {
+                    // Compute which items in THIS VA's panel are selected
+                    const thisVAProjIds = myProjectAssignments.map((a) => a.id);
+                    const thisVATaskIds = myTaskAssignments.map((a) => a.id);
+                    const selectedProjCount = thisVAProjIds.filter((id) => selectedVAProjectAssignmentIds.has(id)).length;
+                    const selectedTaskCount = thisVATaskIds.filter((id) => selectedVATaskAssignmentIds.has(id)).length;
+                    const totalSelectedInVA = selectedProjCount + selectedTaskCount;
+                    const allSelectedInVA = totalAssignments > 0 && totalSelectedInVA === totalAssignments;
+
+                    return (
                     <div className="border-t border-sand bg-white p-2 space-y-2">
+                      {/* Bulk select bar */}
+                      {totalAssignments > 0 && (
+                        <div className="flex items-center gap-2 text-[10px] pb-1 border-b border-sand/50">
+                          <input
+                            type="checkbox"
+                            checked={allSelectedInVA}
+                            ref={(el) => { if (el) el.indeterminate = totalSelectedInVA > 0 && !allSelectedInVA; }}
+                            onChange={() => {
+                              if (allSelectedInVA) {
+                                // Deselect all for this VA
+                                setSelectedVAProjectAssignmentIds((prev) => {
+                                  const next = new Set(prev);
+                                  thisVAProjIds.forEach((id) => next.delete(id));
+                                  return next;
+                                });
+                                setSelectedVATaskAssignmentIds((prev) => {
+                                  const next = new Set(prev);
+                                  thisVATaskIds.forEach((id) => next.delete(id));
+                                  return next;
+                                });
+                              } else {
+                                // Select all for this VA
+                                setSelectedVAProjectAssignmentIds((prev) => {
+                                  const next = new Set(prev);
+                                  thisVAProjIds.forEach((id) => next.add(id));
+                                  return next;
+                                });
+                                setSelectedVATaskAssignmentIds((prev) => {
+                                  const next = new Set(prev);
+                                  thisVATaskIds.forEach((id) => next.add(id));
+                                  return next;
+                                });
+                              }
+                            }}
+                            className="h-3 w-3 rounded border-sand text-sage accent-sage cursor-pointer"
+                          />
+                          <span className="text-stone">
+                            {totalSelectedInVA > 0 ? `${totalSelectedInVA} selected` : "Select all"}
+                          </span>
+                          {totalSelectedInVA > 0 && (
+                            <button
+                              onClick={handleBulkRemoveFromVAPanel}
+                              disabled={assigning}
+                              className="ml-auto px-2 py-0.5 rounded-lg bg-red-500 text-white text-[10px] font-semibold hover:bg-red-600 disabled:opacity-50 cursor-pointer transition-colors"
+                            >
+                              {assigning ? "Removing..." : `Bulk Remove (${totalSelectedInVA})`}
+                            </button>
+                          )}
+                        </div>
+                      )}
                       {allProjectIds.size === 0 ? (
                         <p className="text-[10px] text-stone text-center py-3 bg-parchment/30 rounded-lg">
                           No assignments yet. Assign from Accounts &amp; Projects.
@@ -2030,6 +2113,20 @@ export default function ProjectsTasksTab() {
                                 {/* Project header */}
                                 <div className="bg-parchment/40 px-2 py-1.5 space-y-1">
                                   <div className="flex items-center gap-1.5">
+                                    {projAssignment && (
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedVAProjectAssignmentIds.has(projAssignment.id)}
+                                        onChange={() => {
+                                          setSelectedVAProjectAssignmentIds((prev) => {
+                                            const next = new Set(prev);
+                                            if (next.has(projAssignment.id)) next.delete(projAssignment.id); else next.add(projAssignment.id);
+                                            return next;
+                                          });
+                                        }}
+                                        className="h-3 w-3 rounded border-sand text-sage accent-sage cursor-pointer shrink-0"
+                                      />
+                                    )}
                                     <ProjectIcon />
                                     <div className="flex-1 min-w-0">
                                       <span className="text-[11px] font-semibold text-espresso truncate block">{projectName}</span>
@@ -2082,7 +2179,19 @@ export default function ProjectsTasksTab() {
                                       const taskName = ta.project_task_assignments?.task_library?.task_name ?? "Unknown Task";
                                       return (
                                         <div key={ta.id} className="px-2 py-1.5 flex items-center gap-1.5 text-[11px]">
-                                          <span className="flex-1 text-espresso truncate pl-3">{taskName}</span>
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedVATaskAssignmentIds.has(ta.id)}
+                                            onChange={() => {
+                                              setSelectedVATaskAssignmentIds((prev) => {
+                                                const next = new Set(prev);
+                                                if (next.has(ta.id)) next.delete(ta.id); else next.add(ta.id);
+                                                return next;
+                                              });
+                                            }}
+                                            className="h-3 w-3 rounded border-sand text-sage accent-sage cursor-pointer shrink-0 ml-3"
+                                          />
+                                          <span className="flex-1 text-espresso truncate">{taskName}</span>
                                           <select
                                             value={ta.billing_type}
                                             onChange={(e) => handleUpdateVATaskRate(ta.id, e.target.value)}
@@ -2122,7 +2231,8 @@ export default function ProjectsTasksTab() {
                         </div>
                       )}
                     </div>
-                  )}
+                    );
+                  })()}
                 </div>
               );
             })}
