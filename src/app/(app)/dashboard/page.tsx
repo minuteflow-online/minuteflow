@@ -11,6 +11,7 @@ import LiveSessionPrompt from "@/components/LiveSessionPrompt";
 import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSidebar";
 import DailyTaskPlanner from "@/components/DailyTaskPlanner";
 import VaAssignmentsColumn from "@/components/VaAssignmentsColumn";
+import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import { getTodayBoundsInTimezone } from "@/lib/utils";
 import type {
@@ -71,6 +72,7 @@ export default function DashboardPage() {
   // Session state
   const [session, setSession] = useState<Session | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>("idle");
+  const [claimRefreshKey, setClaimRefreshKey] = useState(0);
   const [sessionElapsed, setSessionElapsed] = useState(0);
   const [breakElapsed, setBreakElapsed] = useState(0);
   const [breakStartTime, setBreakStartTime] = useState<string | null>(null);
@@ -2014,7 +2016,7 @@ export default function DashboardPage() {
       <div className={`grid gap-5 mb-6 ${
         role === "va"
           ? sessionState === "idle"
-            ? "grid-cols-1 md:grid-cols-[1fr_260px_260px]"
+            ? "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
             : "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]"
       }`}>
@@ -2035,7 +2037,11 @@ export default function DashboardPage() {
         )}
         {/* VA Assignments — only visible BEFORE clock-in */}
         {role === "va" && userId && sessionState === "idle" && (
-          <VaAssignmentsColumn userId={userId} />
+          <VaAssignmentsColumn userId={userId} key={`va-assign-${claimRefreshKey}`} />
+        )}
+        {/* Available Tasks to Claim — only visible BEFORE clock-in */}
+        {role === "va" && sessionState === "idle" && (
+          <ClaimableTasksColumn onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
         )}
         {/* Quick Pick — hidden for VAs before clock-in */}
         {(role !== "va" || sessionState !== "idle") && (
