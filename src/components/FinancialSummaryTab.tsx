@@ -161,6 +161,10 @@ export default function FinancialSummaryTab() {
   // Filters
   const [filterVa, setFilterVa] = useState("");
   const [filterAccount, setFilterAccount] = useState("");
+  const [expenseTypeFilter, setExpenseTypeFilter] = useState<"all" | "business" | "reimbursable">("all");
+  const [expenseCategoryFilter, setExpenseCategoryFilter] = useState("");
+  const [expenseSortField, setExpenseSortField] = useState<"date" | "amount" | "category">("date");
+  const [expenseSortAsc, setExpenseSortAsc] = useState(false);
 
   // Data
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
@@ -539,6 +543,7 @@ export default function FinancialSummaryTab() {
   /* ── Expenses Calculation ───────────────────────────── */
 
   const expenseData = useMemo(() => {
+    // Totals from ALL expenses (unfiltered) for summary cards
     const totalExpenses = expenses.reduce((s, e) => s + Number(e.amount), 0);
     const reimbursableTotal = expenses
       .filter((e) => e.is_reimbursable)
@@ -546,8 +551,30 @@ export default function FinancialSummaryTab() {
     const reimbursedTotal = expenses
       .filter((e) => e.reimbursed)
       .reduce((s, e) => s + Number(e.amount), 0);
-    return { rows: expenses, totalExpenses, reimbursableTotal, reimbursedTotal };
-  }, [expenses]);
+    const businessTotal = expenses
+      .filter((e) => !e.is_reimbursable)
+      .reduce((s, e) => s + Number(e.amount), 0);
+
+    // Apply filters
+    let filtered = [...expenses];
+    if (expenseTypeFilter === "business") filtered = filtered.filter((e) => !e.is_reimbursable);
+    if (expenseTypeFilter === "reimbursable") filtered = filtered.filter((e) => e.is_reimbursable);
+    if (expenseCategoryFilter) filtered = filtered.filter((e) => e.category === expenseCategoryFilter);
+
+    // Apply sorting
+    filtered.sort((a, b) => {
+      let cmp = 0;
+      if (expenseSortField === "date") cmp = a.expense_date.localeCompare(b.expense_date);
+      else if (expenseSortField === "amount") cmp = Number(a.amount) - Number(b.amount);
+      else if (expenseSortField === "category") cmp = a.category.localeCompare(b.category);
+      return expenseSortAsc ? cmp : -cmp;
+    });
+
+    // Unique categories in current data
+    const categories = Array.from(new Set(expenses.map((e) => e.category))).sort();
+
+    return { rows: filtered, totalExpenses, reimbursableTotal, reimbursedTotal, businessTotal, categories };
+  }, [expenses, expenseTypeFilter, expenseCategoryFilter, expenseSortField, expenseSortAsc]);
 
   /* ── Profit Summary ──────────────────────────────────── */
 
@@ -557,7 +584,11 @@ export default function FinancialSummaryTab() {
     const expenseTotal = expenseData.totalExpenses;
     const net = revenue - cost - expenseTotal;
     const margin = revenue > 0 ? (net / revenue) * 100 : 0;
-    return { revenue, cost, net, margin, expenseTotal, collected: revenueData.totalCollected };
+    const collected = revenueData.totalCollected;
+    const receivable = revenue - collected; // what clients still owe you
+    const vaPaid = vaCostData.totalVaPaid;
+    const vaPayable = cost - vaPaid; // what you still owe VAs
+    return { revenue, cost, net, margin, expenseTotal, collected, receivable, vaPaid, vaPayable };
   }, [revenueData, vaCostData, expenseData]);
 
   /* ── Unique accounts for filter (active only) ──────────── */
@@ -732,44 +763,68 @@ export default function FinancialSummaryTab() {
         </div>
       ) : (
         <>
-          {/* ── Profit Summary Cards ───────────────────────── */}
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-            <SummaryCard
-              label="Revenue"
-              value={fmtMoney(profitData.revenue)}
-              sub={revenueData.hasUnsetRates ? "Some rates not set" : undefined}
-              color="text-sage"
-            />
-            <SummaryCard
-              label="Collected"
-              value={fmtMoney(profitData.collected)}
-              sub={`of ${fmtMoney(profitData.revenue)}`}
-              color="text-emerald-600"
-            />
-            <SummaryCard
-              label="VA Costs"
-              value={fmtMoney(profitData.cost)}
-              sub={fmtHours(vaCostData.totalPaidMs) + " paid hours"}
-              color="text-terracotta"
-            />
-            <SummaryCard
-              label="Expenses"
-              value={fmtMoney(profitData.expenseTotal)}
-              sub={expenses.length + " entries"}
-              color="text-amber-600"
-            />
-            <SummaryCard
-              label="Net Margin"
-              value={fmtMoney(profitData.net)}
-              sub={profitData.margin.toFixed(1) + "%"}
-              color={profitData.net >= 0 ? "text-sage" : "text-red-500"}
-            />
-            <SummaryCard
-              label="Total Hours"
-              value={fmtHours(categoryData.totalMs)}
-              sub={filteredLogs.length + " entries"}
-              color="text-slate-blue"
-            />
+          {/* ── Summary Cards — Organized by Paid/Collected vs Payable/Receivable ── */}
+          <div className="space-y-3">
+            {/* Row 1: What's been paid & collected (done) */}
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-bark/60 mb-2 px-1">Paid & Collected</div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <SummaryCard
+                  label="Collected from Clients"
+                  value={fmtMoney(profitData.collected)}
+                  sub={`of ${fmtMoney(profitData.revenue)} billed`}
+                  color="text-emerald-600"
+                />
+                <SummaryCard
+                  label="Total VA Payments"
+                  value={fmtMoney(profitData.vaPaid)}
+                  sub={`of ${fmtMoney(profitData.cost)} earned`}
+                  color="text-emerald-600"
+                />
+                <SummaryCard
+                  label="Expenses Paid"
+                  value={fmtMoney(profitData.expenseTotal)}
+                  sub={expenses.length + " entries"}
+                  color="text-amber-600"
+                />
+                <SummaryCard
+                  label="Net Margin"
+                  value={fmtMoney(profitData.net)}
+                  sub={profitData.margin.toFixed(1) + "% margin"}
+                  color={profitData.net >= 0 ? "text-sage" : "text-red-500"}
+                />
+              </div>
+            </div>
+            {/* Row 2: What's still owed (outstanding) */}
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-bark/60 mb-2 px-1">Payable & Receivable</div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <SummaryCard
+                  label="Receivable from Clients"
+                  value={fmtMoney(profitData.receivable)}
+                  sub={profitData.receivable > 0 ? "clients still owe" : "all collected"}
+                  color={profitData.receivable > 0 ? "text-amber-600" : "text-sage"}
+                />
+                <SummaryCard
+                  label="Payable to VAs"
+                  value={fmtMoney(profitData.vaPayable)}
+                  sub={profitData.vaPayable > 0.01 ? "still owed to VAs" : "all paid up"}
+                  color={profitData.vaPayable > 0.01 ? "text-amber-600" : "text-sage"}
+                />
+                <SummaryCard
+                  label="Revenue"
+                  value={fmtMoney(profitData.revenue)}
+                  sub={revenueData.hasUnsetRates ? "Some rates not set" : fmtHours(revenueData.totalMs) + " billed"}
+                  color="text-sage"
+                />
+                <SummaryCard
+                  label="Total Hours"
+                  value={fmtHours(categoryData.totalMs)}
+                  sub={filteredLogs.length + " entries"}
+                  color="text-slate-blue"
+                />
+              </div>
+            </div>
           </div>
 
           {/* ── Revenue (Client Collectibles) — Expandable ──── */}
@@ -939,7 +994,6 @@ export default function FinancialSummaryTab() {
                       <th className="px-2 py-3">VA</th>
                       <th className="px-3 py-3 text-right">Paid Hours</th>
                       <th className="px-3 py-3 text-right">Rate</th>
-                      <th className="px-3 py-3 text-right">Hourly Pay</th>
                       <th className="px-3 py-3 text-right">Fixed Tasks</th>
                       <th className="px-3 py-3 text-right">Total Earned</th>
                       <th className="px-3 py-3 text-right">Paid</th>
@@ -966,9 +1020,6 @@ export default function FinancialSummaryTab() {
                             {fmtMoney(row.hourlyRate)}/hr
                           </td>
                           <td className="px-3 py-3 text-right text-bark">
-                            {fmtMoney(row.hourlyPay)}
-                          </td>
-                          <td className="px-3 py-3 text-right text-bark">
                             {row.fixedPay > 0 ? fmtMoney(row.fixedPay) : "—"}
                           </td>
                           <td className="px-3 py-3 text-right font-semibold text-terracotta">
@@ -985,7 +1036,7 @@ export default function FinancialSummaryTab() {
                         </tr>
                         {expandedVas.has(row.userId) && (
                           <tr>
-                            <td colSpan={9} className="bg-parchment/10 px-6 py-4">
+                            <td colSpan={8} className="bg-parchment/10 px-6 py-4">
                               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 {/* Day-by-day breakdown */}
                                 <div>
@@ -1136,7 +1187,6 @@ export default function FinancialSummaryTab() {
                       </td>
                       <td className="px-3 py-3" />
                       <td className="px-3 py-3" />
-                      <td className="px-3 py-3" />
                       <td className="px-3 py-3 text-right text-terracotta">
                         {fmtMoney(vaCostData.totalCost)}
                       </td>
@@ -1165,18 +1215,56 @@ export default function FinancialSummaryTab() {
               </button>
             }
           >
+            {/* Expense Filters */}
+            <div className="border-b border-parchment px-5 py-3 flex flex-wrap items-center gap-3">
+              <div className="flex rounded-lg border border-sand overflow-hidden text-[11px]">
+                {(["all", "business", "reimbursable"] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setExpenseTypeFilter(type)}
+                    className={`px-3 py-1.5 font-medium capitalize transition-colors cursor-pointer ${
+                      expenseTypeFilter === type
+                        ? "bg-amber-600 text-white"
+                        : "bg-white text-bark hover:bg-parchment"
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+              <select
+                value={expenseCategoryFilter}
+                onChange={(e) => setExpenseCategoryFilter(e.target.value)}
+                className="rounded-lg border border-sand px-3 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta"
+              >
+                <option value="">All Categories</option>
+                {expenseData.categories.map((c) => (
+                  <option key={c} value={c}>{EXPENSE_CATEGORIES.find((ec) => ec.value === c)?.label ?? c}</option>
+                ))}
+              </select>
+              <div className="text-[10px] text-bark/60 ml-auto">
+                {expenseData.rows.length} expense{expenseData.rows.length !== 1 ? "s" : ""}
+                {expenseTypeFilter !== "all" || expenseCategoryFilter ? " (filtered)" : ""}
+              </div>
+            </div>
             {expenseData.rows.length === 0 ? (
-              <EmptyState text="No expenses recorded for this period." />
+              <EmptyState text={expenseTypeFilter !== "all" || expenseCategoryFilter ? "No expenses match your filters." : "No expenses recorded for this period."} />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-[12px]">
                   <thead>
                     <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
-                      <th className="px-4 py-3">Date</th>
+                      <th className="px-4 py-3 cursor-pointer hover:text-terracotta" onClick={() => { if (expenseSortField === "date") setExpenseSortAsc(!expenseSortAsc); else { setExpenseSortField("date"); setExpenseSortAsc(false); } }}>
+                        Date {expenseSortField === "date" ? (expenseSortAsc ? "↑" : "↓") : ""}
+                      </th>
                       <th className="px-3 py-3">Description</th>
                       <th className="px-3 py-3">Account</th>
-                      <th className="px-3 py-3">Category</th>
-                      <th className="px-3 py-3 text-right">Amount</th>
+                      <th className="px-3 py-3 cursor-pointer hover:text-terracotta" onClick={() => { if (expenseSortField === "category") setExpenseSortAsc(!expenseSortAsc); else { setExpenseSortField("category"); setExpenseSortAsc(true); } }}>
+                        Category {expenseSortField === "category" ? (expenseSortAsc ? "↑" : "↓") : ""}
+                      </th>
+                      <th className="px-3 py-3 text-right cursor-pointer hover:text-terracotta" onClick={() => { if (expenseSortField === "amount") setExpenseSortAsc(!expenseSortAsc); else { setExpenseSortField("amount"); setExpenseSortAsc(false); } }}>
+                        Amount {expenseSortField === "amount" ? (expenseSortAsc ? "↑" : "↓") : ""}
+                      </th>
                       <th className="px-3 py-3 text-center">Reimbursable</th>
                       <th className="px-3 py-3 text-center">Reimbursed</th>
                       <th className="px-3 py-3 w-8"></th>
