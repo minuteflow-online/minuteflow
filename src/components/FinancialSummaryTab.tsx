@@ -173,6 +173,8 @@ export default function FinancialSummaryTab() {
   const [filterAccount, setFilterAccount] = useState("");
   const [expenseTypeFilter, setExpenseTypeFilter] = useState<"all" | "business" | "reimbursable">("all");
   const [expenseCategoryFilter, setExpenseCategoryFilter] = useState("");
+  const [expenseDateFrom, setExpenseDateFrom] = useState("");
+  const [expenseDateTo, setExpenseDateTo] = useState("");
   const [expenseSortField, setExpenseSortField] = useState<"date" | "amount" | "category">("date");
   const [expenseSortAsc, setExpenseSortAsc] = useState(false);
 
@@ -637,6 +639,8 @@ export default function FinancialSummaryTab() {
     if (expenseTypeFilter === "business") filtered = filtered.filter((e) => !e.is_reimbursable);
     if (expenseTypeFilter === "reimbursable") filtered = filtered.filter((e) => e.is_reimbursable);
     if (expenseCategoryFilter) filtered = filtered.filter((e) => e.category === expenseCategoryFilter);
+    if (expenseDateFrom) filtered = filtered.filter((e) => e.expense_date >= expenseDateFrom);
+    if (expenseDateTo) filtered = filtered.filter((e) => e.expense_date <= expenseDateTo);
 
     // Apply sorting
     filtered.sort((a, b) => {
@@ -651,7 +655,7 @@ export default function FinancialSummaryTab() {
     const categories = Array.from(new Set(expenses.map((e) => e.category))).sort();
 
     return { rows: filtered, totalExpenses, reimbursableTotal, reimbursedTotal, businessTotal, categories };
-  }, [expenses, expenseTypeFilter, expenseCategoryFilter, expenseSortField, expenseSortAsc]);
+  }, [expenses, expenseTypeFilter, expenseCategoryFilter, expenseDateFrom, expenseDateTo, expenseSortField, expenseSortAsc]);
 
   /* ── Profit Summary ──────────────────────────────────── */
 
@@ -1337,13 +1341,37 @@ export default function FinancialSummaryTab() {
                   <option key={c} value={c}>{EXPENSE_CATEGORIES.find((ec) => ec.value === c)?.label ?? c}</option>
                 ))}
               </select>
+              <div className="flex items-center gap-1.5">
+                <label className="text-[10px] font-semibold text-bark">From</label>
+                <input
+                  type="date"
+                  value={expenseDateFrom}
+                  onChange={(e) => setExpenseDateFrom(e.target.value)}
+                  className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
+                />
+                <label className="text-[10px] font-semibold text-bark">To</label>
+                <input
+                  type="date"
+                  value={expenseDateTo}
+                  onChange={(e) => setExpenseDateTo(e.target.value)}
+                  className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
+                />
+                {(expenseDateFrom || expenseDateTo) && (
+                  <button
+                    onClick={() => { setExpenseDateFrom(""); setExpenseDateTo(""); }}
+                    className="text-[10px] text-terracotta hover:text-terracotta/70 font-medium cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
               <div className="text-[10px] text-bark/60 ml-auto">
                 {expenseData.rows.length} expense{expenseData.rows.length !== 1 ? "s" : ""}
-                {expenseTypeFilter !== "all" || expenseCategoryFilter ? " (filtered)" : ""}
+                {expenseTypeFilter !== "all" || expenseCategoryFilter || expenseDateFrom || expenseDateTo ? " (filtered)" : ""}
               </div>
             </div>
             {expenseData.rows.length === 0 ? (
-              <EmptyState text={expenseTypeFilter !== "all" || expenseCategoryFilter ? "No expenses match your filters." : "No expenses recorded for this period."} />
+              <EmptyState text={expenseTypeFilter !== "all" || expenseCategoryFilter || expenseDateFrom || expenseDateTo ? "No expenses match your filters." : "No expenses recorded for this period."} />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-[12px]">
@@ -1766,6 +1794,7 @@ function ExpenseModal({
   const [amount, setAmount] = useState("");
   const [expenseDate, setExpenseDate] = useState(defaultDate);
   const [category, setCategory] = useState("other");
+  const [customCategory, setCustomCategory] = useState("");
   const [account, setAccount] = useState("");
   const [isReimbursable, setIsReimbursable] = useState(false);
   const [notes, setNotes] = useState("");
@@ -1774,8 +1803,10 @@ function ExpenseModal({
   const handleSave = async () => {
     if (!description) { alert("Please enter a description."); return; }
     if (!amount || parseFloat(amount) <= 0) { alert("Please enter a valid amount."); return; }
+    const finalCategory = category === "custom" ? (customCategory.trim().toLowerCase() || "other") : category;
+    if (category === "custom" && !customCategory.trim()) { alert("Please enter a custom category name."); return; }
     setSaving(true);
-    await onSave({ description, amount, expense_date: expenseDate, category, account, is_reimbursable: isReimbursable, notes });
+    await onSave({ description, amount, expense_date: expenseDate, category: finalCategory, account, is_reimbursable: isReimbursable, notes });
     setSaving(false);
   };
 
@@ -1804,10 +1835,16 @@ function ExpenseModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Category</label>
-              <select value={category} onChange={(e) => setCategory(e.target.value)}
+              <select value={category} onChange={(e) => { setCategory(e.target.value); if (e.target.value !== "custom") setCustomCategory(""); }}
                 className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta">
                 {EXPENSE_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                <option value="custom">+ Custom Category</option>
               </select>
+              {category === "custom" && (
+                <input type="text" value={customCategory} onChange={(e) => setCustomCategory(e.target.value)}
+                  className="w-full mt-1.5 rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+                  placeholder="Type custom category name" />
+              )}
             </div>
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Account (optional)</label>

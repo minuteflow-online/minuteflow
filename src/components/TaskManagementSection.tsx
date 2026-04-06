@@ -91,6 +91,7 @@ export default function TaskManagementSection() {
   const [editingInstructions, setEditingInstructions] = useState<Record<number, string>>({});
   const [filterStatus, setFilterStatus] = useState<AssignmentStatus | "all">("all");
   const [filterVA, setFilterVA] = useState<string>("all");
+  const [filterBillingType, setFilterBillingType] = useState<BillingType | "all">("all");
   const [submissions, setSubmissions] = useState<Record<number, Submission[]>>({});
 
   /* ── Add Task Form state ── */
@@ -358,6 +359,7 @@ export default function TaskManagementSection() {
   const filtered = assignments.filter((a) => {
     if (filterStatus !== "all" && a.status !== filterStatus) return false;
     if (filterVA !== "all" && a.va_id !== filterVA) return false;
+    if (filterBillingType !== "all" && a.billing_type !== filterBillingType) return false;
     return true;
   });
 
@@ -414,6 +416,15 @@ export default function TaskManagementSection() {
             {uniqueVAs.map(([id, name]) => (
               <option key={id} value={id}>{name}</option>
             ))}
+          </select>
+          <select
+            value={filterBillingType}
+            onChange={(e) => setFilterBillingType(e.target.value as BillingType | "all")}
+            className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+          >
+            <option value="all">All Types</option>
+            <option value="fixed">Fixed Rate</option>
+            <option value="hourly">Hourly</option>
           </select>
         </div>
       </div>
