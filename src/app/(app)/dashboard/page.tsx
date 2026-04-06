@@ -1273,6 +1273,37 @@ export default function DashboardPage() {
     [clearCaptureTimers, silentCapture]
   );
 
+  // ─── Auto-update assignment status helper ───────────────────
+  const autoUpdateAssignmentStatus = useCallback(
+    async (taskName: string) => {
+      if (role !== "va" || !taskName || !userId) return;
+      try {
+        const assignRes = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
+        const assignData = await assignRes.json();
+        const formTaskLower = taskName.trim().toLowerCase();
+        const matching = (assignData.assignments ?? []).find(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (a: any) => {
+            if (a.status !== "not_started" && a.status !== "revision_needed") return false;
+            const libName = (a.project_task_assignments?.task_library?.task_name ?? "").trim().toLowerCase();
+            if (!libName) return false;
+            return libName === formTaskLower || libName.includes(formTaskLower) || formTaskLower.includes(libName);
+          }
+        );
+        if (matching) {
+          await fetch("/api/va-task-assignments", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: matching.id, status: "in_progress" }),
+          });
+        }
+      } catch (err) {
+        console.error("Auto-status update failed:", err);
+      }
+    },
+    [role, userId]
+  );
+
   // ─── Start Task ─────────────────────────────────────────────
 
   const startTask = useCallback(
@@ -1316,6 +1347,8 @@ export default function DashboardPage() {
         if (logData) {
           setTimeLogs((prev) => [logData as TimeLog, ...prev]);
         }
+        // Auto-update assignment status for fixed tasks too
+        await autoUpdateAssignmentStatus(formData.task_name);
         return; // No timer, no active task, no screenshots
       }
 
@@ -1394,32 +1427,7 @@ export default function DashboardPage() {
       }
 
       // Auto-update assignment status to "in_progress" when VA starts working
-      if (role === "va" && formData.task_name) {
-        try {
-          const assignRes = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
-          const assignData = await assignRes.json();
-          const formTaskLower = formData.task_name.trim().toLowerCase();
-          const matching = (assignData.assignments ?? []).find(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (a: any) => {
-              if (a.status !== "not_started" && a.status !== "revision_needed") return false;
-              const libName = (a.project_task_assignments?.task_library?.task_name ?? "").trim().toLowerCase();
-              if (!libName) return false;
-              // Match: exact, starts-with, or contains (either direction)
-              return libName === formTaskLower || libName.includes(formTaskLower) || formTaskLower.includes(libName);
-            }
-          );
-          if (matching) {
-            await fetch("/api/va-task-assignments", {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ id: matching.id, status: "in_progress" }),
-            });
-          }
-        } catch (err) {
-          console.error("Auto-status update failed:", err);
-        }
-      }
+      await autoUpdateAssignmentStatus(formData.task_name);
 
       const newActiveTask: ActiveTask = {
         task_name: formData.task_name,
@@ -1523,7 +1531,7 @@ export default function DashboardPage() {
         }
       }
     },
-    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream]
+    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus]
   );
 
   // ─── Screenshot (manual + fallback) ─────────────────────────
