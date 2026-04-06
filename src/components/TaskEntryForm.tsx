@@ -5,9 +5,9 @@ import type { BillingType } from "@/types/database";
 
 const CATEGORIES = [
   { label: "Task", value: "Task" },
-  { label: "Message", value: "Message" },
+  { label: "Communication", value: "Communication" },
   { label: "Meeting", value: "Meeting" },
-  { label: "Sorting Tasks", value: "Sorting Tasks" },
+  { label: "Planning", value: "Planning" },
   { label: "Collaboration", value: "Collaboration" },
   { label: "Personal", value: "Personal" },
   { label: "Break", value: "Break" },
@@ -386,11 +386,11 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       return "border border-sand bg-white text-bark hover:border-terracotta hover:text-terracotta";
     }
     switch (cat) {
-      case "Message":
+      case "Communication":
         return "bg-slate-blue text-white border border-slate-blue";
       case "Meeting":
         return "bg-clay-rose text-white border border-clay-rose";
-      case "Sorting Tasks":
+      case "Planning":
         return "bg-amber text-white border border-amber";
       case "Collaboration":
         return "bg-sage text-white border border-sage";
@@ -589,12 +589,12 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
             </div>
           )}
 
-          {/* ─── Row 4: Start Task button ─── */}
+          {/* ─── Row 4: Start Activity button ─── */}
           <button
             onClick={handleStartTask}
             className="w-full flex items-center justify-center py-[11px] mt-2 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(194,105,79,0.25)]"
           >
-            Start Task
+            Start Activity
           </button>
         </div>
       </div>

@@ -84,7 +84,7 @@ export default function SessionBanner({
           </h3>
           <p className="text-xs text-walnut mt-0.5">
             {state === "idle"
-              ? "Fill in a task below and click Start Task to begin"
+              ? "Fill in a task below and click Start Activity to begin"
               : state === "on-break"
                 ? `Break started ${breakElapsedSeconds > 0 ? formatTimer(breakElapsedSeconds) + " ago" : "just now"}`
                 : clockInTime

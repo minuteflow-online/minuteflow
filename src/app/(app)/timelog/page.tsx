@@ -80,10 +80,11 @@ const DAY_NAMES_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const catColors: Record<string, string> = {
   Task: "bg-terracotta-soft text-terracotta",
-  Message: "bg-slate-blue-soft text-slate-blue",
+  Communication: "bg-slate-blue-soft text-slate-blue",
   Meeting: "bg-clay-rose-soft text-clay-rose",
-  "Sorting Tasks": "bg-amber-soft text-amber",
+  Planning: "bg-amber-soft text-amber",
   Sorting: "bg-amber-soft text-amber",
+  "Sorting Tasks": "bg-amber-soft text-amber",
   Supervision: "bg-clay-rose-soft text-clay-rose",
   Personal: "bg-parchment text-walnut",
   Break: "bg-amber-soft text-amber",

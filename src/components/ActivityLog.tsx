@@ -285,7 +285,7 @@ export default function ActivityLog({
   }, [logs]);
 
   // Static category list (always show all options in filter)
-  const ALL_CATEGORIES = ["Task", "Message", "Meeting", "Sorting Tasks", "Collaboration", "Personal", "Break"];
+  const ALL_CATEGORIES = ["Task", "Communication", "Meeting", "Planning", "Collaboration", "Personal", "Break"];
   const uniqueCategories = ALL_CATEGORIES;
 
   const uniqueAccounts = useMemo(() => {

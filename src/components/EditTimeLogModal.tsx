@@ -10,11 +10,12 @@ import type { TimeLog, Profile } from "@/types/database";
 
 const CATEGORIES = [
   "Task",
-  "Message",
+  "Communication",
   "Meeting",
-  "Sorting",
+  "Planning",
   "Personal",
   "Break",
+  "Collaboration",
 ];
 
 const ACCOUNTS = [

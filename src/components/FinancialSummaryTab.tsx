@@ -96,7 +96,7 @@ const UNPAID_CATEGORIES = ["Personal"];
 const VIRTUAL_CONCIERGE = "Virtual Concierge";
 
 // Categories where time is billed to Virtual Concierge (internal overhead)
-const VC_BILLED_CATEGORIES = ["Break", "Sorting Tasks"];
+const VC_BILLED_CATEGORIES = ["Break", "Planning", "Sorting Tasks"];
 
 const PAYMENT_METHODS = [
   { value: "bank_transfer", label: "Bank Transfer" },

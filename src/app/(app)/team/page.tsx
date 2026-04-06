@@ -207,13 +207,13 @@ export default function TeamPage() {
         .filter((l) => l.category === "Personal")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const sortingMs = userLogs
-        .filter((l) => l.category === "Sorting" || l.category === "Sorting Tasks")
+        .filter((l) => l.category === "Planning" || l.category === "Sorting" || l.category === "Sorting Tasks")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const breakMs = userLogs
         .filter((l) => l.category === "Break")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const taskMs = userLogs
-        .filter((l) => !["Personal", "Sorting", "Sorting Tasks", "Break", "Collaboration", "Meeting", "Message"].includes(l.category))
+        .filter((l) => !["Personal", "Planning", "Sorting", "Sorting Tasks", "Break", "Collaboration", "Meeting", "Communication", "Message"].includes(l.category))
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const wizardMs = userLogs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0);
       const collaborationMs = userLogs
@@ -223,7 +223,7 @@ export default function TeamPage() {
         .filter((l) => l.category === "Meeting")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const messageMs = userLogs
-        .filter((l) => l.category === "Message")
+        .filter((l) => l.category === "Communication" || l.category === "Message")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
       let status: TeamMember["status"] = "away";
@@ -962,12 +962,12 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   const categoryTotals = useMemo(() => {
     const cats: { label: string; ms: number; color: string }[] = [];
     if (member.taskMs > 0) cats.push({ label: "Task", ms: member.taskMs, color: "bg-sage" });
-    if (member.sortingMs > 0) cats.push({ label: "Sorting", ms: member.sortingMs, color: "bg-amber" });
+    if (member.sortingMs > 0) cats.push({ label: "Planning", ms: member.sortingMs, color: "bg-amber" });
     if (member.breakMs > 0) cats.push({ label: "Break", ms: member.breakMs, color: "bg-stone" });
     if (member.wizardMs > 0) cats.push({ label: "Wizard", ms: member.wizardMs, color: "bg-indigo-400" });
     if (member.collaborationMs > 0) cats.push({ label: "Collaboration", ms: member.collaborationMs, color: "bg-sky-400" });
     if (member.meetingMs > 0) cats.push({ label: "Meeting", ms: member.meetingMs, color: "bg-violet-400" });
-    if (member.messageMs > 0) cats.push({ label: "Message", ms: member.messageMs, color: "bg-blue-400" });
+    if (member.messageMs > 0) cats.push({ label: "Communication", ms: member.messageMs, color: "bg-blue-400" });
     if (member.personalMs > 0) cats.push({ label: "Personal", ms: member.personalMs, color: "bg-clay-rose" });
     return cats;
   }, [member]);
@@ -1253,7 +1253,7 @@ function TaskLogList({ logs, showProgress }: { logs: TimeLog[]; showProgress?: b
             <div className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
               log.category === "Break" ? "bg-stone" :
               log.category === "Personal" ? "bg-clay-rose" :
-              log.category === "Sorting" || log.category === "Sorting Tasks" ? "bg-amber" :
+              log.category === "Planning" || log.category === "Sorting" || log.category === "Sorting Tasks" ? "bg-amber" :
               "bg-sage"
             }`} />
             <div className="flex-1 min-w-0">

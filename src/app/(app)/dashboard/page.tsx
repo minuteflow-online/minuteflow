@@ -426,7 +426,7 @@ export default function DashboardPage() {
     if (!userId || !profile) return;
     const now = new Date().toISOString();
 
-    // Create a "Sorting Tasks" time_log entry so clock-in registers in activity log
+    // Create a "Planning" time_log entry so clock-in registers in activity log
     const { data: sortingLog } = await supabase
       .from("time_logs")
       .insert({
@@ -436,7 +436,8 @@ export default function DashboardPage() {
         department: profile.department,
         position: profile.position,
         task_name: "Clock In",
-        category: "Sorting Tasks",
+        category: "Planning",
+        project: "Set-up",
         account: "Virtual Concierge",
         client_name: "Toni Colina",
         start_time: now,
@@ -448,8 +449,8 @@ export default function DashboardPage() {
 
     const sortingTask: ActiveTask = {
       task_name: "Clock In",
-      category: "Sorting Tasks",
-      project: "",
+      category: "Planning",
+      project: "Set-up",
       account: "Virtual Concierge",
       client_name: "Toni Colina",
       client_memo: "",
@@ -1379,8 +1380,8 @@ export default function DashboardPage() {
         .select()
         .single();
 
-      // If category is 'Sorting Tasks', auto-create a sorting_review record
-      if (formData.category === "Sorting Tasks" && logData?.id) {
+      // If category is 'Planning', auto-create a sorting_review record
+      if (formData.category === "Planning" && logData?.id) {
         await supabase.from("sorting_review").insert({
           log_id: logData.id,
           status: "pending",
@@ -1877,8 +1878,8 @@ export default function DashboardPage() {
         "coaching-review": { category: "Task", task_name: "Coaching/Review" },
         "weekly-meeting": { category: "Meeting", task_name: "Weekly Meeting" },
         "unscheduled-meeting": { category: "Meeting", task_name: "Unscheduled Meeting" },
-        "messaging": { category: "Message", task_name: "Messaging" },
-        "sorting-tasks": { category: "Sorting Tasks", task_name: "Sorting Tasks", account: "Virtual Concierge", client_name: "Toni Colina" },
+        "messaging": { category: "Communication", task_name: "Messaging" },
+        "sorting-tasks": { category: "Planning", task_name: "Sorting Tasks", account: "Virtual Concierge", client_name: "Toni Colina" },
       };
 
       const mapping = QUICK_ACTION_MAP[action];
