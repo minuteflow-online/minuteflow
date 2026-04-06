@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, Fragment } from "react";
 import { createClient } from "@/lib/supabase/client";
+import CSVUploadModal from "@/components/CSVUploadModal";
 
 
 /* ── Types ──────────────────────────────────────────────── */
@@ -197,6 +198,8 @@ export default function FinancialSummaryTab() {
   const [showVaPaymentModal, setShowVaPaymentModal] = useState<string | null>(null); // va user_id
   const [showClientPaymentModal, setShowClientPaymentModal] = useState<string | null>(null); // account name
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [showExpenseUpload, setShowExpenseUpload] = useState(false);
+  const [showTimeLogUpload, setShowTimeLogUpload] = useState(false);
 
   /* ── Toggle helpers ────────────────────────────────────── */
 
@@ -1063,7 +1066,17 @@ export default function FinancialSummaryTab() {
           </Section>
 
           {/* ── VA Costs — Expandable ─────────────────────── */}
-          <Section title="VA Costs — What You Pay">
+          <Section
+            title="VA Costs — What You Pay"
+            action={
+              <button
+                onClick={() => setShowTimeLogUpload(true)}
+                className="rounded-lg border border-terracotta px-3 py-1 text-[11px] font-semibold text-terracotta hover:bg-terracotta/5 transition-colors cursor-pointer"
+              >
+                ↑ Upload Time Logs
+              </button>
+            }
+          >
             {vaCostData.rows.length === 0 ? (
               <EmptyState text="No VA activity found for this period." />
             ) : (
@@ -1306,12 +1319,20 @@ export default function FinancialSummaryTab() {
           <Section
             title="Expenses & Investments"
             action={
-              <button
-                onClick={() => setShowExpenseModal(true)}
-                className="rounded-lg bg-amber-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-amber-700 transition-colors cursor-pointer"
-              >
-                + Add Expense
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowExpenseUpload(true)}
+                  className="rounded-lg border border-amber-600 px-3 py-1 text-[11px] font-semibold text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer"
+                >
+                  ↑ Upload CSV
+                </button>
+                <button
+                  onClick={() => setShowExpenseModal(true)}
+                  className="rounded-lg bg-amber-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-amber-700 transition-colors cursor-pointer"
+                >
+                  + Add Expense
+                </button>
+              </div>
             }
           >
             {/* Expense Filters */}
@@ -1550,6 +1571,49 @@ export default function FinancialSummaryTab() {
           defaultDate={new Date().toISOString().slice(0, 10)}
           onClose={() => setShowExpenseModal(false)}
           onSave={saveExpense}
+        />
+      )}
+
+      {/* ── Expense CSV Upload Modal ─────────────────────── */}
+      {showExpenseUpload && (
+        <CSVUploadModal
+          title="Upload Expenses (CSV)"
+          type="expenses"
+          columns={[
+            { key: "description", label: "description", required: true, example: "Canva Pro subscription" },
+            { key: "amount", label: "amount", required: true, example: "12.99" },
+            { key: "expense_date", label: "expense_date", required: true, example: "2025-04-01" },
+            { key: "category", label: "category", required: false, example: "subscription" },
+            { key: "account", label: "account", required: false, example: "Virtual Concierge" },
+            { key: "is_reimbursable", label: "is_reimbursable", required: false, example: "no" },
+            { key: "notes", label: "notes", required: false, example: "Monthly renewal" },
+          ]}
+          onClose={() => setShowExpenseUpload(false)}
+          onSuccess={() => fetchData()}
+        />
+      )}
+
+      {/* ── Time Log CSV Upload Modal ────────────────────── */}
+      {showTimeLogUpload && (
+        <CSVUploadModal
+          title="Upload Time Logs (CSV)"
+          type="time_logs"
+          columns={[
+            { key: "va_name", label: "va_name", required: true, example: "Arianne Claire Rivera" },
+            { key: "task_name", label: "task_name", required: true, example: "Social Media Post" },
+            { key: "date", label: "date", required: true, example: "2025-04-01" },
+            { key: "duration_hours", label: "duration_hours", required: false, example: "2.5" },
+            { key: "start_time", label: "start_time", required: false, example: "09:00" },
+            { key: "end_time", label: "end_time", required: false, example: "11:30" },
+            { key: "category", label: "category", required: false, example: "Task" },
+            { key: "account", label: "account", required: false, example: "Virtual Concierge" },
+            { key: "client_name", label: "client_name", required: false, example: "Toni Colina" },
+            { key: "billable", label: "billable", required: false, example: "yes" },
+            { key: "client_memo", label: "client_memo", required: false, example: "Completed 5 posts" },
+            { key: "internal_memo", label: "internal_memo", required: false, example: "Used Canva template" },
+          ]}
+          onClose={() => setShowTimeLogUpload(false)}
+          onSuccess={() => fetchData()}
         />
       )}
     </div>
