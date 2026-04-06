@@ -5,7 +5,6 @@ import { useState, useEffect, useCallback } from "react";
 /* ── Types ─────────────────────────────────────────────── */
 
 type AssignmentStatus = "not_started" | "submitted" | "revision_needed" | "approved";
-type MessageType = "instruction" | "submission" | "revision" | "approval" | "comment";
 
 interface Assignment {
   id: number;
@@ -14,21 +13,12 @@ interface Assignment {
   rate: number | null;
   status: AssignmentStatus;
   instructions: string | null;
+  profiles: { id: string; full_name: string; username: string; position: string | null } | null;
   project_task_assignments: {
     id: number;
     task_library: { id: number; task_name: string } | null;
     project_tags: { id: number; account: string; project_name: string } | null;
   } | null;
-}
-
-interface Submission {
-  id: number;
-  va_task_assignment_id: number;
-  user_id: string;
-  message_type: MessageType;
-  content: string;
-  created_at: string;
-  profiles: { id: string; full_name: string; username: string; role: string } | null;
 }
 
 /* ── Status helpers ────────────────────────────────────── */
@@ -69,33 +59,25 @@ function linkify(text: string) {
   );
 }
 
-/* ── Message type styling ──────────────────────────────── */
-
-const MSG_STYLES: Record<MessageType, { label: string; bg: string; border: string }> = {
-  instruction: { label: "Instructions", bg: "bg-indigo-50", border: "border-l-indigo-400" },
-  submission: { label: "Your Submission", bg: "bg-blue-50", border: "border-l-blue-400" },
-  revision: { label: "Revision Requested", bg: "bg-amber-50", border: "border-l-amber-400" },
-  approval: { label: "Approved", bg: "bg-emerald-50", border: "border-l-emerald-400" },
-  comment: { label: "Comment", bg: "bg-gray-50", border: "border-l-gray-400" },
-};
-
 /* ── Main Component ────────────────────────────────────── */
 
 export default function VaAssignmentsColumn({ userId }: { userId: string }) {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [submissions, setSubmissions] = useState<Record<number, Submission[]>>({});
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [submitText, setSubmitText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
   /* ── Fetch assignments ── */
   const fetchAssignments = useCallback(async () => {
     try {
       const res = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
       const data = await res.json();
-      // Only show fixed and project-based (not exclude-type)
-      setAssignments(data.assignments ?? []);
+      // Only show if billing_type is "fixed" or VA position is project-based
+      const filtered = (data.assignments ?? []).filter(
+        (a: Assignment) =>
+          a.billing_type === "fixed" ||
+          a.profiles?.position?.toLowerCase().includes("project based")
+      );
+      setAssignments(filtered);
     } catch {
       console.error("Failed to fetch assignments");
     } finally {
@@ -103,54 +85,13 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
     }
   }, [userId]);
 
-  /* ── Fetch submissions for an assignment ── */
-  const fetchSubmissions = useCallback(async (assignmentId: number) => {
-    try {
-      const res = await fetch(`/api/task-submissions?va_task_assignment_id=${assignmentId}`);
-      const data = await res.json();
-      setSubmissions((prev) => ({ ...prev, [assignmentId]: data.submissions ?? [] }));
-    } catch {
-      console.error("Failed to fetch submissions");
-    }
-  }, []);
-
   useEffect(() => {
     if (userId) fetchAssignments();
   }, [userId, fetchAssignments]);
 
   /* ── Expand/collapse ── */
   const handleExpand = (id: number) => {
-    if (expandedId === id) {
-      setExpandedId(null);
-    } else {
-      setExpandedId(id);
-      fetchSubmissions(id);
-    }
-    setSubmitText("");
-  };
-
-  /* ── Submit work ── */
-  const handleSubmit = async (assignmentId: number) => {
-    if (!submitText.trim()) return;
-    setSubmitting(true);
-    try {
-      await fetch("/api/task-submissions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          va_task_assignment_id: assignmentId,
-          message_type: "submission",
-          content: submitText.trim(),
-        }),
-      });
-      setSubmitText("");
-      fetchSubmissions(assignmentId);
-      fetchAssignments();
-    } catch {
-      console.error("Failed to submit");
-    } finally {
-      setSubmitting(false);
-    }
+    setExpandedId(expandedId === id ? null : id);
   };
 
   // Don't render if no assignments
@@ -177,7 +118,6 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
             const account = a.project_task_assignments?.project_tags?.account ?? "";
             const project = a.project_task_assignments?.project_tags?.project_name ?? "";
             const isExpanded = expandedId === a.id;
-            const msgs = submissions[a.id] ?? [];
 
             return (
               <div key={a.id} className="rounded-lg border border-sand overflow-hidden">
@@ -215,59 +155,26 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
                       </div>
                     )}
 
-                    {/* Communication thread */}
-                    {msgs.length > 0 && (
-                      <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
-                        {msgs.map((m) => {
-                          const style = MSG_STYLES[m.message_type];
-                          return (
-                            <div
-                              key={m.id}
-                              className={`${style.bg} border-l-3 ${style.border} rounded-r-lg px-2.5 py-1.5`}
-                            >
-                              <div className="flex items-center gap-1.5 mb-0.5">
-                                <span className="text-[9px] font-bold text-stone uppercase">{style.label}</span>
-                                <span className="text-[9px] text-stone/50">
-                                  {new Date(m.created_at).toLocaleString()}
-                                </span>
-                              </div>
-                              <div className="text-[11px] text-espresso whitespace-pre-wrap">
-                                {linkify(m.content)}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Submit work (not shown if already approved) */}
-                    {a.status !== "approved" && (
-                      <div className="space-y-1.5">
-                        <textarea
-                          value={submitText}
-                          onChange={(e) => setSubmitText(e.target.value)}
-                          placeholder="Paste links or describe where to find your work..."
-                          className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[11px] text-espresso outline-none resize-y min-h-[50px] focus:border-sage"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.shiftKey) {
-                              e.preventDefault();
-                              handleSubmit(a.id);
-                            }
-                          }}
-                        />
-                        <button
-                          onClick={() => handleSubmit(a.id)}
-                          disabled={!submitText.trim() || submitting}
-                          className="w-full px-3 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
-                        >
-                          {submitting ? "Submitting..." : "Submit Work"}
-                        </button>
-                      </div>
-                    )}
-
+                    {/* Status feedback */}
                     {a.status === "approved" && (
-                      <div className="text-center text-emerald-600 text-[11px] font-semibold py-1">
-                        Approved
+                      <div className="bg-emerald-50 border-l-3 border-l-emerald-400 rounded-r-lg px-2.5 py-2">
+                        <div className="text-[11px] font-semibold text-emerald-700">
+                          ✓ Approved
+                        </div>
+                      </div>
+                    )}
+
+                    {a.status === "revision_needed" && (
+                      <div className="bg-amber-50 border-l-3 border-l-amber-400 rounded-r-lg px-2.5 py-2">
+                        <div className="text-[11px] font-semibold text-amber-700">
+                          Revision requested — please check instructions and resubmit
+                        </div>
+                      </div>
+                    )}
+
+                    {a.status === "not_started" && !a.instructions && (
+                      <div className="text-stone text-[11px] italic">
+                        No instructions yet. Check back later.
                       </div>
                     )}
                   </div>

@@ -16,7 +16,7 @@ interface VaTaskAssignmentRow {
   status: AssignmentStatus;
   instructions: string | null;
   assigned_at: string;
-  profiles: { id: string; full_name: string; username: string } | null;
+  profiles: { id: string; full_name: string; username: string; position: string | null } | null;
   project_task_assignments: {
     id: number;
     task_library_id: number;
@@ -26,16 +26,6 @@ interface VaTaskAssignmentRow {
     task_library: { id: number; task_name: string } | null;
     project_tags: { id: number; account: string; project_name: string } | null;
   } | null;
-}
-
-interface Submission {
-  id: number;
-  va_task_assignment_id: number;
-  user_id: string;
-  message_type: MessageType;
-  content: string;
-  created_at: string;
-  profiles: { id: string; full_name: string; username: string; role: string } | null;
 }
 
 /* ── Status helpers ────────────────────────────────────── */
@@ -54,43 +44,10 @@ const STATUS_COLORS: Record<AssignmentStatus, string> = {
   approved: "bg-emerald-100 text-emerald-700",
 };
 
-/* ── Linkify helper ────────────────────────────────────── */
-
-function linkify(text: string) {
-  const urlRegex = /(https?:\/\/[^\s<]+)/g;
-  const parts = text.split(urlRegex);
-  return parts.map((part, i) =>
-    urlRegex.test(part) ? (
-      <a
-        key={i}
-        href={part}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 underline hover:text-blue-800 break-all"
-      >
-        {part}
-      </a>
-    ) : (
-      <span key={i}>{part}</span>
-    )
-  );
-}
-
-/* ── Message type styling ──────────────────────────────── */
-
-const MSG_STYLES: Record<MessageType, { label: string; bg: string; border: string }> = {
-  instruction: { label: "Instructions", bg: "bg-indigo-50", border: "border-l-indigo-400" },
-  submission: { label: "Submission", bg: "bg-blue-50", border: "border-l-blue-400" },
-  revision: { label: "Revision Requested", bg: "bg-amber-50", border: "border-l-amber-400" },
-  approval: { label: "Approved", bg: "bg-emerald-50", border: "border-l-emerald-400" },
-  comment: { label: "Comment", bg: "bg-gray-50", border: "border-l-gray-400" },
-};
-
 /* ── Main Component ────────────────────────────────────── */
 
 export default function TaskManagementSection() {
   const [assignments, setAssignments] = useState<VaTaskAssignmentRow[]>([]);
-  const [submissions, setSubmissions] = useState<Record<number, Submission[]>>({});
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [newMessage, setNewMessage] = useState("");
@@ -106,9 +63,11 @@ export default function TaskManagementSection() {
     try {
       const res = await fetch("/api/va-task-assignments?assignment_type=include");
       const data = await res.json();
-      // Filter to only fixed and project-based assignments
+      // Filter: only show if VA position is "Project Based VA" OR billing_type is "fixed"
       const filtered = (data.assignments ?? []).filter(
-        (a: VaTaskAssignmentRow) => a.billing_type === "fixed" || a.billing_type === "hourly"
+        (a: VaTaskAssignmentRow) =>
+          a.billing_type === "fixed" ||
+          a.profiles?.position?.toLowerCase().includes("project based")
       );
       setAssignments(filtered);
     } catch {
@@ -118,28 +77,16 @@ export default function TaskManagementSection() {
     }
   }, []);
 
-  /* ── Fetch submissions for a specific assignment ── */
-  const fetchSubmissions = useCallback(async (assignmentId: number) => {
-    try {
-      const res = await fetch(`/api/task-submissions?va_task_assignment_id=${assignmentId}`);
-      const data = await res.json();
-      setSubmissions((prev) => ({ ...prev, [assignmentId]: data.submissions ?? [] }));
-    } catch {
-      console.error("Failed to fetch submissions");
-    }
-  }, []);
-
   useEffect(() => {
     fetchAssignments();
   }, [fetchAssignments]);
 
-  /* ── When expanding a row, fetch its submissions ── */
+  /* ── Expand/collapse row ── */
   const handleExpand = (id: number) => {
     if (expandedId === id) {
       setExpandedId(null);
     } else {
       setExpandedId(id);
-      fetchSubmissions(id);
     }
     setNewMessage("");
     setMessageType("instruction");
@@ -156,19 +103,6 @@ export default function TaskManagementSection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: assignment.id, instructions: text }),
       });
-      // Also post as instruction message if text is non-empty and different from existing
-      if (text.trim() && text !== assignment.instructions) {
-        await fetch("/api/task-submissions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            va_task_assignment_id: assignment.id,
-            message_type: "instruction",
-            content: text,
-          }),
-        });
-        fetchSubmissions(assignment.id);
-      }
       fetchAssignments();
       setEditingInstructions((prev) => {
         const copy = { ...prev };
@@ -182,28 +116,7 @@ export default function TaskManagementSection() {
     }
   };
 
-  /* ── Post a message (revision, approval, comment) ── */
-  const handlePostMessage = async (assignmentId: number) => {
-    if (!newMessage.trim()) return;
-    try {
-      await fetch("/api/task-submissions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          va_task_assignment_id: assignmentId,
-          message_type: messageType,
-          content: newMessage.trim(),
-        }),
-      });
-      setNewMessage("");
-      fetchSubmissions(assignmentId);
-      fetchAssignments(); // status may have changed
-    } catch {
-      console.error("Failed to post message");
-    }
-  };
-
-  /* ── Quick approve ── */
+  /* ── Approve assignment ── */
   const handleApprove = async (assignmentId: number) => {
     try {
       await fetch("/api/task-submissions", {
@@ -212,21 +125,20 @@ export default function TaskManagementSection() {
         body: JSON.stringify({
           va_task_assignment_id: assignmentId,
           message_type: "approval",
-          content: "Approved! Great work.",
+          content: "Approved",
         }),
       });
-      fetchSubmissions(assignmentId);
       fetchAssignments();
     } catch {
       console.error("Failed to approve");
     }
   };
 
-  /* ── Quick request revision ── */
+  /* ── Request revision ── */
   const handleRequestRevision = async (assignmentId: number) => {
     if (!newMessage.trim()) {
       setMessageType("revision");
-      return; // force them to write feedback
+      return; // show feedback input
     }
     try {
       await fetch("/api/task-submissions", {
@@ -239,7 +151,7 @@ export default function TaskManagementSection() {
         }),
       });
       setNewMessage("");
-      fetchSubmissions(assignmentId);
+      setMessageType("instruction");
       fetchAssignments();
     } catch {
       console.error("Failed to request revision");
@@ -331,7 +243,6 @@ export default function TaskManagementSection() {
           const project = pta?.project_tags?.project_name ?? "—";
           const vaName = a.profiles?.full_name ?? "Unknown";
           const isExpanded = expandedId === a.id;
-          const msgs = submissions[a.id] ?? [];
 
           return (
             <div key={a.id} className="border-b border-sand last:border-b-0">
@@ -359,17 +270,17 @@ export default function TaskManagementSection() {
               {/* Expanded Detail */}
               {isExpanded && (
                 <div className="px-4 py-3 bg-parchment/10 border-t border-sand space-y-3">
-                  {/* Instructions */}
+                  {/* Instructions / Link */}
                   <div>
                     <label className="text-[10px] font-bold text-stone uppercase tracking-wide block mb-1">
-                      Instructions / Directions
+                      Instructions / Link
                     </label>
                     <textarea
                       value={editingInstructions[a.id] ?? a.instructions ?? ""}
                       onChange={(e) =>
                         setEditingInstructions((prev) => ({ ...prev, [a.id]: e.target.value }))
                       }
-                      placeholder="Write task instructions, paste links, describe deliverables..."
+                      placeholder="Paste a link for instructions and submissions..."
                       className="w-full rounded-lg border border-sand px-3 py-2 text-xs text-espresso outline-none resize-y min-h-[60px] focus:border-sage"
                     />
                     {editingInstructions[a.id] !== undefined &&
@@ -379,50 +290,13 @@ export default function TaskManagementSection() {
                           disabled={savingInstructions === a.id}
                           className="mt-1 px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer"
                         >
-                          {savingInstructions === a.id ? "Saving..." : "Save Instructions"}
+                          {savingInstructions === a.id ? "Saving..." : "Save"}
                         </button>
                       )}
                   </div>
 
-                  {/* Communication Thread */}
-                  <div>
-                    <label className="text-[10px] font-bold text-stone uppercase tracking-wide block mb-1">
-                      Communication Thread
-                    </label>
-                    {msgs.length === 0 ? (
-                      <p className="text-stone text-[11px] italic">No messages yet.</p>
-                    ) : (
-                      <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                        {msgs.map((m) => {
-                          const style = MSG_STYLES[m.message_type];
-                          return (
-                            <div
-                              key={m.id}
-                              className={`${style.bg} border-l-3 ${style.border} rounded-r-lg px-3 py-2`}
-                            >
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-[10px] font-bold text-stone uppercase">
-                                  {style.label}
-                                </span>
-                                <span className="text-[10px] text-stone">
-                                  by {m.profiles?.full_name ?? "Unknown"}
-                                </span>
-                                <span className="text-[10px] text-stone/50">
-                                  {new Date(m.created_at).toLocaleString()}
-                                </span>
-                              </div>
-                              <div className="text-xs text-espresso whitespace-pre-wrap">
-                                {linkify(m.content)}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Action Buttons (when submitted) */}
-                  {a.status === "submitted" && (
+                  {/* Action Buttons — always visible when not approved */}
+                  {a.status !== "approved" ? (
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleApprove(a.id)}
@@ -437,39 +311,44 @@ export default function TaskManagementSection() {
                         Request Revision
                       </button>
                     </div>
+                  ) : (
+                    <div className="text-emerald-600 text-[11px] font-semibold">
+                      ✓ Approved
+                    </div>
                   )}
 
-                  {/* New Message */}
-                  <div className="flex gap-2">
-                    <select
-                      value={messageType}
-                      onChange={(e) => setMessageType(e.target.value as MessageType)}
-                      className="rounded-lg border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none bg-white shrink-0"
-                    >
-                      <option value="instruction">Instruction</option>
-                      <option value="revision">Revision Request</option>
-                      <option value="comment">Comment</option>
-                    </select>
-                    <textarea
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      placeholder="Write a message, paste links..."
-                      className="flex-1 rounded-lg border border-sand px-3 py-1.5 text-xs text-espresso outline-none resize-none min-h-[36px] focus:border-sage"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          handlePostMessage(a.id);
-                        }
-                      }}
-                    />
-                    <button
-                      onClick={() => handlePostMessage(a.id)}
-                      disabled={!newMessage.trim()}
-                      className="px-3 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer shrink-0"
-                    >
-                      Send
-                    </button>
-                  </div>
+                  {/* Revision feedback input — shown when Request Revision is clicked */}
+                  {messageType === "revision" && (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-stone uppercase tracking-wide block">
+                        Revision Feedback
+                      </label>
+                      <textarea
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        placeholder="Describe what needs to be revised..."
+                        className="w-full rounded-lg border border-amber-300 px-3 py-1.5 text-xs text-espresso outline-none resize-none min-h-[50px] focus:border-amber-500"
+                        autoFocus
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            if (newMessage.trim()) handleRequestRevision(a.id);
+                          }}
+                          disabled={!newMessage.trim()}
+                          className="px-3 py-1 rounded-lg bg-amber-500 text-white text-[11px] font-semibold hover:bg-amber-600 disabled:opacity-50 cursor-pointer"
+                        >
+                          Send Revision Request
+                        </button>
+                        <button
+                          onClick={() => { setMessageType("instruction"); setNewMessage(""); }}
+                          className="px-3 py-1 rounded-lg border border-sand text-stone text-[11px] hover:bg-parchment/30 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
