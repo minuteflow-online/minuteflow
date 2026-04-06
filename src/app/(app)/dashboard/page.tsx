@@ -1398,11 +1398,12 @@ export default function DashboardPage() {
         try {
           const assignRes = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
           const assignData = await assignRes.json();
+          const formTaskLower = formData.task_name.trim().toLowerCase();
           const matching = (assignData.assignments ?? []).find(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (a: any) =>
-              a.status === "not_started" &&
-              a.project_task_assignments?.task_library?.task_name === formData.task_name
+              (a.status === "not_started" || a.status === "revision_needed") &&
+              (a.project_task_assignments?.task_library?.task_name ?? "").trim().toLowerCase() === formTaskLower
           );
           if (matching) {
             await fetch("/api/va-task-assignments", {
@@ -2017,7 +2018,7 @@ export default function DashboardPage() {
         role === "va"
           ? sessionState === "idle"
             ? "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
-            : "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
+            : "grid-cols-1 md:grid-cols-[1fr_260px_260px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]"
       }`}>
         {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} />}

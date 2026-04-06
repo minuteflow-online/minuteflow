@@ -8,6 +8,16 @@ type BillingType = "hourly" | "fixed";
 type AssignmentStatus = "not_started" | "in_progress" | "submitted" | "reviewing" | "revision_needed" | "approved" | "completed";
 type MessageType = "instruction" | "submission" | "revision" | "approval" | "comment";
 
+interface Submission {
+  id: number;
+  message_type: string;
+  content: string;
+  submission_link: string | null;
+  submission_comment: string | null;
+  created_at: string;
+  profiles: { full_name: string } | null;
+}
+
 interface VaTaskAssignmentRow {
   id: number;
   va_id: string;
@@ -81,6 +91,7 @@ export default function TaskManagementSection() {
   const [editingInstructions, setEditingInstructions] = useState<Record<number, string>>({});
   const [filterStatus, setFilterStatus] = useState<AssignmentStatus | "all">("all");
   const [filterVA, setFilterVA] = useState<string>("all");
+  const [submissions, setSubmissions] = useState<Record<number, Submission[]>>({});
 
   /* ── Add Task Form state ── */
   const [showAddForm, setShowAddForm] = useState(false);
@@ -103,9 +114,7 @@ export default function TaskManagementSection() {
       const res = await fetch("/api/va-task-assignments?assignment_type=include");
       const data = await res.json();
       // Only show fixed-rate / project-based assignments (not hourly)
-      const all = data.assignments ?? [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setAssignments(all.filter((a: any) => a.billing_type === "fixed"));
+      setAssignments(data.assignments ?? []);
     } catch {
       console.error("Failed to fetch assignments");
     } finally {
@@ -233,12 +242,25 @@ export default function TaskManagementSection() {
     }
   };
 
+  /* ── Fetch submissions for an assignment ── */
+  const fetchSubmissions = useCallback(async (assignmentId: number) => {
+    try {
+      const res = await fetch(`/api/task-submissions?va_task_assignment_id=${assignmentId}`);
+      const data = await res.json();
+      setSubmissions((prev) => ({ ...prev, [assignmentId]: data.submissions ?? [] }));
+    } catch {
+      console.error("Failed to fetch submissions");
+    }
+  }, []);
+
   /* ── Expand/collapse row ── */
   const handleExpand = (id: number) => {
     if (expandedId === id) {
       setExpandedId(null);
     } else {
       setExpandedId(id);
+      // Fetch submissions when expanding
+      fetchSubmissions(id);
     }
     setNewMessage("");
     setMessageType("instruction");
@@ -281,6 +303,7 @@ export default function TaskManagementSection() {
         }),
       });
       fetchAssignments();
+      fetchSubmissions(assignmentId);
     } catch {
       console.error("Failed to approve");
     }
@@ -305,6 +328,7 @@ export default function TaskManagementSection() {
       setNewMessage("");
       setMessageType("instruction");
       fetchAssignments();
+      fetchSubmissions(assignmentId);
     } catch {
       console.error("Failed to request revision");
     }
@@ -490,7 +514,7 @@ export default function TaskManagementSection() {
       {/* ── Assignment Table ── */}
       {assignments.length === 0 ? (
         <p className="text-stone text-xs">
-          No fixed-rate or project-based task assignments yet. Use the &quot;+ Add Task&quot; button above or assign tasks with &quot;Fixed&quot; billing type to VAs in the columns above.
+          No task assignments yet. Use the &quot;+ Add Task&quot; button above or assign tasks to VAs in the columns above.
         </p>
       ) : (
         <div className="border border-sand rounded-lg overflow-hidden">
@@ -563,6 +587,50 @@ export default function TaskManagementSection() {
                           </button>
                         )}
                     </div>
+
+                    {/* VA Submissions */}
+                    {(submissions[a.id] ?? []).filter((s) => s.message_type === "submission").length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-stone uppercase tracking-wide block">
+                          VA Submissions
+                        </label>
+                        {(submissions[a.id] ?? [])
+                          .filter((s) => s.message_type === "submission")
+                          .map((s) => (
+                            <div key={s.id} className="bg-blue-50 border-l-3 border-l-blue-400 rounded-r-lg px-2.5 py-2 space-y-0.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-semibold text-blue-700">
+                                  {s.profiles?.full_name ?? "VA"}
+                                </span>
+                                <span className="text-[9px] text-stone">
+                                  {new Date(s.created_at).toLocaleString()}
+                                </span>
+                              </div>
+                              {s.submission_link && (
+                                <div className="text-xs">
+                                  <span className="text-stone font-medium">Link: </span>
+                                  <a
+                                    href={s.submission_link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 underline hover:text-blue-800 break-all"
+                                  >
+                                    {s.submission_link}
+                                  </a>
+                                </div>
+                              )}
+                              {s.submission_comment && (
+                                <div className="text-xs text-espresso whitespace-pre-wrap">
+                                  {s.submission_comment}
+                                </div>
+                              )}
+                              {!s.submission_link && !s.submission_comment && (
+                                <div className="text-xs text-stone italic">{s.content}</div>
+                              )}
+                            </div>
+                          ))}
+                      </div>
+                    )}
 
                     {/* Action Buttons */}
                     {a.status === "completed" ? (

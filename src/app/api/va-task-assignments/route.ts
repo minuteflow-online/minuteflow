@@ -83,39 +83,59 @@ export async function POST(request: Request) {
   } = body;
   const effectiveType = assignment_type === "exclude" ? "exclude" : "include";
 
+  // Helper: look up PTA billing_type and task_rate to inherit when not explicitly set
+  async function getPtaDefaults(ptaId: number): Promise<{ billing: string; ptaRate: number | null }> {
+    const { data: pta } = await supabase
+      .from("project_task_assignments")
+      .select("billing_type, task_rate, task_library(billing_type, default_rate)")
+      .eq("id", ptaId)
+      .single();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ptaAny = pta as any;
+    const billing = ptaAny?.billing_type ?? ptaAny?.task_library?.billing_type ?? "hourly";
+    const ptaRate = ptaAny?.task_rate ?? ptaAny?.task_library?.default_rate ?? null;
+    return { billing, ptaRate };
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let rows: any[] = [];
 
   // Mode 1: One VA → multiple tasks
   if (va_id && Array.isArray(project_task_assignment_ids) && project_task_assignment_ids.length > 0) {
-    rows = project_task_assignment_ids.map((ptaId: number) => ({
-      va_id,
-      project_task_assignment_id: ptaId,
-      billing_type: billing_type ?? "hourly",
-      rate: rate ?? null,
-      assignment_type: effectiveType,
-      assigned_by: user.id,
-    }));
+    const rowPromises = project_task_assignment_ids.map(async (ptaId: number) => {
+      const defaults = await getPtaDefaults(ptaId);
+      return {
+        va_id,
+        project_task_assignment_id: ptaId,
+        billing_type: billing_type ?? defaults.billing,
+        rate: rate ?? defaults.ptaRate,
+        assignment_type: effectiveType,
+        assigned_by: user.id,
+      };
+    });
+    rows = await Promise.all(rowPromises);
   }
   // Mode 2: One task → multiple VAs
   else if (project_task_assignment_id && Array.isArray(va_ids) && va_ids.length > 0) {
+    const defaults = await getPtaDefaults(project_task_assignment_id);
     rows = va_ids.map((vid: string) => ({
       va_id: vid,
       project_task_assignment_id,
-      billing_type: billing_type ?? "hourly",
-      rate: rate ?? null,
+      billing_type: billing_type ?? defaults.billing,
+      rate: rate ?? defaults.ptaRate,
       assignment_type: effectiveType,
       assigned_by: user.id,
     }));
   }
   // Mode 3: Single
   else if (va_id && project_task_assignment_id) {
+    const defaults = await getPtaDefaults(project_task_assignment_id);
     rows = [
       {
         va_id,
         project_task_assignment_id,
-        billing_type: billing_type ?? "hourly",
-        rate: rate ?? null,
+        billing_type: billing_type ?? defaults.billing,
+        rate: rate ?? defaults.ptaRate,
         assignment_type: effectiveType,
         assigned_by: user.id,
       },

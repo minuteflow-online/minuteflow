@@ -63,9 +63,6 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
     }
   };
 
-  // Don't render if no claimable tasks
-  if (!loading && tasks.length === 0) return null;
-
   return (
     <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
       <h3 className="text-xs font-bold text-espresso uppercase tracking-wide flex items-center gap-1.5 sticky top-0 bg-white pb-1 z-10">
@@ -80,6 +77,8 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
 
       {loading ? (
         <p className="text-stone text-[11px] text-center py-3">Loading...</p>
+      ) : tasks.length === 0 ? (
+        <p className="text-stone text-[11px] text-center py-3 italic">No tasks available to claim right now.</p>
       ) : (
         <div className="space-y-1.5">
           {tasks.map((t) => {
