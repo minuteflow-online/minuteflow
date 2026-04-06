@@ -113,8 +113,15 @@ export default function TaskManagementSection() {
     try {
       const res = await fetch("/api/va-task-assignments?assignment_type=include");
       const data = await res.json();
-      // Only show fixed-rate / project-based assignments (not hourly)
-      setAssignments(data.assignments ?? []);
+      // Only show fixed-rate tasks OR hourly for project-based VAs
+      const all = data.assignments ?? [];
+      const filtered = all.filter((a: VaTaskAssignmentRow) => {
+        if (a.billing_type === "fixed") return true;
+        // Hourly tasks: only show if VA's position is "Project Based VA"
+        if (a.billing_type === "hourly" && a.profiles?.position?.toLowerCase() === "project based va") return true;
+        return false;
+      });
+      setAssignments(filtered);
     } catch {
       console.error("Failed to fetch assignments");
     } finally {
@@ -185,7 +192,7 @@ export default function TaskManagementSection() {
         return;
       }
 
-      // Update PTA billing type and rate
+      // Update PTA billing type, rate, and instructions (for claimable tasks)
       await fetch("/api/project-task-assignments", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -193,6 +200,7 @@ export default function TaskManagementSection() {
           id: pta.id,
           billing_type: addBillingType,
           task_rate: addRate ? parseFloat(addRate) : null,
+          instructions: addInstructions.trim() || null,
         }),
       });
 
@@ -211,7 +219,7 @@ export default function TaskManagementSection() {
         const vaData = await vaRes.json();
         const newAssignment = vaData.assignments?.[0];
 
-        // If instructions were provided, save them
+        // If instructions were provided, save them to the VA assignment too
         if (addInstructions.trim() && newAssignment) {
           await fetch("/api/va-task-assignments", {
             method: "PATCH",
@@ -223,7 +231,7 @@ export default function TaskManagementSection() {
           });
         }
       }
-      // If no VA selected, task stays as a claimable PTA (up for grabs)
+      // If no VA selected, task stays as a claimable PTA (up for grabs) with instructions on PTA
 
       // Reset form
       setShowAddForm(false);
@@ -293,7 +301,7 @@ export default function TaskManagementSection() {
   /* ── Approve assignment ── */
   const handleApprove = async (assignmentId: number) => {
     try {
-      await fetch("/api/task-submissions", {
+      const res = await fetch("/api/task-submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -302,10 +310,16 @@ export default function TaskManagementSection() {
           content: "Approved",
         }),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Failed to approve: ${errData.error || res.statusText}`);
+        return;
+      }
       fetchAssignments();
       fetchSubmissions(assignmentId);
-    } catch {
-      console.error("Failed to approve");
+    } catch (err) {
+      console.error("Failed to approve:", err);
+      alert("Failed to approve — network error. Please try again.");
     }
   };
 
@@ -316,7 +330,7 @@ export default function TaskManagementSection() {
       return; // show feedback input
     }
     try {
-      await fetch("/api/task-submissions", {
+      const res = await fetch("/api/task-submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -325,12 +339,18 @@ export default function TaskManagementSection() {
           content: newMessage.trim(),
         }),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Failed to request revision: ${errData.error || res.statusText}`);
+        return;
+      }
       setNewMessage("");
       setMessageType("instruction");
       fetchAssignments();
       fetchSubmissions(assignmentId);
-    } catch {
-      console.error("Failed to request revision");
+    } catch (err) {
+      console.error("Failed to request revision:", err);
+      alert("Failed to request revision — network error. Please try again.");
     }
   };
 

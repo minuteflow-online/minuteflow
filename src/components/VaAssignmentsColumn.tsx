@@ -81,19 +81,44 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
   const [submitting, setSubmitting] = useState<number | null>(null);
   const [submissionLinks, setSubmissionLinks] = useState<Record<number, string>>({});
   const [submissionComments, setSubmissionComments] = useState<Record<number, string>>({});
+  const [revisionMessages, setRevisionMessages] = useState<Record<number, string>>({});
+
+  /* ── Fetch revision messages for a specific assignment ── */
+  const fetchRevisionMessages = useCallback(async (assignmentId: number) => {
+    try {
+      const res = await fetch(`/api/task-submissions?va_task_assignment_id=${assignmentId}`);
+      const data = await res.json();
+      const subs = data.submissions ?? [];
+      // Get the latest revision message
+      const revisions = subs.filter((s: { message_type: string }) => s.message_type === "revision");
+      if (revisions.length > 0) {
+        const latest = revisions[revisions.length - 1];
+        setRevisionMessages((prev) => ({ ...prev, [assignmentId]: latest.content }));
+      }
+    } catch {
+      // silent
+    }
+  }, []);
 
   /* ── Fetch assignments ── */
   const fetchAssignments = useCallback(async () => {
     try {
       const res = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
       const data = await res.json();
-      setAssignments(data.assignments ?? []);
+      const list = data.assignments ?? [];
+      setAssignments(list);
+      // Fetch revision messages for any assignment needing revision
+      list.forEach((a: Assignment) => {
+        if (a.status === "revision_needed") {
+          fetchRevisionMessages(a.id);
+        }
+      });
     } catch {
       console.error("Failed to fetch assignments");
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, fetchRevisionMessages]);
 
   useEffect(() => {
     if (userId) fetchAssignments();
@@ -112,7 +137,7 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
     const content = parts.length > 0 ? parts.join("\n") : "Submitted for review";
 
     try {
-      await fetch("/api/task-submissions", {
+      const res = await fetch("/api/task-submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -123,20 +148,52 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
           submission_comment: comment.trim() || null,
         }),
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Failed to submit: ${errData.error || res.statusText}`);
+        return;
+      }
       // Clear form fields
       setSubmissionLinks((prev) => ({ ...prev, [assignmentId]: "" }));
       setSubmissionComments((prev) => ({ ...prev, [assignmentId]: "" }));
       fetchAssignments();
-    } catch {
-      console.error("Failed to submit");
+    } catch (err) {
+      console.error("Failed to submit:", err);
+      alert("Failed to submit — network error. Please try again.");
     } finally {
       setSubmitting(null);
     }
   };
 
+  /* ── Auto-set in_progress when VA opens a not_started task ── */
+  const markInProgress = useCallback(async (assignmentId: number) => {
+    try {
+      await fetch("/api/va-task-assignments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: assignmentId, status: "in_progress" }),
+      });
+      // Update local state immediately
+      setAssignments((prev) =>
+        prev.map((a) => (a.id === assignmentId ? { ...a, status: "in_progress" as AssignmentStatus } : a))
+      );
+    } catch {
+      // silent — non-critical
+    }
+  }, []);
+
   /* ── Expand/collapse ── */
   const handleExpand = (id: number) => {
-    setExpandedId(expandedId === id ? null : id);
+    if (expandedId === id) {
+      setExpandedId(null);
+    } else {
+      setExpandedId(id);
+      // Auto-mark in_progress when VA opens a not_started task
+      const assignment = assignments.find((a) => a.id === id);
+      if (assignment && assignment.status === "not_started") {
+        markInProgress(id);
+      }
+    }
   };
 
   // Count revision-needed assignments for header indicator
@@ -208,7 +265,7 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
 
                 {/* Expanded detail */}
                 {isExpanded && (
-                  <div className="px-2.5 py-2.5 border-t border-sand bg-parchment/10 space-y-2">
+                  <div className="px-2.5 py-2.5 border-t border-sand bg-parchment/10 space-y-2" onClick={(e) => e.stopPropagation()}>
                     {/* Instructions from admin */}
                     {a.instructions && (
                       <div className="bg-indigo-50 border-l-3 border-l-indigo-400 rounded-r-lg px-2.5 py-2">
@@ -242,8 +299,9 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
 
                     {a.status === "revision_needed" && (
                       <div className="bg-amber-50 border-l-3 border-l-amber-400 rounded-r-lg px-2.5 py-2">
-                        <div className="text-[11px] font-semibold text-amber-700">
-                          Revision requested — please check instructions and resubmit
+                        <div className="text-[10px] font-bold text-amber-800 uppercase mb-0.5">Revision Requested</div>
+                        <div className="text-xs text-amber-900 whitespace-pre-wrap">
+                          {revisionMessages[a.id] || "Please check instructions and resubmit."}
                         </div>
                       </div>
                     )}

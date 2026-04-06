@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("task_submissions")
     .select(
-      "id, va_task_assignment_id, user_id, message_type, content, submission_link, submission_comment, created_at, profiles!task_submissions_user_id_fkey(id, full_name, username, role)"
+      "id, va_task_assignment_id, user_id, message_type, content, submission_link, submission_comment, created_at, profiles!task_submissions_user_id_profiles_fkey(id, full_name, username, role)"
     )
     .order("created_at", { ascending: true });
 
@@ -144,7 +144,7 @@ export async function POST(request: Request) {
       submission_comment: submission_comment || null,
     })
     .select(
-      "id, va_task_assignment_id, user_id, message_type, content, submission_link, submission_comment, created_at, profiles!task_submissions_user_id_fkey(id, full_name, username, role)"
+      "id, va_task_assignment_id, user_id, message_type, content, submission_link, submission_comment, created_at"
     )
     .single();
 

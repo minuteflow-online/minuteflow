@@ -21,7 +21,7 @@ export async function GET() {
   const { data: allPTAs, error: ptaError } = await supabase
     .from("project_task_assignments")
     .select(
-      "id, task_library_id, project_tag_id, billing_type, task_rate, task_library(id, task_name, is_active, billing_type, default_rate), project_tags(id, account, project_name, is_active)"
+      "id, task_library_id, project_tag_id, billing_type, task_rate, instructions, task_library(id, task_name, is_active, billing_type, default_rate), project_tags(id, account, project_name, is_active)"
     )
     .order("id");
 
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
   // Verify the PTA exists and is fixed billing
   const { data: pta } = await supabase
     .from("project_task_assignments")
-    .select("id, billing_type, task_rate, task_library(id, task_name, billing_type, default_rate)")
+    .select("id, billing_type, task_rate, instructions, task_library(id, task_name, billing_type, default_rate)")
     .eq("id", project_task_assignment_id)
     .single();
 
@@ -112,7 +112,7 @@ export async function POST(request: Request) {
   // Determine rate
   const effectiveRate = ptaAny.task_rate ?? ptaAny.task_library?.default_rate ?? null;
 
-  // Create the VA task assignment (claim)
+  // Create the VA task assignment (claim) — copy instructions from PTA if present
   const { data: assignment, error } = await supabase
     .from("va_task_assignments")
     .insert({
@@ -123,6 +123,7 @@ export async function POST(request: Request) {
       assignment_type: "include",
       assigned_by: user.id, // self-assigned
       status: "not_started",
+      instructions: ptaAny?.instructions || null,
     })
     .select(
       "id, va_id, project_task_assignment_id, billing_type, rate, status, profiles!va_task_assignments_va_id_fkey(id, full_name, username), project_task_assignments(id, task_library(id, task_name), project_tags(id, account, project_name))"
