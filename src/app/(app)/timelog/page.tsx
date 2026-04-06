@@ -6,6 +6,7 @@ import type { TimeLog, Profile, TaskScreenshot } from "@/types/database";
 import EditTimeLogModal from "@/components/EditTimeLogModal";
 import CorrectionRequestModal from "@/components/CorrectionRequestModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import CSVUploadModal from "@/components/CSVUploadModal";
 import {
   formatDuration,
   formatDurationShort,
@@ -130,6 +131,7 @@ export default function TimeLogPage() {
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [correctionLog, setCorrectionLog] = useState<TimeLog | null>(null);
+  const [showCSVUpload, setShowCSVUpload] = useState(false);
 
   /* ── Edited log IDs (for "edited" indicator) ───────────── */
   const [editedLogIds, setEditedLogIds] = useState<Set<number>>(new Set());
@@ -647,12 +649,20 @@ export default function TimeLogPage() {
             Export CSV
           </button>
           {isAdminOrManager && (
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
-            >
-              + Add Time Entry
-            </button>
+            <>
+              <button
+                onClick={() => setShowCSVUpload(true)}
+                className="rounded-lg border border-terracotta bg-white px-4 py-2 text-[13px] font-semibold text-terracotta transition-all hover:bg-terracotta hover:text-white"
+              >
+                ↑ Upload CSV
+              </button>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
+              >
+                + Add Time Entry
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -1119,6 +1129,32 @@ export default function TimeLogPage() {
         <ScreenshotLightbox
           url={lightboxUrl}
           onClose={() => setLightboxUrl(null)}
+        />
+      )}
+
+      {showCSVUpload && (
+        <CSVUploadModal
+          title="Upload Time Logs (CSV)"
+          type="time_logs"
+          columns={[
+            { key: "va_name", label: "va_name", required: true, example: "Arianne Claire Rivera" },
+            { key: "task_name", label: "task_name", required: true, example: "Social Media Post" },
+            { key: "date", label: "date", required: true, example: "2025-04-01" },
+            { key: "duration_hours", label: "duration_hours", required: false, example: "2.5" },
+            { key: "start_time", label: "start_time", required: false, example: "09:00" },
+            { key: "end_time", label: "end_time", required: false, example: "11:30" },
+            { key: "category", label: "category", required: false, example: "Task" },
+            { key: "account", label: "account", required: false, example: "Virtual Concierge" },
+            { key: "client_name", label: "client_name", required: false, example: "Toni Colina" },
+            { key: "billable", label: "billable", required: false, example: "yes" },
+            { key: "client_memo", label: "client_memo", required: false, example: "Completed 5 posts" },
+            { key: "internal_memo", label: "internal_memo", required: false, example: "Used Canva template" },
+          ]}
+          onClose={() => setShowCSVUpload(false)}
+          onSuccess={() => {
+            setShowCSVUpload(false);
+            fetchLogs();
+          }}
         />
       )}
     </>
