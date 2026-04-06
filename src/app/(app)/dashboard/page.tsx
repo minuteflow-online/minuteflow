@@ -1870,15 +1870,15 @@ export default function DashboardPage() {
   const handleQuickAction = useCallback(
     (action: string) => {
       const QUICK_ACTION_MAP: Record<string, { category: string; task_name: string; account?: string; client_name?: string }> = {
-        "sorting-tasks": { category: "Sorting Tasks", task_name: "Sorting Tasks", account: "Virtual Concierge", client_name: "Toni Colina" },
-        "message": { category: "Message", task_name: "Message" },
-        "personal": { category: "Personal", task_name: "Personal Time" },
-        "coaching": { category: "Task", task_name: "Coaching" },
+        "team-assist": { category: "Collaboration", task_name: "Team Assist" },
+        "support-request": { category: "Task", task_name: "Support Request" },
         "training": { category: "Task", task_name: "Training" },
         "feedback": { category: "Task", task_name: "Feedback" },
-        "collaboration": { category: "Collaboration", task_name: "Collaboration" },
-        "team-development": { category: "Task", task_name: "Team Development" },
-        "personal-development": { category: "Task", task_name: "Personal Development" },
+        "coaching-review": { category: "Task", task_name: "Coaching/Review" },
+        "weekly-meeting": { category: "Meeting", task_name: "Weekly Meeting" },
+        "unscheduled-meeting": { category: "Meeting", task_name: "Unscheduled Meeting" },
+        "messaging": { category: "Message", task_name: "Messaging" },
+        "sorting-tasks": { category: "Sorting Tasks", task_name: "Sorting Tasks", account: "Virtual Concierge", client_name: "Toni Colina" },
       };
 
       const mapping = QUICK_ACTION_MAP[action];

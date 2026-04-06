@@ -1,15 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
-
-interface ProjectTag {
-  id: number;
-  account: string;
-  project_name: string;
-  sort_order: number;
-  is_active: boolean;
-}
+const QUICK_ACTIONS = [
+  { label: "Team Assist", action: "team-assist", icon: "\ud83e\udd1d", color: "bg-terracotta-soft text-terracotta" },
+  { label: "Support Request", action: "support-request", icon: "\ud83c\udd98", color: "bg-clay-rose-soft text-clay-rose" },
+  { label: "Training", action: "training", icon: "\ud83d\udcda", color: "bg-clay-rose-soft text-clay-rose" },
+  { label: "Feedback", action: "feedback", icon: "\ud83d\udcac", color: "bg-parchment text-walnut" },
+  { label: "Coaching/Review", action: "coaching-review", icon: "\ud83c\udfaf", color: "bg-sage-soft text-sage" },
+  { label: "Weekly Meeting", action: "weekly-meeting", icon: "\ud83d\udcc5", color: "bg-slate-blue-soft text-slate-blue" },
+  { label: "Unsched Meeting", action: "unscheduled-meeting", icon: "\ud83d\udde3\ufe0f", color: "bg-amber-soft text-amber" },
+  { label: "Messaging", action: "messaging", icon: "\ud83d\udce8", color: "bg-slate-blue-soft text-slate-blue" },
+  { label: "Sorting Tasks", action: "sorting-tasks", icon: "\ud83d\udccb", color: "bg-amber-soft text-amber" },
+];
 
 interface ProjectSidebarProps {
   onSelectProject: (account: string, project: string) => void;
@@ -17,265 +18,32 @@ interface ProjectSidebarProps {
   isAdmin: boolean;
 }
 
-const QUICK_ACTIONS = [
-  { label: "Sorting Tasks", action: "sorting-tasks", icon: "\ud83d\udccb", color: "bg-amber-soft text-amber" },
-  { label: "Message", action: "message", icon: "\ud83d\udce8", color: "bg-slate-blue-soft text-slate-blue" },
-  { label: "Personal", action: "personal", icon: "\ud83c\udf3f", color: "bg-parchment text-walnut" },
-  { label: "Coaching", action: "coaching", icon: "\ud83c\udfaf", color: "bg-sage-soft text-sage" },
-  { label: "Training", action: "training", icon: "\ud83d\udcda", color: "bg-clay-rose-soft text-clay-rose" },
-  { label: "Feedback", action: "feedback", icon: "\ud83d\udcac", color: "bg-parchment text-walnut" },
-  { label: "Collaboration", action: "collaboration", icon: "\ud83e\udd1d", color: "bg-terracotta-soft text-terracotta" },
-  { label: "Team Dev", action: "team-development", icon: "\ud83d\ude80", color: "bg-sage-soft text-sage" },
-  { label: "Personal Dev", action: "personal-development", icon: "\ud83c\udf31", color: "bg-clay-rose-soft text-clay-rose" },
-];
-
 export default function ProjectSidebar({
-  onSelectProject,
   onQuickAction,
-  isAdmin,
 }: ProjectSidebarProps) {
-  const [tags, setTags] = useState<ProjectTag[]>([]);
-  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [addBulkMode, setAddBulkMode] = useState(false);
-  const [newAccount, setNewAccount] = useState("");
-  const [newProject, setNewProject] = useState("");
-  const [bulkProjects, setBulkProjects] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
-
-  const [allAccounts, setAllAccounts] = useState<string[]>([]);
-
-  const fetchTags = useCallback(async () => {
-    const supabase = createClient();
-    const [tagsRes, accountsRes] = await Promise.all([
-      supabase
-        .from("project_tags")
-        .select("*")
-        .eq("is_active", true)
-        .order("account")
-        .order("sort_order"),
-      supabase
-        .from("accounts")
-        .select("name")
-        .eq("active", true)
-        .order("name"),
-    ]);
-    if (tagsRes.data) setTags(tagsRes.data as ProjectTag[]);
-    if (accountsRes.data) setAllAccounts(accountsRes.data.map((a: { name: string }) => a.name));
-  }, []);
-
-  useEffect(() => {
-    fetchTags();
-  }, [fetchTags]);
-
-  // Group tags by account
-  const grouped = tags.reduce<Record<string, ProjectTag[]>>((acc, tag) => {
-    if (!acc[tag.account]) acc[tag.account] = [];
-    acc[tag.account].push(tag);
-    return acc;
-  }, {});
-
-  const toggleAccount = (account: string) => {
-    setExpandedAccounts((prev) => {
-      const next = new Set(prev);
-      if (next.has(account)) next.delete(account);
-      else next.add(account);
-      return next;
-    });
-  };
-
-  const handleAddProject = async () => {
-    if (!newAccount.trim()) return;
-    setAdding(true);
-    const supabase = createClient();
-
-    if (addBulkMode) {
-      // Bulk: one project per line
-      const lines = bulkProjects.split("\n").map((l) => l.trim()).filter(Boolean);
-      if (lines.length === 0) { setAdding(false); return; }
-      await supabase.from("project_tags").insert(
-        lines.map((name) => ({ account: newAccount.trim(), project_name: name }))
-      );
-      setBulkProjects("");
-    } else {
-      if (!newProject.trim()) { setAdding(false); return; }
-      await supabase.from("project_tags").insert({
-        account: newAccount.trim(),
-        project_name: newProject.trim(),
-      });
-      setNewProject("");
-    }
-
-    setNewAccount("");
-    setShowAddForm(false);
-    setAdding(false);
-    fetchTags();
-  };
-
-  const handleDeleteProject = async (tagId: number) => {
-    if (!isAdmin) return;
-    setDeletingId(tagId);
-    const supabase = createClient();
-    await supabase
-      .from("project_tags")
-      .update({ is_active: false })
-      .eq("id", tagId);
-    setDeletingId(null);
-    fetchTags();
-  };
-
-  // All active accounts (from DB + any that have projects)
-  const accounts = [...new Set([...allAccounts, ...tags.map((t) => t.account)])].sort();
-
   return (
     <div className="rounded-xl border border-sand bg-white overflow-hidden">
       {/* Header */}
-      <div className="border-b border-parchment px-4 py-3 flex items-center justify-between">
+      <div className="border-b border-parchment px-4 py-3">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">
           Quick Pick
         </h3>
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="text-[10px] font-semibold text-terracotta hover:text-[#a85840] cursor-pointer"
-        >
-          {showAddForm ? "Cancel" : "+ Add"}
-        </button>
       </div>
 
-      {/* Add Project Form (all users can add) */}
-      {showAddForm && (
-        <div className="px-4 py-3 border-b border-parchment bg-cream space-y-2">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[9px] font-semibold text-bark uppercase tracking-wider">
-              {addBulkMode ? "Bulk Add" : "Add Project"}
-            </span>
+      {/* Quick Actions */}
+      <div className="px-4 py-3">
+        <div className="grid grid-cols-3 gap-1.5">
+          {QUICK_ACTIONS.map((qa) => (
             <button
-              onClick={() => setAddBulkMode(!addBulkMode)}
-              className="text-[9px] font-semibold text-terracotta hover:text-[#a85840] cursor-pointer"
+              key={qa.action}
+              onClick={() => onQuickAction(qa.action)}
+              className={`${qa.color} rounded-lg py-2 px-1 text-center cursor-pointer transition-all hover:opacity-80`}
             >
-              {addBulkMode ? "Single" : "Bulk"}
+              <div className="text-sm leading-none mb-0.5">{qa.icon}</div>
+              <div className="text-[9px] font-semibold leading-tight">{qa.label}</div>
             </button>
-          </div>
-          <div>
-            <input
-              list="accounts-list"
-              value={newAccount}
-              onChange={(e) => setNewAccount(e.target.value)}
-              placeholder="Account name"
-              className="w-full rounded border border-sand px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
-            />
-            <datalist id="accounts-list">
-              {accounts.map((a) => (
-                <option key={a} value={a} />
-              ))}
-            </datalist>
-          </div>
-          {addBulkMode ? (
-            <textarea
-              value={bulkProjects}
-              onChange={(e) => setBulkProjects(e.target.value)}
-              placeholder="One project per line"
-              rows={4}
-              className="w-full rounded border border-sand px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta resize-none"
-            />
-          ) : (
-            <input
-              value={newProject}
-              onChange={(e) => setNewProject(e.target.value)}
-              placeholder="Project name"
-              className="w-full rounded border border-sand px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
-            />
-          )}
-          <button
-            onClick={handleAddProject}
-            disabled={adding || !newAccount.trim() || (addBulkMode ? !bulkProjects.trim() : !newProject.trim())}
-            className="w-full py-1.5 rounded bg-terracotta text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
-          >
-            {adding ? "Adding..." : addBulkMode ? "Add All Projects" : "Add Project"}
-          </button>
+          ))}
         </div>
-      )}
-
-      <div className="max-h-[500px] overflow-y-auto">
-        {/* Quick Actions */}
-        <div className="px-4 py-3 border-b border-parchment">
-          <div className="text-[9px] font-bold text-bark uppercase tracking-wider mb-2">
-            Actions
-          </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {QUICK_ACTIONS.map((qa) => (
-              <button
-                key={qa.action}
-                onClick={() => onQuickAction(qa.action)}
-                className={`${qa.color} rounded-lg py-2 px-1 text-center cursor-pointer transition-all hover:opacity-80`}
-              >
-                <div className="text-sm leading-none mb-0.5">{qa.icon}</div>
-                <div className="text-[9px] font-semibold leading-tight">{qa.label}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Projects by Account */}
-        <div className="px-4 py-3">
-          <div className="text-[9px] font-bold text-bark uppercase tracking-wider mb-2">
-            Projects
-          </div>
-          {accounts.length === 0 ? (
-            <p className="text-[11px] text-stone">No accounts yet. Click + Add to create one.</p>
-          ) : (
-            <div className="space-y-1">
-              {accounts.map((account) => {
-                const projects = grouped[account] || [];
-                return (
-                <div key={account}>
-                  <button
-                    onClick={() => projects.length > 0 ? toggleAccount(account) : onSelectProject(account, "")}
-                    className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-parchment cursor-pointer transition-colors"
-                  >
-                    <span className="text-[11px] font-semibold text-espresso">{account}</span>
-                    <span className="text-[9px] text-stone">
-                      {projects.length > 0 ? `${expandedAccounts.has(account) ? "\u25bc" : "\u25b6"} ${projects.length}` : ""}
-                    </span>
-                  </button>
-                  {expandedAccounts.has(account) && (
-                    <div className="ml-2 mb-1 space-y-0.5">
-                      {projects.map((tag) => (
-                        <div
-                          key={tag.id}
-                          className="flex items-center group"
-                        >
-                          <button
-                            onClick={() => onSelectProject(account, tag.project_name)}
-                            className="flex-1 text-left py-1.5 px-2.5 rounded-md text-[11px] text-walnut hover:bg-terracotta-soft hover:text-terracotta cursor-pointer transition-colors"
-                          >
-                            {tag.project_name}
-                          </button>
-                          {isAdmin && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteProject(tag.id);
-                              }}
-                              disabled={deletingId === tag.id}
-                              className="opacity-0 group-hover:opacity-100 px-1.5 py-1 text-[9px] text-stone hover:text-red-500 cursor-pointer transition-all"
-                              title="Remove project"
-                            >
-                              {deletingId === tag.id ? "..." : "\u00d7"}
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
       </div>
     </div>
   );
