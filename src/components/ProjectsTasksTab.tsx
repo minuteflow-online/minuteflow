@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import TaskManagementSection from "./TaskManagementSection";
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -2239,6 +2240,9 @@ export default function ProjectsTasksTab() {
           </div>
         </div>
       </div>
+
+      {/* ═══ SECTION: Fixed & Project-Based Task Management ═══ */}
+      <TaskManagementSection />
 
     </div>
   );

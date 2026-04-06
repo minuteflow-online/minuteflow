@@ -45,6 +45,16 @@ interface LogRow {
   task_rate: number | null;
 }
 
+interface VaFixedAssignment {
+  va_id: string;
+  task_name: string;
+  account: string | null;
+  project_name: string | null;
+  rate: number;
+  task_library_id: number;
+  status: "not_started" | "submitted" | "revision_needed" | "approved";
+}
+
 interface VaPaymentRow {
   id: number;
   va_id: string;
@@ -174,6 +184,7 @@ export default function FinancialSummaryTab() {
   const [vaPayments, setVaPayments] = useState<VaPaymentRow[]>([]);
   const [clientPayments, setClientPayments] = useState<ClientPaymentRow[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
+  const [vaFixedAssignments, setVaFixedAssignments] = useState<VaFixedAssignment[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Expand/collapse state
@@ -212,7 +223,7 @@ export default function FinancialSummaryTab() {
     const rangeStart = `${startDate}T00:00:00.000Z`;
     const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes] = await Promise.all([
+    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes] = await Promise.all([
       fetch("/api/accounts"),
       supabase
         .from("profiles")
@@ -244,6 +255,15 @@ export default function FinancialSummaryTab() {
         .gte("expense_date", startDate)
         .lte("expense_date", endDate)
         .order("expense_date", { ascending: false }),
+      // Fetch VA fixed-rate task assignments (for pending/earned fixed task display)
+      supabase
+        .from("va_task_assignments")
+        .select(
+          "va_id, billing_type, rate, status, project_task_assignments(task_library_id, project_tag_id, task_library(id, task_name), project_tags(id, account, project_name))"
+        )
+        .eq("billing_type", "fixed")
+        .gt("rate", 0)
+        .eq("assignment_type", "include"),
     ]);
 
     const accData = await accRes.json();
@@ -254,6 +274,26 @@ export default function FinancialSummaryTab() {
     setVaPayments((vaPayRes.data as VaPaymentRow[]) ?? []);
     setClientPayments((clientPayRes.data as ClientPaymentRow[]) ?? []);
     setExpenses((expRes.data as ExpenseRow[]) ?? []);
+
+    // Parse VA fixed assignments into flat structure
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawFixed = (vaFixedRes.data ?? []) as any[];
+    const parsedFixed: VaFixedAssignment[] = rawFixed.map((row) => {
+      const pta = row.project_task_assignments;
+      const lib = pta?.task_library;
+      const proj = pta?.project_tags;
+      return {
+        va_id: row.va_id,
+        task_name: lib?.task_name ?? "Unknown Task",
+        account: proj?.account ?? null,
+        project_name: proj?.project_name ?? null,
+        rate: Number(row.rate),
+        task_library_id: lib?.id ?? 0,
+        status: row.status ?? "not_started",
+      };
+    });
+    setVaFixedAssignments(parsedFixed);
+
     setLoading(false);
   }, [startDate, endDate, supabase]);
 
@@ -381,10 +421,10 @@ export default function FinancialSummaryTab() {
     return { rows, totalMs, totalAmount, totalCollected, hasUnsetRates };
   }, [filteredLogs, accountRateMap, clientPaymentsByAccount]);
 
-  /* ── VA Costs Calculation (Enhanced with day breakdown + fixed tasks) ── */
+  /* ── VA Costs Calculation (Enhanced with day breakdown + fixed tasks from assignments) ── */
 
   const vaCostData = useMemo(() => {
-    // Group by user_id
+    // Group time logs by user_id
     const userTotals: Record<
       string,
       {
@@ -392,7 +432,7 @@ export default function FinancialSummaryTab() {
         paidMs: number;
         categoryMs: Record<string, number>;
         dayBreakdown: Record<string, { ms: number; paidMs: number }>;
-        fixedTasks: { task_name: string; account: string | null; task_rate: number }[];
+        loggedFixedTasks: Set<string>; // task names logged as fixed (for earned check)
       }
     > = {};
 
@@ -403,7 +443,7 @@ export default function FinancialSummaryTab() {
           paidMs: 0,
           categoryMs: {},
           dayBreakdown: {},
-          fixedTasks: [],
+          loggedFixedTasks: new Set(),
         };
       }
       const ut = userTotals[log.user_id];
@@ -424,14 +464,30 @@ export default function FinancialSummaryTab() {
         ut.dayBreakdown[day].paidMs += log.duration_ms;
       }
 
-      // Fixed tasks
-      if (log.billing_type === "fixed" && log.task_rate != null && log.task_rate > 0) {
-        ut.fixedTasks.push({
-          task_name: log.task_name,
-          account: log.account,
-          task_rate: log.task_rate,
-        });
+      // Track which fixed tasks were actually logged (for pending/earned status)
+      if (log.billing_type === "fixed") {
+        ut.loggedFixedTasks.add(log.task_name);
       }
+    });
+
+    // Build fixed tasks from VA assignments (not time_logs)
+    // Group assignments by va_id
+    const assignmentsByVa: Record<
+      string,
+      { task_name: string; account: string | null; project_name: string | null; rate: number; earned: boolean }[]
+    > = {};
+
+    vaFixedAssignments.forEach((a) => {
+      if (!assignmentsByVa[a.va_id]) assignmentsByVa[a.va_id] = [];
+      // Earned = admin approved the submission; pending = anything else
+      const earned = a.status === "approved";
+      assignmentsByVa[a.va_id].push({
+        task_name: a.task_name,
+        account: a.account,
+        project_name: a.project_name,
+        rate: a.rate,
+        earned,
+      });
     });
 
     const profileMap: Record<string, ProfileRow> = {};
@@ -439,10 +495,24 @@ export default function FinancialSummaryTab() {
 
     const activeVaIds = new Set(vaProfiles.map((p) => p.id));
 
-    const rows = Object.entries(userTotals)
-      .map(([userId, data]) => {
+    // Collect all VA IDs that have either time logs OR fixed assignments
+    const allVaIds = new Set([
+      ...Object.keys(userTotals),
+      ...Object.keys(assignmentsByVa),
+    ]);
+
+    const rows = Array.from(allVaIds)
+      .map((userId) => {
         const profile = profileMap[userId];
         if (!profile || !activeVaIds.has(userId)) return null;
+
+        const data = userTotals[userId] ?? {
+          totalMs: 0,
+          paidMs: 0,
+          categoryMs: {},
+          dayBreakdown: {},
+          loggedFixedTasks: new Set<string>(),
+        };
 
         // Calculate hourly rate
         let hourlyRate = profile.pay_rate;
@@ -451,7 +521,11 @@ export default function FinancialSummaryTab() {
 
         const paidHours = msToHours(data.paidMs);
         const hourlyPay = paidHours * hourlyRate;
-        const fixedPay = data.fixedTasks.reduce((s, t) => s + t.task_rate, 0);
+
+        // Fixed tasks come from assignments, not time_logs
+        const fixedTasks = assignmentsByVa[userId] ?? [];
+        const fixedPay = fixedTasks.reduce((s, t) => s + t.rate, 0);
+        const earnedFixedPay = fixedTasks.filter((t) => t.earned).reduce((s, t) => s + t.rate, 0);
         const grossPay = hourlyPay + fixedPay;
 
         // Payments made to this VA
@@ -482,12 +556,13 @@ export default function FinancialSummaryTab() {
           hourlyRate,
           hourlyPay,
           fixedPay,
+          earnedFixedPay,
           grossPay,
           totalPaid,
           balance: grossPay - totalPaid,
           breakdown,
           days,
-          fixedTasks: data.fixedTasks,
+          fixedTasks,
           payments,
         };
       })
@@ -499,12 +574,13 @@ export default function FinancialSummaryTab() {
       hourlyRate: number;
       hourlyPay: number;
       fixedPay: number;
+      earnedFixedPay: number;
       grossPay: number;
       totalPaid: number;
       balance: number;
       breakdown: string;
       days: { date: string; ms: number; paidMs: number; amount: number }[];
-      fixedTasks: { task_name: string; account: string | null; task_rate: number }[];
+      fixedTasks: { task_name: string; account: string | null; project_name: string | null; rate: number; earned: boolean }[];
       payments: VaPaymentRow[];
     }[];
 
@@ -515,7 +591,7 @@ export default function FinancialSummaryTab() {
     const totalVaPaid = rows.reduce((s, r) => s + r.totalPaid, 0);
 
     return { rows, totalCost, totalPaidMs, totalVaPaid };
-  }, [filteredLogs, profiles, vaProfiles, vaPaymentsByUser]);
+  }, [filteredLogs, profiles, vaProfiles, vaPaymentsByUser, vaFixedAssignments]);
 
   /* ── Category Breakdown ──────────────────────────────── */
 
@@ -1064,7 +1140,7 @@ export default function FinancialSummaryTab() {
                                     </tbody>
                                   </table>
 
-                                  {/* Fixed tasks */}
+                                  {/* Fixed tasks (from VA assignments — shows pending/earned) */}
                                   {row.fixedTasks.length > 0 && (
                                     <div className="mt-4">
                                       <h4 className="text-[11px] font-bold uppercase tracking-wider text-bark mb-2">
@@ -1075,6 +1151,7 @@ export default function FinancialSummaryTab() {
                                           <tr className="text-[9px] font-semibold uppercase tracking-wider text-bark/60">
                                             <th className="py-1 text-left">Task</th>
                                             <th className="py-1 text-left">Account</th>
+                                            <th className="py-1 text-center">Status</th>
                                             <th className="py-1 text-right">Amount</th>
                                           </tr>
                                         </thead>
@@ -1083,15 +1160,32 @@ export default function FinancialSummaryTab() {
                                             <tr key={i} className="border-t border-parchment/50">
                                               <td className="py-1 text-espresso">{t.task_name}</td>
                                               <td className="py-1 text-bark">{t.account || "—"}</td>
-                                              <td className="py-1 text-right font-medium text-espresso">{fmtMoney(t.task_rate)}</td>
+                                              <td className="py-1 text-center">
+                                                {t.earned ? (
+                                                  <span className="inline-block rounded-full bg-sage-soft px-2 py-0.5 text-[9px] font-semibold text-sage">
+                                                    Earned
+                                                  </span>
+                                                ) : (
+                                                  <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-semibold text-amber-700">
+                                                    Pending
+                                                  </span>
+                                                )}
+                                              </td>
+                                              <td className="py-1 text-right font-medium text-espresso">{fmtMoney(t.rate)}</td>
                                             </tr>
                                           ))}
                                         </tbody>
                                         <tfoot>
                                           <tr className="border-t border-bark/20 font-semibold">
-                                            <td className="py-1" colSpan={2}>Total Fixed</td>
+                                            <td className="py-1" colSpan={3}>Total Fixed</td>
                                             <td className="py-1 text-right text-terracotta">{fmtMoney(row.fixedPay)}</td>
                                           </tr>
+                                          {row.earnedFixedPay < row.fixedPay && (
+                                            <tr className="text-[10px]">
+                                              <td className="py-0.5 text-bark/60" colSpan={3}>Earned so far</td>
+                                              <td className="py-0.5 text-right text-sage font-medium">{fmtMoney(row.earnedFixedPay)}</td>
+                                            </tr>
+                                          )}
                                         </tfoot>
                                       </table>
                                     </div>

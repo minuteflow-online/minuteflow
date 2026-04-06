@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("va_task_assignments")
     .select(
-      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, assigned_by, assigned_at, profiles!va_task_assignments_va_id_fkey(id, full_name, username), project_task_assignments(id, task_library_id, project_tag_id, billing_type, task_rate, task_library(id, task_name), project_tags(id, account, project_name))"
+      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, assigned_by, assigned_at, status, instructions, profiles!va_task_assignments_va_id_fkey(id, full_name, username), project_task_assignments(id, task_library_id, project_tag_id, billing_type, task_rate, task_library(id, task_name), project_tags(id, account, project_name))"
     )
     .order("assigned_at", { ascending: false });
 
@@ -169,7 +169,7 @@ export async function PATCH(request: Request) {
   }
 
   const body = await request.json();
-  const { id, billing_type, rate, assignment_type } = body;
+  const { id, billing_type, rate, assignment_type, status, instructions } = body;
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
@@ -179,6 +179,8 @@ export async function PATCH(request: Request) {
   if (billing_type !== undefined) updates.billing_type = billing_type;
   if (rate !== undefined) updates.rate = rate;
   if (assignment_type !== undefined) updates.assignment_type = assignment_type;
+  if (status !== undefined) updates.status = status;
+  if (instructions !== undefined) updates.instructions = instructions;
 
   if (Object.keys(updates).length === 0) {
     return Response.json({ error: "Nothing to update" }, { status: 400 });
@@ -189,7 +191,7 @@ export async function PATCH(request: Request) {
     .update(updates)
     .eq("id", id)
     .select(
-      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, assigned_at, profiles!va_task_assignments_va_id_fkey(id, full_name, username), project_task_assignments(id, task_library_id, project_tag_id, task_library(id, task_name), project_tags(id, account, project_name))"
+      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, status, instructions, assigned_at, profiles!va_task_assignments_va_id_fkey(id, full_name, username), project_task_assignments(id, task_library_id, project_tag_id, task_library(id, task_name), project_tags(id, account, project_name))"
     )
     .single();
 

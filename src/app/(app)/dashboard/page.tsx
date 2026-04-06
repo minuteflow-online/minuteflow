@@ -10,6 +10,7 @@ import ActivityLog from "@/components/ActivityLog";
 import LiveSessionPrompt from "@/components/LiveSessionPrompt";
 import ProjectSidebar from "@/components/ProjectSidebar";
 import DailyTaskPlanner from "@/components/DailyTaskPlanner";
+import VaAssignmentsColumn from "@/components/VaAssignmentsColumn";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import { getTodayBoundsInTimezone } from "@/lib/utils";
 import type {
@@ -124,6 +125,9 @@ export default function DashboardPage() {
 
   // Loading state
   const [loading, setLoading] = useState(true);
+
+  // VA has fixed/project-based task assignments
+  const [hasFixedAssignments, setHasFixedAssignments] = useState(false);
 
   // Timer refs
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -242,6 +246,17 @@ export default function DashboardPage() {
           }
         });
         setScreenshots(grouped);
+      }
+
+      // Check if VA has fixed/project-based task assignments
+      if (userId && profileRes.data?.role === "va") {
+        try {
+          const assignRes = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
+          const assignData = await assignRes.json();
+          setHasFixedAssignments((assignData.assignments ?? []).length > 0);
+        } catch {
+          // silently ignore
+        }
       }
 
       setLoading(false);
@@ -1986,8 +2001,14 @@ export default function DashboardPage() {
         />
       )}
 
-      {/* Layout: Team (left) + Task Form (center) + Daily Planner + Projects (right) */}
-      <div className={`grid gap-5 mb-6 ${role === "va" ? "grid-cols-1 md:grid-cols-[1fr_260px_260px]" : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]"}`}>
+      {/* Layout: Team (left) + Task Form (center) + Daily Planner + Projects/Assignments (right) */}
+      <div className={`grid gap-5 mb-6 ${
+        role === "va"
+          ? sessionState === "idle"
+            ? "grid-cols-1 md:grid-cols-[1fr_260px_260px]"
+            : "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
+          : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]"
+      }`}>
         {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} />}
         <TaskEntryForm
           onStartTask={handleCheckAndStartTask}
@@ -2003,11 +2024,18 @@ export default function DashboardPage() {
             teamMembers={teamMembers.map((m) => m.profile)}
           />
         )}
-        <ProjectSidebar
-          onSelectProject={handleProjectSelect}
-          onQuickAction={handleQuickAction}
-          isAdmin={role === "admin" || role === "manager"}
-        />
+        {/* VA Assignments — always visible for VAs (even before clock-in) */}
+        {role === "va" && userId && (
+          <VaAssignmentsColumn userId={userId} />
+        )}
+        {/* Quick Pick — hidden for VAs before clock-in */}
+        {(role !== "va" || sessionState !== "idle") && (
+          <ProjectSidebar
+            onSelectProject={handleProjectSelect}
+            onQuickAction={handleQuickAction}
+            isAdmin={role === "admin" || role === "manager"}
+          />
+        )}
       </div>
 
       {/* Activity Log — VAs see only their own entries */}
