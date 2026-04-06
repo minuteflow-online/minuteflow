@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 /* ── Types ─────────────────────────────────────────────── */
 
 type BillingType = "hourly" | "fixed";
-type AssignmentStatus = "not_started" | "in_progress" | "submitted" | "reviewing" | "revision_needed" | "approved" | "completed";
+type AssignmentStatus = "not_started" | "in_progress" | "submitted" | "reviewing" | "revision_needed" | "approved" | "completed" | "unassigned";
 type MessageType = "instruction" | "submission" | "revision" | "approval" | "comment";
 
 interface Submission {
@@ -20,12 +20,12 @@ interface Submission {
 
 interface VaTaskAssignmentRow {
   id: number;
-  va_id: string;
+  va_id: string | null;
   billing_type: BillingType;
   rate: number | null;
   status: AssignmentStatus;
   instructions: string | null;
-  assigned_at: string;
+  assigned_at: string | null;
   profiles: { id: string; full_name: string; username: string; position: string | null } | null;
   project_task_assignments: {
     id: number;
@@ -36,6 +36,7 @@ interface VaTaskAssignmentRow {
     task_library: { id: number; task_name: string } | null;
     project_tags: { id: number; account: string; project_name: string } | null;
   } | null;
+  _isUnassigned?: boolean;
 }
 
 interface TaskLibraryItem {
@@ -60,6 +61,7 @@ interface VAProfile {
 /* ── Status helpers ────────────────────────────────────── */
 
 const STATUS_LABELS: Record<AssignmentStatus, string> = {
+  unassigned: "Unassigned",
   not_started: "Not Started",
   in_progress: "In Progress",
   submitted: "Submitted",
@@ -70,6 +72,7 @@ const STATUS_LABELS: Record<AssignmentStatus, string> = {
 };
 
 const STATUS_COLORS: Record<AssignmentStatus, string> = {
+  unassigned: "bg-orange-100 text-orange-700",
   not_started: "bg-stone/10 text-stone",
   in_progress: "bg-sky-100 text-sky-700",
   submitted: "bg-blue-100 text-blue-700",
@@ -112,11 +115,13 @@ export default function TaskManagementSection() {
   const fetchAssignments = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/va-task-assignments?assignment_type=include");
+      const res = await fetch("/api/admin-tasks-combined");
       const data = await res.json();
-      // Only show fixed-rate tasks OR hourly for project-based VAs
+      // Only show fixed-rate tasks OR hourly for project-based VAs (+ all unassigned)
       const all = data.assignments ?? [];
       const filtered = all.filter((a: VaTaskAssignmentRow) => {
+        // Always show unassigned tasks
+        if (a._isUnassigned) return true;
         if (a.billing_type === "fixed") return true;
         // Hourly tasks: only show if VA's position is "Project Based VA"
         if (a.billing_type === "hourly" && a.profiles?.position?.toLowerCase() === "project based va") return true;
@@ -358,14 +363,20 @@ export default function TaskManagementSection() {
   /* ── Filter assignments ── */
   const filtered = assignments.filter((a) => {
     if (filterStatus !== "all" && a.status !== filterStatus) return false;
-    if (filterVA !== "all" && a.va_id !== filterVA) return false;
+    if (filterVA === "unassigned" && a.va_id !== null) return false;
+    if (filterVA !== "all" && filterVA !== "unassigned" && a.va_id !== filterVA) return false;
     if (filterBillingType !== "all" && a.billing_type !== filterBillingType) return false;
     return true;
   });
 
-  /* ── Get unique VAs for filter ── */
+  /* ── Get unique VAs for filter (include "Unassigned" if any tasks have no VA) ── */
+  const hasUnassigned = assignments.some((a) => a.va_id === null);
   const uniqueVAs = Array.from(
-    new Map(assignments.map((a) => [a.va_id, a.profiles?.full_name ?? a.va_id])).entries()
+    new Map(
+      assignments
+        .filter((a): a is VaTaskAssignmentRow & { va_id: string } => a.va_id !== null)
+        .map((a) => [a.va_id, a.profiles?.full_name ?? a.va_id])
+    ).entries()
   );
 
   if (loading) {
@@ -399,6 +410,7 @@ export default function TaskManagementSection() {
             className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
           >
             <option value="all">All Statuses</option>
+            <option value="unassigned">Unassigned</option>
             <option value="not_started">Not Started</option>
             <option value="in_progress">In Progress</option>
             <option value="submitted">Submitted</option>
@@ -413,6 +425,7 @@ export default function TaskManagementSection() {
             className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
           >
             <option value="all">All VAs</option>
+            {hasUnassigned && <option value="unassigned">Unassigned</option>}
             {uniqueVAs.map(([id, name]) => (
               <option key={id} value={id}>{name}</option>
             ))}
@@ -565,7 +578,7 @@ export default function TaskManagementSection() {
             const taskName = pta?.task_library?.task_name ?? "Unknown Task";
             const account = pta?.project_tags?.account ?? "—";
             const project = pta?.project_tags?.project_name ?? "—";
-            const vaName = a.profiles?.full_name ?? "Unknown";
+            const vaName = a._isUnassigned ? "— Unassigned —" : (a.profiles?.full_name ?? "Unknown");
             const isExpanded = expandedId === a.id;
 
             return (
@@ -579,7 +592,7 @@ export default function TaskManagementSection() {
                 >
                   <span className="font-medium text-espresso truncate">{taskName}</span>
                   <span className="text-stone truncate">{account} / {project}</span>
-                  <span className="text-espresso truncate">{vaName}</span>
+                  <span className={`truncate ${a._isUnassigned ? "text-orange-500 italic" : "text-espresso"}`}>{vaName}</span>
                   <span className="text-stone capitalize">{a.billing_type}</span>
                   <span className="text-espresso font-medium">
                     {a.rate != null ? `$${Number(a.rate).toFixed(2)}` : "—"}
