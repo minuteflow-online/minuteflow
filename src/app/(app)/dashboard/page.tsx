@@ -1401,9 +1401,13 @@ export default function DashboardPage() {
           const formTaskLower = formData.task_name.trim().toLowerCase();
           const matching = (assignData.assignments ?? []).find(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (a: any) =>
-              (a.status === "not_started" || a.status === "revision_needed") &&
-              (a.project_task_assignments?.task_library?.task_name ?? "").trim().toLowerCase() === formTaskLower
+            (a: any) => {
+              if (a.status !== "not_started" && a.status !== "revision_needed") return false;
+              const libName = (a.project_task_assignments?.task_library?.task_name ?? "").trim().toLowerCase();
+              if (!libName) return false;
+              // Match: exact, starts-with, or contains (either direction)
+              return libName === formTaskLower || libName.includes(formTaskLower) || formTaskLower.includes(libName);
+            }
           );
           if (matching) {
             await fetch("/api/va-task-assignments", {
@@ -1412,8 +1416,8 @@ export default function DashboardPage() {
               body: JSON.stringify({ id: matching.id, status: "in_progress" }),
             });
           }
-        } catch {
-          // silently ignore assignment status update failures
+        } catch (err) {
+          console.error("Auto-status update failed:", err);
         }
       }
 

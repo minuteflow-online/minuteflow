@@ -526,7 +526,8 @@ export default function FinancialSummaryTab() {
         const fixedTasks = assignmentsByVa[userId] ?? [];
         const fixedPay = fixedTasks.reduce((s, t) => s + t.rate, 0);
         const earnedFixedPay = fixedTasks.filter((t) => t.earned).reduce((s, t) => s + t.rate, 0);
-        const grossPay = hourlyPay + fixedPay;
+        // Only count approved fixed tasks toward gross pay and balance
+        const grossPay = hourlyPay + earnedFixedPay;
 
         // Payments made to this VA
         const payments = vaPaymentsByUser[userId] ?? [];
