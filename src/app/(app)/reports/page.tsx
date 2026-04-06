@@ -220,6 +220,7 @@ export default function ReportsPage() {
       const rawCat = l.category || "Task";
       const cat = rawCat === "Sorting Tasks" || rawCat === "Sorting" ? "Planning"
         : rawCat === "Message" ? "Communication"
+        : rawCat === "Meeting" ? "Collaboration"
         : rawCat;
       categoryMs[cat] = (categoryMs[cat] || 0) + (l.duration_ms || 0);
 

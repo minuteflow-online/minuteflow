@@ -6,7 +6,6 @@ import type { BillingType } from "@/types/database";
 const CATEGORIES = [
   { label: "Task", value: "Task" },
   { label: "Communication", value: "Communication" },
-  { label: "Meeting", value: "Meeting" },
   { label: "Planning", value: "Planning" },
   { label: "Collaboration", value: "Collaboration" },
   { label: "Personal", value: "Personal" },
@@ -259,10 +258,6 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       // Fixed tasks always show the wizard to collect status + memos for the NEW task
       setWizardStep("log-fixed");
     } else if (hasActiveTask) {
-      if (category === "Meeting") {
-        setShowClientMemo(true);
-        setShowInternalMemo(true);
-      }
       setWizardStep("close-old");
     } else {
       submitTask("", "", "");
@@ -388,8 +383,6 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     switch (cat) {
       case "Communication":
         return "bg-slate-blue text-white border border-slate-blue";
-      case "Meeting":
-        return "bg-clay-rose text-white border border-clay-rose";
       case "Planning":
         return "bg-amber text-white border border-amber";
       case "Collaboration":
@@ -398,6 +391,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       case "Break":
         return "bg-walnut text-white border border-walnut";
       default:
+        // "Task" and others
         return "bg-terracotta text-white border border-terracotta";
     }
   };

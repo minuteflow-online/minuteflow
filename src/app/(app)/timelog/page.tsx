@@ -81,11 +81,11 @@ const DAY_NAMES_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const catColors: Record<string, string> = {
   Task: "bg-terracotta-soft text-terracotta",
   Communication: "bg-slate-blue-soft text-slate-blue",
-  Message: "bg-slate-blue-soft text-slate-blue",
-  Meeting: "bg-clay-rose-soft text-clay-rose",
+  Message: "bg-slate-blue-soft text-slate-blue", // legacy
+  Meeting: "bg-terracotta-soft text-terracotta", // legacy → maps to Collaboration color
   Planning: "bg-amber-soft text-amber",
-  Sorting: "bg-amber-soft text-amber",
-  "Sorting Tasks": "bg-amber-soft text-amber",
+  Sorting: "bg-amber-soft text-amber", // legacy
+  "Sorting Tasks": "bg-amber-soft text-amber", // legacy
   Collaboration: "bg-terracotta-soft text-terracotta",
   Personal: "bg-parchment text-walnut",
   Break: "bg-amber-soft text-amber",
@@ -444,6 +444,7 @@ export default function TimeLogPage() {
       const rawCat = l.category || "Other";
       const cat = rawCat === "Sorting Tasks" || rawCat === "Sorting" ? "Planning"
         : rawCat === "Message" ? "Communication"
+        : rawCat === "Meeting" ? "Collaboration"
         : rawCat;
       categoryMs[cat] = (categoryMs[cat] || 0) + (l.duration_ms || 0);
 
@@ -1006,13 +1007,12 @@ export default function TimeLogPage() {
                   {/* Dynamic category breakdown */}
                   {daySummary.categories.map((cat) => {
                     const colorClass =
-                      cat.name.toLowerCase() === "task" ? "text-terracotta" :
+                      cat.name.toLowerCase() === "execution" || cat.name.toLowerCase() === "task" ? "text-terracotta" :
                       cat.name.toLowerCase() === "break" ? "text-amber" :
                       cat.name.toLowerCase() === "communication" || cat.name.toLowerCase() === "message" ? "text-slate-blue" :
-                      cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
                       cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
                       cat.name.toLowerCase() === "planning" || cat.name.toLowerCase() === "sorting tasks" || cat.name.toLowerCase() === "sorting" ? "text-amber" :
-                      cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
+                      cat.name.toLowerCase() === "collaboration" || cat.name.toLowerCase() === "meeting" ? "text-terracotta" :
                       "text-bark";
                     return (
                       <SummaryItem

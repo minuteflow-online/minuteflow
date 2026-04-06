@@ -965,8 +965,8 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
     if (member.sortingMs > 0) cats.push({ label: "Planning", ms: member.sortingMs, color: "bg-amber" });
     if (member.breakMs > 0) cats.push({ label: "Break", ms: member.breakMs, color: "bg-stone" });
     if (member.wizardMs > 0) cats.push({ label: "Wizard", ms: member.wizardMs, color: "bg-indigo-400" });
-    if (member.collaborationMs > 0) cats.push({ label: "Collaboration", ms: member.collaborationMs, color: "bg-sky-400" });
-    if (member.meetingMs > 0) cats.push({ label: "Meeting", ms: member.meetingMs, color: "bg-violet-400" });
+    const totalCollabMs = member.collaborationMs + member.meetingMs;
+    if (totalCollabMs > 0) cats.push({ label: "Collaboration", ms: totalCollabMs, color: "bg-sky-400" });
     if (member.messageMs > 0) cats.push({ label: "Communication", ms: member.messageMs, color: "bg-blue-400" });
     if (member.personalMs > 0) cats.push({ label: "Personal", ms: member.personalMs, color: "bg-clay-rose" });
     return cats;
@@ -1322,7 +1322,7 @@ function TimeAllocationBar({ member }: { member: TeamMember }) {
         {member.taskMs > 0 && (
           <span className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-sage" />
-            Tasks {formatDuration(member.taskMs)}
+            Task {formatDuration(member.taskMs)}
           </span>
         )}
         {member.sortingMs > 0 && (

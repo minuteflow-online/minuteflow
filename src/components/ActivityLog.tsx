@@ -43,11 +43,14 @@ function getUserColor(username: string): string {
 function normalizeCategory(cat: string): string {
   if (cat === "Sorting Tasks" || cat === "Sorting") return "Planning";
   if (cat === "Message") return "Communication";
+  // "Task" stays as "Task" (current category name)
+  if (cat === "Meeting") return "Collaboration";
   return cat;
 }
 
 function getCategoryTag(category: string): { bg: string; text: string } {
   switch (category.toLowerCase()) {
+    case "execution":
     case "task":
       return { bg: "bg-terracotta-soft", text: "text-terracotta" };
     case "break":
@@ -55,8 +58,6 @@ function getCategoryTag(category: string): { bg: string; text: string } {
     case "communication":
     case "message":
       return { bg: "bg-slate-blue-soft", text: "text-slate-blue" };
-    case "meeting":
-      return { bg: "bg-clay-rose-soft", text: "text-clay-rose" };
     case "personal":
       return { bg: "bg-parchment", text: "text-walnut" };
     case "planning":
@@ -64,6 +65,7 @@ function getCategoryTag(category: string): { bg: string; text: string } {
     case "sorting tasks":
       return { bg: "bg-amber-soft", text: "text-amber" };
     case "collaboration":
+    case "meeting":
       return { bg: "bg-terracotta-soft", text: "text-terracotta" };
     case "clock out":
       return { bg: "bg-stone/10", text: "text-stone" };
@@ -345,6 +347,8 @@ export default function ActivityLog({
       if (categoryFilter) {
         const norm = log.category === "Sorting Tasks" || log.category === "Sorting" ? "Planning"
           : log.category === "Message" ? "Communication"
+          : log.category === "Task" ? "Task"
+          : log.category === "Meeting" ? "Collaboration"
           : log.category;
         if (norm !== categoryFilter) return false;
       }
@@ -379,6 +383,8 @@ export default function ActivityLog({
       if (categoryFilter) {
         const norm = log.category === "Sorting Tasks" || log.category === "Sorting" ? "Planning"
           : log.category === "Message" ? "Communication"
+          : log.category === "Task" ? "Task"
+          : log.category === "Meeting" ? "Collaboration"
           : log.category;
         if (norm !== categoryFilter) return false;
       }
@@ -404,6 +410,8 @@ export default function ActivityLog({
       if (categoryFilter) {
         const norm = log.category === "Sorting Tasks" || log.category === "Sorting" ? "Planning"
           : log.category === "Message" ? "Communication"
+          : log.category === "Task" ? "Task"
+          : log.category === "Meeting" ? "Collaboration"
           : log.category;
         if (norm !== categoryFilter) return false;
       }
@@ -432,6 +440,8 @@ export default function ActivityLog({
       const rawCat = log.category;
       const cat = rawCat === "Sorting Tasks" || rawCat === "Sorting" ? "Planning"
         : rawCat === "Message" ? "Communication"
+        : rawCat === "Task" ? "Task"
+        : rawCat === "Meeting" ? "Collaboration"
         : rawCat;
       categoryMs[cat] = (categoryMs[cat] || 0) + log.duration_ms;
 
@@ -1106,13 +1116,12 @@ export default function ActivityLog({
             {/* Dynamic category breakdown */}
             {summary.categories.map((cat) => {
               const colorClass =
-                cat.name.toLowerCase() === "task" ? "text-terracotta" :
+                cat.name.toLowerCase() === "execution" || cat.name.toLowerCase() === "task" ? "text-terracotta" :
                 cat.name.toLowerCase() === "break" ? "text-amber" :
                 cat.name.toLowerCase() === "communication" || cat.name.toLowerCase() === "message" ? "text-slate-blue" :
-                cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
                 cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
                 cat.name.toLowerCase() === "planning" || cat.name.toLowerCase() === "sorting tasks" || cat.name.toLowerCase() === "sorting" ? "text-amber" :
-                cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
+                cat.name.toLowerCase() === "collaboration" || cat.name.toLowerCase() === "meeting" ? "text-terracotta" :
                 "text-bark";
               return (
                 <div key={cat.name}>

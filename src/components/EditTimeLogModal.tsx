@@ -11,7 +11,6 @@ import type { TimeLog, Profile } from "@/types/database";
 const CATEGORIES = [
   "Task",
   "Communication",
-  "Meeting",
   "Planning",
   "Personal",
   "Break",
