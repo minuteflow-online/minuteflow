@@ -81,11 +81,12 @@ const DAY_NAMES_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const catColors: Record<string, string> = {
   Task: "bg-terracotta-soft text-terracotta",
   Communication: "bg-slate-blue-soft text-slate-blue",
+  Message: "bg-slate-blue-soft text-slate-blue",
   Meeting: "bg-clay-rose-soft text-clay-rose",
   Planning: "bg-amber-soft text-amber",
   Sorting: "bg-amber-soft text-amber",
   "Sorting Tasks": "bg-amber-soft text-amber",
-  Supervision: "bg-clay-rose-soft text-clay-rose",
+  Collaboration: "bg-terracotta-soft text-terracotta",
   Personal: "bg-parchment text-walnut",
   Break: "bg-amber-soft text-amber",
   "Clock Out": "bg-stone/10 text-stone",
@@ -440,7 +441,10 @@ export default function TimeLogPage() {
       totalMs += l.duration_ms || 0;
       wizardMs += l.form_fill_ms || 0;
 
-      const cat = l.category || "Other";
+      const rawCat = l.category || "Other";
+      const cat = rawCat === "Sorting Tasks" || rawCat === "Sorting" ? "Planning"
+        : rawCat === "Message" ? "Communication"
+        : rawCat;
       categoryMs[cat] = (categoryMs[cat] || 0) + (l.duration_ms || 0);
 
       if (cat.toLowerCase() === "personal") {
@@ -1004,10 +1008,10 @@ export default function TimeLogPage() {
                     const colorClass =
                       cat.name.toLowerCase() === "task" ? "text-terracotta" :
                       cat.name.toLowerCase() === "break" ? "text-amber" :
-                      cat.name.toLowerCase() === "message" ? "text-slate-blue" :
+                      cat.name.toLowerCase() === "communication" || cat.name.toLowerCase() === "message" ? "text-slate-blue" :
                       cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
                       cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
-                      cat.name.toLowerCase() === "sorting tasks" ? "text-amber" :
+                      cat.name.toLowerCase() === "planning" || cat.name.toLowerCase() === "sorting tasks" || cat.name.toLowerCase() === "sorting" ? "text-amber" :
                       cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
                       "text-bark";
                     return (

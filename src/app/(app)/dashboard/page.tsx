@@ -8,7 +8,7 @@ import TaskEntryForm, { type TaskFormData } from "@/components/TaskEntryForm";
 import TeamSidebar from "@/components/TeamSidebar";
 import ActivityLog from "@/components/ActivityLog";
 import LiveSessionPrompt from "@/components/LiveSessionPrompt";
-import ProjectSidebar from "@/components/ProjectSidebar";
+import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSidebar";
 import DailyTaskPlanner from "@/components/DailyTaskPlanner";
 import VaAssignmentsColumn from "@/components/VaAssignmentsColumn";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
@@ -1869,27 +1869,12 @@ export default function DashboardPage() {
   );
 
   const handleQuickAction = useCallback(
-    (action: string) => {
-      const QUICK_ACTION_MAP: Record<string, { category: string; task_name: string; account?: string; client_name?: string }> = {
-        "team-assist": { category: "Collaboration", task_name: "Team Assist" },
-        "support-request": { category: "Task", task_name: "Support Request" },
-        "training": { category: "Task", task_name: "Training" },
-        "feedback": { category: "Task", task_name: "Feedback" },
-        "coaching-review": { category: "Task", task_name: "Coaching/Review" },
-        "weekly-meeting": { category: "Meeting", task_name: "Weekly Meeting" },
-        "unscheduled-meeting": { category: "Meeting", task_name: "Unscheduled Meeting" },
-        "messaging": { category: "Communication", task_name: "Messaging" },
-        "sorting-tasks": { category: "Planning", task_name: "Sorting Tasks", account: "Virtual Concierge", client_name: "Toni Colina" },
-      };
-
-      const mapping = QUICK_ACTION_MAP[action];
-      if (mapping) {
-        window.dispatchEvent(
-          new CustomEvent("minuteflow-prefill", {
-            detail: mapping,
-          })
-        );
-      }
+    (mapping: QuickActionMapping) => {
+      window.dispatchEvent(
+        new CustomEvent("minuteflow-prefill", {
+          detail: mapping,
+        })
+      );
     },
     []
   );

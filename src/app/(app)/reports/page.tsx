@@ -217,7 +217,10 @@ export default function ReportsPage() {
       totalMs += l.duration_ms || 0;
       wizardMs += l.form_fill_ms || 0;
 
-      const cat = l.category || "Task";
+      const rawCat = l.category || "Task";
+      const cat = rawCat === "Sorting Tasks" || rawCat === "Sorting" ? "Planning"
+        : rawCat === "Message" ? "Communication"
+        : rawCat;
       categoryMs[cat] = (categoryMs[cat] || 0) + (l.duration_ms || 0);
 
       if (cat.toLowerCase() === "personal") {
@@ -700,10 +703,13 @@ export default function ReportsPage() {
                   const colorClass: Record<string, string> = {
                     task: "bg-terracotta",
                     break: "bg-amber",
+                    communication: "bg-slate-blue",
                     message: "bg-slate-blue",
                     meeting: "bg-clay-rose",
                     personal: "bg-clay-rose",
+                    planning: "bg-amber",
                     "sorting tasks": "bg-amber",
+                    sorting: "bg-amber",
                     collaboration: "bg-terracotta",
                   };
                   const barColor = colorClass[cat.name.toLowerCase()] || "bg-bark";

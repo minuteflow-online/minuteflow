@@ -39,18 +39,27 @@ function getUserColor(username: string): string {
   return AVATAR_COLORS[username];
 }
 
+/** Normalize old DB category names to current display names */
+function normalizeCategory(cat: string): string {
+  if (cat === "Sorting Tasks" || cat === "Sorting") return "Planning";
+  if (cat === "Message") return "Communication";
+  return cat;
+}
+
 function getCategoryTag(category: string): { bg: string; text: string } {
   switch (category.toLowerCase()) {
     case "task":
       return { bg: "bg-terracotta-soft", text: "text-terracotta" };
     case "break":
       return { bg: "bg-amber-soft", text: "text-amber" };
+    case "communication":
     case "message":
       return { bg: "bg-slate-blue-soft", text: "text-slate-blue" };
     case "meeting":
       return { bg: "bg-clay-rose-soft", text: "text-clay-rose" };
     case "personal":
       return { bg: "bg-parchment", text: "text-walnut" };
+    case "planning":
     case "sorting":
     case "sorting tasks":
       return { bg: "bg-amber-soft", text: "text-amber" };
@@ -285,7 +294,7 @@ export default function ActivityLog({
   }, [logs]);
 
   // Static category list (always show all options in filter)
-  const ALL_CATEGORIES = ["Task", "Communication", "Meeting", "Planning", "Collaboration", "Personal", "Break"];
+  const ALL_CATEGORIES = ["Task", "Planning", "Communication", "Collaboration", "Personal", "Break"];
   const uniqueCategories = ALL_CATEGORIES;
 
   const uniqueAccounts = useMemo(() => {
@@ -333,7 +342,12 @@ export default function ActivityLog({
           (log.project || "").toLowerCase().includes(q);
         if (!match) return false;
       }
-      if (categoryFilter && log.category !== categoryFilter) return false;
+      if (categoryFilter) {
+        const norm = log.category === "Sorting Tasks" || log.category === "Sorting" ? "Planning"
+          : log.category === "Message" ? "Communication"
+          : log.category;
+        if (norm !== categoryFilter) return false;
+      }
       if (accountFilter && log.account !== accountFilter) return false;
       if (statusFilter && log.progress !== statusFilter) return false;
       return true;
@@ -362,7 +376,12 @@ export default function ActivityLog({
           (log.project || "").toLowerCase().includes(q);
         if (!match) return false;
       }
-      if (categoryFilter && log.category !== categoryFilter) return false;
+      if (categoryFilter) {
+        const norm = log.category === "Sorting Tasks" || log.category === "Sorting" ? "Planning"
+          : log.category === "Message" ? "Communication"
+          : log.category;
+        if (norm !== categoryFilter) return false;
+      }
       if (accountFilter && log.account !== accountFilter) return false;
       return true;
     }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
@@ -382,7 +401,12 @@ export default function ActivityLog({
           (log.project || "").toLowerCase().includes(q);
         if (!match) return false;
       }
-      if (categoryFilter && log.category !== categoryFilter) return false;
+      if (categoryFilter) {
+        const norm = log.category === "Sorting Tasks" || log.category === "Sorting" ? "Planning"
+          : log.category === "Message" ? "Communication"
+          : log.category;
+        if (norm !== categoryFilter) return false;
+      }
       if (accountFilter && log.account !== accountFilter) return false;
       return true;
     }).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
@@ -404,8 +428,11 @@ export default function ActivityLog({
       totalMs += log.duration_ms;
       wizardMs += log.form_fill_ms || 0;
 
-      // Accumulate per-category
-      const cat = log.category;
+      // Normalize old category names for display
+      const rawCat = log.category;
+      const cat = rawCat === "Sorting Tasks" || rawCat === "Sorting" ? "Planning"
+        : rawCat === "Message" ? "Communication"
+        : rawCat;
       categoryMs[cat] = (categoryMs[cat] || 0) + log.duration_ms;
 
       if (cat.toLowerCase() === "personal") {
@@ -714,7 +741,8 @@ export default function ActivityLog({
             </thead>
             <tbody>
               {filteredLogs.map((log) => {
-                const catTag = getCategoryTag(log.category);
+                const displayCategory = normalizeCategory(log.category);
+                const catTag = getCategoryTag(displayCategory);
                 const logScreenshots = screenshots[log.id] || [];
                 const isLive = !log.end_time;
                 const isEdited = editedLogIds.has(log.id);
@@ -860,7 +888,7 @@ export default function ActivityLog({
                     {/* Category */}
                     <td className="py-2.5 px-3 text-[12px] border-b border-parchment align-top">
                       <span className={`inline-block py-[2px] px-2 rounded-[10px] text-[10px] font-medium ${catTag.bg} ${catTag.text}`}>
-                        {log.category}
+                        {displayCategory}
                       </span>
                     </td>
 
@@ -1080,10 +1108,10 @@ export default function ActivityLog({
               const colorClass =
                 cat.name.toLowerCase() === "task" ? "text-terracotta" :
                 cat.name.toLowerCase() === "break" ? "text-amber" :
-                cat.name.toLowerCase() === "message" ? "text-slate-blue" :
+                cat.name.toLowerCase() === "communication" || cat.name.toLowerCase() === "message" ? "text-slate-blue" :
                 cat.name.toLowerCase() === "meeting" ? "text-clay-rose" :
                 cat.name.toLowerCase() === "personal" ? "text-clay-rose" :
-                cat.name.toLowerCase() === "sorting tasks" ? "text-amber" :
+                cat.name.toLowerCase() === "planning" || cat.name.toLowerCase() === "sorting tasks" || cat.name.toLowerCase() === "sorting" ? "text-amber" :
                 cat.name.toLowerCase() === "collaboration" ? "text-terracotta" :
                 "text-bark";
               return (

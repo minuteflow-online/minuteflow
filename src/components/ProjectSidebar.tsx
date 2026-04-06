@@ -11,22 +11,41 @@ interface ProjectTag {
   is_active: boolean;
 }
 
+export interface QuickActionMapping {
+  category: string;
+  task_name: string;
+  account: string;
+  project: string;
+  client_name?: string;
+}
+
 interface ProjectSidebarProps {
   onSelectProject: (account: string, project: string) => void;
-  onQuickAction: (action: string) => void;
+  onQuickAction: (mapping: QuickActionMapping) => void;
   isAdmin: boolean;
 }
 
-const QUICK_ACTIONS = [
-  { label: "Team Assist", action: "team-assist", icon: "\ud83e\udd1d", color: "bg-terracotta-soft text-terracotta" },
-  { label: "Support Request", action: "support-request", icon: "\ud83c\udd98", color: "bg-clay-rose-soft text-clay-rose" },
-  { label: "Training", action: "training", icon: "\ud83d\udcda", color: "bg-clay-rose-soft text-clay-rose" },
-  { label: "Feedback", action: "feedback", icon: "\ud83d\udcac", color: "bg-parchment text-walnut" },
-  { label: "Coaching/Review", action: "coaching-review", icon: "\ud83c\udfaf", color: "bg-sage-soft text-sage" },
-  { label: "Weekly Meeting", action: "weekly-meeting", icon: "\ud83d\udcc5", color: "bg-slate-blue-soft text-slate-blue" },
-  { label: "Unsched Meeting", action: "unscheduled-meeting", icon: "\ud83d\udde3\ufe0f", color: "bg-amber-soft text-amber" },
-  { label: "Messaging", action: "messaging", icon: "\ud83d\udce8", color: "bg-slate-blue-soft text-slate-blue" },
-  { label: "Sorting Tasks", action: "sorting-tasks", icon: "\ud83d\udccb", color: "bg-amber-soft text-amber" },
+interface QuickActionConfig {
+  label: string;
+  action: string;
+  icon: string;
+  color: string;
+  category: string;
+  account: string;
+  projects: string[]; // 1 = auto-fill, 2+ = VA picks from dropdown
+  client_name?: string;
+}
+
+const QUICK_ACTIONS: QuickActionConfig[] = [
+  { label: "Team Assist", action: "team-assist", icon: "\ud83e\udd1d", color: "bg-terracotta-soft text-terracotta", category: "Collaboration", account: "Virtual Concierge", projects: ["Supervision"] },
+  { label: "Support Request", action: "support-request", icon: "\ud83c\udd98", color: "bg-clay-rose-soft text-clay-rose", category: "Collaboration", account: "Virtual Concierge", projects: ["Supervision"] },
+  { label: "Training", action: "training", icon: "\ud83d\udcda", color: "bg-clay-rose-soft text-clay-rose", category: "Collaboration", account: "Virtual Concierge", projects: ["1 on 1 Meeting", "Team Meeting"] },
+  { label: "Feedback", action: "feedback", icon: "\ud83d\udcac", color: "bg-parchment text-walnut", category: "Collaboration", account: "Virtual Concierge", projects: ["Personal Development", "Team Development"] },
+  { label: "Coaching/Review", action: "coaching-review", icon: "\ud83c\udfaf", color: "bg-sage-soft text-sage", category: "Collaboration", account: "Virtual Concierge", projects: ["Personal Development", "Team Development"] },
+  { label: "Weekly Meeting", action: "weekly-meeting", icon: "\ud83d\udcc5", color: "bg-slate-blue-soft text-slate-blue", category: "Collaboration", account: "Virtual Concierge", projects: ["1 on 1 Meeting", "Team Meeting"] },
+  { label: "Unsched Meeting", action: "unscheduled-meeting", icon: "\ud83d\udde3\ufe0f", color: "bg-amber-soft text-amber", category: "Collaboration", account: "Virtual Concierge", projects: ["1 on 1 Meeting", "Team Meeting"] },
+  { label: "Messaging", action: "messaging", icon: "\ud83d\udce8", color: "bg-slate-blue-soft text-slate-blue", category: "Communication", account: "Virtual Concierge", projects: ["Supervision"] },
+  { label: "Sorting Tasks", action: "sorting-tasks", icon: "\ud83d\udccb", color: "bg-amber-soft text-amber", category: "Planning", account: "Virtual Concierge", projects: ["Organizing"], client_name: "Toni Colina" },
 ];
 
 export default function ProjectSidebar({
@@ -113,7 +132,18 @@ export default function ProjectSidebar({
             {QUICK_ACTIONS.map((qa) => (
               <button
                 key={qa.action}
-                onClick={() => onQuickAction(qa.action)}
+                onClick={() => {
+                  // Auto-fill task name, category, account
+                  // If single project → also auto-fill project
+                  // If multiple projects → leave project empty, VA picks from dropdown
+                  onQuickAction({
+                    category: qa.category,
+                    task_name: qa.label,
+                    account: qa.account,
+                    project: qa.projects.length === 1 ? qa.projects[0] : "",
+                    client_name: qa.client_name,
+                  });
+                }}
                 className={`${qa.color} rounded-lg py-2 px-1 text-center cursor-pointer transition-all hover:opacity-80`}
               >
                 <div className="text-sm leading-none mb-0.5">{qa.icon}</div>
