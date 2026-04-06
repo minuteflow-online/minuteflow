@@ -63,13 +63,7 @@ export default function TaskManagementSection() {
     try {
       const res = await fetch("/api/va-task-assignments?assignment_type=include");
       const data = await res.json();
-      // Filter: only show if VA position is "Project Based VA" OR billing_type is "fixed"
-      const filtered = (data.assignments ?? []).filter(
-        (a: VaTaskAssignmentRow) =>
-          a.billing_type === "fixed" ||
-          a.profiles?.position?.toLowerCase().includes("project based")
-      );
-      setAssignments(filtered);
+      setAssignments(data.assignments ?? []);
     } catch {
       console.error("Failed to fetch assignments");
     } finally {
@@ -182,10 +176,10 @@ export default function TaskManagementSection() {
     return (
       <div className="rounded-xl border border-sand bg-white p-4">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide mb-2">
-          Fixed & Project-Based Task Management
+          Task Management
         </h3>
         <p className="text-stone text-xs">
-          No fixed or project-based task assignments yet. Assign tasks to VAs in the columns above, then manage submissions here.
+          No task assignments yet. Assign tasks to VAs in the columns above, then manage submissions here.
         </p>
       </div>
     );
@@ -196,7 +190,7 @@ export default function TaskManagementSection() {
       {/* ── Header & Filters ── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">
-          Fixed & Project-Based Task Management
+          Task Management
         </h3>
         <div className="flex items-center gap-2">
           <select

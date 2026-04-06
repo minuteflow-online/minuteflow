@@ -65,19 +65,14 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState<number | null>(null);
 
   /* ── Fetch assignments ── */
   const fetchAssignments = useCallback(async () => {
     try {
       const res = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
       const data = await res.json();
-      // Only show if billing_type is "fixed" or VA position is project-based
-      const filtered = (data.assignments ?? []).filter(
-        (a: Assignment) =>
-          a.billing_type === "fixed" ||
-          a.profiles?.position?.toLowerCase().includes("project based")
-      );
-      setAssignments(filtered);
+      setAssignments(data.assignments ?? []);
     } catch {
       console.error("Failed to fetch assignments");
     } finally {
@@ -88,6 +83,27 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
   useEffect(() => {
     if (userId) fetchAssignments();
   }, [userId, fetchAssignments]);
+
+  /* ── Submit work ── */
+  const handleSubmit = async (assignmentId: number) => {
+    setSubmitting(assignmentId);
+    try {
+      await fetch("/api/task-submissions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          va_task_assignment_id: assignmentId,
+          message_type: "submission",
+          content: "Submitted for review",
+        }),
+      });
+      fetchAssignments();
+    } catch {
+      console.error("Failed to submit");
+    } finally {
+      setSubmitting(null);
+    }
+  };
 
   /* ── Expand/collapse ── */
   const handleExpand = (id: number) => {
@@ -172,10 +188,29 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
                       </div>
                     )}
 
+                    {a.status === "submitted" && (
+                      <div className="bg-blue-50 border-l-3 border-l-blue-400 rounded-r-lg px-2.5 py-2">
+                        <div className="text-[11px] font-semibold text-blue-700">
+                          Submitted — waiting for review
+                        </div>
+                      </div>
+                    )}
+
                     {a.status === "not_started" && !a.instructions && (
                       <div className="text-stone text-[11px] italic">
                         No instructions yet. Check back later.
                       </div>
+                    )}
+
+                    {/* Submit button — visible when not yet submitted or approved */}
+                    {(a.status === "not_started" || a.status === "revision_needed") && (
+                      <button
+                        onClick={() => handleSubmit(a.id)}
+                        disabled={submitting === a.id}
+                        className="w-full mt-1 px-3 py-2 rounded-lg bg-sage text-white text-xs font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
+                      >
+                        {submitting === a.id ? "Submitting..." : "Submit for Review"}
+                      </button>
                     )}
                   </div>
                 )}
