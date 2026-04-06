@@ -1391,6 +1391,29 @@ export default function DashboardPage() {
         });
       }
 
+      // Auto-update assignment status to "in_progress" when VA starts working
+      if (role === "va" && formData.task_name) {
+        try {
+          const assignRes = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
+          const assignData = await assignRes.json();
+          const matching = (assignData.assignments ?? []).find(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (a: any) =>
+              a.status === "not_started" &&
+              a.project_task_assignments?.task_library?.task_name === formData.task_name
+          );
+          if (matching) {
+            await fetch("/api/va-task-assignments", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: matching.id, status: "in_progress" }),
+            });
+          }
+        } catch {
+          // silently ignore assignment status update failures
+        }
+      }
+
       const newActiveTask: ActiveTask = {
         task_name: formData.task_name,
         category: formData.category,
@@ -2010,8 +2033,8 @@ export default function DashboardPage() {
             teamMembers={teamMembers.map((m) => m.profile)}
           />
         )}
-        {/* VA Assignments — always visible for VAs (even before clock-in) */}
-        {role === "va" && userId && (
+        {/* VA Assignments — only visible BEFORE clock-in */}
+        {role === "va" && userId && sessionState === "idle" && (
           <VaAssignmentsColumn userId={userId} />
         )}
         {/* Quick Pick — hidden for VAs before clock-in */}

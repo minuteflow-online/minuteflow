@@ -148,7 +148,8 @@ export async function POST(request: Request) {
 }
 
 /** PATCH: Update billing_type, rate, and/or assignment_type on existing assignment
- *  Body: { id, billing_type?, rate?, assignment_type? }
+ *  Body: { id, billing_type?, rate?, assignment_type?, status?, instructions? }
+ *  Admin can update all fields. VAs can only update status on their own assignments.
  */
 export async function PATCH(request: Request) {
   const supabase = await createClient();
@@ -164,15 +165,30 @@ export async function PATCH(request: Request) {
     .select("role")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+
+  const isAdmin = profile?.role === "admin";
 
   const body = await request.json();
   const { id, billing_type, rate, assignment_type, status, instructions } = body;
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
+  }
+
+  // VAs can only update status on their own assignments
+  if (!isAdmin) {
+    if (billing_type || rate !== undefined || assignment_type || instructions !== undefined) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+    // Verify ownership
+    const { data: assignment } = await supabase
+      .from("va_task_assignments")
+      .select("va_id")
+      .eq("id", id)
+      .single();
+    if (!assignment || assignment.va_id !== user.id) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const updates: Record<string, unknown> = {};

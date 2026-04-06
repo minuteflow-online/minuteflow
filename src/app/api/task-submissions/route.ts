@@ -99,7 +99,7 @@ export async function POST(request: Request) {
 
   const isAdmin = profile?.role === "admin";
   const body = await request.json();
-  const { va_task_assignment_id, message_type, content } = body;
+  const { va_task_assignment_id, message_type, content, submission_link, submission_comment } = body;
 
   if (!va_task_assignment_id || !message_type || !content) {
     return Response.json(
@@ -140,6 +140,8 @@ export async function POST(request: Request) {
       user_id: user.id,
       message_type,
       content,
+      submission_link: submission_link || null,
+      submission_comment: submission_comment || null,
     })
     .select(
       "id, va_task_assignment_id, user_id, message_type, content, created_at, profiles!task_submissions_user_id_fkey(id, full_name, username, role)"

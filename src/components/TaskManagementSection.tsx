@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 /* ── Types ─────────────────────────────────────────────── */
 
 type BillingType = "hourly" | "fixed";
-type AssignmentStatus = "not_started" | "submitted" | "revision_needed" | "approved";
+type AssignmentStatus = "not_started" | "in_progress" | "submitted" | "reviewing" | "revision_needed" | "approved" | "completed";
 type MessageType = "instruction" | "submission" | "revision" | "approval" | "comment";
 
 interface VaTaskAssignmentRow {
@@ -32,16 +32,22 @@ interface VaTaskAssignmentRow {
 
 const STATUS_LABELS: Record<AssignmentStatus, string> = {
   not_started: "Not Started",
+  in_progress: "In Progress",
   submitted: "Submitted",
+  reviewing: "Reviewing",
   revision_needed: "Revision Needed",
   approved: "Approved",
+  completed: "Completed",
 };
 
 const STATUS_COLORS: Record<AssignmentStatus, string> = {
   not_started: "bg-stone/10 text-stone",
+  in_progress: "bg-sky-100 text-sky-700",
   submitted: "bg-blue-100 text-blue-700",
+  reviewing: "bg-violet-100 text-violet-700",
   revision_needed: "bg-amber-100 text-amber-700",
   approved: "bg-emerald-100 text-emerald-700",
+  completed: "bg-green-100 text-green-800",
 };
 
 /* ── Main Component ────────────────────────────────────── */
@@ -63,7 +69,10 @@ export default function TaskManagementSection() {
     try {
       const res = await fetch("/api/va-task-assignments?assignment_type=include");
       const data = await res.json();
-      setAssignments(data.assignments ?? []);
+      // Only show fixed-rate / project-based assignments (not hourly)
+      const all = data.assignments ?? [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setAssignments(all.filter((a: any) => a.billing_type === "fixed"));
     } catch {
       console.error("Failed to fetch assignments");
     } finally {
@@ -176,10 +185,10 @@ export default function TaskManagementSection() {
     return (
       <div className="rounded-xl border border-sand bg-white p-4">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide mb-2">
-          Task Management
+          Fixed & Project-Based Task Management
         </h3>
         <p className="text-stone text-xs">
-          No task assignments yet. Assign tasks to VAs in the columns above, then manage submissions here.
+          No fixed-rate or project-based task assignments yet. Assign tasks with &quot;Fixed&quot; billing type to VAs in the columns above, then manage submissions here.
         </p>
       </div>
     );
@@ -190,7 +199,7 @@ export default function TaskManagementSection() {
       {/* ── Header & Filters ── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">
-          Task Management
+          Fixed & Project-Based Task Management
         </h3>
         <div className="flex items-center gap-2">
           <select
@@ -200,9 +209,12 @@ export default function TaskManagementSection() {
           >
             <option value="all">All Statuses</option>
             <option value="not_started">Not Started</option>
+            <option value="in_progress">In Progress</option>
             <option value="submitted">Submitted</option>
+            <option value="reviewing">Reviewing</option>
             <option value="revision_needed">Revision Needed</option>
             <option value="approved">Approved</option>
+            <option value="completed">Completed</option>
           </select>
           <select
             value={filterVA}
@@ -289,9 +301,13 @@ export default function TaskManagementSection() {
                       )}
                   </div>
 
-                  {/* Action Buttons — always visible when not approved */}
-                  {a.status !== "approved" ? (
-                    <div className="flex items-center gap-2">
+                  {/* Action Buttons */}
+                  {a.status === "completed" ? (
+                    <div className="text-green-700 text-[11px] font-semibold">Completed</div>
+                  ) : a.status === "approved" ? (
+                    <div className="text-emerald-600 text-[11px] font-semibold">Approved</div>
+                  ) : (
+                    <div className="flex items-center gap-2 flex-wrap">
                       <button
                         onClick={() => handleApprove(a.id)}
                         className="px-4 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold hover:bg-emerald-700 cursor-pointer transition-colors"
@@ -304,10 +320,6 @@ export default function TaskManagementSection() {
                       >
                         Request Revision
                       </button>
-                    </div>
-                  ) : (
-                    <div className="text-emerald-600 text-[11px] font-semibold">
-                      ✓ Approved
                     </div>
                   )}
 
