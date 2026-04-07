@@ -117,11 +117,12 @@ export default function TaskManagementSection() {
     try {
       const res = await fetch("/api/admin-tasks-combined");
       const data = await res.json();
-      // Only show fixed-rate tasks OR hourly for project-based VAs (+ all unassigned)
+      // Only show fixed-rate tasks OR hourly for project-based VAs (+ fixed-rate unassigned)
       const all = data.assignments ?? [];
       const filtered = all.filter((a: VaTaskAssignmentRow) => {
-        // Always show unassigned tasks
-        if (a._isUnassigned) return true;
+        // Only show unassigned tasks if they are fixed-rate
+        if (a._isUnassigned && a.billing_type === "fixed") return true;
+        if (a._isUnassigned) return false;
         if (a.billing_type === "fixed") return true;
         // Hourly tasks: only show if VA's position is "Project Based VA"
         if (a.billing_type === "hourly" && a.profiles?.position?.toLowerCase() === "project based va") return true;

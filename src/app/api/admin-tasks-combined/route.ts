@@ -70,6 +70,9 @@ export async function GET() {
       // Skip inactive tasks/projects
       if (pta.task_library?.is_active === false) return false;
       if (pta.project_tags?.is_active === false) return false;
+      // Only include fixed-rate unassigned tasks (hourly unassigned belong in Available Tasks)
+      const billing = pta.billing_type ?? pta.task_library?.billing_type ?? "fixed";
+      if (billing === "hourly") return false;
       return true;
     })
     .map((pta: any) => {
