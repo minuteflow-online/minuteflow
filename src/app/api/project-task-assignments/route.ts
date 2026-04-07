@@ -130,6 +130,22 @@ export async function PATCH(request: Request) {
     return Response.json({ success: true });
   }
 
+  // Bulk update show_in_assignment for multiple IDs
+  if (Array.isArray(body.ids) && body.show_in_assignment !== undefined) {
+    const ids = body.ids.map((i: number) => Number(i)).filter((i: number) => !isNaN(i));
+    if (ids.length === 0) {
+      return Response.json({ error: "No valid ids provided" }, { status: 400 });
+    }
+    const { error } = await supabase
+      .from("project_task_assignments")
+      .update({ show_in_assignment: body.show_in_assignment })
+      .in("id", ids);
+    if (error) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    return Response.json({ success: true, updated: ids.length });
+  }
+
   // Update billing_type, task_rate, instructions, and/or show_in_assignment on a single assignment
   const { id, billing_type, task_rate, instructions, show_in_assignment } = body;
   if (id && (billing_type !== undefined || task_rate !== undefined || instructions !== undefined || show_in_assignment !== undefined)) {

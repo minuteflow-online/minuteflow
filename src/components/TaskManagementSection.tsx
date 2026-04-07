@@ -105,6 +105,10 @@ export default function TaskManagementSection() {
   const [savingAssign, setSavingAssign] = useState<number | null>(null);
   const [togglingAssignment, setTogglingAssignment] = useState<number | null>(null);
 
+  /* ── Bulk select state ── */
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+
   /* ── Add Task Form state ── */
   const [showAddForm, setShowAddForm] = useState(false);
   const [taskLibrary, setTaskLibrary] = useState<TaskLibraryItem[]>([]);
@@ -468,6 +472,51 @@ export default function TaskManagementSection() {
     }
   };
 
+  /* ── Bulk toggle show_in_assignment ── */
+  const handleBulkToggle = async (show: boolean) => {
+    // Collect the PTA IDs for all selected rows
+    const ptaIds = Array.from(selectedIds)
+      .map((rowId) => {
+        const row = assignments.find((a) => a.id === rowId);
+        return row?.project_task_assignments?.id;
+      })
+      .filter((id): id is number => id != null);
+
+    if (ptaIds.length === 0) return;
+    setBulkUpdating(true);
+    try {
+      await fetch("/api/project-task-assignments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: ptaIds, show_in_assignment: show }),
+      });
+      setSelectedIds(new Set());
+      fetchAssignments();
+    } catch {
+      console.error("Failed to bulk update show_in_assignment");
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
+
+  /* ── Select helpers ── */
+  const toggleSelectOne = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map((a) => a.id)));
+    }
+  };
+
   /* ── Filter assignments ── */
   const filtered = assignments.filter((a) => {
     if (filterStatus !== "all" && a.status !== filterStatus) return false;
@@ -670,8 +719,46 @@ export default function TaskManagementSection() {
         </p>
       ) : (
         <div className="border border-sand rounded-lg overflow-hidden">
+          {/* Bulk Action Bar */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-sage-soft/30 border-b border-sand">
+              <span className="text-[11px] font-semibold text-espresso">
+                {selectedIds.size} selected
+              </span>
+              <button
+                onClick={() => handleBulkToggle(true)}
+                disabled={bulkUpdating}
+                className="px-3 py-1 rounded-lg bg-sage text-white text-[10px] font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                {bulkUpdating ? "..." : "Show in Assignment"}
+              </button>
+              <button
+                onClick={() => handleBulkToggle(false)}
+                disabled={bulkUpdating}
+                className="px-3 py-1 rounded-lg bg-stone/60 text-white text-[10px] font-semibold hover:bg-stone/80 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                {bulkUpdating ? "..." : "Hide from Assignment"}
+              </button>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="px-2 py-1 text-[10px] text-stone hover:text-espresso cursor-pointer"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
           {/* Header */}
-          <div className="grid grid-cols-[1fr_1fr_1fr_80px_90px_100px_60px] gap-2 px-3 py-2 bg-parchment/50 border-b border-sand text-[10px] font-bold text-stone uppercase tracking-wide">
+          <div className="grid grid-cols-[32px_1fr_1fr_1fr_80px_90px_100px_60px] gap-2 px-3 py-2 bg-parchment/50 border-b border-sand text-[10px] font-bold text-stone uppercase tracking-wide">
+            <span className="flex items-center justify-center">
+              <input
+                type="checkbox"
+                checked={filtered.length > 0 && selectedIds.size === filtered.length}
+                onChange={toggleSelectAll}
+                className="w-3.5 h-3.5 accent-sage cursor-pointer"
+                title="Select all"
+              />
+            </span>
             <span>Task</span>
             <span>Account / Project</span>
             <span>VA</span>
@@ -695,10 +782,19 @@ export default function TaskManagementSection() {
                 {/* Row */}
                 <div
                   onClick={() => handleExpand(a.id)}
-                  className={`grid grid-cols-[1fr_1fr_1fr_80px_90px_100px_60px] gap-2 px-3 py-2.5 text-xs cursor-pointer transition-colors ${
+                  className={`grid grid-cols-[32px_1fr_1fr_1fr_80px_90px_100px_60px] gap-2 px-3 py-2.5 text-xs cursor-pointer transition-colors ${
                     isExpanded ? "bg-parchment/30" : "hover:bg-parchment/20"
-                  }`}
+                  } ${selectedIds.has(a.id) ? "bg-sage-soft/10" : ""}`}
                 >
+                  {/* Checkbox */}
+                  <span className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(a.id)}
+                      onChange={() => toggleSelectOne(a.id)}
+                      className="w-3.5 h-3.5 accent-sage cursor-pointer"
+                    />
+                  </span>
                   <span className="font-medium text-espresso truncate">{taskName}</span>
                   <span className="text-stone truncate">{account} / {project}</span>
                   {/* VA column: inline assign dropdown for unassigned */}
