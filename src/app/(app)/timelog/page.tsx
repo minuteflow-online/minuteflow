@@ -1145,6 +1145,7 @@ export default function TimeLogPage() {
             { key: "end_time", label: "end_time", required: false, example: "11:30" },
             { key: "category", label: "category", required: false, example: "Task" },
             { key: "account", label: "account", required: false, example: "Virtual Concierge" },
+            { key: "project", label: "project", required: false, example: "Website Redesign" },
             { key: "client_name", label: "client_name", required: false, example: "Toni Colina" },
             { key: "billable", label: "billable", required: false, example: "yes" },
             { key: "client_memo", label: "client_memo", required: false, example: "Completed 5 posts" },

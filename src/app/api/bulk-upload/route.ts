@@ -120,6 +120,7 @@ async function handleTimeLogs(supabase: any, rows: Record<string, string>[]) {
     task_name: string;
     category: string;
     account: string | null;
+    project: string | null;
     client_name: string | null;
     start_time: string;
     end_time: string;
@@ -165,6 +166,9 @@ async function handleTimeLogs(supabase: any, rows: Record<string, string>[]) {
 
     // account (optional)
     const account = (r.account || "").trim() || null;
+
+    // project (optional)
+    const project = (r.project || "").trim() || null;
 
     // client_name (optional)
     const client_name = (r.client_name || r.client || "").trim() || null;
@@ -221,6 +225,7 @@ async function handleTimeLogs(supabase: any, rows: Record<string, string>[]) {
       task_name,
       category,
       account,
+      project,
       client_name,
       start_time,
       end_time,
