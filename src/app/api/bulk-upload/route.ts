@@ -61,6 +61,16 @@ async function handleExpenses(supabase: any, rows: Record<string, string>[]) {
     const r = rows[i];
     const rowNum = i + 1; // 1-indexed for user-facing errors
 
+    // Skip blank rows or rows where all values are empty/whitespace
+    const allValues = Object.values(r);
+    if (allValues.length === 0 || allValues.every((v) => !(v || "").trim())) continue;
+
+    // Skip rows missing all required fields (description AND amount AND date) — treat as junk data
+    const desc_check = (r.description || "").trim();
+    const amt_check = (r.amount || "").trim();
+    const date_check_exp = (r.expense_date || r.date || "").trim();
+    if (!desc_check && !amt_check && !date_check_exp) continue;
+
     // description (required)
     const description = (r.description || "").trim();
     if (!description) {
@@ -145,6 +155,16 @@ async function handleTimeLogs(supabase: any, rows: Record<string, string>[]) {
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const rowNum = i + 1;
+
+    // Skip blank rows or rows where all values are empty/whitespace
+    const allValues = Object.values(r);
+    if (allValues.length === 0 || allValues.every((v) => !(v || "").trim())) continue;
+
+    // Skip rows missing all required fields (va_name AND task_name AND date) — treat as junk data
+    const vaName_check = (r.va_name || r.full_name || r.name || "").trim();
+    const task_check = (r.task_name || r.task || "").trim();
+    const date_check = (r.date || "").trim();
+    if (!vaName_check && !task_check && !date_check) continue;
 
     // va_name (required) - match against profiles
     const vaName = (r.va_name || r.full_name || r.name || "").trim();
