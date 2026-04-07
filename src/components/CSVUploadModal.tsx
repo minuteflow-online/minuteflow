@@ -135,18 +135,27 @@ export default function CSVUploadModal({ title, type, columns, onClose, onSucces
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, rows: parsedRows }),
       });
-      const data = await res.json();
+
+      // Safely parse JSON — server may return empty/malformed response
+      let data: { inserted?: number; errors?: UploadError[]; error?: string };
+      try {
+        const text = await res.text();
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: `Server returned invalid response (status ${res.status}). Try uploading fewer rows or check your CSV format.` };
+      }
+
       if (!res.ok) {
-        setResult({ inserted: data.inserted || 0, errors: data.errors || [{ row: 0, message: data.error || "Upload failed" }] });
+        setResult({ inserted: data.inserted || 0, errors: data.errors || [{ row: 0, message: data.error || `Upload failed (status ${res.status})` }] });
       } else {
-        setResult({ inserted: data.inserted, errors: data.errors || [] });
+        setResult({ inserted: data.inserted || 0, errors: data.errors || [] });
       }
       setStep("result");
-      if (data.inserted > 0) {
+      if ((data.inserted || 0) > 0) {
         onSuccess();
       }
     } catch (err) {
-      setResult({ inserted: 0, errors: [{ row: 0, message: `Network error: ${err}` }] });
+      setResult({ inserted: 0, errors: [{ row: 0, message: `Network error: Could not reach server. Check your connection and try again.` }] });
       setStep("result");
     } finally {
       setUploading(false);

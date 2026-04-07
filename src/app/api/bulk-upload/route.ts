@@ -10,37 +10,50 @@ export const dynamic = "force-dynamic";
  * Returns { inserted: number, errors: Array<{ row: number, message: string }> }
  */
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  // Check admin
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  if (profile?.role !== "admin") {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+    // Check admin
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+    if (profile?.role !== "admin") {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
 
-  const body = await request.json();
-  const { type, rows } = body as { type: string; rows: Record<string, string>[] };
+    let body: { type?: string; rows?: Record<string, string>[] };
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: "Invalid JSON in request body" }, { status: 400 });
+    }
+    const { type, rows } = body as { type: string; rows: Record<string, string>[] };
 
-  if (!type || !rows || !Array.isArray(rows) || rows.length === 0) {
-    return Response.json({ error: "Missing type or rows" }, { status: 400 });
-  }
+    if (!type || !rows || !Array.isArray(rows) || rows.length === 0) {
+      return Response.json({ error: "Missing type or rows" }, { status: 400 });
+    }
 
-  if (type === "expenses") {
-    return handleExpenses(supabase, rows);
-  } else if (type === "time_logs") {
-    return handleTimeLogs(supabase, rows);
-  } else {
-    return Response.json({ error: `Unknown type: ${type}` }, { status: 400 });
+    if (type === "expenses") {
+      return handleExpenses(supabase, rows);
+    } else if (type === "time_logs") {
+      return handleTimeLogs(supabase, rows);
+    } else {
+      return Response.json({ error: `Unknown type: ${type}` }, { status: 400 });
+    }
+  } catch (err) {
+    console.error("Bulk upload error:", err);
+    return Response.json(
+      { error: `Server error: ${err instanceof Error ? err.message : "Unknown error"}`, inserted: 0, errors: [] },
+      { status: 500 }
+    );
   }
 }
 
