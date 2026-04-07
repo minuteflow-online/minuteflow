@@ -23,6 +23,7 @@ interface Assignment {
   profiles: { id: string; full_name: string; username: string; position: string | null } | null;
   project_task_assignments: {
     id: number;
+    show_in_assignment?: boolean;
     task_library: { id: number; task_name: string } | null;
     project_tags: { id: number; account: string; project_name: string } | null;
   } | null;
@@ -105,7 +106,14 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
     try {
       const res = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
       const data = await res.json();
-      const list = data.assignments ?? [];
+      const allAssignments = data.assignments ?? [];
+      // Filter: hide hourly tasks from My Assignment (they show in Log a Task after clock-in)
+      // Also hide tasks where admin toggled show_in_assignment = false
+      const list = allAssignments.filter((a: Assignment) => {
+        if (a.billing_type === "hourly") return false;
+        if (a.project_task_assignments?.show_in_assignment === false) return false;
+        return true;
+      });
       setAssignments(list);
       // Fetch revision messages for any assignment needing revision
       list.forEach((a: Assignment) => {

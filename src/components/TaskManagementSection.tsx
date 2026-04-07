@@ -33,6 +33,7 @@ interface VaTaskAssignmentRow {
     project_tag_id: number;
     billing_type: BillingType | null;
     task_rate: number | null;
+    show_in_assignment?: boolean;
     task_library: { id: number; task_name: string } | null;
     project_tags: { id: number; account: string; project_name: string } | null;
   } | null;
@@ -97,6 +98,13 @@ export default function TaskManagementSection() {
   const [filterBillingType, setFilterBillingType] = useState<BillingType | "all">("all");
   const [submissions, setSubmissions] = useState<Record<number, Submission[]>>({});
 
+  /* ── Inline editing state ── */
+  const [editingRate, setEditingRate] = useState<Record<number, string>>({});
+  const [savingRate, setSavingRate] = useState<number | null>(null);
+  const [assigningVa, setAssigningVa] = useState<Record<number, string>>({});
+  const [savingAssign, setSavingAssign] = useState<number | null>(null);
+  const [togglingAssignment, setTogglingAssignment] = useState<number | null>(null);
+
   /* ── Add Task Form state ── */
   const [showAddForm, setShowAddForm] = useState(false);
   const [taskLibrary, setTaskLibrary] = useState<TaskLibraryItem[]>([]);
@@ -136,9 +144,21 @@ export default function TaskManagementSection() {
     }
   }, []);
 
+  /* ── Fetch VA list for inline assignment ── */
+  const fetchVaList = useCallback(async () => {
+    try {
+      const res = await fetch("/api/profiles?role=va");
+      const data = await res.json();
+      setVaList(data.profiles ?? []);
+    } catch {
+      // silent
+    }
+  }, []);
+
   useEffect(() => {
     fetchAssignments();
-  }, [fetchAssignments]);
+    fetchVaList();
+  }, [fetchAssignments, fetchVaList]);
 
   /* ── Fetch options for Add Task form ── */
   const fetchAddOptions = useCallback(async () => {
@@ -361,6 +381,93 @@ export default function TaskManagementSection() {
     }
   };
 
+  /* ── Toggle show_in_assignment on PTA ── */
+  const handleToggleShowInAssignment = async (a: VaTaskAssignmentRow) => {
+    const ptaId = a.project_task_assignments?.id;
+    if (!ptaId) return;
+    const current = a.project_task_assignments?.show_in_assignment ?? true;
+    setTogglingAssignment(ptaId);
+    try {
+      await fetch("/api/project-task-assignments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: ptaId, show_in_assignment: !current }),
+      });
+      fetchAssignments();
+    } catch {
+      console.error("Failed to toggle show_in_assignment");
+    } finally {
+      setTogglingAssignment(null);
+    }
+  };
+
+  /* ── Inline rate save ── */
+  const handleSaveRate = async (a: VaTaskAssignmentRow) => {
+    const rateStr = editingRate[a.id];
+    if (rateStr === undefined) return;
+    const newRate = rateStr ? parseFloat(rateStr) : null;
+    setSavingRate(a.id);
+    try {
+      if (a._isUnassigned) {
+        // Update on the PTA directly
+        const ptaId = a.project_task_assignments?.id;
+        if (ptaId) {
+          await fetch("/api/project-task-assignments", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: ptaId, task_rate: newRate }),
+          });
+        }
+      } else {
+        // Update on the VA task assignment
+        await fetch("/api/va-task-assignments", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: a.id, rate: newRate }),
+        });
+      }
+      setEditingRate((prev) => {
+        const copy = { ...prev };
+        delete copy[a.id];
+        return copy;
+      });
+      fetchAssignments();
+    } catch {
+      console.error("Failed to update rate");
+    } finally {
+      setSavingRate(null);
+    }
+  };
+
+  /* ── Assign VA from table row ── */
+  const handleAssignVaFromTable = async (a: VaTaskAssignmentRow) => {
+    const vaId = assigningVa[a.id];
+    if (!vaId || !a.project_task_assignments?.id) return;
+    setSavingAssign(a.id);
+    try {
+      await fetch("/api/va-task-assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          va_id: vaId,
+          project_task_assignment_id: a.project_task_assignments.id,
+          billing_type: a.billing_type,
+          rate: a.rate,
+        }),
+      });
+      setAssigningVa((prev) => {
+        const copy = { ...prev };
+        delete copy[a.id];
+        return copy;
+      });
+      fetchAssignments();
+    } catch {
+      console.error("Failed to assign VA");
+    } finally {
+      setSavingAssign(null);
+    }
+  };
+
   /* ── Filter assignments ── */
   const filtered = assignments.filter((a) => {
     if (filterStatus !== "all" && a.status !== filterStatus) return false;
@@ -564,13 +671,14 @@ export default function TaskManagementSection() {
       ) : (
         <div className="border border-sand rounded-lg overflow-hidden">
           {/* Header */}
-          <div className="grid grid-cols-[1fr_1fr_1fr_80px_80px_100px] gap-2 px-3 py-2 bg-parchment/50 border-b border-sand text-[10px] font-bold text-stone uppercase tracking-wide">
+          <div className="grid grid-cols-[1fr_1fr_1fr_80px_90px_100px_60px] gap-2 px-3 py-2 bg-parchment/50 border-b border-sand text-[10px] font-bold text-stone uppercase tracking-wide">
             <span>Task</span>
             <span>Account / Project</span>
             <span>VA</span>
             <span>Type</span>
             <span>Rate</span>
             <span>Status</span>
+            <span title="Show in My Assignment">Assign</span>
           </div>
 
           {/* Rows */}
@@ -587,21 +695,97 @@ export default function TaskManagementSection() {
                 {/* Row */}
                 <div
                   onClick={() => handleExpand(a.id)}
-                  className={`grid grid-cols-[1fr_1fr_1fr_80px_80px_100px] gap-2 px-3 py-2.5 text-xs cursor-pointer transition-colors ${
+                  className={`grid grid-cols-[1fr_1fr_1fr_80px_90px_100px_60px] gap-2 px-3 py-2.5 text-xs cursor-pointer transition-colors ${
                     isExpanded ? "bg-parchment/30" : "hover:bg-parchment/20"
                   }`}
                 >
                   <span className="font-medium text-espresso truncate">{taskName}</span>
                   <span className="text-stone truncate">{account} / {project}</span>
-                  <span className={`truncate ${a._isUnassigned ? "text-orange-500 italic" : "text-espresso"}`}>{vaName}</span>
+                  {/* VA column: inline assign dropdown for unassigned */}
+                  <span className={`truncate ${a._isUnassigned ? "text-orange-500 italic" : "text-espresso"}`} onClick={(e) => e.stopPropagation()}>
+                    {a._isUnassigned ? (
+                      <span className="flex items-center gap-1">
+                        <select
+                          value={assigningVa[a.id] ?? ""}
+                          onChange={(e) => setAssigningVa((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                          className="w-full rounded border border-sand px-1 py-0.5 text-[10px] text-espresso bg-white outline-none"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <option value="">Assign VA...</option>
+                          {vaList.map((v) => (
+                            <option key={v.id} value={v.id}>{v.full_name}</option>
+                          ))}
+                        </select>
+                        {assigningVa[a.id] && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleAssignVaFromTable(a); }}
+                            disabled={savingAssign === a.id}
+                            className="shrink-0 px-1.5 py-0.5 rounded bg-sage text-white text-[9px] font-bold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer"
+                          >
+                            {savingAssign === a.id ? "..." : "Go"}
+                          </button>
+                        )}
+                      </span>
+                    ) : vaName}
+                  </span>
                   <span className="text-stone capitalize">{a.billing_type}</span>
-                  <span className="text-espresso font-medium">
-                    {a.rate != null ? `$${Number(a.rate).toFixed(2)}` : "—"}
+                  {/* Rate column: click to edit */}
+                  <span className="text-espresso font-medium" onClick={(e) => e.stopPropagation()}>
+                    {editingRate[a.id] !== undefined ? (
+                      <span className="flex items-center gap-0.5">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editingRate[a.id]}
+                          onChange={(e) => setEditingRate((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                          className="w-14 rounded border border-sand px-1 py-0.5 text-[10px] outline-none"
+                          autoFocus
+                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveRate(a); if (e.key === "Escape") setEditingRate((prev) => { const c = {...prev}; delete c[a.id]; return c; }); }}
+                        />
+                        <button
+                          onClick={() => handleSaveRate(a)}
+                          disabled={savingRate === a.id}
+                          className="px-1 py-0.5 rounded bg-sage text-white text-[9px] font-bold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer"
+                        >
+                          {savingRate === a.id ? "..." : "✓"}
+                        </button>
+                      </span>
+                    ) : (
+                      <span
+                        onClick={() => setEditingRate((prev) => ({ ...prev, [a.id]: a.rate != null ? String(a.rate) : "" }))}
+                        className="cursor-pointer hover:text-sage underline decoration-dashed underline-offset-2"
+                        title="Click to edit rate"
+                      >
+                        {a.rate != null ? `$${Number(a.rate).toFixed(2)}` : "—"}
+                      </span>
+                    )}
                   </span>
                   <span>
                     <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${STATUS_COLORS[a.status]}`}>
                       {STATUS_LABELS[a.status]}
                     </span>
+                  </span>
+                  {/* Show in Assignment toggle */}
+                  <span onClick={(e) => e.stopPropagation()} className="flex items-center justify-center">
+                    <button
+                      onClick={() => handleToggleShowInAssignment(a)}
+                      disabled={togglingAssignment === (a.project_task_assignments?.id ?? 0)}
+                      className={`w-8 h-4 rounded-full relative transition-colors cursor-pointer ${
+                        (a.project_task_assignments?.show_in_assignment ?? true)
+                          ? "bg-sage"
+                          : "bg-stone/30"
+                      } ${togglingAssignment === (a.project_task_assignments?.id ?? 0) ? "opacity-50" : ""}`}
+                      title={(a.project_task_assignments?.show_in_assignment ?? true) ? "Showing in My Assignment" : "Hidden from My Assignment"}
+                    >
+                      <span
+                        className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
+                          (a.project_task_assignments?.show_in_assignment ?? true)
+                            ? "translate-x-4"
+                            : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
                   </span>
                 </div>
 

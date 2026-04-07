@@ -134,5 +134,31 @@ export async function POST(request: Request) {
     return Response.json({ error: error.message }, { status: 400 });
   }
 
+  // Auto-include project so the account/project shows in the VA's Log a Task dropdown
+  try {
+    const { data: ptaForProject } = await supabase
+      .from("project_task_assignments")
+      .select("project_tag_id")
+      .eq("id", project_task_assignment_id)
+      .single();
+    if (ptaForProject?.project_tag_id) {
+      await supabase
+        .from("va_project_assignments")
+        .upsert(
+          {
+            va_id: user.id,
+            project_tag_id: ptaForProject.project_tag_id,
+            billing_type: "fixed",
+            assignment_type: "include",
+            assigned_by: user.id,
+          },
+          { onConflict: "va_id,project_tag_id", ignoreDuplicates: true }
+        );
+    }
+  } catch {
+    // Non-critical — claim still succeeded
+    console.error("Auto-project-include on claim failed (non-critical)");
+  }
+
   return Response.json({ assignment }, { status: 201 });
 }

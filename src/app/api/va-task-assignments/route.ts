@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("va_task_assignments")
     .select(
-      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, assigned_by, assigned_at, status, instructions, profiles!va_task_assignments_va_id_fkey(id, full_name, username, position), project_task_assignments(id, task_library_id, project_tag_id, billing_type, task_rate, task_library(id, task_name), project_tags(id, account, project_name))"
+      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, assigned_by, assigned_at, status, instructions, profiles!va_task_assignments_va_id_fkey(id, full_name, username, position), project_task_assignments(id, task_library_id, project_tag_id, billing_type, task_rate, show_in_assignment, task_library(id, task_name), project_tags(id, account, project_name))"
     )
     .order("assigned_at", { ascending: false });
 
@@ -162,6 +162,36 @@ export async function POST(request: Request) {
 
   if (error) {
     return Response.json({ error: error.message }, { status: 400 });
+  }
+
+  // Auto-include project for each assigned VA so the account/project shows in Log a Task
+  try {
+    for (const row of rows) {
+      if (row.assignment_type !== "include") continue;
+      // Look up the project_tag_id for this PTA
+      const { data: ptaData } = await supabase
+        .from("project_task_assignments")
+        .select("project_tag_id")
+        .eq("id", row.project_task_assignment_id)
+        .single();
+      if (ptaData?.project_tag_id) {
+        await supabase
+          .from("va_project_assignments")
+          .upsert(
+            {
+              va_id: row.va_id,
+              project_tag_id: ptaData.project_tag_id,
+              billing_type: row.billing_type ?? "hourly",
+              assignment_type: "include",
+              assigned_by: user.id,
+            },
+            { onConflict: "va_id,project_tag_id", ignoreDuplicates: true }
+          );
+      }
+    }
+  } catch {
+    // Non-critical — task assignment still succeeded
+    console.error("Auto-project-include failed (non-critical)");
   }
 
   return Response.json({ assignments: data }, { status: 201 });

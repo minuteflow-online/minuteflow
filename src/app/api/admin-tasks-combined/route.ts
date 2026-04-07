@@ -34,7 +34,7 @@ export async function GET() {
   const { data: assigned, error: assignedError } = await supabase
     .from("va_task_assignments")
     .select(
-      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, assigned_by, assigned_at, status, instructions, profiles!va_task_assignments_va_id_fkey(id, full_name, username, position), project_task_assignments(id, task_library_id, project_tag_id, billing_type, task_rate, task_library(id, task_name), project_tags(id, account, project_name))"
+      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, assigned_by, assigned_at, status, instructions, profiles!va_task_assignments_va_id_fkey(id, full_name, username, position), project_task_assignments(id, task_library_id, project_tag_id, billing_type, task_rate, show_in_assignment, task_library(id, task_name), project_tags(id, account, project_name))"
     )
     .eq("assignment_type", "include")
     .order("assigned_at", { ascending: false });
@@ -47,7 +47,7 @@ export async function GET() {
   const { data: allPTAs, error: ptaError } = await supabase
     .from("project_task_assignments")
     .select(
-      "id, task_library_id, project_tag_id, billing_type, task_rate, instructions, task_library(id, task_name, is_active, billing_type, default_rate), project_tags(id, account, project_name, is_active)"
+      "id, task_library_id, project_tag_id, billing_type, task_rate, show_in_assignment, instructions, task_library(id, task_name, is_active, billing_type, default_rate), project_tags(id, account, project_name, is_active)"
     )
     .order("id");
 
@@ -97,6 +97,7 @@ export async function GET() {
           project_tag_id: pta.project_tag_id,
           billing_type: pta.billing_type,
           task_rate: pta.task_rate,
+          show_in_assignment: pta.show_in_assignment ?? true,
           task_library: pta.task_library
             ? { id: pta.task_library.id, task_name: pta.task_library.task_name }
             : null,
