@@ -49,9 +49,11 @@ export async function POST(request: Request) {
       return Response.json({ error: `Unknown type: ${type}` }, { status: 400 });
     }
   } catch (err) {
-    console.error("Bulk upload error:", err);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack : "";
+    console.error("Bulk upload error:", errMsg, errStack);
     return Response.json(
-      { error: `Server error: ${err instanceof Error ? err.message : "Unknown error"}`, inserted: 0, errors: [] },
+      { error: `Server error: ${errMsg}`, inserted: 0, errors: [] },
       { status: 500 }
     );
   }
@@ -217,27 +219,55 @@ async function handleTimeLogs(supabase: any, rows: Record<string, string>[]) {
     let duration_ms: number;
 
     if (dateStr && startStr && endStr) {
-      // Full date + time provided
-      start_time = `${dateStr}T${startStr}`;
-      end_time = `${dateStr}T${endStr}`;
-      const startMs = new Date(start_time).getTime();
-      const endMs = new Date(end_time).getTime();
-      if (isNaN(startMs) || isNaN(endMs) || endMs <= startMs) {
-        errors.push({ row: rowNum, message: `Invalid date/time range: ${dateStr} ${startStr} - ${endStr}` });
+      // Full date + time provided — use space separator (not T) so AM/PM parses correctly
+      const startRaw = `${dateStr} ${startStr}`;
+      const endRaw = `${dateStr} ${endStr}`;
+      const startMs = new Date(startRaw).getTime();
+      let endMs = new Date(endRaw).getTime();
+      if (isNaN(startMs) || isNaN(endMs)) {
+        errors.push({ row: rowNum, message: `Invalid date/time: ${dateStr} ${startStr} - ${endStr}` });
         continue;
       }
+      // Handle overnight spans (e.g., 11:36 PM → 12:31 AM) — add 1 day to end
+      if (endMs <= startMs) {
+        endMs += 86400000; // +24 hours
+      }
+      start_time = new Date(startMs).toISOString();
+      end_time = new Date(endMs).toISOString();
       duration_ms = endMs - startMs;
-    } else if (dateStr && durationHoursStr) {
-      // Date + duration in hours
+    } else if (dateStr && startStr && !endStr && durationHoursStr) {
+      // Start time + duration but no end time — calculate end from duration
+      const startRaw = `${dateStr} ${startStr}`;
+      const startMs = new Date(startRaw).getTime();
+      if (isNaN(startMs)) {
+        errors.push({ row: rowNum, message: `Invalid start time: ${dateStr} ${startStr}` });
+        continue;
+      }
       const hours = parseFloat(durationHoursStr);
       if (isNaN(hours) || hours <= 0) {
         errors.push({ row: rowNum, message: `Invalid duration_hours: "${durationHoursStr}"` });
         continue;
       }
       duration_ms = Math.round(hours * 3600000);
-      // Default to 9am start
-      start_time = `${dateStr}T09:00:00`;
-      end_time = new Date(new Date(start_time).getTime() + duration_ms).toISOString();
+      start_time = new Date(startMs).toISOString();
+      end_time = new Date(startMs + duration_ms).toISOString();
+    } else if (dateStr && durationHoursStr) {
+      // Date + duration in hours only (no start/end times)
+      const hours = parseFloat(durationHoursStr);
+      if (isNaN(hours) || hours <= 0) {
+        errors.push({ row: rowNum, message: `Invalid duration_hours: "${durationHoursStr}"` });
+        continue;
+      }
+      duration_ms = Math.round(hours * 3600000);
+      // Default to 9am start, use space separator for AM/PM safety
+      const startRaw = `${dateStr} 09:00:00`;
+      const startMs = new Date(startRaw).getTime();
+      if (isNaN(startMs)) {
+        errors.push({ row: rowNum, message: `Invalid date: "${dateStr}"` });
+        continue;
+      }
+      start_time = new Date(startMs).toISOString();
+      end_time = new Date(startMs + duration_ms).toISOString();
     } else {
       errors.push({ row: rowNum, message: "Need either (date + start_time + end_time) or (date + duration_hours)" });
       continue;
@@ -274,10 +304,19 @@ async function handleTimeLogs(supabase: any, rows: Record<string, string>[]) {
     return Response.json({ inserted: 0, errors });
   }
 
-  const { error: insertError } = await supabase.from("time_logs").insert(valid);
-  if (insertError) {
-    return Response.json({ error: `Database insert failed: ${insertError.message}`, inserted: 0, errors }, { status: 500 });
+  // Insert rows one at a time so partial successes are saved and per-row errors are reported
+  let inserted = 0;
+  for (let i = 0; i < valid.length; i++) {
+    const row = valid[i];
+    const { error: insertError } = await supabase.from("time_logs").insert(row);
+    if (insertError) {
+      console.error(`Bulk upload row ${i + 1} insert failed:`, insertError.message, JSON.stringify(row));
+      errors.push({ row: i + 1, message: `Database insert failed: ${insertError.message}` });
+    } else {
+      inserted++;
+    }
   }
 
-  return Response.json({ inserted: valid.length, errors });
+  const status = inserted === 0 && errors.length > 0 ? 500 : 200;
+  return Response.json({ inserted, errors }, { status });
 }
