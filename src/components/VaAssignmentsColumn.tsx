@@ -107,10 +107,9 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
       const res = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
       const data = await res.json();
       const allAssignments = data.assignments ?? [];
-      // Filter: hide hourly tasks from My Assignment (they show in Log a Task after clock-in)
-      // Also hide tasks where admin toggled show_in_assignment = false
+      // Filter: show_in_assignment toggle is the sole gatekeeper for My Assignment visibility
+      // Hourly tasks default to show_in_assignment=false but admin can toggle them ON
       const list = allAssignments.filter((a: Assignment) => {
-        if (a.billing_type === "hourly") return false;
         if (a.project_task_assignments?.show_in_assignment === false) return false;
         return true;
       });
