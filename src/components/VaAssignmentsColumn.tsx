@@ -188,11 +188,8 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
       setExpandedId(null);
     } else {
       setExpandedId(id);
-      // Auto-mark in_progress when VA opens a not_started task
-      const assignment = assignments.find((a) => a.id === id);
-      if (assignment && assignment.status === "not_started") {
-        markInProgress(id);
-      }
+      // NOTE: We no longer auto-mark in_progress on expand.
+      // Status changes to in_progress only when the VA actually starts logging time for this task.
     }
   };
 

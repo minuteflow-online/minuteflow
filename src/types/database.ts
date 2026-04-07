@@ -20,6 +20,7 @@ export interface Profile {
   pay_rate: number;
   pay_rate_type: 'hourly' | 'daily' | 'monthly';
   is_active: boolean;
+  can_see_available_tasks: boolean;
   created_at: string;
 }
 

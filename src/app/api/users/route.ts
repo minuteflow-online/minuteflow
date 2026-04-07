@@ -172,6 +172,7 @@ export async function PATCH(request: Request) {
     "pay_rate",
     "pay_rate_type",
     "is_active",
+    "can_see_available_tasks",
   ];
   for (const field of allowedFields) {
     if (field in updates) {

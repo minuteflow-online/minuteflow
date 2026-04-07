@@ -2026,45 +2026,84 @@ export default function DashboardPage() {
       )}
 
       {/* Layout: Team (left) + Task Form (center) + Daily Planner + Projects/Assignments (right) */}
-      <div className={`grid gap-5 mb-6 ${
-        role === "va"
+      {(() => {
+        // ─── VA Visibility Rules ───────────────────────────────────
+        const isVa = role === "va";
+        const pos = profile?.position ?? "";
+        const isProjectBased = pos === "Project Based VA";
+        const isPerTask = pos === "Per Task VA";
+        const isHourly = !isProjectBased && !isPerTask; // Full-time, Part-time, null
+
+        // My Assignments: Project Based → always; Per Task → always; Hourly → only if they have fixed task assignments
+        const canSeeAssignments = isVa && (isProjectBased || isPerTask || (isHourly && hasFixedAssignments));
+        // Available Tasks: controlled by per-VA toggle
+        const canSeeAvailable = isVa && !!profile?.can_see_available_tasks;
+
+        // Grid: when VA is idle, always show 4 columns (locked panels fill the gaps)
+        const gridClass = isVa
           ? sessionState === "idle"
             ? "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
             : "grid-cols-1 md:grid-cols-[1fr_260px_260px]"
-          : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]"
-      }`}>
-        {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} />}
-        <TaskEntryForm
-          onStartTask={handleCheckAndStartTask}
-          hasActiveTask={!!activeTask || sessionState === "clocked-in" || sessionState === "on-break"}
-          role={role}
-          sessionState={sessionState}
-        />
-        {userId && (
-          <DailyTaskPlanner
-            userId={userId}
-            role={role}
-            onStartPlannedTask={handleStartPlannedTask}
-            teamMembers={teamMembers.map((m) => m.profile)}
-          />
-        )}
-        {/* VA Assignments — only visible BEFORE clock-in */}
-        {role === "va" && userId && sessionState === "idle" && (
-          <VaAssignmentsColumn userId={userId} key={`va-assign-${claimRefreshKey}`} />
-        )}
-        {/* Available Tasks to Claim — only visible BEFORE clock-in */}
-        {role === "va" && sessionState === "idle" && (
-          <ClaimableTasksColumn onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
-        )}
-        {/* Quick Pick — hidden for VAs before clock-in */}
-        {(role !== "va" || sessionState !== "idle") && (
-          <ProjectSidebar
-            onSelectProject={handleProjectSelect}
-            onQuickAction={handleQuickAction}
-            isAdmin={role === "admin" || role === "manager"}
-          />
-        )}
-      </div>
+          : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]";
+
+        return (
+          <div className={`grid gap-5 mb-6 ${gridClass}`}>
+            {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} />}
+            <TaskEntryForm
+              onStartTask={handleCheckAndStartTask}
+              hasActiveTask={!!activeTask || sessionState === "clocked-in" || sessionState === "on-break"}
+              role={role}
+              sessionState={sessionState}
+            />
+            {userId && (
+              <DailyTaskPlanner
+                userId={userId}
+                role={role}
+                onStartPlannedTask={handleStartPlannedTask}
+                teamMembers={teamMembers.map((m) => m.profile)}
+              />
+            )}
+            {/* VA Assignments — visible BEFORE clock-in, based on position rules */}
+            {isVa && userId && sessionState === "idle" && canSeeAssignments && (
+              <VaAssignmentsColumn userId={userId} key={`va-assign-${claimRefreshKey}`} />
+            )}
+            {/* Locked panel for VAs who can't see assignments */}
+            {isVa && userId && sessionState === "idle" && !canSeeAssignments && (
+              <div className="rounded-xl border border-sand bg-white/60 p-3 flex flex-col items-center justify-center text-center min-h-[120px]">
+                <svg className="h-6 w-6 text-stone/40 mb-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0110 0v4" />
+                </svg>
+                <p className="text-[11px] text-stone font-medium">My Assignments</p>
+                <p className="text-[10px] text-stone/60 mt-0.5">Locked</p>
+              </div>
+            )}
+            {/* Available Tasks to Claim — only if admin toggled on for this VA */}
+            {isVa && sessionState === "idle" && canSeeAvailable && (
+              <ClaimableTasksColumn onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
+            )}
+            {/* Locked panel for VAs who can't see available tasks */}
+            {isVa && sessionState === "idle" && !canSeeAvailable && (
+              <div className="rounded-xl border border-sand bg-white/60 p-3 flex flex-col items-center justify-center text-center min-h-[120px]">
+                <svg className="h-6 w-6 text-stone/40 mb-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0110 0v4" />
+                </svg>
+                <p className="text-[11px] text-stone font-medium">Available Tasks</p>
+                <p className="text-[10px] text-stone/60 mt-0.5">Locked</p>
+              </div>
+            )}
+            {/* Quick Pick — hidden for VAs before clock-in */}
+            {(role !== "va" || sessionState !== "idle") && (
+              <ProjectSidebar
+                onSelectProject={handleProjectSelect}
+                onQuickAction={handleQuickAction}
+                isAdmin={role === "admin" || role === "manager"}
+              />
+            )}
+          </div>
+        );
+      })()}
 
       {/* Activity Log — VAs see only their own entries */}
       <ActivityLog

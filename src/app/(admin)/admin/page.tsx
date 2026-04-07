@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -1499,6 +1499,18 @@ function TeamManagementTab({
       .then((d) => setVaCatAssignments(d.assignments ?? []))
       .catch(() => {});
   }, []);
+  // Email map: user_id -> email
+  const [emailMap, setEmailMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    fetch("/api/user-emails")
+      .then((r) => r.json())
+      .then((d) => setEmailMap(d.emails ?? {}))
+      .catch(() => {});
+  }, []);
+
+  // Expandable row state
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   const getCategoryBadges = (userId: string) => {
     return vaCatAssignments
       .filter((a) => a.va_id === userId && a.task_categories)
@@ -1963,15 +1975,20 @@ function TeamManagementTab({
                 <th className="px-3 py-3 text-right">Pay Rate</th>
                 <th className="px-3 py-3">Rate Type</th>
                 <th className="px-3 py-3">Assignments</th>
+                <th className="px-3 py-3 text-center">Avail. Tasks</th>
                 <th className="px-3 py-3">Joined</th>
                 <th className="px-3 py-3 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-parchment">
               {profiles.map((p) => (
-                <tr key={p.id} className="hover:bg-parchment/20 transition-colors">
+                <React.Fragment key={p.id}>
+                <tr className="hover:bg-parchment/20 transition-colors cursor-pointer" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
+                      <svg className={`h-3 w-3 text-bark shrink-0 transition-transform ${expandedId === p.id ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M9 18l6-6-6-6" />
+                      </svg>
                       <div
                         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
                         style={{ backgroundColor: getAvatarColor(p.id) }}
@@ -2151,6 +2168,35 @@ function TeamManagementTab({
                       );
                     })()}
                   </td>
+                  {/* Available Tasks toggle */}
+                  <td className="px-3 py-3 text-center">
+                    {p.role === "va" ? (
+                      <button
+                        onClick={async () => {
+                          const newVal = !p.can_see_available_tasks;
+                          try {
+                            const res = await fetch("/api/users", {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ user_id: p.id, can_see_available_tasks: newVal }),
+                            });
+                            if (res.ok) fetchData();
+                          } catch { /* silent */ }
+                        }}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-all cursor-pointer ${
+                          p.can_see_available_tasks
+                            ? "bg-sage-soft text-sage hover:bg-sage/20"
+                            : "bg-parchment text-stone hover:bg-sand"
+                        }`}
+                        title={p.can_see_available_tasks ? "Click to hide Available Tasks" : "Click to show Available Tasks"}
+                      >
+                        <span className={`inline-block h-1.5 w-1.5 rounded-full ${p.can_see_available_tasks ? "bg-sage" : "bg-stone"}`} />
+                        {p.can_see_available_tasks ? "On" : "Off"}
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-stone">&mdash;</span>
+                    )}
+                  </td>
                   <td className="px-3 py-3 text-[11px] text-stone whitespace-nowrap">
                     {new Date(p.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                   </td>
@@ -2201,6 +2247,51 @@ function TeamManagementTab({
                     </div>
                   </td>
                 </tr>
+                {expandedId === p.id && (
+                  <tr className="bg-parchment/10">
+                    <td colSpan={12} className="px-6 py-4">
+                      <div className="grid grid-cols-3 gap-6 text-[12px]">
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Email</span>
+                          <p className="mt-0.5 text-espresso font-medium">{emailMap[p.id] || "—"}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Username</span>
+                          <p className="mt-0.5 text-espresso font-medium">{p.username}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Department</span>
+                          <p className="mt-0.5 text-espresso font-medium">{p.department || "—"}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Position</span>
+                          <p className="mt-0.5 text-espresso font-medium">{p.position || "—"}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Pay Rate</span>
+                          <p className="mt-0.5 text-espresso font-medium">${(p.pay_rate || 0).toFixed(2)} / {p.pay_rate_type || "hourly"}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Role</span>
+                          <p className="mt-0.5 text-espresso font-medium capitalize">{p.role}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Joined</span>
+                          <p className="mt-0.5 text-espresso font-medium">{new Date(p.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Status</span>
+                          <p className="mt-0.5 text-espresso font-medium">{p.is_active !== false ? "Active" : "Inactive"}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Available Tasks</span>
+                          <p className="mt-0.5 text-espresso font-medium">{p.can_see_available_tasks ? "Enabled" : "Disabled"}</p>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
               ))}
             </tbody>
           </table>
