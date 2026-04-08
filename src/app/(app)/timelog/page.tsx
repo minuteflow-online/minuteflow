@@ -59,6 +59,21 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
+/** Convert a UTC timestamp to a YYYY-MM-DD date string in the given timezone */
+function toDateInTz(utcTimestamp: string, tz: string): string {
+  return new Date(utcTimestamp).toLocaleDateString("en-CA", { timeZone: tz });
+}
+
+/** Check if a UTC timestamp falls on a given date (YYYY-MM-DD) in the given timezone */
+function isDateInTz(utcTimestamp: string, dateStr: string, tz: string): boolean {
+  return toDateInTz(utcTimestamp, tz) === dateStr;
+}
+
+/** Get YYYY-MM-DD for a Date object in a given timezone */
+function dateToDateStr(d: Date, tz: string): string {
+  return d.toLocaleDateString("en-CA", { timeZone: tz });
+}
+
 function formatDateDisplay(d: Date): string {
   return d.toLocaleDateString("en-US", {
     month: "long",
@@ -401,13 +416,15 @@ export default function TimeLogPage() {
   const weekDays: WeekDay[] = useMemo(() => {
     const ws = weekStart(anchorDate);
     const today = new Date();
+    const todayStr = dateToDateStr(today, orgTimezone);
     return DAY_NAMES_SHORT.map((name, i) => {
       const d = new Date(ws);
       d.setDate(d.getDate() + i);
+      const dStr = dateToDateStr(d, orgTimezone);
       const dayLogs = logs.filter(
         (l) =>
           l.start_time &&
-          isSameDay(new Date(l.start_time), d)
+          isDateInTz(l.start_time, dStr, orgTimezone)
       );
       return {
         dayName: name,
@@ -415,20 +432,29 @@ export default function TimeLogPage() {
         fullDate: d,
         totalMs: dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0),
         taskCount: dayLogs.length,
-        isToday: isSameDay(d, today),
+        isToday: dStr === todayStr,
       };
     });
-  }, [logs, anchorDate]);
+  }, [logs, anchorDate, orgTimezone]);
 
   /* ── Filtered entries for current view ─────────────────── */
 
   const filteredLogs = useMemo(() => {
+    if (viewMode === "day") {
+      // In day view, filter by the org-timezone date of the anchor
+      const anchorStr = dateToDateStr(anchorDate, orgTimezone);
+      return logs.filter((l) => {
+        if (!l.start_time) return false;
+        return isDateInTz(l.start_time, anchorStr, orgTimezone);
+      });
+    }
+    // For week/month/custom, use the computed range boundaries
     return logs.filter((l) => {
       if (!l.start_time) return false;
       const d = new Date(l.start_time);
       return d >= rangeStart && d <= rangeEnd;
     });
-  }, [logs, rangeStart, rangeEnd]);
+  }, [logs, rangeStart, rangeEnd, viewMode, anchorDate, orgTimezone]);
 
   /* ── Group logs by day (for week/month view) ───────────── */
 
@@ -436,12 +462,12 @@ export default function TimeLogPage() {
     const grouped: Record<string, TimeLog[]> = {};
     filteredLogs.forEach((l) => {
       if (!l.start_time) return;
-      const key = l.start_time.slice(0, 10);
+      const key = toDateInTz(l.start_time, orgTimezone);
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(l);
     });
     return grouped;
-  }, [filteredLogs]);
+  }, [filteredLogs, orgTimezone]);
 
   /* ── Day summary stats (dynamic categories + type/status) ──── */
 
