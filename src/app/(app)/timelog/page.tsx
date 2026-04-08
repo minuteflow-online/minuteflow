@@ -18,7 +18,7 @@ import {
 
 /* ── Types ────────────────────────────────────────────────── */
 
-type ViewMode = "day" | "week" | "month";
+type ViewMode = "day" | "week" | "month" | "custom";
 
 type WeekDay = {
   dayName: string;
@@ -121,6 +121,10 @@ export default function TimeLogPage() {
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
   const [expandedEntry, setExpandedEntry] = useState<number | null>(null);
 
+  /* ── Custom date range state ──────────────────────────── */
+  const [customStart, setCustomStart] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [customEnd, setCustomEnd] = useState<string>(() => new Date().toISOString().slice(0, 10));
+
   /* ── Role & user state ─────────────────────────────────── */
   const [currentUserId, setCurrentUserId] = useState("");
   const [role, setRole] = useState<string>("va");
@@ -211,6 +215,16 @@ export default function TimeLogPage() {
         rangeEnd: weekEnd(anchorDate),
         displayLabel: formatWeekDisplay(anchorDate),
       };
+    } else if (viewMode === "custom") {
+      const cs = new Date(customStart + "T00:00:00");
+      const ce = new Date(customEnd + "T23:59:59.999");
+      const startLabel = cs.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const endLabel = ce.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      return {
+        rangeStart: cs,
+        rangeEnd: ce,
+        displayLabel: `${startLabel} \u2013 ${endLabel}`,
+      };
     } else {
       return {
         rangeStart: startOfMonth(anchorDate),
@@ -218,7 +232,7 @@ export default function TimeLogPage() {
         displayLabel: formatMonthDisplay(anchorDate),
       };
     }
-  }, [viewMode, anchorDate]);
+  }, [viewMode, anchorDate, customStart, customEnd]);
 
   /* ── Fetch data ────────────────────────────────────────── */
 
@@ -227,6 +241,7 @@ export default function TimeLogPage() {
     const supabase = createClient();
 
     // For day view, still fetch the full week for the week overview cards
+    // For custom view, fetch exactly the custom range
     const fetchStart =
       viewMode === "day" ? weekStart(anchorDate) : rangeStart;
     const fetchEnd = viewMode === "day" ? weekEnd(anchorDate) : rangeEnd;
@@ -356,6 +371,7 @@ export default function TimeLogPage() {
   /* ── Navigation ────────────────────────────────────────── */
 
   function navigatePrev() {
+    if (viewMode === "custom") return; // no arrow nav in custom mode
     setAnchorDate((prev) => {
       const d = new Date(prev);
       if (viewMode === "day") d.setDate(d.getDate() - 1);
@@ -366,6 +382,7 @@ export default function TimeLogPage() {
   }
 
   function navigateNext() {
+    if (viewMode === "custom") return; // no arrow nav in custom mode
     setAnchorDate((prev) => {
       const d = new Date(prev);
       if (viewMode === "day") d.setDate(d.getDate() + 1);
@@ -669,34 +686,38 @@ export default function TimeLogPage() {
 
       {/* Date Navigation */}
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="flex gap-1">
-          <button
-            onClick={navigatePrev}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-base font-semibold text-walnut transition-all hover:border-terracotta hover:text-terracotta"
-          >
-            &larr;
-          </button>
-          <button
-            onClick={navigateNext}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-base font-semibold text-walnut transition-all hover:border-terracotta hover:text-terracotta"
-          >
-            &rarr;
-          </button>
-        </div>
+        {viewMode !== "custom" && (
+          <div className="flex gap-1">
+            <button
+              onClick={navigatePrev}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-base font-semibold text-walnut transition-all hover:border-terracotta hover:text-terracotta"
+            >
+              &larr;
+            </button>
+            <button
+              onClick={navigateNext}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-base font-semibold text-walnut transition-all hover:border-terracotta hover:text-terracotta"
+            >
+              &rarr;
+            </button>
+          </div>
+        )}
 
         <span className="font-serif text-base font-bold text-espresso">
           {displayLabel}
         </span>
 
-        <button
-          onClick={goToToday}
-          className="ml-1 rounded-lg border border-sand bg-white px-3 py-1.5 text-xs font-semibold text-walnut transition-all hover:border-terracotta hover:text-terracotta"
-        >
-          Today
-        </button>
+        {viewMode !== "custom" && (
+          <button
+            onClick={goToToday}
+            className="ml-1 rounded-lg border border-sand bg-white px-3 py-1.5 text-xs font-semibold text-walnut transition-all hover:border-terracotta hover:text-terracotta"
+          >
+            Today
+          </button>
+        )}
 
         <div className="ml-auto flex gap-1">
-          {(["day", "week", "month"] as ViewMode[]).map((mode) => (
+          {(["day", "week", "month", "custom"] as ViewMode[]).map((mode) => (
             <button
               key={mode}
               onClick={() => setViewMode(mode)}
@@ -712,6 +733,26 @@ export default function TimeLogPage() {
         </div>
       </div>
 
+      {/* Custom Date Range Picker */}
+      {viewMode === "custom" && (
+        <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-sand bg-white px-5 py-3">
+          <label className="text-[12px] font-semibold text-bark">From</label>
+          <input
+            type="date"
+            value={customStart}
+            onChange={(e) => setCustomStart(e.target.value)}
+            className="rounded-lg border border-sand bg-parchment px-3 py-1.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+          />
+          <label className="text-[12px] font-semibold text-bark">To</label>
+          <input
+            type="date"
+            value={customEnd}
+            onChange={(e) => setCustomEnd(e.target.value)}
+            className="rounded-lg border border-sand bg-parchment px-3 py-1.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+          />
+        </div>
+      )}
+
       {loading ? (
         <div className="space-y-4">
           <div className="h-24 animate-pulse rounded-xl border border-sand bg-white" />
@@ -719,10 +760,12 @@ export default function TimeLogPage() {
         </div>
       ) : (
         <>
-          {/* Week Overview Cards */}
-          <div className="mb-5 rounded-xl border border-sand bg-white">
+          {/* Week Overview Cards (hidden in custom range mode) */}
+          {viewMode !== "custom" && <div className="mb-5 rounded-xl border border-sand bg-white">
             <div className="grid grid-cols-7 gap-2 p-4 max-md:grid-cols-3 max-md:gap-3">
-              {weekDays.map((day) => (
+              {weekDays.map((day) => {
+                const isSelected = viewMode === "day" && isSameDay(day.fullDate, anchorDate);
+                return (
                 <button
                   key={day.date}
                   onClick={() => {
@@ -730,9 +773,11 @@ export default function TimeLogPage() {
                     setViewMode("day");
                   }}
                   className={`rounded-[10px] px-3 py-3.5 text-center transition-all cursor-pointer ${
-                    day.isToday
-                      ? "bg-terracotta-soft border border-terracotta"
-                      : "bg-parchment hover:bg-sand border border-transparent"
+                    isSelected
+                      ? "bg-espresso/10 border-2 border-espresso ring-1 ring-espresso/20"
+                      : day.isToday
+                        ? "bg-terracotta-soft border border-terracotta"
+                        : "bg-parchment hover:bg-sand border border-transparent"
                   }`}
                 >
                   <div className="text-[10px] font-semibold uppercase tracking-[1px] text-bark">
@@ -750,9 +795,10 @@ export default function TimeLogPage() {
                       : "\u00A0"}
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
-          </div>
+          </div>}
 
           {/* Timeline Card */}
           <div className="rounded-xl border border-sand bg-white">
