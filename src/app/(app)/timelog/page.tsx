@@ -74,18 +74,63 @@ function dateToDateStr(d: Date, tz: string): string {
   return d.toLocaleDateString("en-CA", { timeZone: tz });
 }
 
-function formatDateDisplay(d: Date): string {
+/**
+ * Create a Date that represents noon on a given YYYY-MM-DD in the given timezone.
+ * Using noon avoids DST edge cases where midnight might not exist or shifts a day.
+ */
+function dateFromDateStr(dateStr: string, tz: string): Date {
+  // Start with noon UTC on the given date
+  const d = new Date(dateStr + "T12:00:00Z");
+  // Adjust so that when converted to `tz`, it reads as the target date.
+  // We check what date `d` appears as in `tz` and nudge by 24h if needed.
+  const apparent = dateToDateStr(d, tz);
+  if (apparent < dateStr) {
+    d.setTime(d.getTime() + 24 * 60 * 60 * 1000);
+  } else if (apparent > dateStr) {
+    d.setTime(d.getTime() - 24 * 60 * 60 * 1000);
+  }
+  return d;
+}
+
+/**
+ * Get the Monday of the week containing anchorDate, in the org timezone.
+ * Returns an array of 7 YYYY-MM-DD strings (Mon–Sun) in the org timezone.
+ */
+function weekDaysInTz(anchorDate: Date, tz: string): string[] {
+  // Get the anchor's date in the org timezone
+  const anchorStr = dateToDateStr(anchorDate, tz);
+  // Parse into year/month/day
+  const [y, m, day] = anchorStr.split("-").map(Number);
+  // Create a simple Date to determine day-of-week (use UTC to avoid local TZ issues)
+  const temp = new Date(Date.UTC(y, m - 1, day));
+  const dow = temp.getUTCDay(); // 0=Sun … 6=Sat
+  // Calculate Monday offset
+  const mondayOffset = dow === 0 ? -6 : 1 - dow;
+  const mondayDate = day + mondayOffset;
+  // Build 7 date strings
+  const result: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(Date.UTC(y, m - 1, mondayDate + i));
+    const ds = d.toISOString().slice(0, 10); // YYYY-MM-DD
+    result.push(ds);
+  }
+  return result;
+}
+
+function formatDateDisplay(d: Date, tz: string = "America/New_York"): string {
   return d.toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
     year: "numeric",
+    timeZone: tz,
   });
 }
 
-function formatWeekDisplay(d: Date): string {
-  const ws = weekStart(d);
-  const we = weekEnd(d);
-  return `${ws.toLocaleDateString("en-US", { month: "short", day: "numeric" })} \u2013 ${we.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+function formatWeekDisplay(d: Date, tz: string = "America/New_York"): string {
+  const dayStrs = weekDaysInTz(d, tz);
+  const wsDate = dateFromDateStr(dayStrs[0], tz);
+  const weDate = dateFromDateStr(dayStrs[6], tz);
+  return `${wsDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: tz })} \u2013 ${weDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: tz })}`;
 }
 
 function formatMonthDisplay(d: Date): string {
@@ -222,13 +267,15 @@ export default function TimeLogPage() {
       return {
         rangeStart: startOfDay(anchorDate),
         rangeEnd: endOfDay(anchorDate),
-        displayLabel: formatDateDisplay(anchorDate),
+        displayLabel: formatDateDisplay(anchorDate, orgTimezone),
       };
     } else if (viewMode === "week") {
+      // Use timezone-aware week boundaries
+      const dayStrs = weekDaysInTz(anchorDate, orgTimezone);
       return {
-        rangeStart: weekStart(anchorDate),
-        rangeEnd: weekEnd(anchorDate),
-        displayLabel: formatWeekDisplay(anchorDate),
+        rangeStart: dateFromDateStr(dayStrs[0], orgTimezone),
+        rangeEnd: dateFromDateStr(dayStrs[6], orgTimezone),
+        displayLabel: formatWeekDisplay(anchorDate, orgTimezone),
       };
     } else if (viewMode === "custom") {
       const cs = new Date(customStart + "T00:00:00");
@@ -247,7 +294,7 @@ export default function TimeLogPage() {
         displayLabel: formatMonthDisplay(anchorDate),
       };
     }
-  }, [viewMode, anchorDate, customStart, customEnd]);
+  }, [viewMode, anchorDate, customStart, customEnd, orgTimezone]);
 
   /* ── Fetch data ────────────────────────────────────────── */
 
@@ -257,9 +304,21 @@ export default function TimeLogPage() {
 
     // For day view, still fetch the full week for the week overview cards
     // For custom view, fetch exactly the custom range
-    const fetchStart =
-      viewMode === "day" ? weekStart(anchorDate) : rangeStart;
-    const fetchEnd = viewMode === "day" ? weekEnd(anchorDate) : rangeEnd;
+    // Use timezone-aware week boundaries so we don't miss entries near midnight
+    let fetchStart: Date;
+    let fetchEnd: Date;
+    if (viewMode === "day") {
+      const dayStrs = weekDaysInTz(anchorDate, orgTimezone);
+      // Start of Monday in org TZ (use midnight-ish by subtracting 14h buffer)
+      fetchStart = new Date(dayStrs[0] + "T00:00:00Z");
+      fetchStart.setTime(fetchStart.getTime() - 14 * 60 * 60 * 1000);
+      // End of Sunday in org TZ (add 14h buffer past end of day)
+      fetchEnd = new Date(dayStrs[6] + "T23:59:59Z");
+      fetchEnd.setTime(fetchEnd.getTime() + 14 * 60 * 60 * 1000);
+    } else {
+      fetchStart = rangeStart;
+      fetchEnd = rangeEnd;
+    }
 
     let query = supabase
       .from("time_logs")
@@ -300,8 +359,18 @@ export default function TimeLogPage() {
 
     // Fetch mood data from mood_logs for the date range
     {
-      const moodStart = (viewMode === "day" ? weekStart(anchorDate) : rangeStart).toISOString().split("T")[0];
-      const moodEnd = (viewMode === "day" ? weekEnd(anchorDate) : rangeEnd).toISOString().split("T")[0];
+      let moodStartDate: Date;
+      let moodEndDate: Date;
+      if (viewMode === "day") {
+        const dayStrs = weekDaysInTz(anchorDate, orgTimezone);
+        moodStartDate = dateFromDateStr(dayStrs[0], orgTimezone);
+        moodEndDate = dateFromDateStr(dayStrs[6], orgTimezone);
+      } else {
+        moodStartDate = rangeStart;
+        moodEndDate = rangeEnd;
+      }
+      const moodStart = dateToDateStr(moodStartDate, orgTimezone);
+      const moodEnd = dateToDateStr(moodEndDate, orgTimezone);
 
       let moodQuery = supabase
         .from("mood_logs")
@@ -414,13 +483,12 @@ export default function TimeLogPage() {
   /* ── Week overview data ────────────────────────────────── */
 
   const weekDays: WeekDay[] = useMemo(() => {
-    const ws = weekStart(anchorDate);
-    const today = new Date();
-    const todayStr = dateToDateStr(today, orgTimezone);
+    const todayStr = dateToDateStr(new Date(), orgTimezone);
+    const dayStrs = weekDaysInTz(anchorDate, orgTimezone); // 7 YYYY-MM-DD strings Mon–Sun
     return DAY_NAMES_SHORT.map((name, i) => {
-      const d = new Date(ws);
-      d.setDate(d.getDate() + i);
-      const dStr = dateToDateStr(d, orgTimezone);
+      const dStr = dayStrs[i];
+      const dateNum = parseInt(dStr.split("-")[2], 10); // day-of-month from TZ-aware string
+      const fullDate = dateFromDateStr(dStr, orgTimezone); // Date object that maps to this date in TZ
       const dayLogs = logs.filter(
         (l) =>
           l.start_time &&
@@ -428,8 +496,8 @@ export default function TimeLogPage() {
       );
       return {
         dayName: name,
-        date: d.getDate(),
-        fullDate: d,
+        date: dateNum,
+        fullDate,
         totalMs: dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0),
         taskCount: dayLogs.length,
         isToday: dStr === todayStr,
