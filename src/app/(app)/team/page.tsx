@@ -853,6 +853,213 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
   );
 }
 
+/* ── Star Rating Component ───────────────────────────────── */
+
+function StarRating({ value, onChange, readonly = false }: { value: number; onChange?: (v: number) => void; readonly?: boolean }) {
+  const [hovered, setHovered] = useState(0);
+  return (
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          disabled={readonly}
+          onClick={() => onChange?.(star)}
+          onMouseEnter={() => !readonly && setHovered(star)}
+          onMouseLeave={() => !readonly && setHovered(0)}
+          className={`text-2xl transition-colors ${readonly ? "cursor-default" : "cursor-pointer"} ${
+            star <= (hovered || value) ? "text-amber" : "text-sand"
+          }`}
+        >
+          ★
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ── Daily Ratings Panel ─────────────────────────────────── */
+
+type DailyRating = {
+  id: number;
+  va_id: string;
+  rated_by: string;
+  rating_date: string;
+  score: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function DailyRatingsPanel({ vaId, isAdmin }: { vaId: string; isAdmin: boolean }) {
+  const supabase = createClient();
+  const [ratings, setRatings] = useState<DailyRating[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [score, setScore] = useState(5);
+  const [notes, setNotes] = useState("");
+  const [date, setDate] = useState(formatDateInput(new Date()));
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const fetchRatings = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("va_daily_ratings")
+      .select("*")
+      .eq("va_id", vaId)
+      .order("rating_date", { ascending: false });
+    setRatings((data as DailyRating[]) || []);
+    setLoading(false);
+  }, [vaId, supabase]);
+
+  useEffect(() => { fetchRatings(); }, [fetchRatings]);
+
+  const averageScore = ratings.length > 0
+    ? ratings.reduce((sum, r) => sum + r.score, 0) / ratings.length
+    : null;
+
+  const handleSave = async () => {
+    if (!score) return;
+    setSaving(true);
+    if (editingId) {
+      await supabase
+        .from("va_daily_ratings")
+        .update({ score, notes: notes || null, updated_at: new Date().toISOString() })
+        .eq("id", editingId);
+    } else {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from("va_daily_ratings").upsert({
+        va_id: vaId,
+        rated_by: user!.id,
+        rating_date: date,
+        score,
+        notes: notes || null,
+      }, { onConflict: "va_id,rating_date" });
+    }
+    setScore(5);
+    setNotes("");
+    setDate(formatDateInput(new Date()));
+    setEditingId(null);
+    setSaving(false);
+    fetchRatings();
+  };
+
+  const handleEdit = (r: DailyRating) => {
+    setEditingId(r.id);
+    setScore(r.score);
+    setNotes(r.notes || "");
+    setDate(r.rating_date);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setScore(5);
+    setNotes("");
+    setDate(formatDateInput(new Date()));
+  };
+
+  return (
+    <div className="px-6 py-5">
+      {/* Average */}
+      <div className="mb-5 flex items-center gap-4">
+        <div className="rounded-xl bg-parchment/60 px-5 py-3 text-center min-w-[100px]">
+          <div className="font-serif text-2xl font-bold text-terracotta">
+            {averageScore !== null ? averageScore.toFixed(1) : "—"}
+          </div>
+          <div className="text-[9px] font-semibold uppercase tracking-[0.5px] text-bark mt-0.5">Avg Rating</div>
+        </div>
+        <div>
+          {averageScore !== null && <StarRating value={Math.round(averageScore)} readonly />}
+          <div className="text-[11px] text-bark mt-1">{ratings.length} rating{ratings.length !== 1 ? "s" : ""} total</div>
+        </div>
+      </div>
+
+      {/* Add / Edit form (admin only) */}
+      {isAdmin && (
+        <div className="mb-5 rounded-xl border border-sand bg-parchment/30 p-4">
+          <div className="text-[11px] font-bold uppercase tracking-[0.5px] text-bark mb-3">
+            {editingId ? "Edit Rating" : "Add Rating"}
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <div className="text-[10px] text-bark mb-1">Date</div>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                disabled={!!editingId}
+                className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso disabled:opacity-50"
+              />
+            </div>
+            <div>
+              <div className="text-[10px] text-bark mb-1">Score</div>
+              <StarRating value={score} onChange={setScore} />
+            </div>
+            <div className="flex-1 min-w-[160px]">
+              <div className="text-[10px] text-bark mb-1">Notes (optional)</div>
+              <input
+                type="text"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="e.g. Great initiative today"
+                className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso placeholder:text-stone"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleSave}
+                disabled={saving || !score}
+                className="rounded-lg px-4 py-2 text-[12px] font-semibold bg-terracotta text-white hover:bg-terracotta/80 disabled:opacity-50 transition-all cursor-pointer"
+              >
+                {saving ? "Saving…" : editingId ? "Update" : "Save"}
+              </button>
+              {editingId && (
+                <button
+                  onClick={handleCancelEdit}
+                  className="rounded-lg px-4 py-2 text-[12px] font-semibold bg-parchment text-bark border border-sand hover:bg-sand cursor-pointer"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ratings list */}
+      {loading ? (
+        <div className="text-[13px] text-stone">Loading…</div>
+      ) : ratings.length === 0 ? (
+        <div className="text-[13px] text-stone py-4">No ratings yet.</div>
+      ) : (
+        <div className="space-y-2">
+          {ratings.map((r) => (
+            <div key={r.id} className="flex items-center gap-3 rounded-xl border border-sand bg-white px-4 py-3">
+              <div className="text-[12px] font-bold text-terracotta min-w-[90px]">
+                {new Date(r.rating_date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+              </div>
+              <div className="flex items-center gap-0.5">
+                {[1,2,3,4,5].map(s => (
+                  <span key={s} className={`text-base ${s <= r.score ? "text-amber" : "text-sand"}`}>★</span>
+                ))}
+              </div>
+              <div className="flex-1 text-[12px] text-bark truncate">{r.notes || ""}</div>
+              {isAdmin && (
+                <button
+                  onClick={() => handleEdit(r)}
+                  className="text-[11px] text-walnut hover:text-terracotta cursor-pointer font-semibold"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Expanded Member Card (Full Width) ───────────────────── */
 
 function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselect, userMoods }: {
@@ -866,6 +1073,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   const { profile, status, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<"activity" | "ratings">("activity");
 
   const toggleDate = useCallback((dateLabel: string) => {
     setExpandedDates(prev => {
@@ -1012,8 +1220,30 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         </div>
       </div>
 
+      {/* Tab Strip */}
+      <div className="flex border-b border-parchment px-6">
+        {(["activity", "ratings"] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`py-3 px-4 text-[12px] font-semibold transition-colors cursor-pointer border-b-2 -mb-px ${
+              activeTab === tab
+                ? "border-terracotta text-terracotta"
+                : "border-transparent text-bark hover:text-espresso"
+            }`}
+          >
+            {tab === "activity" ? "Activity" : "Daily Ratings"}
+          </button>
+        ))}
+      </div>
+
+      {/* Daily Ratings Tab */}
+      {activeTab === "ratings" && (
+        <DailyRatingsPanel vaId={profile.id} isAdmin={isAdmin} />
+      )}
+
       {/* Summary + Category Totals */}
-      <div className="px-6 py-5 border-b border-parchment">
+      {activeTab === "activity" && <><div className="px-6 py-5 border-b border-parchment">
         {/* Row 1: Key Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           <div className="rounded-lg bg-parchment/50 p-3 text-center">
@@ -1213,6 +1443,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
           </div>
         )}
       </div>
+    </>}
     </div>
   );
 }
