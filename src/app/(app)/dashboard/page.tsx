@@ -1158,19 +1158,33 @@ export default function DashboardPage() {
   const silentCapture = useCallback(
     async (logId: number, screenshotType: 'start' | 'progress' | 'end' | 'manual'): Promise<boolean> => {
       // Guard: skip if a capture is already in progress
-      if (isCapturingRef.current) return false;
+      if (isCapturingRef.current) {
+        console.warn(`[Screenshot] Skipped (${screenshotType}): another capture is already in progress.`);
+        return false;
+      }
       // Guard: enforce 45-second cooldown between captures (skip for 'end' and 'manual' — those are intentional)
       if (screenshotType !== 'end' && screenshotType !== 'manual') {
         const now = Date.now();
-        if (now - lastCaptureTimeRef.current < 45_000) return false;
+        const secsSinceLast = Math.round((now - lastCaptureTimeRef.current) / 1000);
+        if (now - lastCaptureTimeRef.current < 45_000) {
+          console.warn(`[Screenshot] Skipped (${screenshotType}): cooldown active (${secsSinceLast}s since last capture, need 45s).`);
+          return false;
+        }
       }
       isCapturingRef.current = true;
       try {
         const blob = await captureFrame();
-        if (!blob) return false;
+        if (!blob) {
+          console.warn(`[Screenshot] Failed (${screenshotType}): screen share stream is not active. The VA may have stopped sharing their screen. A new screen share permission is needed.`);
+          return false;
+        }
         await uploadScreenshot(blob, logId, screenshotType);
         lastCaptureTimeRef.current = Date.now();
+        console.info(`[Screenshot] Captured (${screenshotType}) for log ${logId}.`);
         return true;
+      } catch (err) {
+        console.error(`[Screenshot] Error during capture (${screenshotType}) for log ${logId}:`, err);
+        return false;
       } finally {
         isCapturingRef.current = false;
       }
@@ -1221,7 +1235,7 @@ export default function DashboardPage() {
   }, []);
 
   // No visibility change listener needed — screenshots are taken on a fixed
-  // 9-minute schedule regardless of tab activity/inactivity.
+  // 10-minute schedule regardless of tab activity/inactivity.
 
   /** Schedule the auto-capture sequence using Web Worker (with setTimeout fallback) */
   const scheduleCaptureSequence = useCallback(
@@ -1240,35 +1254,19 @@ export default function DashboardPage() {
       // Immediate start screenshot
       silentCapture(logId, "start");
 
-      // 3 minute progress
-      const t1 = setTimeout(() => {
-        if (activeLogIdRef.current === logId) {
-          silentCapture(logId, "progress");
-        }
-      }, 180_000);
-
-      // 9 minute progress (6 min after the 3-min mark)
-      const t2 = setTimeout(() => {
-        if (activeLogIdRef.current === logId) {
-          silentCapture(logId, "progress");
-        }
-      }, 540_000);
-
-      captureTimersRef.current = [t1, t2];
-
-      // After 9 minutes, every 9 minutes consistently (even if inactive)
+      // Every 10 minutes consistently
       const scheduleRepeating = (afterMs: number) => {
         const t = setTimeout(() => {
           if (activeLogIdRef.current === logId) {
             silentCapture(logId, "progress");
-            scheduleRepeating(540_000); // Next one in 9 min
+            scheduleRepeating(600_000); // Next one in 10 min
           }
         }, afterMs);
         captureTimersRef.current.push(t);
       };
 
-      // First repeating capture at 18 min (9 + 9)
-      scheduleRepeating(1_080_000);
+      // First repeating capture at 10 min
+      scheduleRepeating(600_000);
     },
     [clearCaptureTimers, silentCapture]
   );

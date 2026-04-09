@@ -7,14 +7,13 @@
  *
  * Schedule:
  *   - Immediate "start" screenshot on task begin
- *   - 3 minutes: "progress"
- *   - 9 minutes (6 min after the 3-min mark): "progress"
- *   - Then every 9 minutes consistently forever (even if inactive)
+ *   - Every 10 minutes consistently after that
  *
  * Protocol:
  *   Main -> Worker: { type: "start", logId: number }
  *   Main -> Worker: { type: "stop" }
  *   Worker -> Main: { type: "capture", logId: number, screenshotType: string }
+ *   Worker -> Main: { type: "capture_failed", logId: number, reason: string }
  */
 
 let currentLogId = null;
@@ -30,12 +29,12 @@ function requestCapture(logId, screenshotType) {
   self.postMessage({ type: "capture", logId, screenshotType });
 }
 
-function scheduleRepeating(logId, afterMs) {
+function scheduleRepeating(logId, intervalMs) {
   const t = setTimeout(() => {
     if (currentLogId !== logId) return;
     requestCapture(logId, "progress");
-    scheduleRepeating(logId, 540000); // Every 9 minutes
-  }, afterMs);
+    scheduleRepeating(logId, intervalMs); // Keep repeating at same interval
+  }, intervalMs);
   timers.push(t);
 }
 
@@ -49,20 +48,8 @@ self.onmessage = function (e) {
     // Immediate start screenshot
     requestCapture(logId, "start");
 
-    // 3 minute progress
-    const t1 = setTimeout(() => {
-      requestCapture(logId, "progress");
-    }, 180000); // 3 min
-
-    // 9 minute progress (6 min after the 3-min mark)
-    const t2 = setTimeout(() => {
-      requestCapture(logId, "progress");
-    }, 540000); // 9 min
-
-    timers = [t1, t2];
-
-    // After the 9-minute mark, every 9 minutes consistently
-    scheduleRepeating(logId, 1080000); // 18 min = 9 + 9
+    // Every 10 minutes consistently
+    scheduleRepeating(logId, 600000); // 10 min
   }
 
   if (type === "stop") {
