@@ -7,7 +7,9 @@
  *
  * Schedule:
  *   - Immediate "start" screenshot on task begin
- *   - Every 10 minutes consistently after that
+ *   - 3 min → screenshot
+ *   - 9 min → screenshot
+ *   - Every 9 min after that
  *
  * Protocol:
  *   Main -> Worker: { type: "start", logId: number }
@@ -48,8 +50,22 @@ self.onmessage = function (e) {
     // Immediate start screenshot
     requestCapture(logId, "start");
 
-    // Every 10 minutes consistently
-    scheduleRepeating(logId, 600000); // 10 min
+    // 3 min screenshot
+    const t3 = setTimeout(() => {
+      if (currentLogId !== logId) return;
+      requestCapture(logId, "progress");
+
+      // 9 min screenshot (6 min after the 3-min one)
+      const t9 = setTimeout(() => {
+        if (currentLogId !== logId) return;
+        requestCapture(logId, "progress");
+
+        // Every 9 min after that
+        scheduleRepeating(logId, 540000); // 9 min
+      }, 360000); // 6 min after 3-min = 9 min total
+      timers.push(t9);
+    }, 180000); // 3 min
+    timers.push(t3);
   }
 
   if (type === "stop") {
