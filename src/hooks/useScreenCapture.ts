@@ -42,6 +42,8 @@ export function useScreenCapture(): UseScreenCaptureReturn {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
+          // Force the browser to pre-select "Entire Screen" in the share dialog
+          displaySurface: "monitor",
           // Request reasonable resolution — not ultra-high to keep file sizes manageable
           width: { ideal: 1920 },
           height: { ideal: 1080 },
