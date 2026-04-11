@@ -24,7 +24,7 @@ import {
   formatDuration,
   getInitials,
   getAvatarColor,
-  todayStart,
+  getTodayBoundsInTimezone,
   getTimezoneAbbr,
 } from "@/lib/utils";
 import ProjectsTasksTab from "@/components/ProjectsTasksTab";
@@ -290,7 +290,7 @@ export default function AdminPage() {
   /* ── Data Fetching ──────────────────────────────────────── */
 
   const fetchData = useCallback(async () => {
-    const today = todayStart();
+    const today = getTodayBoundsInTimezone(orgTimezone).start;
     const supabase = createClient();
 
     let screenshotDateStart = today;
@@ -389,7 +389,7 @@ export default function AdminPage() {
     }
 
     setLoading(false);
-  }, [screenshotDateFilter, screenshotCustomStart, screenshotCustomEnd]);
+  }, [screenshotDateFilter, screenshotCustomStart, screenshotCustomEnd, orgTimezone]);
 
   useEffect(() => {
     fetchData();
@@ -541,6 +541,7 @@ export default function AdminPage() {
         month: "long",
         day: "numeric",
         year: "numeric",
+        timeZone: orgTimezone,
       });
       if (!groups[dateKey]) groups[dateKey] = {};
       const userId = ss.user_id;
@@ -548,7 +549,7 @@ export default function AdminPage() {
       groups[dateKey][userId].push(ss);
     });
     return groups;
-  }, [filteredScreenshots]);
+  }, [filteredScreenshots, orgTimezone]);
 
   const activityEvents = useMemo(() => {
     const events: {
@@ -1011,6 +1012,7 @@ export default function AdminPage() {
               screenshotUrls={screenshotUrls}
               loadingUrls={loadingUrls}
               setSelectedScreenshot={setSelectedScreenshot}
+              orgTimezone={orgTimezone}
             />
           )}
 
@@ -1055,6 +1057,7 @@ export default function AdminPage() {
                 setReviewNotes={setReviewNotes}
                 handleApproveCorrection={handleApproveCorrection}
                 handleDenyCorrection={handleDenyCorrection}
+                orgTimezone={orgTimezone}
               />
               <BreakCorrectionsSection
                 breakCorrectionRequests={breakCorrectionRequests}
@@ -1065,6 +1068,7 @@ export default function AdminPage() {
                 setBreakCustomMs={setBreakCustomMs}
                 handleApproveBreakCorrection={handleApproveBreakCorrection}
                 handleDenyBreakCorrection={handleDenyBreakCorrection}
+                orgTimezone={orgTimezone}
               />
               <ManualEntriesSection
                 pendingManualEntries={pendingManualEntries}
@@ -1100,6 +1104,7 @@ export default function AdminPage() {
           url={screenshotUrls[selectedScreenshot.id] || null}
           profile={profileMap.get(selectedScreenshot.user_id) || null}
           log={selectedScreenshot.log_id ? logMap.get(selectedScreenshot.log_id) || null : null}
+          timezone={orgTimezone}
           onClose={() => setSelectedScreenshot(null)}
           onPrev={() => {
             const idx = filteredScreenshots.findIndex((s) => s.id === selectedScreenshot.id);
@@ -1296,6 +1301,7 @@ function ScreenshotsTab({
   screenshotUrls,
   loadingUrls,
   setSelectedScreenshot,
+  orgTimezone,
 }: {
   profiles: Profile[];
   profileMap: Map<string, Profile>;
@@ -1313,6 +1319,7 @@ function ScreenshotsTab({
   screenshotUrls: Record<number, string>;
   loadingUrls: boolean;
   setSelectedScreenshot: (ss: TaskScreenshot) => void;
+  orgTimezone: string;
 }) {
   return (
     <div className="rounded-xl border border-sand bg-white">
@@ -1440,7 +1447,7 @@ function ScreenshotsTab({
                                 </div>
                               )}
                               <div className="text-[10px] text-stone">
-                                {formatTimeShort(ss.created_at)}
+                                {formatTimeShort(ss.created_at, orgTimezone)}
                               </div>
                             </div>
                           </button>
@@ -3625,6 +3632,7 @@ function CorrectionsTab({
   setReviewNotes,
   handleApproveCorrection,
   handleDenyCorrection,
+  orgTimezone,
 }: {
   correctionRequests: TimeCorrectionRequest[];
   profileMap: Map<string, Profile>;
@@ -3633,6 +3641,7 @@ function CorrectionsTab({
   setReviewNotes: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   handleApproveCorrection: (req: TimeCorrectionRequest) => void;
   handleDenyCorrection: (req: TimeCorrectionRequest) => void;
+  orgTimezone: string;
 }) {
   if (correctionRequests.length === 0) {
     return (
@@ -3679,7 +3688,7 @@ function CorrectionsTab({
                   {reqLog && (
                     <div className="mt-0.5 text-[11px] text-stone">
                       Task: {reqLog.task_name} &middot;{" "}
-                      {new Date(reqLog.start_time).toLocaleDateString()}
+                      {new Date(reqLog.start_time).toLocaleDateString("en-US", { timeZone: orgTimezone })}
                     </div>
                   )}
                   <div className="mt-1 text-xs text-espresso">
@@ -3698,8 +3707,8 @@ function CorrectionsTab({
                         <div><span className="font-medium">Client:</span> {reqLog.client_name || "—"}</div>
                         <div><span className="font-medium">Project:</span> {reqLog.project || "—"}</div>
                         <div><span className="font-medium">Billable:</span> {reqLog.billable ? "Yes" : "No"}</div>
-                        <div><span className="font-medium">Start:</span> {new Date(reqLog.start_time).toLocaleString()}</div>
-                        <div><span className="font-medium">End:</span> {reqLog.end_time ? new Date(reqLog.end_time).toLocaleString() : "—"}</div>
+                        <div><span className="font-medium">Start:</span> {new Date(reqLog.start_time).toLocaleString("en-US", { timeZone: orgTimezone })}</div>
+                        <div><span className="font-medium">End:</span> {reqLog.end_time ? new Date(reqLog.end_time).toLocaleString("en-US", { timeZone: orgTimezone }) : "—"}</div>
                         {reqLog.client_memo && (
                           <div className="col-span-2"><span className="font-medium">Client Memo:</span> {reqLog.client_memo}</div>
                         )}
@@ -3729,7 +3738,7 @@ function CorrectionsTab({
                   </div>
                 </div>
                 <span className="text-[10px] text-stone shrink-0">
-                  {new Date(req.created_at).toLocaleDateString()}
+                  {new Date(req.created_at).toLocaleDateString("en-US", { timeZone: orgTimezone })}
                 </span>
               </div>
               {/* Review notes + actions */}
@@ -3778,6 +3787,7 @@ function BreakCorrectionsSection({
   setBreakCustomMs,
   handleApproveBreakCorrection,
   handleDenyBreakCorrection,
+  orgTimezone,
 }: {
   breakCorrectionRequests: BreakCorrectionRequest[];
   profileMap: Map<string, Profile>;
@@ -3787,6 +3797,7 @@ function BreakCorrectionsSection({
   setBreakCustomMs: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   handleApproveBreakCorrection: (req: BreakCorrectionRequest) => void;
   handleDenyBreakCorrection: (req: BreakCorrectionRequest) => void;
+  orgTimezone: string;
 }) {
   if (breakCorrectionRequests.length === 0) {
     return (
@@ -3830,7 +3841,7 @@ function BreakCorrectionsSection({
                     </span>
                   </div>
                   <div className="mt-0.5 text-[11px] text-stone">
-                    {new Date(req.session_date).toLocaleDateString()} &middot; {shiftHrs}h shift
+                    {new Date(req.session_date).toLocaleDateString("en-US", { timeZone: orgTimezone })} &middot; {shiftHrs}h shift
                   </div>
 
                   {/* Break details */}
@@ -3854,7 +3865,7 @@ function BreakCorrectionsSection({
                   </div>
                 </div>
                 <span className="text-[10px] text-stone shrink-0">
-                  {new Date(req.created_at || "").toLocaleDateString()}
+                  {new Date(req.created_at || "").toLocaleDateString("en-US", { timeZone: orgTimezone })}
                 </span>
               </div>
               {/* Custom billable amount + review notes + actions */}
@@ -3979,7 +3990,7 @@ function ManualEntriesSection({
                     </span>
                   </div>
                   <div className="mt-0.5 text-[11px] text-stone">
-                    Submitted {startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    Submitted {startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                   </div>
 
                   {/* Entry details */}
@@ -3996,11 +4007,11 @@ function ManualEntriesSection({
                       <div><span className="font-medium">Billable:</span> {entry.billable ? "Yes" : "No"}</div>
                       <div>
                         <span className="font-medium">Start:</span>{" "}
-                        {startDate.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}
+                        {startDate.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true, timeZone: orgTimezone })}
                       </div>
                       <div>
                         <span className="font-medium">End:</span>{" "}
-                        {endDate ? endDate.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "—"}
+                        {endDate ? endDate.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true, timeZone: orgTimezone }) : "—"}
                       </div>
                       <div>
                         <span className="font-medium">Duration:</span>{" "}
@@ -4017,7 +4028,7 @@ function ManualEntriesSection({
                   </div>
                 </div>
                 <span className="text-[10px] text-stone shrink-0">
-                  {startDate.toLocaleDateString()}
+                  {startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                 </span>
               </div>
               {/* Review notes + actions */}
@@ -4183,6 +4194,7 @@ function SortingReviewTab({
                           {new Date(log.start_time).toLocaleDateString("en-US", {
                             month: "short",
                             day: "numeric",
+                            timeZone: orgTimezone,
                           })}{" "}
                           &middot;{" "}
                           {log.duration_ms > 0
@@ -4573,6 +4585,7 @@ function ScreenshotLightbox({
   url,
   profile,
   log,
+  timezone,
   onClose,
   onPrev,
   onNext,
@@ -4581,6 +4594,7 @@ function ScreenshotLightbox({
   url: string | null;
   profile: Profile | null;
   log: TimeLog | null;
+  timezone: string;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -4631,7 +4645,7 @@ function ScreenshotLightbox({
           </div>
           <div className="flex items-center gap-3">
             <span className="text-[11px] text-stone">
-              {formatDateShort(screenshot.created_at)} at {formatTimeShort(screenshot.created_at)}
+              {formatDateShort(screenshot.created_at, timezone)} at {formatTimeShort(screenshot.created_at, timezone)}
             </span>
             <button
               onClick={onClose}
