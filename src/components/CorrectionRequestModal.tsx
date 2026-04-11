@@ -19,6 +19,7 @@ const CORRECTABLE_FIELDS = [
 interface CorrectionRequestModalProps {
   log: TimeLog;
   currentUserId: string;
+  timezone?: string;
   onClose: () => void;
   onSubmitted: () => void;
 }
@@ -26,6 +27,7 @@ interface CorrectionRequestModalProps {
 export default function CorrectionRequestModal({
   log,
   currentUserId,
+  timezone = "UTC",
   onClose,
   onSubmitted,
 }: CorrectionRequestModalProps) {
@@ -136,8 +138,8 @@ export default function CorrectionRequestModal({
               <div><span className="text-bark">Account:</span> <span className="text-espresso font-medium">{log.account || "—"}</span></div>
               <div><span className="text-bark">Client:</span> <span className="text-espresso font-medium">{log.client_name || "—"}</span></div>
               <div><span className="text-bark">Project:</span> <span className="text-espresso font-medium">{log.project || "—"}</span></div>
-              <div><span className="text-bark">Start:</span> <span className="text-espresso font-medium">{new Date(log.start_time).toLocaleString()}</span></div>
-              <div><span className="text-bark">End:</span> <span className="text-espresso font-medium">{log.end_time ? new Date(log.end_time).toLocaleString() : "Running"}</span></div>
+              <div><span className="text-bark">Start:</span> <span className="text-espresso font-medium">{new Date(log.start_time).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span></div>
+              <div><span className="text-bark">End:</span> <span className="text-espresso font-medium">{log.end_time ? new Date(log.end_time).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "Running"}</span></div>
               <div><span className="text-bark">Duration:</span> <span className="text-espresso font-medium">{log.duration_ms > 0 ? `${Math.floor(log.duration_ms / 60000)}m` : "—"}</span></div>
               <div><span className="text-bark">Billable:</span> <span className="text-espresso font-medium">{log.billable ? "Yes" : "No"}</span></div>
             </div>

@@ -10,7 +10,7 @@ import CSVUploadModal from "@/components/CSVUploadModal";
 import {
   formatDuration,
   formatDurationShort,
-  formatTimeET,
+  formatTimeTZ,
   getTimezoneAbbr,
   weekStart,
   weekEnd,
@@ -201,7 +201,7 @@ export default function TimeLogPage() {
   const [editedLogIds, setEditedLogIds] = useState<Set<number>>(new Set());
 
   /* ── Org timezone ────────────────────────────────────────── */
-  const [orgTimezone, setOrgTimezone] = useState<string>("America/New_York");
+  const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
 
   /* ── Screenshots state (for admin/manager) ───────────────── */
   const [screenshots, setScreenshots] = useState<Record<number, TaskScreenshot[]>>({});
@@ -1015,7 +1015,7 @@ export default function TimeLogPage() {
                               )}
                             </div>
                             <div className="text-[10px] text-stone mt-0.5 whitespace-nowrap">
-                              {log.start_time ? formatTimeET(log.start_time, orgTimezone) : "\u2014"}
+                              {log.start_time ? formatTimeTZ(log.start_time, orgTimezone) : "\u2014"}
                             </div>
                             {/* Expanded: show memos inline */}
                             {isExpanded && hasMemos && (
@@ -1260,6 +1260,7 @@ export default function TimeLogPage() {
         <CorrectionRequestModal
           log={correctionLog}
           currentUserId={currentUserId}
+          timezone={orgTimezone}
           onClose={() => setCorrectionLog(null)}
           onSubmitted={handleModalSaved}
         />

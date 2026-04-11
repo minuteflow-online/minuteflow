@@ -1367,6 +1367,7 @@ export default function ActivityLog({
         <CorrectionRequestModal
           log={correctionLog}
           currentUserId={currentUserId}
+          timezone={timezone}
           onClose={() => setCorrectionLog(null)}
           onSubmitted={handleModalSaved}
         />

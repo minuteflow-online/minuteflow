@@ -48,15 +48,18 @@ export function getAvatarColor(seed: string): string {
 }
 
 /** Format a date to time display in a specific timezone (e.g. "3:45 PM") */
-export function formatTimeET(date: Date | string, timezone?: string): string {
+export function formatTimeTZ(date: Date | string, timezone: string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   return d.toLocaleTimeString("en-US", {
-    timeZone: timezone || "America/New_York",
+    timeZone: timezone,
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
   });
 }
+
+/** @deprecated Use formatTimeTZ instead */
+export const formatTimeET = formatTimeTZ;
 
 /** Format a date to short date display in a specific timezone (e.g. "Jan 5") */
 export function formatDateShortTZ(date: Date | string, timezone: string): string {

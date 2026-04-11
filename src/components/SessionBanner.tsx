@@ -28,7 +28,7 @@ function formatTimer(totalSeconds: number): string {
 function formatTime(iso: string, timezone?: string): string {
   const d = new Date(iso);
   return d.toLocaleTimeString("en-US", {
-    timeZone: timezone || "America/New_York",
+    timeZone: timezone || "UTC",
     hour: "numeric",
     minute: "2-digit",
     hour12: true,

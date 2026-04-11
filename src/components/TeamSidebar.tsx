@@ -12,6 +12,7 @@ interface TeamMember {
 interface TeamSidebarProps {
   members: TeamMember[];
   timeLogs?: TimeLog[];
+  timezone?: string;
 }
 
 const AVATAR_COLORS = [
@@ -67,7 +68,7 @@ function getStatusBadgeClass(status: "working" | "resting" | "away"): string {
   }
 }
 
-export default function TeamSidebar({ members, timeLogs = [] }: TeamSidebarProps) {
+export default function TeamSidebar({ members, timeLogs = [], timezone = "UTC" }: TeamSidebarProps) {
   const [expandedMembers, setExpandedMembers] = useState<Set<string>>(new Set());
 
   const toggleExpand = (memberId: string) => {
@@ -78,10 +79,6 @@ export default function TeamSidebar({ members, timeLogs = [] }: TeamSidebarProps
       return next;
     });
   };
-
-  // Get today's start for filtering (in case logs from other days sneak in)
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
 
   return (
     <div className="bg-white border border-sand rounded-xl">
@@ -157,6 +154,7 @@ export default function TeamSidebar({ members, timeLogs = [] }: TeamSidebarProps
                 <div className="mt-1.5 ml-[46px] space-y-1 max-h-[180px] overflow-y-auto">
                   {memberLogs.map((log) => {
                     const startTime = new Date(log.start_time).toLocaleTimeString("en-US", {
+                      timeZone: timezone,
                       hour: "numeric",
                       minute: "2-digit",
                       hour12: true,
