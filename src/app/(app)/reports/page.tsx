@@ -7,8 +7,9 @@ import {
   formatDuration,
   getInitials,
   getAvatarColor,
-  weekStart,
-  weekEnd,
+  getTodayBoundsInTimezone,
+  getWeekBoundsInTimezone,
+  getMonthBoundsInTimezone,
 } from "@/lib/utils";
 
 /* ── Types ────────────────────────────────────────────────── */
@@ -62,21 +63,34 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole>("va");
+  const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
+
+  /* ── Fetch org timezone on mount ────────────────────────── */
+
+  useEffect(() => {
+    async function fetchTimezone() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("organization_settings")
+        .select("timezone")
+        .limit(1)
+        .single();
+      if (data?.timezone) setOrgTimezone(data.timezone);
+    }
+    fetchTimezone();
+  }, []);
 
   /* ── Compute date range as ISO strings (stable primitives) ── */
 
   const { startISO, endISO, start, end, periodLabel } = useMemo(() => {
-    const now = new Date();
     if (dateRange === "today") {
-      const s = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-      const e = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-      const label = s.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-      return { startISO: s.toISOString(), endISO: e.toISOString(), start: s, end: e, periodLabel: label };
+      const { start: s, end: e } = getTodayBoundsInTimezone(orgTimezone);
+      const label = new Date(s).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone });
+      return { startISO: s, endISO: e, start: new Date(s), end: new Date(e), periodLabel: label };
     } else if (dateRange === "week") {
-      const s = weekStart(now);
-      const e = weekEnd(now);
-      const label = `Week of ${s.toLocaleDateString("en-US", { month: "long", day: "numeric" })} \u2013 ${e.toLocaleDateString("en-US", { day: "numeric", year: "numeric" })}`;
-      return { startISO: s.toISOString(), endISO: e.toISOString(), start: s, end: e, periodLabel: label };
+      const { start: s, end: e } = getWeekBoundsInTimezone(orgTimezone);
+      const label = `Week of ${new Date(s).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: orgTimezone })} \u2013 ${new Date(e).toLocaleDateString("en-US", { day: "numeric", year: "numeric", timeZone: orgTimezone })}`;
+      return { startISO: s, endISO: e, start: new Date(s), end: new Date(e), periodLabel: label };
     } else if (dateRange === "custom" && appliedStart && appliedEnd) {
       const s = new Date(appliedStart + "T00:00:00Z");
       const e = new Date(appliedEnd + "T23:59:59Z");
@@ -88,15 +102,11 @@ export default function ReportsPage() {
       const e = new Date(0);
       return { startISO: "", endISO: "", start: s, end: e, periodLabel: "Select date range" };
     } else {
-      const s = new Date(now.getFullYear(), now.getMonth(), 1);
-      const e = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-      const label = s.toLocaleDateString("en-US", {
-        month: "long",
-        year: "numeric",
-      });
-      return { startISO: s.toISOString(), endISO: e.toISOString(), start: s, end: e, periodLabel: label };
+      const { start: s, end: e } = getMonthBoundsInTimezone(orgTimezone);
+      const label = new Date(s).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: orgTimezone });
+      return { startISO: s, endISO: e, start: new Date(s), end: new Date(e), periodLabel: label };
     }
-  }, [dateRange, appliedStart, appliedEnd]);
+  }, [dateRange, appliedStart, appliedEnd, orgTimezone]);
 
   /* ── Fetch data — uses ISO strings so deps are stable primitives ── */
 
@@ -299,7 +309,7 @@ export default function ReportsPage() {
       return [buildDay(d, dayNames[d.getDay()])];
     } else if (dateRange === "week") {
       const days: DailyData[] = [];
-      const ws = weekStart();
+      const ws = new Date(getWeekBoundsInTimezone(orgTimezone).start);
       for (let i = 0; i < 7; i++) {
         const d = new Date(ws);
         d.setDate(d.getDate() + i);
@@ -335,7 +345,7 @@ export default function ReportsPage() {
       }
       return days;
     }
-  }, [filteredLogs, dateRange, start, appliedStart, appliedEnd]);
+  }, [filteredLogs, dateRange, start, appliedStart, appliedEnd, orgTimezone]);
 
   const maxDayMs = useMemo(
     () => Math.max(...dailyData.map((d) => d.totalMs), 1),
@@ -434,13 +444,13 @@ export default function ReportsPage() {
 
     const rows = filteredLogs.map((l) => {
       const startDate = l.start_time
-        ? new Date(l.start_time).toLocaleDateString()
+        ? new Date(l.start_time).toLocaleDateString("en-US", { timeZone: orgTimezone })
         : "";
       const startTime = l.start_time
-        ? new Date(l.start_time).toLocaleTimeString()
+        ? new Date(l.start_time).toLocaleTimeString("en-US", { timeZone: orgTimezone })
         : "";
       const endTime = l.end_time
-        ? new Date(l.end_time).toLocaleTimeString()
+        ? new Date(l.end_time).toLocaleTimeString("en-US", { timeZone: orgTimezone })
         : "";
       const mins = l.duration_ms ? Math.round(l.duration_ms / 60000) : 0;
       return [
@@ -476,7 +486,7 @@ export default function ReportsPage() {
     link.download = `MinuteFlow-Report-${start.toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
-  }, [filteredLogs, start]);
+  }, [filteredLogs, start, orgTimezone]);
 
   /* ── Export XLSX (HTML table for Excel) ──────────────────── */
 
@@ -515,9 +525,9 @@ export default function ReportsPage() {
               ? "#e8f4f8"
               : "#f5f5f5";
       html += `<tr style="background:${bg}">`;
-      html += `<td>${l.start_time ? new Date(l.start_time).toLocaleDateString() : ""}</td>`;
-      html += `<td>${l.start_time ? new Date(l.start_time).toLocaleTimeString() : ""}</td>`;
-      html += `<td>${l.end_time ? new Date(l.end_time).toLocaleTimeString() : ""}</td>`;
+      html += `<td>${l.start_time ? new Date(l.start_time).toLocaleDateString("en-US", { timeZone: orgTimezone }) : ""}</td>`;
+      html += `<td>${l.start_time ? new Date(l.start_time).toLocaleTimeString("en-US", { timeZone: orgTimezone }) : ""}</td>`;
+      html += `<td>${l.end_time ? new Date(l.end_time).toLocaleTimeString("en-US", { timeZone: orgTimezone }) : ""}</td>`;
       html += `<td>${l.duration_ms ? Math.round(l.duration_ms / 60000) : 0}</td>`;
       html += `<td>${l.username || ""}</td>`;
       html += `<td>${l.full_name || ""}</td>`;
@@ -541,7 +551,7 @@ export default function ReportsPage() {
     link.download = `MinuteFlow-Report-${start.toISOString().slice(0, 10)}.xls`;
     link.click();
     URL.revokeObjectURL(url);
-  }, [filteredLogs, start]);
+  }, [filteredLogs, start, orgTimezone]);
 
   /* ── Render ──────────────────────────────────────────────── */
 

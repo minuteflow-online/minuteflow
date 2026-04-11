@@ -1089,6 +1089,7 @@ export default function AdminPage() {
               logMap={logMap}
               currentUserId={currentUserId}
               fetchData={fetchData}
+              orgTimezone={orgTimezone}
             />
           )}
 
@@ -4077,12 +4078,14 @@ function SortingReviewTab({
   logMap,
   currentUserId,
   fetchData,
+  orgTimezone,
 }: {
   sortingReviews: SortingReview[];
   profileMap: Map<string, Profile>;
   logMap: Map<number, TimeLog>;
   currentUserId: string | null;
   fetchData: () => void;
+  orgTimezone: string;
 }) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editAccount, setEditAccount] = useState("");
