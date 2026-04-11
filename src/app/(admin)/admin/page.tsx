@@ -25,7 +25,7 @@ import {
   getInitials,
   getAvatarColor,
   todayStart,
-  formatTimeET,
+  getTimezoneAbbr,
 } from "@/lib/utils";
 import ProjectsTasksTab from "@/components/ProjectsTasksTab";
 import FinancialSummaryTab from "@/components/FinancialSummaryTab";
@@ -41,18 +41,20 @@ function getTimeAgo(date: Date): string {
   return date.toLocaleDateString();
 }
 
-function formatDateShort(iso: string): string {
+function formatDateShort(iso: string, timezone?: string): string {
   return new Date(iso).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
+    ...(timezone ? { timeZone: timezone } : {}),
   });
 }
 
-function formatTimeShort(iso: string): string {
+function formatTimeShort(iso: string, timezone?: string): string {
   return new Date(iso).toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    ...(timezone ? { timeZone: timezone } : {}),
   });
 }
 
@@ -261,25 +263,29 @@ export default function AdminPage() {
   const [sortingReviews, setSortingReviews] = useState<SortingReview[]>([]);
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
 
+  // Org timezone
+  const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
+
   // Clock
   const [clock, setClock] = useState("");
 
   useEffect(() => {
     function updateClock() {
       const now = new Date();
+      const tz = orgTimezone || "UTC";
       setClock(
         now.toLocaleTimeString("en-US", {
-          timeZone: "America/New_York",
+          timeZone: tz,
           hour: "numeric",
           minute: "2-digit",
           hour12: true,
-        }) + " ET"
+        }) + " " + getTimezoneAbbr(tz)
       );
     }
     updateClock();
     const interval = setInterval(updateClock, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [orgTimezone]);
 
   /* ── Data Fetching ──────────────────────────────────────── */
 
@@ -322,6 +328,7 @@ export default function AdminPage() {
       sortingRes,
       breakCorrectionsRes,
       manualEntriesRes,
+      orgSettingsRes,
     ] = await Promise.all([
       supabase.from("profiles").select("*"),
       supabase.from("sessions").select("*"),
@@ -362,6 +369,7 @@ export default function AdminPage() {
         .eq("is_manual", true)
         .eq("manual_status", "pending")
         .order("created_at", { ascending: false }),
+      supabase.from("organization_settings").select("timezone").limit(1).single(),
     ]);
 
     setProfiles((profilesRes.data ?? []) as Profile[]);
@@ -374,6 +382,7 @@ export default function AdminPage() {
     setSortingReviews((sortingRes.data ?? []) as SortingReview[]);
     setBreakCorrectionRequests((breakCorrectionsRes.data ?? []) as BreakCorrectionRequest[]);
     setPendingManualEntries((manualEntriesRes.data ?? []) as TimeLog[]);
+    if (orgSettingsRes.data?.timezone) setOrgTimezone(orgSettingsRes.data.timezone);
 
     if (authRes.data?.user) {
       setCurrentUserId(authRes.data.user.id);
