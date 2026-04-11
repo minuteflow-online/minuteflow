@@ -1077,6 +1077,7 @@ export default function AdminPage() {
                 setManualReviewNotes={setManualReviewNotes}
                 handleApproveManualEntry={handleApproveManualEntry}
                 handleDenyManualEntry={handleDenyManualEntry}
+                orgTimezone={orgTimezone}
               />
             </div>
           )}
@@ -3935,6 +3936,7 @@ function ManualEntriesSection({
   setManualReviewNotes,
   handleApproveManualEntry,
   handleDenyManualEntry,
+  orgTimezone,
 }: {
   pendingManualEntries: TimeLog[];
   profileMap: Map<string, Profile>;
@@ -3942,6 +3944,7 @@ function ManualEntriesSection({
   setManualReviewNotes: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   handleApproveManualEntry: (entry: TimeLog) => void;
   handleDenyManualEntry: (entry: TimeLog) => void;
+  orgTimezone: string;
 }) {
   if (pendingManualEntries.length === 0) {
     return (
