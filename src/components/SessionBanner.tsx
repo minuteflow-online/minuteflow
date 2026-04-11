@@ -10,6 +10,7 @@ interface SessionBannerProps {
   elapsedSeconds: number;
   breakElapsedSeconds: number;
   screenShareActive?: boolean;
+  timezone?: string;
   onClockIn?: () => void;
   onClockOut: () => void;
   onStartBreak: () => void;
@@ -24,9 +25,10 @@ function formatTimer(totalSeconds: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
-function formatTime(iso: string): string {
+function formatTime(iso: string, timezone?: string): string {
   const d = new Date(iso);
   return d.toLocaleTimeString("en-US", {
+    timeZone: timezone || "America/New_York",
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
@@ -39,6 +41,7 @@ export default function SessionBanner({
   elapsedSeconds,
   breakElapsedSeconds,
   screenShareActive,
+  timezone,
   onClockIn,
   onClockOut,
   onStartBreak,
@@ -88,7 +91,7 @@ export default function SessionBanner({
               : state === "on-break"
                 ? `Break started ${breakElapsedSeconds > 0 ? formatTimer(breakElapsedSeconds) + " ago" : "just now"}`
                 : clockInTime
-                  ? `Since ${formatTime(clockInTime)}`
+                  ? `Since ${formatTime(clockInTime, timezone)}`
                   : "Session active"}
           </p>
           {screenShareActive && state !== "idle" && (

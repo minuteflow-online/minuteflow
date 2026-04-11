@@ -47,7 +47,7 @@ export function getAvatarColor(seed: string): string {
   return avatarColors[Math.abs(hash) % avatarColors.length];
 }
 
-/** Format a date to a specific timezone display */
+/** Format a date to time display in a specific timezone (e.g. "3:45 PM") */
 export function formatTimeET(date: Date | string, timezone?: string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   return d.toLocaleTimeString("en-US", {
@@ -56,6 +56,46 @@ export function formatTimeET(date: Date | string, timezone?: string): string {
     minute: "2-digit",
     hour12: true,
   });
+}
+
+/** Format a date to short date display in a specific timezone (e.g. "Jan 5") */
+export function formatDateShortTZ(date: Date | string, timezone: string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d.toLocaleDateString("en-US", {
+    timeZone: timezone,
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/** Format a date to full date display in a specific timezone (e.g. "January 5, 2026") */
+export function formatDateFullTZ(date: Date | string, timezone: string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d.toLocaleDateString("en-US", {
+    timeZone: timezone,
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/** Format a date to date+time display in a specific timezone (e.g. "Jan 5, 3:45 PM") */
+export function formatDateTimeTZ(date: Date | string, timezone: string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d.toLocaleString("en-US", {
+    timeZone: timezone,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+/** Format a date to YYYY-MM-DD in a specific timezone */
+export function formatDateLocalTZ(date: Date | string, timezone: string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d.toLocaleDateString("en-CA", { timeZone: timezone });
 }
 
 /** Get the timezone abbreviation for display */

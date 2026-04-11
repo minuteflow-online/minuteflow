@@ -2069,6 +2069,7 @@ export default function DashboardPage() {
         elapsedSeconds={sessionElapsed}
         breakElapsedSeconds={breakElapsed}
         screenShareActive={screenShareActive}
+        timezone={orgTimezone}
         onClockIn={clockIn}
         onClockOut={clockOut}
         onStartBreak={startBreak}

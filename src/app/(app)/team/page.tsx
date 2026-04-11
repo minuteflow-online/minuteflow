@@ -11,6 +11,7 @@ import {
   todayStart,
   weekStart,
   weekEnd,
+  formatDateLocalTZ,
 } from "@/lib/utils";
 
 /* ── Types ────────────────────────────────────────────────── */
@@ -75,6 +76,7 @@ export default function TeamPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole | null>(null);
+  const [orgTimezone, setOrgTimezone] = useState<string>("America/New_York");
 
   // Date range state
   const [datePreset, setDatePreset] = useState<DateRangePreset>("today");
@@ -150,7 +152,7 @@ export default function TeamPage() {
     const moodStart = rangeStart.toISOString().split("T")[0];
     const moodEnd = rangeEnd.toISOString().split("T")[0];
 
-    const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes] =
+    const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes, orgRes] =
       await Promise.all([
         supabase.from("profiles").select("*"),
         supabase.from("sessions").select("*"),
@@ -169,7 +171,12 @@ export default function TeamPage() {
           .select("user_id, session_date, mood")
           .gte("session_date", moodStart)
           .lte("session_date", moodEnd),
+        supabase.from("organization_settings").select("timezone").limit(1).single(),
       ]);
+
+    if (orgRes.data?.timezone) {
+      setOrgTimezone(orgRes.data.timezone);
+    }
 
     const allProfiles = (profilesRes.data ?? []) as Profile[];
     const profiles = allProfiles.filter((p) => p.is_active !== false);
@@ -598,6 +605,7 @@ export default function TeamPage() {
                   onForceLogout={isAdmin ? handleForceLogout : undefined}
                   onDeselect={() => toggleMember(member.profile.id)}
                   userMoods={moodData[member.profile.id] || {}}
+                  timezone={orgTimezone}
                 />
               ))}
             </div>
@@ -1062,13 +1070,14 @@ function DailyRatingsPanel({ vaId, isAdmin }: { vaId: string; isAdmin: boolean }
 
 /* ── Expanded Member Card (Full Width) ───────────────────── */
 
-function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselect, userMoods }: {
+function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselect, userMoods, timezone }: {
   member: TeamMember;
   isAdmin: boolean;
   isToday: boolean;
   onForceLogout?: (userId: string, fullName: string) => void;
   onDeselect: () => void;
   userMoods: Record<string, string>; // { "YYYY-MM-DD": mood }
+  timezone: string;
 }) {
   const { profile, status, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
@@ -1126,9 +1135,9 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
     const byDate: Record<string, { logs: TimeLog[]; dateSort: number; isoDate: string }> = {};
     member.todayLogs.forEach((log) => {
       const d = new Date(log.start_time);
-      const key = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-      const dateSort = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-      const isoDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const isoDate = formatDateLocalTZ(d, timezone); // "YYYY-MM-DD" in org timezone
+      const key = d.toLocaleDateString("en-US", { timeZone: timezone, weekday: "short", month: "short", day: "numeric" });
+      const dateSort = new Date(isoDate).getTime();
       if (!byDate[key]) byDate[key] = { logs: [], dateSort, isoDate };
       byDate[key].logs.push(log);
     });
@@ -1359,13 +1368,13 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
                       </span>
                       <span className="text-[11px] text-bark">
                         {day.clockIn
-                          ? day.clockIn.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+                          ? day.clockIn.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true })
                           : "\u2014"}
                         {" \u2192 "}
                         {day.hasActiveLog
                           ? "Still active"
                           : day.clockOut
-                            ? day.clockOut.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+                            ? day.clockOut.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true })
                             : "\u2014"}
                       </span>
                     </div>
