@@ -30,7 +30,7 @@ type TopNavProps = {
 
 function Clock() {
   const [time, setTime] = useState("");
-  const [timezone, setTimezone] = useState<string>("America/New_York");
+  const [timezone, setTimezone] = useState<string>("UTC");
   const [tzAbbr, setTzAbbr] = useState("ET");
 
   // Fetch org timezone on mount

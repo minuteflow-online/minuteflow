@@ -30,7 +30,7 @@ import type {
 function getGreeting(timezone?: string): string {
   const now = new Date();
   const hourStr = now.toLocaleTimeString("en-US", {
-    timeZone: timezone || "America/New_York",
+    timeZone: timezone || "UTC",
     hour: "numeric",
     hour12: false,
   });
@@ -42,7 +42,7 @@ function getGreeting(timezone?: string): string {
 
 function formatDateLong(timezone?: string): string {
   return new Date().toLocaleDateString("en-US", {
-    timeZone: timezone || "America/New_York",
+    timeZone: timezone || "UTC",
     weekday: "long",
     month: "long",
     day: "numeric",
@@ -120,7 +120,7 @@ export default function DashboardPage() {
   const [clockOutMood, setClockOutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
 
   // Org timezone
-  const [orgTimezone, setOrgTimezone] = useState<string>("America/New_York");
+  const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
 
   // In-app messages
   const [messages, setMessages] = useState<(Message & { senderName?: string })[]>([]);
@@ -2109,7 +2109,7 @@ export default function DashboardPage() {
 
         return (
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
-            {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} />}
+            {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />}
             <TaskEntryForm
               onStartTask={handleCheckAndStartTask}
               hasActiveTask={!!activeTask || sessionState === "clocked-in" || sessionState === "on-break"}
@@ -2122,6 +2122,7 @@ export default function DashboardPage() {
                 role={role}
                 onStartPlannedTask={handleStartPlannedTask}
                 teamMembers={teamMembers.map((m) => m.profile)}
+                orgTimezone={orgTimezone}
               />
             )}
             {/* VA Assignments — visible BEFORE clock-in, based on position rules */}

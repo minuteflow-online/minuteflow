@@ -9,6 +9,7 @@ interface DailyTaskPlannerProps {
   role: UserRole;
   onStartPlannedTask: (task: PlannedTask) => void;
   teamMembers?: Profile[];
+  orgTimezone?: string;
 }
 
 const FALLBACK_ACCOUNTS = [
@@ -25,17 +26,41 @@ const FALLBACK_ACCOUNTS = [
   "TONIWSB",
 ];
 
+function getDateInTimezone(tz: string): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: tz });
+}
+
+function shiftDate(dateStr: string, days: number): string {
+  // Use noon to avoid DST edge cases
+  const d = new Date(dateStr + "T12:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString("en-CA");
+}
+
+function formatDateDisplay(dateStr: string, todayStr: string): string {
+  if (dateStr === todayStr) return "Today";
+  const d = new Date(dateStr + "T12:00:00");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
 export default function DailyTaskPlanner({
   userId,
   role,
   onStartPlannedTask,
   teamMembers = [],
+  orgTimezone = "UTC",
 }: DailyTaskPlannerProps) {
   const supabase = createClient();
   const [tasks, setTasks] = useState<PlannedTask[]>([]);
   const [accounts, setAccounts] = useState<string[]>(FALLBACK_ACCOUNTS);
   const [loading, setLoading] = useState(true);
   const [logDurations, setLogDurations] = useState<Record<number, number>>({});
+
+  // Today in org timezone
+  const todayStr = getDateInTimezone(orgTimezone);
+
+  // Viewed date — defaults to today, navigable with ← → arrows
+  const [viewDate, setViewDate] = useState<string>(todayStr);
 
   // Single task entry
   const [newTaskName, setNewTaskName] = useState("");
@@ -52,8 +77,10 @@ export default function DailyTaskPlanner({
   // Admin: which VA to view
   const [viewUserId, setViewUserId] = useState(userId);
 
-  // Today's date in local timezone
-  const today = new Date().toISOString().split("T")[0];
+  // Re-sync viewDate when orgTimezone resolves (avoids showing UTC "today" briefly)
+  useEffect(() => {
+    setViewDate(getDateInTimezone(orgTimezone));
+  }, [orgTimezone]);
 
   // Fetch accounts from DB
   const fetchAccounts = useCallback(async () => {
@@ -71,7 +98,7 @@ export default function DailyTaskPlanner({
     }
   }, []);
 
-  // Fetch planned tasks for today
+  // Fetch planned tasks for viewDate
   const fetchTasks = useCallback(async () => {
     setLoading(true);
     const targetUserId = role === "va" ? userId : viewUserId;
@@ -79,7 +106,7 @@ export default function DailyTaskPlanner({
     let query = supabase
       .from("planned_tasks")
       .select("*")
-      .eq("plan_date", today)
+      .eq("plan_date", viewDate)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: true });
 
@@ -94,7 +121,7 @@ export default function DailyTaskPlanner({
       setTasks(data as PlannedTask[]);
     }
     setLoading(false);
-  }, [supabase, userId, viewUserId, role, today]);
+  }, [supabase, userId, viewUserId, role, viewDate]);
 
   useEffect(() => {
     fetchAccounts();
@@ -138,7 +165,7 @@ export default function DailyTaskPlanner({
         user_id: role === "va" ? userId : viewUserId,
         task_name: newTaskName.trim(),
         account: newTaskAccount || null,
-        plan_date: today,
+        plan_date: viewDate,
         sort_order: tasks.length,
       })
       .select()
@@ -149,7 +176,7 @@ export default function DailyTaskPlanner({
       setNewTaskName("");
       setNewTaskAccount("");
     }
-  }, [supabase, userId, viewUserId, role, newTaskName, newTaskAccount, today, tasks.length]);
+  }, [supabase, userId, viewUserId, role, newTaskName, newTaskAccount, viewDate, tasks.length]);
 
   // Add tasks in bulk (one per line)
   const addBulkTasks = useCallback(async () => {
@@ -164,7 +191,7 @@ export default function DailyTaskPlanner({
       user_id: role === "va" ? userId : viewUserId,
       task_name: line,
       account: bulkAccount || null,
-      plan_date: today,
+      plan_date: viewDate,
       sort_order: tasks.length + i,
     }));
 
@@ -179,7 +206,7 @@ export default function DailyTaskPlanner({
       setBulkAccount("");
       setBulkMode(false);
     }
-  }, [supabase, userId, viewUserId, role, bulkText, bulkAccount, today, tasks.length]);
+  }, [supabase, userId, viewUserId, role, bulkText, bulkAccount, viewDate, tasks.length]);
 
   // Toggle completed
   const toggleCompleted = useCallback(
@@ -198,7 +225,7 @@ export default function DailyTaskPlanner({
     [supabase]
   );
 
-  // Delete a task
+  // Delete a single task
   const deleteTask = useCallback(
     async (taskId: number) => {
       const { error } = await supabase
@@ -212,6 +239,24 @@ export default function DailyTaskPlanner({
     },
     [supabase]
   );
+
+  // Clear all tasks for the viewed date
+  const clearDay = useCallback(async () => {
+    if (!confirm(`Clear all tasks for ${formatDateDisplay(viewDate, todayStr)}?`)) return;
+    const targetUserId = role === "va" ? userId : viewUserId;
+
+    let query = supabase
+      .from("planned_tasks")
+      .delete()
+      .eq("plan_date", viewDate);
+
+    if (targetUserId !== "__all__") {
+      query = query.eq("user_id", targetUserId);
+    }
+
+    const { error } = await query;
+    if (!error) setTasks([]);
+  }, [supabase, userId, viewUserId, role, viewDate, todayStr]);
 
   // Update account on an existing task
   const updateTaskAccount = useCallback(
@@ -253,6 +298,10 @@ export default function DailyTaskPlanner({
   }, [teamMembers]);
   const isViewAll = viewUserId === "__all__";
 
+  const isToday = viewDate === todayStr;
+  // Don't allow navigating forward past today
+  const canGoForward = viewDate < todayStr;
+
   return (
     <div className="bg-white border border-sand rounded-xl">
       {/* Header */}
@@ -270,7 +319,7 @@ export default function DailyTaskPlanner({
             <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <h3 className="text-sm font-bold text-espresso">
-            Today&apos;s Plan
+            {isToday ? "Today's Plan" : formatDateDisplay(viewDate, todayStr)}
           </h3>
         </button>
         <div className="flex items-center gap-2">
@@ -279,6 +328,37 @@ export default function DailyTaskPlanner({
               {pendingTasks.length} pending
             </span>
           )}
+          {/* Date navigation arrows */}
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => setViewDate((d) => shiftDate(d, -1))}
+              className="p-1 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft cursor-pointer transition-colors"
+              title="Previous day"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            {!isToday && (
+              <button
+                onClick={() => setViewDate(todayStr)}
+                className="text-[10px] font-semibold text-terracotta hover:text-[#a85840] cursor-pointer px-1"
+                title="Jump to today"
+              >
+                Today
+              </button>
+            )}
+            <button
+              onClick={() => setViewDate((d) => shiftDate(d, 1))}
+              disabled={!canGoForward}
+              className="p-1 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Next day"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          </div>
           {!collapsed && (
             <button
               onClick={() => setBulkMode(!bulkMode)}
@@ -401,7 +481,9 @@ export default function DailyTaskPlanner({
             </div>
           ) : tasks.length === 0 ? (
             <p className="text-xs text-stone py-3 text-center">
-              No tasks planned for today yet.
+              {isToday
+                ? "No tasks planned for today yet."
+                : `No tasks for ${formatDateDisplay(viewDate, todayStr)}.`}
             </p>
           ) : (
             <div>
@@ -524,15 +606,25 @@ export default function DailyTaskPlanner({
             </div>
           )}
 
-          {/* Summary */}
+          {/* Summary + Clear button */}
           {tasks.length > 0 && (
             <div className="mt-3 pt-2 border-t border-parchment flex items-center justify-between text-[10px] text-bark">
               <span>{completedTasks.length}/{tasks.length} completed</span>
-              <div className="w-20 h-1.5 bg-parchment rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-sage rounded-full transition-all"
-                  style={{ width: `${tasks.length > 0 ? (completedTasks.length / tasks.length) * 100 : 0}%` }}
-                />
+              <div className="flex items-center gap-3">
+                {!isToday && (
+                  <button
+                    onClick={clearDay}
+                    className="text-[10px] text-stone hover:text-terracotta cursor-pointer transition-colors"
+                  >
+                    Clear day
+                  </button>
+                )}
+                <div className="w-20 h-1.5 bg-parchment rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-sage rounded-full transition-all"
+                    style={{ width: `${tasks.length > 0 ? (completedTasks.length / tasks.length) * 100 : 0}%` }}
+                  />
+                </div>
               </div>
             </div>
           )}

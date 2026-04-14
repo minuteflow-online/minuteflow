@@ -146,7 +146,7 @@ const ProjectIcon = () => (
 
 /* ── Component ───────────────────────────────────────────── */
 
-export default function ProjectsTasksTab() {
+export default function ProjectsTasksTab({ timezone = "UTC" }: { timezone?: string }) {
   /* ── State: data ─────── */
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [projects, setProjects] = useState<ProjectTag[]>([]);
@@ -2242,7 +2242,7 @@ export default function ProjectsTasksTab() {
       </div>
 
       {/* ═══ SECTION: Fixed & Project-Based Task Management ═══ */}
-      <TaskManagementSection />
+      <TaskManagementSection timezone={timezone} />
 
     </div>
   );

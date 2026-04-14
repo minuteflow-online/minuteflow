@@ -85,7 +85,7 @@ const STATUS_COLORS: Record<AssignmentStatus, string> = {
 
 /* ── Main Component ────────────────────────────────────── */
 
-export default function TaskManagementSection() {
+export default function TaskManagementSection({ timezone = "UTC" }: { timezone?: string }) {
   const [assignments, setAssignments] = useState<VaTaskAssignmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -928,7 +928,7 @@ export default function TaskManagementSection() {
                                   {s.profiles?.full_name ?? "VA"}
                                 </span>
                                 <span className="text-[9px] text-stone">
-                                  {new Date(s.created_at).toLocaleString()}
+                                  {new Date(s.created_at).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}
                                 </span>
                               </div>
                               {s.submission_link && (

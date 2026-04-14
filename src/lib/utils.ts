@@ -159,6 +159,67 @@ export function todayStart(): string {
   return d.toISOString();
 }
 
+/** Get start/end of the current week (Mon–Sun) in a given timezone, as UTC ISO strings */
+export function getWeekBoundsInTimezone(timezone: string): { start: string; end: string } {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const tzYear = parseInt(parts.find(p => p.type === "year")!.value);
+  const tzMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
+  const tzDay = parseInt(parts.find(p => p.type === "day")!.value);
+  const tzHour = parseInt(parts.find(p => p.type === "hour")!.value);
+  const tzMinute = parseInt(parts.find(p => p.type === "minute")!.value);
+  const tzSecond = parseInt(parts.find(p => p.type === "second")!.value);
+  const tzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, tzHour, tzMinute, tzSecond));
+  const offsetMs = tzAsUtc.getTime() - now.getTime();
+  // Find Monday of current week in timezone
+  const jsDay = new Date(tzYear, tzMonth, tzDay).getDay(); // 0=Sun
+  const diffToMonday = jsDay === 0 ? -6 : 1 - jsDay;
+  const mondayDate = new Date(tzYear, tzMonth, tzDay + diffToMonday);
+  const sundayDate = new Date(tzYear, tzMonth, tzDay + diffToMonday + 6);
+  const startUtc = new Date(Date.UTC(mondayDate.getFullYear(), mondayDate.getMonth(), mondayDate.getDate(), 0, 0, 0) - offsetMs);
+  const endUtc = new Date(Date.UTC(sundayDate.getFullYear(), sundayDate.getMonth(), sundayDate.getDate(), 0, 0, 0) - offsetMs + 24 * 60 * 60 * 1000 - 1);
+  return { start: startUtc.toISOString(), end: endUtc.toISOString() };
+}
+
+/** Get start/end of the current month in a given timezone, as UTC ISO strings */
+export function getMonthBoundsInTimezone(timezone: string): { start: string; end: string } {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const tzYear = parseInt(parts.find(p => p.type === "year")!.value);
+  const tzMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
+  const tzDay = parseInt(parts.find(p => p.type === "day")!.value);
+  const tzHour = parseInt(parts.find(p => p.type === "hour")!.value);
+  const tzMinute = parseInt(parts.find(p => p.type === "minute")!.value);
+  const tzSecond = parseInt(parts.find(p => p.type === "second")!.value);
+  const tzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, tzHour, tzMinute, tzSecond));
+  const offsetMs = tzAsUtc.getTime() - now.getTime();
+  const firstDay = new Date(tzYear, tzMonth, 1);
+  const lastDay = new Date(tzYear, tzMonth + 1, 0);
+  const startUtc = new Date(Date.UTC(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate(), 0, 0, 0) - offsetMs);
+  const endUtc = new Date(Date.UTC(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate(), 0, 0, 0) - offsetMs + 24 * 60 * 60 * 1000 - 1);
+  return { start: startUtc.toISOString(), end: endUtc.toISOString() };
+}
+
 /** Get start of the week (Monday) */
 export function weekStart(date?: Date): Date {
   const d = date ? new Date(date) : new Date();

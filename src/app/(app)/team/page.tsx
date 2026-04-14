@@ -58,8 +58,8 @@ function formatCurrency(amount: number): string {
   });
 }
 
-function formatDateShort(d: Date): string {
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+function formatDateShort(d: Date, timezone?: string): string {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(timezone ? { timeZone: timezone } : {}) });
 }
 
 function formatDateInput(d: Date): string {
@@ -76,7 +76,7 @@ export default function TeamPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole | null>(null);
-  const [orgTimezone, setOrgTimezone] = useState<string>("America/New_York");
+  const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
 
   // Date range state
   const [datePreset, setDatePreset] = useState<DateRangePreset>("today");
@@ -113,6 +113,7 @@ export default function TeamPage() {
   // Compute date range boundaries
   const { rangeStart, rangeEnd, periodLabel } = useMemo(() => {
     const now = new Date();
+    const tz = orgTimezone || undefined;
     if (datePreset === "today") {
       const s = new Date(now);
       s.setHours(0, 0, 0, 0);
@@ -123,7 +124,7 @@ export default function TeamPage() {
     if (datePreset === "week") {
       const s = weekStart(now);
       const e = weekEnd(now);
-      const label = `${formatDateShort(s)} \u2013 ${formatDateShort(e)}`;
+      const label = `${formatDateShort(s, tz)} \u2013 ${formatDateShort(e, tz)}`;
       return { rangeStart: s, rangeEnd: e, periodLabel: label };
     }
     if (datePreset === "month") {
@@ -131,15 +132,15 @@ export default function TeamPage() {
       s.setHours(0, 0, 0, 0);
       const e = new Date(now.getFullYear(), now.getMonth() + 1, 0);
       e.setHours(23, 59, 59, 999);
-      const label = s.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+      const label = s.toLocaleDateString("en-US", { month: "long", year: "numeric", ...(tz ? { timeZone: tz } : {}) });
       return { rangeStart: s, rangeEnd: e, periodLabel: label };
     }
     // custom
     const s = new Date(customStart + "T00:00:00");
     const e = new Date(customEnd + "T23:59:59.999");
-    const label = `${formatDateShort(s)} \u2013 ${formatDateShort(e)}`;
+    const label = `${formatDateShort(s, tz)} \u2013 ${formatDateShort(e, tz)}`;
     return { rangeStart: s, rangeEnd: e, periodLabel: label };
-  }, [datePreset, customStart, customEnd]);
+  }, [datePreset, customStart, customEnd, orgTimezone]);
 
   const isToday = datePreset === "today";
 
@@ -623,6 +624,7 @@ export default function TeamPage() {
                   isSelected={false}
                   onSelect={() => toggleMember(member.profile.id)}
                   onForceLogout={isAdmin ? handleForceLogout : undefined}
+                  timezone={orgTimezone}
                 />
               ))}
             </div>
@@ -663,13 +665,14 @@ function StatCard({
 
 /* ── Member Card (Compact) ───────────────────────────────── */
 
-function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLogout }: {
+function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLogout, timezone = "UTC" }: {
   member: TeamMember;
   isAdmin: boolean;
   isToday: boolean;
   isSelected: boolean;
   onSelect: () => void;
   onForceLogout?: (userId: string, fullName: string) => void;
+  timezone?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const { profile, status, currentTaskName, currentTaskMeta } = member;
@@ -794,7 +797,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
           </button>
 
           {expanded && (
-            <TaskLogList logs={sortedLogs} />
+            <TaskLogList logs={sortedLogs} timezone={timezone} />
           )}
         </div>
       )}
@@ -1406,7 +1409,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
                   {/* Expanded: task list for this date */}
                   {isExpanded && (
                     <div className="px-4 py-3 border-t border-sand bg-white">
-                      <TaskLogList logs={day.logs} showProgress />
+                      <TaskLogList logs={day.logs} showProgress timezone={timezone} />
                     </div>
                   )}
                 </div>
@@ -1446,7 +1449,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
             </button>
             {expandedDates.has("today") && (
               <div className="px-4 py-3 border-t border-sand bg-white max-h-[400px] overflow-y-auto">
-                <TaskLogList logs={sortedLogs} showProgress />
+                <TaskLogList logs={sortedLogs} showProgress timezone={timezone} />
               </div>
             )}
           </div>
@@ -1459,7 +1462,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
 
 /* ── Task Log List (shared between compact & expanded) ───── */
 
-function TaskLogList({ logs, showProgress }: { logs: TimeLog[]; showProgress?: boolean }) {
+function TaskLogList({ logs, showProgress, timezone = "UTC" }: { logs: TimeLog[]; showProgress?: boolean; timezone?: string }) {
   const progressConfig: Record<string, { label: string; bg: string; text: string; dot: string }> = {
     in_progress: { label: "In Progress", bg: "bg-blue-50", text: "text-blue-600", dot: "bg-blue-500" },
     completed: { label: "Completed", bg: "bg-sage-soft", text: "text-sage", dot: "bg-sage" },
@@ -1470,6 +1473,7 @@ function TaskLogList({ logs, showProgress }: { logs: TimeLog[]; showProgress?: b
     <div className="mt-2 space-y-1.5">
       {logs.map((log) => {
         const startTime = new Date(log.start_time).toLocaleTimeString("en-US", {
+          timeZone: timezone,
           hour: "numeric",
           minute: "2-digit",
           hour12: true,
