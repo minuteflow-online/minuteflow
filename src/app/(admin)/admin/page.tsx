@@ -699,20 +699,26 @@ export default function AdminPage() {
       .single();
 
     if (currentLog) {
+      // Convert datetime-local values (no tz info) to proper UTC ISO strings before storing.
+      // Without this, Postgres treats them as UTC and times end up 4 hours off for EDT users.
+      const toUtcIso = (val: string) => (val ? new Date(val).toISOString() : null);
+
       Object.entries(changes).forEach(([field, newValue]) => {
-        updatePayload[field] = newValue || null;
+        const isTimeField = field === "start_time" || field === "end_time";
+        const valueToStore = isTimeField && newValue ? toUtcIso(newValue) : (newValue || null);
+        updatePayload[field] = valueToStore;
         auditRecords.push({
           log_id: request.log_id,
           edited_by: currentUserId,
           field_name: field,
           old_value: (currentLog as Record<string, unknown>)[field] != null ? String((currentLog as Record<string, unknown>)[field]) : null,
-          new_value: newValue || null,
+          new_value: valueToStore,
         });
       });
 
       if (changes.start_time || changes.end_time) {
-        const startTime = changes.start_time || currentLog.start_time;
-        const endTime = changes.end_time || currentLog.end_time;
+        const startTime = changes.start_time ? new Date(changes.start_time).toISOString() : currentLog.start_time;
+        const endTime = changes.end_time ? new Date(changes.end_time).toISOString() : currentLog.end_time;
         if (startTime && endTime) {
           updatePayload.duration_ms = new Date(endTime).getTime() - new Date(startTime).getTime();
         }
