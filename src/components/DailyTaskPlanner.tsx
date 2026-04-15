@@ -78,6 +78,13 @@ export default function DailyTaskPlanner({
   const [yesterdayPending, setYesterdayPending] = useState<PlannedTask[]>([]);
   const [carryingOver, setCarryingOver] = useState(false);
 
+  // Priority for new tasks
+  const [newTaskPriority, setNewTaskPriority] = useState<"urgent" | "important" | "needed" | "">("");
+  const [bulkPriority, setBulkPriority] = useState<"urgent" | "important" | "needed" | "">("");
+
+  // Collapsed state per category section
+  const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>({});
+
   // Admin: which VA to view
   const [viewUserId, setViewUserId] = useState(userId);
 
@@ -200,6 +207,7 @@ export default function DailyTaskPlanner({
         account: newTaskAccount || null,
         plan_date: viewDate,
         sort_order: tasks.length,
+        priority: newTaskPriority || null,
       })
       .select()
       .single();
@@ -208,8 +216,9 @@ export default function DailyTaskPlanner({
       setTasks((prev) => [...prev, data as PlannedTask]);
       setNewTaskName("");
       setNewTaskAccount("");
+      setNewTaskPriority("");
     }
-  }, [supabase, userId, viewUserId, role, newTaskName, newTaskAccount, viewDate, tasks.length]);
+  }, [supabase, userId, viewUserId, role, newTaskName, newTaskAccount, newTaskPriority, viewDate, tasks.length]);
 
   // Add tasks in bulk (one per line)
   const addBulkTasks = useCallback(async () => {
@@ -226,6 +235,7 @@ export default function DailyTaskPlanner({
       account: bulkAccount || null,
       plan_date: viewDate,
       sort_order: tasks.length + i,
+      priority: bulkPriority || null,
     }));
 
     const { data, error } = await supabase
@@ -237,9 +247,10 @@ export default function DailyTaskPlanner({
       setTasks((prev) => [...prev, ...(data as PlannedTask[])]);
       setBulkText("");
       setBulkAccount("");
+      setBulkPriority("");
       setBulkMode(false);
     }
-  }, [supabase, userId, viewUserId, role, bulkText, bulkAccount, viewDate, tasks.length]);
+  }, [supabase, userId, viewUserId, role, bulkText, bulkAccount, bulkPriority, viewDate, tasks.length]);
 
   // Toggle completed
   const toggleCompleted = useCallback(
@@ -306,6 +317,7 @@ export default function DailyTaskPlanner({
       plan_date: todayStr,
       sort_order: maxSortOrder + 1 + i,
       completed: false,
+      priority: t.priority ?? null,
     }));
 
     const { data, error } = await supabase
@@ -344,6 +356,23 @@ export default function DailyTaskPlanner({
     [supabase]
   );
 
+  // Update priority on an existing task
+  const updateTaskPriority = useCallback(
+    async (taskId: number, priority: "urgent" | "important" | "needed" | null) => {
+      const { error } = await supabase
+        .from("planned_tasks")
+        .update({ priority, updated_at: new Date().toISOString() })
+        .eq("id", taskId);
+
+      if (!error) {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === taskId ? { ...t, priority } : t))
+        );
+      }
+    },
+    [supabase]
+  );
+
   // Start working on a planned task (triggers task entry form prefill)
   const handleStartTask = useCallback(
     (task: PlannedTask) => {
@@ -354,6 +383,14 @@ export default function DailyTaskPlanner({
 
   const pendingTasks = tasks.filter((t) => !t.completed);
   const completedTasks = tasks.filter((t) => t.completed);
+
+  // Cycle through priorities on dot click: none → urgent → important → needed → none
+  const cyclePriority = (current: "urgent" | "important" | "needed" | null): "urgent" | "important" | "needed" | null => {
+    if (!current) return "urgent";
+    if (current === "urgent") return "important";
+    if (current === "important") return "needed";
+    return null;
+  };
 
   const vaOptions = role !== "va"
     ? teamMembers.filter((m) => m.role === "va" || m.id === userId)
@@ -506,6 +543,33 @@ export default function DailyTaskPlanner({
                   ))}
                 </select>
               </div>
+              <div className="mt-2">
+                <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                  Priority <span className="text-stone font-normal">(applied to all)</span>
+                </label>
+                <div className="flex gap-1.5">
+                  {(["urgent", "important", "needed"] as const).map((p) => {
+                    const isActive = bulkPriority === p;
+                    const styles = {
+                      urgent:    { active: "bg-terracotta text-white", inactive: "bg-terracotta/10 text-terracotta border border-terracotta/25" },
+                      important: { active: "bg-amber-400 text-white",  inactive: "bg-amber-50 text-amber-500 border border-amber-200"          },
+                      needed:    { active: "bg-sage text-white",       inactive: "bg-sage/10 text-sage border border-sage/25"                  },
+                    };
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setBulkPriority(bulkPriority === p ? "" : p)}
+                        className={`flex-1 py-1.5 rounded text-[11px] font-semibold capitalize cursor-pointer transition-all ${
+                          isActive ? styles[p].active : styles[p].inactive
+                        }`}
+                      >
+                        {p.charAt(0).toUpperCase() + p.slice(1)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="flex gap-2 mt-3">
                 <button
                   onClick={() => { setBulkMode(false); setBulkText(""); setBulkAccount(""); }}
@@ -556,6 +620,29 @@ export default function DailyTaskPlanner({
                   <option key={a} value={a}>{a}</option>
                 ))}
               </select>
+              {/* Priority pills — always colored so it's obvious what they do */}
+              <div className="flex gap-1.5 mt-2">
+                {(["urgent", "important", "needed"] as const).map((p) => {
+                  const isActive = newTaskPriority === p;
+                  const styles = {
+                    urgent:    { active: "bg-terracotta text-white", inactive: "bg-terracotta/10 text-terracotta border border-terracotta/25" },
+                    important: { active: "bg-amber-400 text-white",  inactive: "bg-amber-50 text-amber-500 border border-amber-200"          },
+                    needed:    { active: "bg-sage text-white",       inactive: "bg-sage/10 text-sage border border-sage/25"                  },
+                  };
+                  return (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setNewTaskPriority(newTaskPriority === p ? "" : p)}
+                      className={`flex-1 py-1 rounded text-[10px] font-semibold capitalize cursor-pointer transition-all ${
+                        isActive ? styles[p].active : styles[p].inactive
+                      }`}
+                    >
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -572,120 +659,189 @@ export default function DailyTaskPlanner({
             </p>
           ) : (
             <div>
-              {/* Pending Tasks */}
+              {/* Pending tasks grouped by priority */}
               {pendingTasks.length > 0 && (
-                <div className="space-y-1">
-                  {pendingTasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="group flex items-start gap-2 py-2 px-2 rounded-lg hover:bg-cream transition-colors"
-                    >
-                      <button
-                        onClick={() => toggleCompleted(task.id, true)}
-                        className="mt-0.5 w-[16px] h-[16px] rounded border border-sand flex-shrink-0 flex items-center justify-center cursor-pointer hover:border-terracotta transition-colors"
-                      >
-                        {/* Empty checkbox */}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[12px] text-espresso font-medium leading-tight">
-                          {isViewAll && (
-                            <span className="text-[9px] font-semibold text-terracotta bg-terracotta-soft px-1.5 py-[1px] rounded mr-1.5">
-                              {nameMap.get(task.user_id) || "?"}
-                            </span>
-                          )}
-                          {task.task_name}
-                        </div>
-                        {task.account ? (
-                          <div className="text-[10px] text-bark mt-0.5">{task.account}</div>
-                        ) : (
-                          <select
-                            value=""
-                            onChange={(e) => updateTaskAccount(task.id, e.target.value)}
-                            className="mt-0.5 text-[10px] text-stone bg-transparent border-none outline-none cursor-pointer p-0"
+                <div className="space-y-0.5">
+                  {(
+                    [
+                      { key: "urgent",    label: "Urgent",    dot: "bg-terracotta",  text: "text-terracotta" },
+                      { key: "important", label: "Important", dot: "bg-amber-400",   text: "text-amber-500"  },
+                      { key: "needed",    label: "Needed",    dot: "bg-sage",        text: "text-sage"       },
+                      { key: "other",     label: "Other",     dot: "bg-stone/40",    text: "text-stone"      },
+                    ] as const
+                  ).map(({ key, label, dot, text }) => {
+                    const group = pendingTasks.filter((t) =>
+                      key === "other" ? !t.priority : t.priority === key
+                    );
+                    if (group.length === 0) return null;
+                    const isCollapsed = !!sectionCollapsed[key];
+                    return (
+                      <div key={key}>
+                        {/* Category header */}
+                        <button
+                          onClick={() =>
+                            setSectionCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
+                          }
+                          className="w-full flex items-center gap-1.5 px-2 py-1 rounded hover:bg-cream cursor-pointer transition-colors"
+                        >
+                          <svg
+                            width="10" height="10" viewBox="0 0 12 12"
+                            className={`text-stone/60 flex-shrink-0 transition-transform ${isCollapsed ? "" : "rotate-90"}`}
                           >
-                            <option value="">+ assign account</option>
-                            {accounts.map((a) => (
-                              <option key={a} value={a}>{a}</option>
+                            <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
+                          <span className={`text-[10px] font-bold uppercase tracking-wider ${text}`}>{label}</span>
+                          <span className="text-[10px] text-stone ml-auto">{group.length}</span>
+                        </button>
+
+                        {/* Tasks in this category */}
+                        {!isCollapsed && (
+                          <div className="space-y-0.5 mb-1">
+                            {group.map((task) => (
+                              <div
+                                key={task.id}
+                                className="group flex items-start gap-2 py-2 px-2 rounded-lg hover:bg-cream transition-colors"
+                              >
+                                <button
+                                  onClick={() => toggleCompleted(task.id, true)}
+                                  className="mt-0.5 w-[16px] h-[16px] rounded border border-sand flex-shrink-0 flex items-center justify-center cursor-pointer hover:border-terracotta transition-colors"
+                                >
+                                  {/* Empty checkbox */}
+                                </button>
+                                {/* Colored dot — click to cycle priority */}
+                                <button
+                                  onClick={() => updateTaskPriority(task.id, cyclePriority(task.priority ?? null))}
+                                  title={task.priority ? `${task.priority} — click to change` : "No priority — click to set"}
+                                  className="mt-[3px] flex-shrink-0 cursor-pointer rounded-full transition-transform hover:scale-125"
+                                >
+                                  <span className={`w-2 h-2 rounded-full block ${
+                                    task.priority === "urgent"    ? "bg-terracotta" :
+                                    task.priority === "important" ? "bg-amber-400"  :
+                                    task.priority === "needed"    ? "bg-sage"       :
+                                    "bg-stone/25"
+                                  }`} />
+                                </button>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[12px] text-espresso font-medium leading-tight">
+                                    {isViewAll && (
+                                      <span className="text-[9px] font-semibold text-terracotta bg-terracotta-soft px-1.5 py-[1px] rounded mr-1.5">
+                                        {nameMap.get(task.user_id) || "?"}
+                                      </span>
+                                    )}
+                                    {task.task_name}
+                                  </div>
+                                  {task.account ? (
+                                    <div className="text-[10px] text-bark mt-0.5">{task.account}</div>
+                                  ) : (
+                                    <select
+                                      value=""
+                                      onChange={(e) => updateTaskAccount(task.id, e.target.value)}
+                                      className="mt-0.5 text-[10px] text-stone bg-transparent border-none outline-none cursor-pointer p-0"
+                                    >
+                                      <option value="">+ assign account</option>
+                                      {accounts.map((a) => (
+                                        <option key={a} value={a}>{a}</option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={() => handleStartTask(task)}
+                                    title="Start this task"
+                                    className="p-1 rounded text-sage hover:bg-sage-soft cursor-pointer transition-colors"
+                                  >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                      <polygon points="5,3 19,12 5,21" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={() => deleteTask(task.id)}
+                                    title="Remove"
+                                    className="p-1 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft cursor-pointer transition-colors"
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M18 6L6 18M6 6l12 12" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
                             ))}
-                          </select>
+                          </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => handleStartTask(task)}
-                          title="Start this task"
-                          className="p-1 rounded text-sage hover:bg-sage-soft cursor-pointer transition-colors"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                            <polygon points="5,3 19,12 5,21" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => deleteTask(task.id)}
-                          title="Remove"
-                          className="p-1 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft cursor-pointer transition-colors"
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M18 6L6 18M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
-              {/* Completed Tasks */}
+              {/* Done section */}
               {completedTasks.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-parchment">
-                  <p className="text-[10px] font-semibold text-stone uppercase tracking-wider mb-1 px-2">
-                    Done ({completedTasks.length})
-                  </p>
-                  <div className="space-y-0.5">
-                    {completedTasks.map((task) => (
-                      <div
-                        key={task.id}
-                        className="group flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors"
-                      >
-                        <button
-                          onClick={() => toggleCompleted(task.id, false)}
-                          className="w-[16px] h-[16px] rounded bg-sage border border-sage flex-shrink-0 flex items-center justify-center cursor-pointer hover:bg-sage/80 transition-colors"
+                  <button
+                    onClick={() =>
+                      setSectionCollapsed((prev) => ({ ...prev, done: !prev.done }))
+                    }
+                    className="w-full flex items-center gap-1.5 px-2 py-1 rounded hover:bg-cream cursor-pointer transition-colors mb-0.5"
+                  >
+                    <svg
+                      width="10" height="10" viewBox="0 0 12 12"
+                      className={`text-stone/60 flex-shrink-0 transition-transform ${sectionCollapsed.done ? "" : "rotate-90"}`}
+                    >
+                      <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-sage" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-sage">Done</span>
+                    <span className="text-[10px] text-stone ml-auto">{completedTasks.length}</span>
+                  </button>
+                  {!sectionCollapsed.done && (
+                    <div className="space-y-0.5">
+                      {completedTasks.map((task) => (
+                        <div
+                          key={task.id}
+                          className="group flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-cream transition-colors"
                         >
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                        </button>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[12px] text-stone line-through leading-tight">
-                            {isViewAll && (
-                              <span className="text-[9px] font-semibold text-stone/60 bg-parchment px-1.5 py-[1px] rounded mr-1.5 no-underline">
-                                {nameMap.get(task.user_id) || "?"}
-                              </span>
-                            )}
-                            {task.task_name}
+                          <button
+                            onClick={() => toggleCompleted(task.id, false)}
+                            className="w-[16px] h-[16px] rounded bg-sage border border-sage flex-shrink-0 flex items-center justify-center cursor-pointer hover:bg-sage/80 transition-colors"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[12px] text-stone line-through leading-tight">
+                              {isViewAll && (
+                                <span className="text-[9px] font-semibold text-stone/60 bg-parchment px-1.5 py-[1px] rounded mr-1.5 no-underline">
+                                  {nameMap.get(task.user_id) || "?"}
+                                </span>
+                              )}
+                              {task.task_name}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              {task.account && (
+                                <span className="text-[10px] text-stone/60">{task.account}</span>
+                              )}
+                              {task.log_id && logDurations[task.log_id] != null && logDurations[task.log_id] > 0 && (
+                                <span className="text-[10px] font-semibold text-sage">
+                                  {Math.round(logDurations[task.log_id] / 60000)}m
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            {task.account && (
-                              <span className="text-[10px] text-stone/60">{task.account}</span>
-                            )}
-                            {task.log_id && logDurations[task.log_id] != null && logDurations[task.log_id] > 0 && (
-                              <span className="text-[10px] font-semibold text-sage">
-                                {Math.round(logDurations[task.log_id] / 60000)}m
-                              </span>
-                            )}
-                          </div>
+                          <button
+                            onClick={() => deleteTask(task.id)}
+                            className="p-1 rounded text-stone opacity-0 group-hover:opacity-100 hover:text-terracotta cursor-pointer transition-all"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M18 6L6 18M6 6l12 12" />
+                            </svg>
+                          </button>
                         </div>
-                        <button
-                          onClick={() => deleteTask(task.id)}
-                          className="p-1 rounded text-stone opacity-0 group-hover:opacity-100 hover:text-terracotta cursor-pointer transition-all"
-                        >
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M18 6L6 18M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
