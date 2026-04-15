@@ -118,10 +118,61 @@ export default function DailyTaskPlanner({
     const { data, error } = await query;
 
     if (!error && data) {
-      setTasks(data as PlannedTask[]);
+      let allTasks = data as PlannedTask[];
+
+      // Auto carry-over: if viewing today for a specific user, copy incomplete
+      // tasks from the past 7 days that aren't already in today's plan.
+      if (viewDate === todayStr && targetUserId !== "__all__") {
+        const sevenDaysAgo = shiftDate(todayStr, -7);
+        const { data: pastTasks } = await supabase
+          .from("planned_tasks")
+          .select("*")
+          .eq("user_id", targetUserId)
+          .eq("completed", false)
+          .lt("plan_date", todayStr)
+          .gte("plan_date", sevenDaysAgo)
+          .order("plan_date", { ascending: false })
+          .order("sort_order", { ascending: true });
+
+        if (pastTasks && pastTasks.length > 0) {
+          const todayNames = new Set(
+            allTasks.map((t) => t.task_name.toLowerCase().trim())
+          );
+          const toCarry = (pastTasks as PlannedTask[]).filter(
+            (t) => !todayNames.has(t.task_name.toLowerCase().trim())
+          );
+
+          if (toCarry.length > 0) {
+            const maxSortOrder =
+              allTasks.length > 0
+                ? Math.max(...allTasks.map((t) => t.sort_order ?? 0))
+                : -1;
+
+            const inserts = toCarry.map((t, i) => ({
+              user_id: targetUserId,
+              task_name: t.task_name,
+              account: t.account,
+              plan_date: todayStr,
+              sort_order: maxSortOrder + 1 + i,
+              completed: false,
+            }));
+
+            const { data: carried } = await supabase
+              .from("planned_tasks")
+              .insert(inserts)
+              .select();
+
+            if (carried) {
+              allTasks = [...allTasks, ...(carried as PlannedTask[])];
+            }
+          }
+        }
+      }
+
+      setTasks(allTasks);
     }
     setLoading(false);
-  }, [supabase, userId, viewUserId, role, viewDate]);
+  }, [supabase, userId, viewUserId, role, viewDate, todayStr]);
 
   useEffect(() => {
     fetchAccounts();
