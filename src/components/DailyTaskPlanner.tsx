@@ -85,6 +85,22 @@ export default function DailyTaskPlanner({
   // Collapsed state per category section
   const [sectionCollapsed, setSectionCollapsed] = useState<Record<string, boolean>>({});
 
+  // Which task's priority dropdown is open (by task id)
+  const [openPriorityDropdown, setOpenPriorityDropdown] = useState<number | null>(null);
+
+  // Close priority dropdown on outside click
+  useEffect(() => {
+    if (openPriorityDropdown === null) return;
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as Element;
+      if (!target.closest("[data-priority-dp]")) {
+        setOpenPriorityDropdown(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [openPriorityDropdown]);
+
   // Admin: which VA to view
   const [viewUserId, setViewUserId] = useState(userId);
 
@@ -709,19 +725,43 @@ export default function DailyTaskPlanner({
                                 >
                                   {/* Empty checkbox */}
                                 </button>
-                                {/* Colored dot — click to cycle priority */}
-                                <button
-                                  onClick={() => updateTaskPriority(task.id, cyclePriority(task.priority ?? null))}
-                                  title={task.priority ? `${task.priority} — click to change` : "No priority — click to set"}
-                                  className="mt-[3px] flex-shrink-0 cursor-pointer rounded-full transition-transform hover:scale-125"
-                                >
-                                  <span className={`w-2 h-2 rounded-full block ${
-                                    task.priority === "urgent"    ? "bg-terracotta" :
-                                    task.priority === "important" ? "bg-amber-400"  :
-                                    task.priority === "needed"    ? "bg-sage"       :
-                                    "bg-stone/25"
-                                  }`} />
-                                </button>
+                                {/* Colored dot — click to open priority dropdown */}
+                                <div className="relative mt-[3px] flex-shrink-0" data-priority-dp>
+                                  <button
+                                    onClick={() => setOpenPriorityDropdown(openPriorityDropdown === task.id ? null : task.id)}
+                                    title={task.priority ? `${task.priority} — click to change` : "No priority — click to set"}
+                                    className="cursor-pointer rounded-full transition-transform hover:scale-125"
+                                  >
+                                    <span className={`w-2 h-2 rounded-full block ${
+                                      task.priority === "urgent"    ? "bg-terracotta" :
+                                      task.priority === "important" ? "bg-amber-400"  :
+                                      task.priority === "needed"    ? "bg-sage"       :
+                                      "bg-stone/25"
+                                    }`} />
+                                  </button>
+                                  {openPriorityDropdown === task.id && (
+                                    <div className="absolute left-0 top-5 z-50 bg-white border border-sand rounded-lg shadow-lg py-1 min-w-[120px]">
+                                      {([
+                                        { value: "urgent",    label: "Urgent",    color: "bg-terracotta" },
+                                        { value: "important", label: "Important", color: "bg-amber-400"  },
+                                        { value: "needed",    label: "Needed",    color: "bg-sage"       },
+                                        { value: null,        label: "None",      color: "bg-stone/25"   },
+                                      ] as const).map(({ value, label, color }) => (
+                                        <button
+                                          key={label}
+                                          onClick={() => {
+                                            updateTaskPriority(task.id, value);
+                                            setOpenPriorityDropdown(null);
+                                          }}
+                                          className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] hover:bg-cream transition-colors text-left ${task.priority === value || (!task.priority && value === null) ? "font-semibold" : ""}`}
+                                        >
+                                          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${color}`} />
+                                          {label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="text-[12px] text-espresso font-medium leading-tight">
                                     {isViewAll && (
