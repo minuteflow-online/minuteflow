@@ -74,6 +74,10 @@ export default function DailyTaskPlanner({
   // Collapsed state
   const [collapsed, setCollapsed] = useState(false);
 
+  // Yesterday's incomplete tasks not yet in today's plan (for carry-over button)
+  const [yesterdayPending, setYesterdayPending] = useState<PlannedTask[]>([]);
+  const [carryingOver, setCarryingOver] = useState(false);
+
   // Admin: which VA to view
   const [viewUserId, setViewUserId] = useState(userId);
 
@@ -118,55 +122,33 @@ export default function DailyTaskPlanner({
     const { data, error } = await query;
 
     if (!error && data) {
-      let allTasks = data as PlannedTask[];
+      const allTasks = data as PlannedTask[];
 
-      // Auto carry-over: if viewing today for a specific user, copy incomplete
-      // tasks from the past 7 days that aren't already in today's plan.
+      // Check yesterday for incomplete tasks not already in today's plan
+      // (used to populate the "Carry over from yesterday" button)
       if (viewDate === todayStr && targetUserId !== "__all__") {
-        const sevenDaysAgo = shiftDate(todayStr, -7);
+        const yesterday = shiftDate(todayStr, -1);
         const { data: pastTasks } = await supabase
           .from("planned_tasks")
           .select("*")
           .eq("user_id", targetUserId)
+          .eq("plan_date", yesterday)
           .eq("completed", false)
-          .lt("plan_date", todayStr)
-          .gte("plan_date", sevenDaysAgo)
-          .order("plan_date", { ascending: false })
           .order("sort_order", { ascending: true });
 
         if (pastTasks && pastTasks.length > 0) {
           const todayNames = new Set(
             allTasks.map((t) => t.task_name.toLowerCase().trim())
           );
-          const toCarry = (pastTasks as PlannedTask[]).filter(
+          const pending = (pastTasks as PlannedTask[]).filter(
             (t) => !todayNames.has(t.task_name.toLowerCase().trim())
           );
-
-          if (toCarry.length > 0) {
-            const maxSortOrder =
-              allTasks.length > 0
-                ? Math.max(...allTasks.map((t) => t.sort_order ?? 0))
-                : -1;
-
-            const inserts = toCarry.map((t, i) => ({
-              user_id: targetUserId,
-              task_name: t.task_name,
-              account: t.account,
-              plan_date: todayStr,
-              sort_order: maxSortOrder + 1 + i,
-              completed: false,
-            }));
-
-            const { data: carried } = await supabase
-              .from("planned_tasks")
-              .insert(inserts)
-              .select();
-
-            if (carried) {
-              allTasks = [...allTasks, ...(carried as PlannedTask[])];
-            }
-          }
+          setYesterdayPending(pending);
+        } else {
+          setYesterdayPending([]);
         }
+      } else {
+        setYesterdayPending([]);
       }
 
       setTasks(allTasks);
@@ -309,6 +291,35 @@ export default function DailyTaskPlanner({
     if (!error) setTasks([]);
   }, [supabase, userId, viewUserId, role, viewDate, todayStr]);
 
+  // Carry over yesterday's incomplete tasks into today's plan
+  const carryOverFromYesterday = useCallback(async () => {
+    if (yesterdayPending.length === 0) return;
+    setCarryingOver(true);
+    const targetUserId = role === "va" ? userId : viewUserId;
+    const maxSortOrder =
+      tasks.length > 0 ? Math.max(...tasks.map((t) => t.sort_order ?? 0)) : -1;
+
+    const inserts = yesterdayPending.map((t, i) => ({
+      user_id: targetUserId,
+      task_name: t.task_name,
+      account: t.account,
+      plan_date: todayStr,
+      sort_order: maxSortOrder + 1 + i,
+      completed: false,
+    }));
+
+    const { data, error } = await supabase
+      .from("planned_tasks")
+      .insert(inserts)
+      .select();
+
+    if (!error && data) {
+      setTasks((prev) => [...prev, ...(data as PlannedTask[])]);
+      setYesterdayPending([]);
+    }
+    setCarryingOver(false);
+  }, [supabase, userId, viewUserId, role, todayStr, yesterdayPending, tasks]);
+
   // Update account on an existing task
   const updateTaskAccount = useCallback(
     async (taskId: number, account: string) => {
@@ -420,6 +431,22 @@ export default function DailyTaskPlanner({
           )}
         </div>
       </div>
+
+      {/* Carry-over banner — only shows when viewing today and there are pending tasks from yesterday */}
+      {!collapsed && isToday && yesterdayPending.length > 0 && (
+        <div className="px-5 py-2.5 border-b border-parchment bg-cream flex items-center justify-between">
+          <span className="text-[11px] text-bark">
+            {yesterdayPending.length} unfinished {yesterdayPending.length === 1 ? "task" : "tasks"} from yesterday
+          </span>
+          <button
+            onClick={carryOverFromYesterday}
+            disabled={carryingOver}
+            className="text-[11px] font-semibold text-terracotta hover:text-[#a85840] cursor-pointer transition-colors disabled:opacity-50 flex items-center gap-1"
+          >
+            ↩ {carryingOver ? "Adding..." : `Carry over (${yesterdayPending.length})`}
+          </button>
+        </div>
+      )}
 
       {!collapsed && (
         <div className="p-[18px_20px]">
