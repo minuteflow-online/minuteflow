@@ -314,6 +314,13 @@ export default function DailyTaskPlanner({
       .select();
 
     if (!error && data) {
+      // Mark the old tasks as completed on their original date so they're no longer pending
+      const oldIds = yesterdayPending.map((t) => t.id);
+      await supabase
+        .from("planned_tasks")
+        .update({ completed: true })
+        .in("id", oldIds);
+
       setTasks((prev) => [...prev, ...(data as PlannedTask[])]);
       setYesterdayPending([]);
     }
