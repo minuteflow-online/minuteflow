@@ -260,6 +260,7 @@ export interface PlannedTask {
   sort_order: number;
   completed: boolean;
   log_id: number | null;
+  priority: "urgent" | "important" | "needed" | null;
   created_at: string;
   updated_at: string;
 }
