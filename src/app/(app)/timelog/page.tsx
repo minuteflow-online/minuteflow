@@ -216,6 +216,13 @@ export default function TimeLogPage() {
   const [selectedLogIds, setSelectedLogIds] = useState<Set<number>>(new Set());
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
 
+  /* ── Trash bin state ──────────────────────────────────────── */
+  const [showTrash, setShowTrash] = useState(false);
+  const [trashedLogs, setTrashedLogs] = useState<TimeLog[]>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [selectedTrashIds, setSelectedTrashIds] = useState<Set<number>>(new Set());
+  const [showPermDeleteConfirm, setShowPermDeleteConfirm] = useState(false);
+
   const isAdminOrManager = role === "admin" || role === "manager";
 
   /* ── Fetch current user & profiles ─────────────────────── */
@@ -327,6 +334,7 @@ export default function TimeLogPage() {
     let query = supabase
       .from("time_logs")
       .select("*")
+      .is("deleted_at", null)
       .gte("start_time", fetchStart.toISOString())
       .lte("start_time", fetchEnd.toISOString())
       .order("start_time", { ascending: false });
@@ -406,6 +414,32 @@ export default function TimeLogPage() {
   useEffect(() => {
     fetchLogs();
   }, [fetchLogs]);
+
+  /* ── Fetch trash ────────────────────────────────────────── */
+
+  const fetchTrash = useCallback(async () => {
+    setTrashLoading(true);
+    const supabase = createClient();
+    let query = supabase
+      .from("time_logs")
+      .select("*")
+      .not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false });
+
+    if (!isAdminOrManager) {
+      query = query.eq("user_id", currentUserId);
+    } else if (selectedVA) {
+      query = query.eq("user_id", selectedVA);
+    }
+
+    const { data } = await query;
+    setTrashedLogs((data ?? []) as TimeLog[]);
+    setTrashLoading(false);
+  }, [isAdminOrManager, selectedVA, currentUserId]);
+
+  useEffect(() => {
+    if (showTrash) fetchTrash();
+  }, [showTrash, fetchTrash]);
 
   /* ── Load edited log IDs ────────────────────────────────── */
 
@@ -732,15 +766,52 @@ export default function TimeLogPage() {
     const idsToDelete = Array.from(selectedLogIds);
     const { error } = await supabase
       .from("time_logs")
-      .delete()
+      .update({ deleted_at: new Date().toISOString() })
       .in("id", idsToDelete);
     if (error) {
-      alert("Delete failed: " + error.message);
+      alert("Move to trash failed: " + error.message);
       return;
     }
     setSelectedLogIds(new Set());
     setShowBulkDeleteConfirm(false);
     fetchLogs();
+  };
+
+  /* ── Trash helpers ───────────────────────────────────────── */
+
+  const toggleSelectTrash = (id: number) => {
+    setSelectedTrashIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleRestoreSelected = async () => {
+    const supabase = createClient();
+    const ids = Array.from(selectedTrashIds);
+    const { error } = await supabase
+      .from("time_logs")
+      .update({ deleted_at: null })
+      .in("id", ids);
+    if (error) { alert("Restore failed: " + error.message); return; }
+    setSelectedTrashIds(new Set());
+    fetchTrash();
+    fetchLogs();
+  };
+
+  const handlePermanentDelete = async () => {
+    const supabase = createClient();
+    const ids = Array.from(selectedTrashIds);
+    const { error } = await supabase
+      .from("time_logs")
+      .delete()
+      .in("id", ids);
+    if (error) { alert("Permanent delete failed: " + error.message); return; }
+    setSelectedTrashIds(new Set());
+    setShowPermDeleteConfirm(false);
+    fetchTrash();
   };
 
   /* ── Build flat item list for table ─────────────────────── */
@@ -812,9 +883,15 @@ export default function TimeLogPage() {
               onClick={() => setShowBulkDeleteConfirm(true)}
               className="rounded-lg border border-red-400 bg-white px-4 py-2 text-[13px] font-semibold text-red-500 transition-all hover:bg-red-500 hover:text-white"
             >
-              🗑 Delete Selected ({selectedLogIds.size})
+              🗑 Move to Trash ({selectedLogIds.size})
             </button>
           )}
+          <button
+            onClick={() => { setShowTrash((v) => !v); setSelectedTrashIds(new Set()); }}
+            className={`rounded-lg border px-4 py-2 text-[13px] font-semibold transition-all ${showTrash ? "border-red-400 bg-red-500 text-white" : "border-sand bg-white text-walnut hover:border-red-400 hover:text-red-500"}`}
+          >
+            🗑 Trash
+          </button>
           {isAdminOrManager && (
             <>
               <button
@@ -834,8 +911,104 @@ export default function TimeLogPage() {
         </div>
       </div>
 
+      {/* ── Trash View ──────────────────────────────────────── */}
+      {showTrash && (
+        <div>
+          <div className="mb-4 flex items-center gap-3">
+            <h2 className="font-serif text-lg font-bold text-espresso">🗑 Trash</h2>
+            <span className="text-[12px] text-bark">{trashedLogs.length} deleted {trashedLogs.length === 1 ? "entry" : "entries"}</span>
+            <div className="ml-auto flex gap-2">
+              {selectedTrashIds.size > 0 && (
+                <>
+                  <button
+                    onClick={handleRestoreSelected}
+                    className="rounded-lg border border-sage bg-white px-4 py-2 text-[13px] font-semibold text-sage transition-all hover:bg-sage hover:text-white"
+                  >
+                    ↩ Restore ({selectedTrashIds.size})
+                  </button>
+                  <button
+                    onClick={() => setShowPermDeleteConfirm(true)}
+                    className="rounded-lg border border-red-500 bg-white px-4 py-2 text-[13px] font-semibold text-red-500 transition-all hover:bg-red-500 hover:text-white"
+                  >
+                    Delete Forever ({selectedTrashIds.size})
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {trashLoading ? (
+            <div className="h-40 animate-pulse rounded-xl border border-sand bg-white" />
+          ) : trashedLogs.length === 0 ? (
+            <div className="rounded-xl border border-sand bg-white px-5 py-12 text-center">
+              <p className="text-sm text-bark">Trash is empty</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-sand bg-white">
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="border-b border-parchment bg-parchment/60">
+                      <th className="w-8 px-4 py-3 text-left">
+                        <input
+                          type="checkbox"
+                          checked={selectedTrashIds.size === trashedLogs.length && trashedLogs.length > 0}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedTrashIds(new Set(trashedLogs.map((l) => l.id)));
+                            else setSelectedTrashIds(new Set());
+                          }}
+                          className="cursor-pointer accent-terracotta"
+                        />
+                      </th>
+                      <th className="px-4 py-3 text-left font-semibold text-bark">Task</th>
+                      {isAdminOrManager && <th className="px-4 py-3 text-left font-semibold text-bark">VA</th>}
+                      <th className="px-4 py-3 text-left font-semibold text-bark">Date</th>
+                      <th className="px-4 py-3 text-left font-semibold text-bark">Duration</th>
+                      <th className="px-4 py-3 text-left font-semibold text-bark">Deleted</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trashedLogs.map((log) => (
+                      <tr
+                        key={log.id}
+                        className={`border-b border-parchment last:border-0 transition-colors ${selectedTrashIds.has(log.id) ? "bg-red-50" : "hover:bg-parchment/30"}`}
+                      >
+                        <td className="w-8 px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedTrashIds.has(log.id)}
+                            onChange={() => toggleSelectTrash(log.id)}
+                            className="cursor-pointer accent-terracotta"
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-espresso">{log.task_name}</div>
+                          {log.account && <div className="text-[11px] text-bark">{log.account}</div>}
+                        </td>
+                        {isAdminOrManager && (
+                          <td className="px-4 py-3 text-bark">{log.full_name}</td>
+                        )}
+                        <td className="px-4 py-3 text-bark">
+                          {log.start_time ? new Date(log.start_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-bark">
+                          {log.duration_ms ? formatDuration(log.duration_ms) : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-bark text-[11px]">
+                          {log.deleted_at ? new Date(log.deleted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Date Navigation */}
-      <div className="mb-5 flex flex-wrap items-center gap-3">
+      {!showTrash && (<><div className="mb-5 flex flex-wrap items-center gap-3">
         {viewMode !== "custom" && (
           <div className="flex gap-1">
             <button
@@ -1315,6 +1488,8 @@ export default function TimeLogPage() {
         </>
       )}
 
+      </>)}
+
       {/* ── Modals ──────────────────────────────────────────── */}
 
       {(editingLog || showCreateModal) && (
@@ -1380,10 +1555,10 @@ export default function TimeLogPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
             <h2 className="font-serif text-lg font-bold text-espresso">
-              Delete {selectedLogIds.size} {selectedLogIds.size === 1 ? "entry" : "entries"}?
+              Move {selectedLogIds.size} {selectedLogIds.size === 1 ? "entry" : "entries"} to Trash?
             </h2>
             <p className="mt-2 text-[13px] text-bark">
-              This will permanently delete the selected time log entries. This action cannot be undone.
+              The selected entries will be moved to the Trash. You can restore them later or permanently delete them from there.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
@@ -1396,7 +1571,35 @@ export default function TimeLogPage() {
                 onClick={handleBulkDelete}
                 className="rounded-lg bg-red-500 px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-red-600"
               >
-                Yes, delete
+                Move to Trash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Permanent Delete Confirmation Modal */}
+      {showPermDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="font-serif text-lg font-bold text-espresso">
+              Permanently delete {selectedTrashIds.size} {selectedTrashIds.size === 1 ? "entry" : "entries"}?
+            </h2>
+            <p className="mt-2 text-[13px] text-bark">
+              This cannot be undone. The data will be gone forever.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setShowPermDeleteConfirm(false)}
+                className="rounded-lg border border-sand px-4 py-2 text-[13px] font-semibold text-walnut transition-all hover:bg-parchment"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePermanentDelete}
+                className="rounded-lg bg-red-600 px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-red-700"
+              >
+                Delete Forever
               </button>
             </div>
           </div>

@@ -101,6 +101,7 @@ export interface TimeLog {
   task_rate: number | null;
   manual_status: 'pending' | 'approved' | 'denied' | null;
   created_at: string;
+  deleted_at: string | null;
 }
 
 export interface TaskScreenshot {

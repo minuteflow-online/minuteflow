@@ -779,6 +779,7 @@ export default function DashboardPage() {
         billing_type: activeTask.billing_type || "hourly",
         task_rate: activeTask.task_rate ?? null,
         created_at: activeTask.start_time,
+        deleted_at: null,
       };
       setLiveSessionData(taskAsLog);
       setCloseOldStep("details");
