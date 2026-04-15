@@ -212,6 +212,10 @@ export default function TimeLogPage() {
   const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
   // moodData: { [userId]: { [session_date]: mood } }
 
+  /* ── Bulk select / delete state ──────────────────────────── */
+  const [selectedLogIds, setSelectedLogIds] = useState<Set<number>>(new Set());
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+
   const isAdminOrManager = role === "admin" || role === "manager";
 
   /* ── Fetch current user & profiles ─────────────────────── */
@@ -695,6 +699,50 @@ export default function TimeLogPage() {
     fetchLogs();
   };
 
+  /* ── Bulk select helpers ────────────────────────────────── */
+
+  const selectableLogIds = useMemo(
+    () => filteredLogs.map((l) => l.id),
+    [filteredLogs]
+  );
+
+  const allSelected =
+    selectableLogIds.length > 0 &&
+    selectableLogIds.every((id) => selectedLogIds.has(id));
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedLogIds(new Set());
+    } else {
+      setSelectedLogIds(new Set(selectableLogIds));
+    }
+  };
+
+  const toggleSelectLog = (id: number) => {
+    setSelectedLogIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    const supabase = createClient();
+    const idsToDelete = Array.from(selectedLogIds);
+    const { error } = await supabase
+      .from("time_logs")
+      .delete()
+      .in("id", idsToDelete);
+    if (error) {
+      alert("Delete failed: " + error.message);
+      return;
+    }
+    setSelectedLogIds(new Set());
+    setShowBulkDeleteConfirm(false);
+    fetchLogs();
+  };
+
   /* ── Build flat item list for table ─────────────────────── */
 
   type TableItem =
@@ -759,6 +807,14 @@ export default function TimeLogPage() {
           >
             Export CSV
           </button>
+          {selectedLogIds.size > 0 && (
+            <button
+              onClick={() => setShowBulkDeleteConfirm(true)}
+              className="rounded-lg border border-red-400 bg-white px-4 py-2 text-[13px] font-semibold text-red-500 transition-all hover:bg-red-500 hover:text-white"
+            >
+              🗑 Delete Selected ({selectedLogIds.size})
+            </button>
+          )}
           {isAdminOrManager && (
             <>
               <button
@@ -923,6 +979,15 @@ export default function TimeLogPage() {
                 <table className="w-full text-left text-[12px]">
                   <thead>
                     <tr className="border-b border-parchment text-[10px] font-semibold uppercase tracking-wider text-bark">
+                      <th className="px-3 py-2.5 w-[36px]">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={toggleSelectAll}
+                          className="cursor-pointer accent-terracotta"
+                          title="Select all"
+                        />
+                      </th>
                       {isAdminOrManager && (
                         <th className="px-3 py-2.5">User</th>
                       )}
@@ -939,7 +1004,8 @@ export default function TimeLogPage() {
                   <tbody className="divide-y divide-parchment">
                     {tableItems.map((item, idx) => {
                       if (item._type === "header") {
-                        const colSpan = isAdminOrManager ? 9 : 8;
+                        // cols: checkbox(admin) + user(admin) + project + task + category + account + duration + memos + screenshots + actions
+                        const colSpan = isAdminOrManager ? 10 : 9;
                         return (
                           <tr key={`hdr-${item.dateKey}`} className="bg-parchment/40">
                             <td colSpan={colSpan - 1} className="px-4 py-2 text-[11px] font-bold text-espresso">
@@ -966,9 +1032,18 @@ export default function TimeLogPage() {
                       return (
                         <tr
                           key={log.id}
-                          className={`transition-colors cursor-pointer ${isExpanded ? "bg-parchment/50" : "hover:bg-parchment/30"} ${isLive ? "bg-sage-soft/20" : ""}`}
+                          className={`transition-colors cursor-pointer ${isExpanded ? "bg-parchment/50" : "hover:bg-parchment/30"} ${isLive ? "bg-sage-soft/20" : ""} ${selectedLogIds.has(log.id) ? "!bg-red-50/60" : ""}`}
                           onClick={() => setExpandedEntry(isExpanded ? null : log.id)}
                         >
+                          {/* Bulk select checkbox */}
+                          <td className="px-3 py-2.5 align-top w-[36px]" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedLogIds.has(log.id)}
+                              onChange={() => toggleSelectLog(log.id)}
+                              className="cursor-pointer accent-terracotta"
+                            />
+                          </td>
                           {/* User (admin/manager only) */}
                           {isAdminOrManager && (
                             <td className="px-3 py-2.5 align-top">
@@ -1298,6 +1373,34 @@ export default function TimeLogPage() {
             fetchLogs();
           }}
         />
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="font-serif text-lg font-bold text-espresso">
+              Delete {selectedLogIds.size} {selectedLogIds.size === 1 ? "entry" : "entries"}?
+            </h2>
+            <p className="mt-2 text-[13px] text-bark">
+              This will permanently delete the selected time log entries. This action cannot be undone.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setShowBulkDeleteConfirm(false)}
+                className="rounded-lg border border-sand px-4 py-2 text-[13px] font-semibold text-walnut transition-all hover:bg-parchment"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                className="rounded-lg bg-red-500 px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-red-600"
+              >
+                Yes, delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
