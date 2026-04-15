@@ -831,8 +831,8 @@ export default function DailyTaskPlanner({
                     >
                       <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-sage" />
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-sage">Done</span>
+                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-plum" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-plum">Done</span>
                     <span className="text-[10px] text-stone ml-auto">{completedTasks.length}</span>
                   </button>
                   {!sectionCollapsed.done && (
@@ -844,7 +844,7 @@ export default function DailyTaskPlanner({
                         >
                           <button
                             onClick={() => toggleCompleted(task.id, false)}
-                            className="w-[16px] h-[16px] rounded bg-sage border border-sage flex-shrink-0 flex items-center justify-center cursor-pointer hover:bg-sage/80 transition-colors"
+                            className="w-[16px] h-[16px] rounded bg-plum border border-plum flex-shrink-0 flex items-center justify-center cursor-pointer hover:bg-plum/80 transition-colors"
                           >
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                               <polyline points="20 6 9 17 4 12" />
@@ -864,7 +864,7 @@ export default function DailyTaskPlanner({
                                 <span className="text-[10px] text-stone/60">{task.account}</span>
                               )}
                               {task.log_id && logDurations[task.log_id] != null && logDurations[task.log_id] > 0 && (
-                                <span className="text-[10px] font-semibold text-sage">
+                                <span className="text-[10px] font-semibold text-plum">
                                   {Math.round(logDurations[task.log_id] / 60000)}m
                                 </span>
                               )}
@@ -902,7 +902,7 @@ export default function DailyTaskPlanner({
                 )}
                 <div className="w-20 h-1.5 bg-parchment rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-sage rounded-full transition-all"
+                    className="h-full bg-plum rounded-full transition-all"
                     style={{ width: `${tasks.length > 0 ? (completedTasks.length / tasks.length) * 100 : 0}%` }}
                   />
                 </div>

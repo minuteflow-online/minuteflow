@@ -28,6 +28,8 @@
   --color-clay-rose-soft: #f0e0d8;
   --color-slate-blue: #697a8a;
   --color-slate-blue-soft: #dfe5ea;
+  --color-plum: #8b6fa8;
+  --color-plum-soft: #ede8f5;
 
   /* Custom animation */
   --animate-breathe: breathe 3s ease-in-out infinite;
