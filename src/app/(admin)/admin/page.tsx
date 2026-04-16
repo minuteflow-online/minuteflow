@@ -197,15 +197,6 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
-    id: "sorting",
-    label: "Sorting Review",
-    icon: (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M3 6h18M3 12h12M3 18h6" />
-      </svg>
-    ),
-  },
-  {
     id: "password",
     label: "Change Password",
     icon: (
@@ -1086,17 +1077,6 @@ export default function AdminPage() {
                 orgTimezone={orgTimezone}
               />
             </div>
-          )}
-
-          {activeTab === "sorting" && (
-            <SortingReviewTab
-              sortingReviews={sortingReviews}
-              profileMap={profileMap}
-              logMap={logMap}
-              currentUserId={currentUserId}
-              fetchData={fetchData}
-              orgTimezone={orgTimezone}
-            />
           )}
 
           {activeTab === "password" && (

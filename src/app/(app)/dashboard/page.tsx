@@ -1443,17 +1443,6 @@ export default function DashboardPage() {
         .select()
         .single();
 
-      // If category is 'Planning', auto-create a sorting_review record
-      if (formData.category === "Planning" && logData?.id) {
-        await supabase.from("sorting_review").insert({
-          log_id: logData.id,
-          status: "pending",
-          bill_to: "internal",
-          original_account: formData.account || null,
-          original_client: formData.client_name || null,
-        });
-      }
-
       // Auto-update assignment status to "in_progress" when VA starts working
       await autoUpdateAssignmentStatus(formData.task_name);
 
