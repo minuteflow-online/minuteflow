@@ -135,6 +135,27 @@ async function handleExpenses(supabase: any, rows: Record<string, string>[]) {
   return Response.json({ inserted: valid.length, errors });
 }
 
+/**
+ * Normalize a date string to YYYY-MM-DD.
+ * Handles DD/MM/YY and DD/MM/YYYY formats (e.g. from Notion exports).
+ */
+function normalizeDate(dateStr: string): string {
+  // DD/MM/YY → YYYY-MM-DD
+  const ddmmyy = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  if (ddmmyy) {
+    const [, dd, mm, yy] = ddmmyy;
+    const year = parseInt(yy) >= 50 ? `19${yy}` : `20${yy}`;
+    return `${year}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  }
+  // DD/MM/YYYY → YYYY-MM-DD
+  const ddmmyyyy = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (ddmmyyyy) {
+    const [, dd, mm, yyyy] = ddmmyyyy;
+    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+  }
+  return dateStr; // already YYYY-MM-DD or other format, pass through
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handleTimeLogs(supabase: any, rows: Record<string, string>[]) {
   const errors: { row: number; message: string }[] = [];
@@ -209,7 +230,7 @@ async function handleTimeLogs(supabase: any, rows: Record<string, string>[]) {
     const client_name = (r.client_name || r.client || "").trim() || null;
 
     // date + start_time + end_time OR date + duration_hours
-    const dateStr = (r.date || "").trim();
+    const dateStr = normalizeDate((r.date || "").trim());
     const startStr = (r.start_time || "").trim();
     const endStr = (r.end_time || "").trim();
     const durationHoursStr = (r.duration_hours || r.hours || "").trim();
@@ -229,7 +250,8 @@ async function handleTimeLogs(supabase: any, rows: Record<string, string>[]) {
         continue;
       }
       // Handle overnight spans (e.g., 11:36 PM → 12:31 AM) — add 1 day to end
-      if (endMs <= startMs) {
+      // Use strict < so identical start/end (0-duration entries like Clock Out) stay at 0ms
+      if (endMs < startMs) {
         endMs += 86400000; // +24 hours
       }
       start_time = new Date(startMs).toISOString();
