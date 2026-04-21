@@ -22,6 +22,7 @@ import {
 } from "@/types/database";
 import {
   formatDuration,
+  formatDateLocalTZ,
   getInitials,
   getAvatarColor,
   getTodayBoundsInTimezone,
@@ -448,7 +449,7 @@ export default function AdminPage() {
       const heartbeat = heartbeats.find((h) => h.user_id === profile.id) ?? null;
       const userLogs = logs.filter((l) => l.user_id === profile.id);
       const userScreenshotsToday = allScreenshots.filter(
-        (s) => s.user_id === profile.id && new Date(s.created_at).toDateString() === new Date().toDateString()
+        (s) => s.user_id === profile.id && formatDateLocalTZ(new Date(s.created_at), orgTimezone) === formatDateLocalTZ(new Date(), orgTimezone)
       );
 
       let status: "live" | "break" | "off" = "off";
@@ -502,7 +503,7 @@ export default function AdminPage() {
     const todayHoursMs = logs
       .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
     const todayScreenshots = allScreenshots.filter(
-      (s) => new Date(s.created_at).toDateString() === new Date().toDateString()
+      (s) => formatDateLocalTZ(new Date(s.created_at), orgTimezone) === formatDateLocalTZ(new Date(), orgTimezone)
     ).length;
     const todayTasks = logs.filter((l) => l.end_time && l.category !== "Break").length;
     const wizardTimeMs = logs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0);
@@ -581,7 +582,7 @@ export default function AdminPage() {
     });
 
     allScreenshots
-      .filter((s) => new Date(s.created_at).toDateString() === new Date().toDateString())
+      .filter((s) => formatDateLocalTZ(new Date(s.created_at), orgTimezone) === formatDateLocalTZ(new Date(), orgTimezone))
       .forEach((ss) => {
         const profile = profileMap.get(ss.user_id);
         const name = profile?.full_name.split(" ")[0] || "Unknown";
