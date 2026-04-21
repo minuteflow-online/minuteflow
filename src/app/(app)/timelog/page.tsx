@@ -453,8 +453,17 @@ export default function TimeLogPage() {
     async function generateUrls() {
       const supabase = createClient();
       const newUrls: Record<number, string> = { ...signedUrls };
-      for (let i = 0; i < missing.length; i += 20) {
-        const batch = missing.slice(i, i + 20);
+
+      // Screenshots already synced to Drive — use public Drive URL (no Supabase hit)
+      const driveReady = missing.filter((s) => s.drive_file_id);
+      driveReady.forEach((ss) => {
+        newUrls[ss.id] = `https://drive.google.com/uc?export=view&id=${ss.drive_file_id}`;
+      });
+
+      // Screenshots not yet synced — fall back to Supabase signed URL
+      const needSigned = missing.filter((s) => !s.drive_file_id);
+      for (let i = 0; i < needSigned.length; i += 20) {
+        const batch = needSigned.slice(i, i + 20);
         const results = await Promise.all(
           batch.map(async (ss) => {
             const { data } = await supabase.storage

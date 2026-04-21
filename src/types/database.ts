@@ -110,6 +110,7 @@ export interface TaskScreenshot {
   log_id: number | null;
   filename: string;
   storage_path: string;
+  drive_file_id: string | null;
   screenshot_type: 'start' | 'progress' | 'end' | 'remote' | 'manual' | 'failed' | null;
   capture_request_id: number | null;
   failure_reason: string | null;
