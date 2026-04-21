@@ -51,8 +51,15 @@ export async function POST(request: Request) {
 
   const items = lineItems ?? [];
 
+  // Fetch org timezone
+  const { data: orgSettings } = await serviceClient
+    .from("organization_settings")
+    .select("timezone")
+    .single();
+  const orgTimezone = orgSettings?.timezone || "UTC";
+
   // Build HTML email
-  const html = buildInvoiceEmail(invoice, items);
+  const html = buildInvoiceEmail(invoice, items, orgTimezone);
 
   // Send via Resend
   const resendKey = process.env.RESEND_API_KEY;
@@ -144,7 +151,7 @@ function paymentTermsLabel(terms: string | null) {
   return labels[terms || ""] || terms || "Net 30";
 }
 
-function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[]): string {
+function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[], timezone = "UTC"): string {
   const lineItemsHtml = items
     .map(
       (li) => `
@@ -182,12 +189,12 @@ function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[]): string {
               <div style="font-size: 28px; font-weight: 700; color: #c0704e;">INVOICE</div>
               <div style="font-size: 14px; font-weight: 600; color: #3d2b1f; margin-top: 4px;">${invoice.invoice_number}</div>
               <div style="font-size: 11px; color: #6b5e52; margin-top: 8px;">
-                <strong style="color: #3d2b1f;">Issue Date:</strong> ${new Date(invoice.issue_date).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                <strong style="color: #3d2b1f;">Issue Date:</strong> ${new Date(invoice.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: timezone })}
               </div>
               ${
                 invoice.due_date
                   ? `<div style="font-size: 11px; color: #6b5e52; margin-top: 2px;">
-                      <strong style="color: #3d2b1f;">Due Date:</strong> ${new Date(invoice.due_date).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                      <strong style="color: #3d2b1f;">Due Date:</strong> ${new Date(invoice.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: timezone })}
                     </div>`
                   : ""
               }

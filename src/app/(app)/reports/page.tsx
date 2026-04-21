@@ -94,7 +94,7 @@ export default function ReportsPage() {
     } else if (dateRange === "custom" && appliedStart && appliedEnd) {
       const s = new Date(appliedStart + "T00:00:00Z");
       const e = new Date(appliedEnd + "T23:59:59Z");
-      const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} \u2013 ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`;
+      const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone })} \u2013 ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}`;
       return { startISO: s.toISOString(), endISO: e.toISOString(), start: s, end: e, periodLabel: label };
     } else if (dateRange === "custom") {
       // Custom selected but no dates applied yet — don't fetch, show placeholder
@@ -998,7 +998,7 @@ export default function ReportsPage() {
                     : "??";
                   const time = new Date(ss.created_at).toLocaleTimeString(
                     "en-US",
-                    { hour: "numeric", minute: "2-digit", hour12: true }
+                    { hour: "numeric", minute: "2-digit", hour12: true, timeZone: orgTimezone }
                   );
                   const url = signedUrls[ss.id];
                   return (

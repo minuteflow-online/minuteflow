@@ -32,13 +32,13 @@ import FinancialSummaryTab from "@/components/FinancialSummaryTab";
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
-function getTimeAgo(date: Date): string {
+function getTimeAgo(date: Date, tz?: string): string {
   const now = new Date();
   const diff = Math.floor((now.getTime() - date.getTime()) / 1000);
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return date.toLocaleDateString();
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", ...(tz ? { timeZone: tz } : {}) });
 }
 
 function formatDateShort(iso: string, timezone?: string): string {
@@ -287,15 +287,9 @@ export default function AdminPage() {
     let screenshotDateStart = today;
     let screenshotDateEnd: string | null = null;
     if (screenshotDateFilter === "week") {
-      const d = new Date();
-      d.setDate(d.getDate() - 7);
-      d.setHours(0, 0, 0, 0);
-      screenshotDateStart = d.toISOString();
+      screenshotDateStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     } else if (screenshotDateFilter === "month") {
-      const d = new Date();
-      d.setDate(d.getDate() - 30);
-      d.setHours(0, 0, 0, 0);
-      screenshotDateStart = d.toISOString();
+      screenshotDateStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     } else if (screenshotDateFilter === "all-time") {
       screenshotDateStart = "2020-01-01T00:00:00.000Z";
     } else if (screenshotDateFilter === "custom") {
@@ -562,7 +556,7 @@ export default function AdminPage() {
           type: "break",
           text: `took a break`,
           userName: name,
-          time: getTimeAgo(new Date(l.start_time)),
+          time: getTimeAgo(new Date(l.start_time), orgTimezone),
           timestamp: new Date(l.start_time).getTime(),
         });
       } else if (l.end_time) {
@@ -571,7 +565,7 @@ export default function AdminPage() {
           type: "task-end",
           text: `completed "${l.task_name}"${l.account ? ` for ${l.account}` : ""}`,
           userName: name,
-          time: getTimeAgo(new Date(l.end_time)),
+          time: getTimeAgo(new Date(l.end_time), orgTimezone),
           timestamp: new Date(l.end_time).getTime(),
         });
       } else {
@@ -580,7 +574,7 @@ export default function AdminPage() {
           type: "task-start",
           text: `started "${l.task_name}"${l.account ? ` for ${l.account}` : ""}`,
           userName: name,
-          time: getTimeAgo(new Date(l.start_time)),
+          time: getTimeAgo(new Date(l.start_time), orgTimezone),
           timestamp: new Date(l.start_time).getTime(),
         });
       }
@@ -597,13 +591,13 @@ export default function AdminPage() {
           type: "screenshot",
           text: `screenshot captured${typeLabel}`,
           userName: name,
-          time: getTimeAgo(new Date(ss.created_at)),
+          time: getTimeAgo(new Date(ss.created_at), orgTimezone),
           timestamp: new Date(ss.created_at).getTime(),
         });
       });
 
     return events.sort((a, b) => b.timestamp - a.timestamp).slice(0, 20);
-  }, [logs, allScreenshots, profileMap]);
+  }, [logs, allScreenshots, profileMap, orgTimezone]);
 
   /* ── Actions ────────────────────────────────────────────── */
 
@@ -988,6 +982,7 @@ export default function AdminPage() {
               handleForceClockOut={handleForceClockOut}
               setMessageTarget={setMessageTarget}
               onRefresh={fetchData}
+              orgTimezone={orgTimezone}
             />
           )}
 
@@ -1017,6 +1012,7 @@ export default function AdminPage() {
             <TeamManagementTab
               profiles={profiles}
               fetchData={fetchData}
+              orgTimezone={orgTimezone}
             />
           )}
 
@@ -1033,11 +1029,11 @@ export default function AdminPage() {
           )}
 
           {activeTab === "invoices" && (
-            <InvoicesTab profiles={profiles} />
+            <InvoicesTab profiles={profiles} orgTimezone={orgTimezone} />
           )}
 
           {activeTab === "financial" && (
-            <FinancialSummaryTab />
+            <FinancialSummaryTab timezone={orgTimezone} />
           )}
 
           {activeTab === "organization" && (
@@ -1164,6 +1160,7 @@ function OverviewTab({
   handleForceClockOut,
   setMessageTarget,
   onRefresh,
+  orgTimezone,
 }: {
   stats: { activeCount: number; todayHoursMs: number; todayScreenshots: number; todayTasks: number; wizardTimeMs: number };
   profiles: Profile[];
@@ -1191,6 +1188,7 @@ function OverviewTab({
   handleForceClockOut: (id: string) => void;
   setMessageTarget: (id: string) => void;
   onRefresh: () => void;
+  orgTimezone: string;
 }) {
   return (
     <>
@@ -1222,6 +1220,7 @@ function OverviewTab({
               onCaptureNow={() => handleCaptureNow(member.profile.id)}
               onMessage={() => setMessageTarget(member.profile.id)}
               onForceClockOut={() => handleForceClockOut(member.profile.id)}
+              timezone={orgTimezone}
             />
           ))}
         </div>
@@ -1458,9 +1457,11 @@ function ScreenshotsTab({
 function TeamManagementTab({
   profiles,
   fetchData,
+  orgTimezone,
 }: {
   profiles: Profile[];
   fetchData: () => void;
+  orgTimezone: string;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
@@ -2202,7 +2203,7 @@ function TeamManagementTab({
                     )}
                   </td>
                   <td className="px-3 py-3 text-[11px] text-stone whitespace-nowrap">
-                    {new Date(p.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    {new Date(p.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                   </td>
                   <td className="px-3 py-3 text-center">
                     <div className="flex items-center justify-center gap-1">
@@ -2281,7 +2282,7 @@ function TeamManagementTab({
                         </div>
                         <div>
                           <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Joined</span>
-                          <p className="mt-0.5 text-espresso font-medium">{new Date(p.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</p>
+                          <p className="mt-0.5 text-espresso font-medium">{new Date(p.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}</p>
                         </div>
                         <div>
                           <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Status</span>
@@ -3453,7 +3454,7 @@ function OrganizationTab() {
         setOrgName(s.org_name || "");
         setLogoUrl(s.logo_url || "");
         setAddress(s.address || "");
-        setTimezone(s.timezone || "America/New_York");
+        setTimezone(s.timezone || "UTC");
         setBillingEmail(s.billing_email || "");
       }
       setLoadingSettings(false);
@@ -3471,7 +3472,7 @@ function OrganizationTab() {
       org_name: orgName || "MinuteFlow",
       logo_url: logoUrl || null,
       address: address || null,
-      timezone: timezone || "America/New_York",
+      timezone: timezone || "UTC",
       billing_email: billingEmail || null,
       updated_at: new Date().toISOString(),
     };
@@ -4401,6 +4402,7 @@ function TeamMemberCard({
   onCaptureNow,
   onMessage,
   onForceClockOut,
+  timezone,
 }: {
   member: {
     profile: Profile;
@@ -4418,6 +4420,7 @@ function TeamMemberCard({
   onCaptureNow: () => void;
   onMessage: () => void;
   onForceClockOut?: () => void;
+  timezone: string;
 }) {
   const { profile, status, currentTask, hasExtension, latestScreenshot, todayScreenshots, todayHoursMs, todayTasks, wizardTimeMs } = member;
   const avatarColor = getAvatarColor(profile.id);
@@ -4488,7 +4491,7 @@ function TeamMemberCard({
         )}
         {latestScreenshot && (
           <span className="absolute bottom-1.5 right-1.5 rounded bg-black/50 px-2 py-0.5 text-[9px] font-semibold text-white">
-            {getTimeAgo(new Date(latestScreenshot.created_at))}
+            {getTimeAgo(new Date(latestScreenshot.created_at), timezone)}
           </span>
         )}
       </div>
@@ -4736,7 +4739,7 @@ interface LineItemDraft {
   service_date: string;
 }
 
-function InvoicesTab({ profiles }: { profiles: Profile[] }) {
+function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezone: string }) {
   const [view, setView] = useState<InvoiceView>("list");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -5770,12 +5773,12 @@ function InvoicesTab({ profiles }: { profiles: Profile[] }) {
                 <div className="mt-2 space-y-0.5 text-[11px] text-bark">
                   <p>
                     <span className="font-semibold text-espresso">Issue Date:</span>{" "}
-                    {new Date(inv.issue_date).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                    {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                   </p>
                   {inv.due_date && (
                     <p>
                       <span className="font-semibold text-espresso">Due Date:</span>{" "}
-                      {new Date(inv.due_date).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                      {new Date(inv.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                     </p>
                   )}
                   {inv.payment_terms && (
@@ -5859,7 +5862,7 @@ function InvoicesTab({ profiles }: { profiles: Profile[] }) {
                   <div className="flex justify-between text-[12px]">
                     <span className="text-sage font-semibold">Paid on</span>
                     <span className="text-sage font-semibold">
-                      {new Date(inv.paid_date).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                      {new Date(inv.paid_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                     </span>
                   </div>
                 )}
@@ -5977,7 +5980,7 @@ function InvoicesTab({ profiles }: { profiles: Profile[] }) {
                   {invoicePayments.map((pmt) => (
                     <tr key={pmt.id} className="hover:bg-parchment/20 transition-colors">
                       <td className="px-4 py-2.5 text-espresso">
-                        {new Date(pmt.payment_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        {new Date(pmt.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                       </td>
                       <td className="px-3 py-2.5 text-right font-semibold text-sage">{formatCurrency(Number(pmt.amount))}</td>
                       <td className="px-3 py-2.5 text-bark capitalize">{pmt.payment_method?.replace("_", " ") || "-"}</td>
@@ -6084,11 +6087,11 @@ function InvoicesTab({ profiles }: { profiles: Profile[] }) {
                     </td>
                     <td className="px-3 py-3 text-bark">{inv.to_name}</td>
                     <td className="px-3 py-3 text-bark">
-                      {new Date(inv.issue_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                     </td>
                     <td className="px-3 py-3 text-bark">
                       {inv.due_date
-                        ? new Date(inv.due_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                        ? new Date(inv.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })
                         : "-"}
                     </td>
                     <td className="px-3 py-3 text-right font-semibold text-espresso">

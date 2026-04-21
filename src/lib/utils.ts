@@ -109,19 +109,14 @@ export function getTimezoneAbbr(timezone: string): string {
     timeZoneName: "short",
   });
   // Extract timezone abbreviation (last word)
-  return parts.split(" ").pop() || "ET";
+  return parts.split(" ").pop() || "";
 }
 
-/** Get today's date boundaries in a specific timezone */
-export function getTodayBoundsInTimezone(timezone: string): { start: string; end: string } {
-  const now = new Date();
-  // Get today's date string in the target timezone
-  const dateStr = now.toLocaleDateString("en-CA", { timeZone: timezone }); // YYYY-MM-DD format
-  // Create start/end boundaries — these are ISO strings representing midnight in the org timezone
-  // We use the timezone offset to compute exact UTC boundaries
-  const startLocal = new Date(`${dateStr}T00:00:00`);
-  const endLocal = new Date(`${dateStr}T23:59:59.999`);
-  // Get the offset for this timezone
+/**
+ * Get the start/end boundaries of a specific day (as represented in a given timezone)
+ * for any reference Date, returned as UTC ISO strings.
+ */
+export function getDayBoundsInTimezone(date: Date, timezone: string): { start: string; end: string } {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
@@ -132,7 +127,7 @@ export function getTodayBoundsInTimezone(timezone: string): { start: string; end
     second: "2-digit",
     hour12: false,
   });
-  const parts = formatter.formatToParts(now);
+  const parts = formatter.formatToParts(date);
   const tzYear = parseInt(parts.find(p => p.type === "year")!.value);
   const tzMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
   const tzDay = parseInt(parts.find(p => p.type === "day")!.value);
@@ -140,11 +135,11 @@ export function getTodayBoundsInTimezone(timezone: string): { start: string; end
   const tzMinute = parseInt(parts.find(p => p.type === "minute")!.value);
   const tzSecond = parseInt(parts.find(p => p.type === "second")!.value);
 
-  // Local time in tz as if it were UTC
+  // Compute the UTC offset for this timezone at this moment
   const tzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, tzHour, tzMinute, tzSecond));
-  const offsetMs = tzAsUtc.getTime() - now.getTime();
+  const offsetMs = tzAsUtc.getTime() - date.getTime();
 
-  // Midnight today in tz → UTC
+  // Midnight of that day in tz → UTC
   const midnightTzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, 0, 0, 0, 0));
   const startUtc = new Date(midnightTzAsUtc.getTime() - offsetMs);
   const endUtc = new Date(midnightTzAsUtc.getTime() - offsetMs + 24 * 60 * 60 * 1000 - 1);
@@ -152,11 +147,14 @@ export function getTodayBoundsInTimezone(timezone: string): { start: string; end
   return { start: startUtc.toISOString(), end: endUtc.toISOString() };
 }
 
-/** Get start of today in ISO format */
-export function todayStart(): string {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
+/** Get today's date boundaries in a specific timezone */
+export function getTodayBoundsInTimezone(timezone: string): { start: string; end: string } {
+  return getDayBoundsInTimezone(new Date(), timezone);
+}
+
+/** Get start of today in ISO format, in the given timezone (defaults to UTC) */
+export function todayStart(timezone = "UTC"): string {
+  return getTodayBoundsInTimezone(timezone).start;
 }
 
 /** Get start/end of the current week (Mon–Sun) in a given timezone, as UTC ISO strings */
@@ -191,9 +189,11 @@ export function getWeekBoundsInTimezone(timezone: string): { start: string; end:
   return { start: startUtc.toISOString(), end: endUtc.toISOString() };
 }
 
-/** Get start/end of the current month in a given timezone, as UTC ISO strings */
-export function getMonthBoundsInTimezone(timezone: string): { start: string; end: string } {
-  const now = new Date();
+/**
+ * Get start/end of the month containing a given date in a specific timezone,
+ * as UTC ISO strings.
+ */
+export function getMonthBoundsForDate(date: Date, timezone: string): { start: string; end: string } {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
@@ -204,7 +204,7 @@ export function getMonthBoundsInTimezone(timezone: string): { start: string; end
     second: "2-digit",
     hour12: false,
   });
-  const parts = formatter.formatToParts(now);
+  const parts = formatter.formatToParts(date);
   const tzYear = parseInt(parts.find(p => p.type === "year")!.value);
   const tzMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
   const tzDay = parseInt(parts.find(p => p.type === "day")!.value);
@@ -212,7 +212,7 @@ export function getMonthBoundsInTimezone(timezone: string): { start: string; end
   const tzMinute = parseInt(parts.find(p => p.type === "minute")!.value);
   const tzSecond = parseInt(parts.find(p => p.type === "second")!.value);
   const tzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, tzHour, tzMinute, tzSecond));
-  const offsetMs = tzAsUtc.getTime() - now.getTime();
+  const offsetMs = tzAsUtc.getTime() - date.getTime();
   const firstDay = new Date(tzYear, tzMonth, 1);
   const lastDay = new Date(tzYear, tzMonth + 1, 0);
   const startUtc = new Date(Date.UTC(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate(), 0, 0, 0) - offsetMs);
@@ -220,14 +220,17 @@ export function getMonthBoundsInTimezone(timezone: string): { start: string; end
   return { start: startUtc.toISOString(), end: endUtc.toISOString() };
 }
 
-/** Get start of the week (Monday) */
+/** Get start/end of the current month in a given timezone, as UTC ISO strings */
+export function getMonthBoundsInTimezone(timezone: string): { start: string; end: string } {
+  return getMonthBoundsForDate(new Date(), timezone);
+}
+
+/** Get start of the week (Monday) at midnight UTC */
 export function weekStart(date?: Date): Date {
   const d = date ? new Date(date) : new Date();
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  const day = d.getUTCDay();
+  const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), diff));
 }
 
 /** Get end of the week (Sunday) */

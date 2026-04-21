@@ -2711,7 +2711,7 @@ export default function DashboardPage() {
                     {msg.content}
                   </div>
                   <div className="text-[10px] text-stone mt-1">
-                    {new Date(msg.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                    {new Date(msg.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: orgTimezone })}
                   </div>
                 </div>
                 <button

@@ -8,9 +8,9 @@ import {
   formatDuration,
   getInitials,
   getAvatarColor,
-  todayStart,
-  weekStart,
-  weekEnd,
+  getTodayBoundsInTimezone,
+  getWeekBoundsInTimezone,
+  getMonthBoundsInTimezone,
   formatDateLocalTZ,
 } from "@/lib/utils";
 
@@ -112,28 +112,23 @@ export default function TeamPage() {
 
   // Compute date range boundaries
   const { rangeStart, rangeEnd, periodLabel } = useMemo(() => {
-    const now = new Date();
-    const tz = orgTimezone || undefined;
+    const tz = orgTimezone || "UTC";
     if (datePreset === "today") {
-      const s = new Date(now);
-      s.setHours(0, 0, 0, 0);
-      const e = new Date(now);
-      e.setHours(23, 59, 59, 999);
-      return { rangeStart: s, rangeEnd: e, periodLabel: "Today" };
+      const { start, end } = getTodayBoundsInTimezone(tz);
+      return { rangeStart: new Date(start), rangeEnd: new Date(end), periodLabel: "Today" };
     }
     if (datePreset === "week") {
-      const s = weekStart(now);
-      const e = weekEnd(now);
+      const { start, end } = getWeekBoundsInTimezone(tz);
+      const s = new Date(start);
+      const e = new Date(end);
       const label = `${formatDateShort(s, tz)} \u2013 ${formatDateShort(e, tz)}`;
       return { rangeStart: s, rangeEnd: e, periodLabel: label };
     }
     if (datePreset === "month") {
-      const s = new Date(now.getFullYear(), now.getMonth(), 1);
-      s.setHours(0, 0, 0, 0);
-      const e = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      e.setHours(23, 59, 59, 999);
-      const label = s.toLocaleDateString("en-US", { month: "long", year: "numeric", ...(tz ? { timeZone: tz } : {}) });
-      return { rangeStart: s, rangeEnd: e, periodLabel: label };
+      const { start, end } = getMonthBoundsInTimezone(tz);
+      const s = new Date(start);
+      const label = s.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: tz });
+      return { rangeStart: s, rangeEnd: new Date(end), periodLabel: label };
     }
     // custom
     const s = new Date(customStart + "T00:00:00");
@@ -902,7 +897,7 @@ type DailyRating = {
   updated_at: string;
 };
 
-function DailyRatingsPanel({ vaId, isAdmin }: { vaId: string; isAdmin: boolean }) {
+function DailyRatingsPanel({ vaId, isAdmin, timezone = "UTC" }: { vaId: string; isAdmin: boolean; timezone?: string }) {
   const supabase = createClient();
   const [ratings, setRatings] = useState<DailyRating[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1047,7 +1042,7 @@ function DailyRatingsPanel({ vaId, isAdmin }: { vaId: string; isAdmin: boolean }
           {ratings.map((r) => (
             <div key={r.id} className="flex items-center gap-3 rounded-xl border border-sand bg-white px-4 py-3">
               <div className="text-[12px] font-bold text-terracotta min-w-[90px]">
-                {new Date(r.rating_date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                {new Date(r.rating_date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: timezone })}
               </div>
               <div className="flex items-center gap-0.5">
                 {[1,2,3,4,5].map(s => (
@@ -1251,7 +1246,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
 
       {/* Daily Ratings Tab */}
       {activeTab === "ratings" && (
-        <DailyRatingsPanel vaId={profile.id} isAdmin={isAdmin} />
+        <DailyRatingsPanel vaId={profile.id} isAdmin={isAdmin} timezone={timezone} />
       )}
 
       {/* Summary + Category Totals */}

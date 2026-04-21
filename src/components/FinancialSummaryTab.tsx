@@ -145,14 +145,14 @@ function toDateInputValue(iso: string): string {
   return iso.slice(0, 10);
 }
 
-function fmtDate(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+function fmtDate(dateStr: string, timezone = "UTC"): string {
+  const d = new Date(dateStr + "T12:00:00Z");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: timezone });
 }
 
-function fmtDateFull(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+function fmtDateFull(dateStr: string, timezone = "UTC"): string {
+  const d = new Date(dateStr + "T12:00:00Z");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: timezone });
 }
 
 function methodLabel(method: string): string {
@@ -161,7 +161,7 @@ function methodLabel(method: string): string {
 
 /* ── Component ──────────────────────────────────────────── */
 
-export default function FinancialSummaryTab() {
+export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: string }) {
   const supabase = createClient();
 
   // Date range (default: current month)
@@ -1015,7 +1015,7 @@ export default function FinancialSummaryTab() {
                                     <tbody>
                                       {row.payments.map((p) => (
                                         <tr key={p.id} className="border-t border-parchment/50">
-                                          <td className="py-1.5 text-espresso">{fmtDateFull(p.payment_date)}</td>
+                                          <td className="py-1.5 text-espresso">{fmtDateFull(p.payment_date, timezone)}</td>
                                           <td className="py-1.5 text-bark">{methodLabel(p.payment_method)}</td>
                                           <td className="py-1.5 text-bark">{p.confirmation_number || "—"}</td>
                                           <td className="py-1.5 text-right font-semibold text-emerald-600">{fmtMoney(Number(p.amount))}</td>
@@ -1149,7 +1149,7 @@ export default function FinancialSummaryTab() {
                                     <tbody>
                                       {row.days.map((d) => (
                                         <tr key={d.date} className="border-t border-parchment/50">
-                                          <td className="py-1 text-espresso">{fmtDate(d.date)}</td>
+                                          <td className="py-1 text-espresso">{fmtDate(d.date, timezone)}</td>
                                           <td className="py-1 text-right text-bark">{fmtHours(d.ms)}</td>
                                           <td className="py-1 text-right text-bark">{fmtHours(d.paidMs)}</td>
                                           <td className="py-1 text-right font-medium text-espresso">{fmtMoney(d.amount)}</td>
@@ -1259,7 +1259,7 @@ export default function FinancialSummaryTab() {
                                       <tbody>
                                         {row.payments.map((p) => (
                                           <tr key={p.id} className="border-t border-parchment/50">
-                                            <td className="py-1.5 text-espresso">{fmtDateFull(p.payment_date)}</td>
+                                            <td className="py-1.5 text-espresso">{fmtDateFull(p.payment_date, timezone)}</td>
                                             <td className="py-1.5 text-bark">{methodLabel(p.payment_method)}</td>
                                             <td className="py-1.5 text-bark">{p.confirmation_number || "—"}</td>
                                             <td className="py-1.5 text-right font-semibold text-emerald-600">{fmtMoney(Number(p.amount))}</td>
@@ -1417,7 +1417,7 @@ export default function FinancialSummaryTab() {
                   <tbody className="divide-y divide-parchment">
                     {expenseData.rows.map((exp) => (
                       <tr key={exp.id} className="hover:bg-parchment/20 transition-colors">
-                        <td className="px-4 py-3 text-espresso">{fmtDateFull(exp.expense_date)}</td>
+                        <td className="px-4 py-3 text-espresso">{fmtDateFull(exp.expense_date, timezone)}</td>
                         <td className="px-3 py-3 font-medium text-espresso max-w-[200px] truncate">{exp.description}</td>
                         <td className="px-3 py-3 text-bark">{exp.account || "General"}</td>
                         <td className="px-3 py-3 text-bark capitalize">{exp.category}</td>

@@ -30,17 +30,17 @@ function getDateInTimezone(tz: string): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: tz });
 }
 
-function shiftDate(dateStr: string, days: number): string {
-  // Use noon to avoid DST edge cases
-  const d = new Date(dateStr + "T12:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toLocaleDateString("en-CA");
+function shiftDate(dateStr: string, days: number, tz: string = "UTC"): string {
+  // Use noon UTC to avoid DST edge cases
+  const d = new Date(dateStr + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toLocaleDateString("en-CA", { timeZone: tz });
 }
 
-function formatDateDisplay(dateStr: string, todayStr: string): string {
+function formatDateDisplay(dateStr: string, todayStr: string, tz: string = "UTC"): string {
   if (dateStr === todayStr) return "Today";
-  const d = new Date(dateStr + "T12:00:00");
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  const d = new Date(dateStr + "T12:00:00Z");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz });
 }
 
 export default function DailyTaskPlanner({
@@ -150,7 +150,7 @@ export default function DailyTaskPlanner({
       // Check yesterday for incomplete tasks not already in today's plan
       // (used to populate the "Carry over from yesterday" button)
       if (viewDate === todayStr && targetUserId !== "__all__") {
-        const yesterday = shiftDate(todayStr, -1);
+        const yesterday = shiftDate(todayStr, -1, orgTimezone);
         const { data: pastTasks } = await supabase
           .from("planned_tasks")
           .select("*")
@@ -302,7 +302,7 @@ export default function DailyTaskPlanner({
 
   // Clear all tasks for the viewed date
   const clearDay = useCallback(async () => {
-    if (!confirm(`Clear all tasks for ${formatDateDisplay(viewDate, todayStr)}?`)) return;
+    if (!confirm(`Clear all tasks for ${formatDateDisplay(viewDate, todayStr, orgTimezone)}?`)) return;
     const targetUserId = role === "va" ? userId : viewUserId;
 
     let query = supabase
@@ -441,7 +441,7 @@ export default function DailyTaskPlanner({
             <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <h3 className="text-sm font-bold text-espresso">
-            {isToday ? "Today's Plan" : formatDateDisplay(viewDate, todayStr)}
+            {isToday ? "Today's Plan" : formatDateDisplay(viewDate, todayStr, orgTimezone)}
           </h3>
         </button>
         <div className="flex items-center gap-2">
@@ -453,7 +453,7 @@ export default function DailyTaskPlanner({
           {/* Date navigation arrows */}
           <div className="flex items-center gap-0.5">
             <button
-              onClick={() => setViewDate((d) => shiftDate(d, -1))}
+              onClick={() => setViewDate((d) => shiftDate(d, -1, orgTimezone))}
               className="p-1 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft cursor-pointer transition-colors"
               title="Previous day"
             >
@@ -471,7 +471,7 @@ export default function DailyTaskPlanner({
               </button>
             )}
             <button
-              onClick={() => setViewDate((d) => shiftDate(d, 1))}
+              onClick={() => setViewDate((d) => shiftDate(d, 1, orgTimezone))}
               disabled={!canGoForward}
               className="p-1 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               title="Next day"
@@ -671,7 +671,7 @@ export default function DailyTaskPlanner({
             <p className="text-xs text-stone py-3 text-center">
               {isToday
                 ? "No tasks planned for today yet."
-                : `No tasks for ${formatDateDisplay(viewDate, todayStr)}.`}
+                : `No tasks for ${formatDateDisplay(viewDate, todayStr, orgTimezone)}.`}
             </p>
           ) : (
             <div>

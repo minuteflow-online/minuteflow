@@ -12,8 +12,8 @@ import {
   formatDurationShort,
   formatTimeTZ,
   getTimezoneAbbr,
-  weekStart,
-  weekEnd,
+  getDayBoundsInTimezone,
+  getMonthBoundsForDate,
 } from "@/lib/utils";
 
 /* ── Types ────────────────────────────────────────────────── */
@@ -31,25 +31,6 @@ type WeekDay = {
 
 /* ── Helpers ──────────────────────────────────────────────── */
 
-function startOfDay(d: Date): Date {
-  const copy = new Date(d);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-}
-
-function endOfDay(d: Date): Date {
-  const copy = new Date(d);
-  copy.setHours(23, 59, 59, 999);
-  return copy;
-}
-
-function startOfMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
-}
-
-function endOfMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
-}
 
 function isSameDay(a: Date, b: Date): boolean {
   return (
@@ -117,7 +98,7 @@ function weekDaysInTz(anchorDate: Date, tz: string): string[] {
   return result;
 }
 
-function formatDateDisplay(d: Date, tz: string = "America/New_York"): string {
+function formatDateDisplay(d: Date, tz: string = "UTC"): string {
   return d.toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
@@ -126,15 +107,15 @@ function formatDateDisplay(d: Date, tz: string = "America/New_York"): string {
   });
 }
 
-function formatWeekDisplay(d: Date, tz: string = "America/New_York"): string {
+function formatWeekDisplay(d: Date, tz: string = "UTC"): string {
   const dayStrs = weekDaysInTz(d, tz);
   const wsDate = dateFromDateStr(dayStrs[0], tz);
   const weDate = dateFromDateStr(dayStrs[6], tz);
   return `${wsDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: tz })} \u2013 ${weDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: tz })}`;
 }
 
-function formatMonthDisplay(d: Date): string {
-  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+function formatMonthDisplay(d: Date, tz = "UTC"): string {
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: tz });
 }
 
 const DAY_NAMES_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -275,9 +256,10 @@ export default function TimeLogPage() {
 
   const { rangeStart, rangeEnd, displayLabel } = useMemo(() => {
     if (viewMode === "day") {
+      const { start: dayStart, end: dayEnd } = getDayBoundsInTimezone(anchorDate, orgTimezone);
       return {
-        rangeStart: startOfDay(anchorDate),
-        rangeEnd: endOfDay(anchorDate),
+        rangeStart: new Date(dayStart),
+        rangeEnd: new Date(dayEnd),
         displayLabel: formatDateDisplay(anchorDate, orgTimezone),
       };
     } else if (viewMode === "week") {
@@ -291,18 +273,19 @@ export default function TimeLogPage() {
     } else if (viewMode === "custom") {
       const cs = new Date(customStart + "T00:00:00");
       const ce = new Date(customEnd + "T23:59:59.999");
-      const startLabel = cs.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      const endLabel = ce.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      const startLabel = cs.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone });
+      const endLabel = ce.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone });
       return {
         rangeStart: cs,
         rangeEnd: ce,
         displayLabel: `${startLabel} \u2013 ${endLabel}`,
       };
     } else {
+      const { start: monthStart, end: monthEnd } = getMonthBoundsForDate(anchorDate, orgTimezone);
       return {
-        rangeStart: startOfMonth(anchorDate),
-        rangeEnd: endOfMonth(anchorDate),
-        displayLabel: formatMonthDisplay(anchorDate),
+        rangeStart: new Date(monthStart),
+        rangeEnd: new Date(monthEnd),
+        displayLabel: formatMonthDisplay(anchorDate, orgTimezone),
       };
     }
   }, [viewMode, anchorDate, customStart, customEnd, orgTimezone]);
@@ -825,11 +808,12 @@ export default function TimeLogPage() {
       return Object.entries(logsByDay)
         .sort(([a], [b]) => b.localeCompare(a))
         .flatMap(([dateKey, dayLogs]) => {
-          const d = new Date(dateKey + "T12:00:00");
+          const d = new Date(dateKey + "T12:00:00Z");
           const dayLabel = d.toLocaleDateString("en-US", {
             weekday: "short",
             month: "short",
             day: "numeric",
+            timeZone: orgTimezone,
           });
           const dayTotalMs = dayLogs
             .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
@@ -989,13 +973,13 @@ export default function TimeLogPage() {
                           <td className="px-4 py-3 text-bark">{log.full_name}</td>
                         )}
                         <td className="px-4 py-3 text-bark">
-                          {log.start_time ? new Date(log.start_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                          {log.start_time ? new Date(log.start_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone }) : "—"}
                         </td>
                         <td className="px-4 py-3 text-bark">
                           {log.duration_ms ? formatDuration(log.duration_ms) : "—"}
                         </td>
                         <td className="px-4 py-3 text-bark text-[11px]">
-                          {log.deleted_at ? new Date(log.deleted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                          {log.deleted_at ? new Date(log.deleted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone }) : "—"}
                         </td>
                       </tr>
                     ))}

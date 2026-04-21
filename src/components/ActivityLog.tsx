@@ -98,7 +98,7 @@ function formatHoursMinutes(ms: number): string {
 function formatTime(iso: string, timezone?: string): string {
   const d = new Date(iso);
   return d.toLocaleTimeString("en-US", {
-    timeZone: timezone || "America/New_York",
+    timeZone: timezone || "UTC",
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
@@ -108,7 +108,7 @@ function formatTime(iso: string, timezone?: string): string {
 function formatDate(iso: string, timezone?: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString("en-US", {
-    timeZone: timezone || "America/New_York",
+    timeZone: timezone || "UTC",
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -305,13 +305,13 @@ export default function ActivityLog({
 
   // Today's date string for filtering
   const todayStr = useMemo(() => {
-    const tz = timezone || "America/New_York";
+    const tz = timezone || "UTC";
     return new Date().toLocaleDateString("en-CA", { timeZone: tz }); // "YYYY-MM-DD"
   }, [timezone]);
 
   // Separate today's logs, past in-progress logs, and past on-hold logs
   const { todayLogs: allTodayLogs, pastInProgressLogs, pastOnHoldLogs } = useMemo(() => {
-    const tz = timezone || "America/New_York";
+    const tz = timezone || "UTC";
     const today: TimeLog[] = [];
     const pastIP: TimeLog[] = [];
     const pastOH: TimeLog[] = [];

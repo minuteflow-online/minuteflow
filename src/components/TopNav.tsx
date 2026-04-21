@@ -31,7 +31,7 @@ type TopNavProps = {
 function Clock() {
   const [time, setTime] = useState("");
   const [timezone, setTimezone] = useState<string>("UTC");
-  const [tzAbbr, setTzAbbr] = useState("ET");
+  const [tzAbbr, setTzAbbr] = useState("UTC");
 
   // Fetch org timezone on mount
   useEffect(() => {
