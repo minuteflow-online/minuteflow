@@ -151,6 +151,7 @@ export default function DashboardPage() {
   const [showWrongSurfaceError, setShowWrongSurfaceError] = useState(false);
   const disclaimerShownRef = useRef(false);
   const pendingCaptureLogIdRef = useRef<number | null>(null);
+  const streamPromptOnLoadRef = useRef(false);
 
   // ─── Auth ──────────────────────────────────────────────────
 
@@ -223,6 +224,10 @@ export default function DashboardPage() {
             if (s.active_task.start_time) {
               setTaskElapsed(secondsSince(s.active_task.start_time));
             }
+            // Restore the active log ID so Capture Now works after a page refresh
+            if (s.active_task.logId) {
+              activeLogIdRef.current = parseInt(s.active_task.logId, 10);
+            }
           }
         } else {
           setSessionState("idle");
@@ -276,6 +281,18 @@ export default function DashboardPage() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  // ─── Re-share prompt on page load (stream drops on refresh) ──
+  // If VA reloads the page mid-session, their screen share stream is gone.
+  // Detect this once after initial data load and prompt them to re-share.
+  useEffect(() => {
+    if (loading) return;
+    if (streamPromptOnLoadRef.current) return;
+    streamPromptOnLoadRef.current = true; // Only run once
+    if (sessionState === "clocked-in" && activeTask && !screenShareActive) {
+      setShowScreenShareAlert(true);
+    }
+  }, [loading, sessionState, activeTask, screenShareActive]);
 
   // ─── Screenshot polling (refresh counts every 15s) ───────
   useEffect(() => {
@@ -2126,7 +2143,7 @@ export default function DashboardPage() {
             <div className="text-3xl mb-3">⚠️</div>
             <h2 className="font-serif text-lg font-bold text-espresso mb-2">Screenshots Stopped</h2>
             <p className="text-sm text-bark mb-4">
-              Your screen share may have stopped. Screenshots haven&apos;t been captured for the last 3 attempts.
+              Your screen share is not active. This can happen when you refresh the page or the browser stops sharing.
               Please re-share your screen so your activity can be tracked.
             </p>
             <button
@@ -2134,7 +2151,12 @@ export default function DashboardPage() {
                 setShowScreenShareAlert(false);
                 consecutiveCaptureFailuresRef.current = 0;
                 const result = await requestStream();
-                if (result === 'wrong-surface') setShowWrongSurfaceError(true);
+                if (result === 'granted' && activeLogIdRef.current) {
+                  // Restart capture schedule with the restored log ID
+                  scheduleCaptureSequence(activeLogIdRef.current);
+                } else if (result === 'wrong-surface') {
+                  setShowWrongSurfaceError(true);
+                }
               }}
               className="w-full bg-terracotta text-white rounded-lg py-2.5 text-sm font-medium hover:bg-terracotta/90 transition-colors"
             >
@@ -2159,11 +2181,8 @@ export default function DashboardPage() {
           <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4 text-center">
             <div className="text-3xl mb-3">📷</div>
             <h2 className="font-serif text-lg font-bold text-espresso mb-2">Screen Capture Active</h2>
-            <p className="text-sm text-bark mb-3">
-              MinuteFlow will capture screenshots of your <strong>entire screen</strong> while you&apos;re clocked in to track your work progress.
-            </p>
             <p className="text-sm text-bark mb-4">
-              During work hours, keep only work-related tabs and apps open. If you need to open something personal, do it on your break — not while you&apos;re clocked in.
+              MinuteFlow will capture your entire screen while you are clocked in. Please be mindful of any personal items you may not want captured.
             </p>
             <button
               onClick={async () => {
