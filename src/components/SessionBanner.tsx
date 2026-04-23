@@ -11,6 +11,7 @@ interface SessionBannerProps {
   breakElapsedSeconds: number;
   screenShareActive?: boolean;
   timezone?: string;
+  actionPending?: boolean;
   onClockIn?: () => void;
   onClockOut: () => void;
   onStartBreak: () => void;
@@ -42,6 +43,7 @@ export default function SessionBanner({
   breakElapsedSeconds,
   screenShareActive,
   timezone,
+  actionPending,
   onClockIn,
   onClockOut,
   onStartBreak,
@@ -121,7 +123,8 @@ export default function SessionBanner({
         {state === "idle" && onClockIn && (
           <button
             onClick={onClockIn}
-            className="inline-flex items-center gap-1.5 px-5 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#5a8a60] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(107,143,113,0.25)]"
+            disabled={actionPending}
+            className="inline-flex items-center gap-1.5 px-5 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#5a8a60] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(107,143,113,0.25)] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
             Clock In
@@ -131,13 +134,15 @@ export default function SessionBanner({
           <>
             <button
               onClick={onStartBreak}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-soft text-amber text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#ecdbb0]"
+              disabled={actionPending}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-soft text-amber text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#ecdbb0] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
             >
               Break
             </button>
             <button
               onClick={onClockOut}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"
+              disabled={actionPending}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
             >
               Clock Out
             </button>
@@ -146,7 +151,8 @@ export default function SessionBanner({
         {state === "on-break" && (
           <button
             onClick={onEndBreak}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(194,105,79,0.25)]"
+            disabled={actionPending}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(194,105,79,0.25)] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
           >
             End Break
           </button>

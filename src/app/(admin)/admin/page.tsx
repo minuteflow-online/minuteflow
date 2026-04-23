@@ -715,7 +715,12 @@ export default function AdminPage() {
         const startTime = changes.start_time ? new Date(changes.start_time).toISOString() : currentLog.start_time;
         const endTime = changes.end_time ? new Date(changes.end_time).toISOString() : currentLog.end_time;
         if (startTime && endTime) {
-          updatePayload.duration_ms = new Date(endTime).getTime() - new Date(startTime).getTime();
+          // Guard: end_time must be after start_time
+          if (new Date(endTime).getTime() <= new Date(startTime).getTime()) {
+            console.error("Correction rejected: end_time is before or equal to start_time");
+            return;
+          }
+          updatePayload.duration_ms = Math.max(0, new Date(endTime).getTime() - new Date(startTime).getTime());
         }
       }
 
@@ -723,6 +728,35 @@ export default function AdminPage() {
 
       if (auditRecords.length > 0) {
         await supabase.from("time_log_edits").insert(auditRecords);
+      }
+
+      // Auto-cascade: if end_time changed, update the next task's start_time to match
+      if (changes.end_time) {
+        const newEndIso = updatePayload.end_time as string;
+        const { data: nextTask } = await supabase
+          .from("time_logs")
+          .select("id, start_time, end_time, duration_ms")
+          .eq("user_id", currentLog.user_id)
+          .gt("start_time", currentLog.start_time)
+          .is("deleted_at", null)
+          .order("start_time", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
+        if (nextTask) {
+          const newEndMs = new Date(newEndIso).getTime();
+          const nextEndMs = nextTask.end_time ? new Date(nextTask.end_time).getTime() : null;
+          // Only cascade if it won't shrink the next task to zero/negative duration
+          if (!nextEndMs || newEndMs < nextEndMs) {
+            await supabase
+              .from("time_logs")
+              .update({
+                start_time: newEndIso,
+                ...(nextEndMs ? { duration_ms: nextEndMs - newEndMs } : {}),
+              })
+              .eq("id", nextTask.id);
+          }
+        }
       }
     }
 

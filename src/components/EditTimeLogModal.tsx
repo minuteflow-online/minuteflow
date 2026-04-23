@@ -137,9 +137,17 @@ export default function EditTimeLogModal({
     const supabase = createClient();
     const startIso = fromLocalDatetimeValue(startTime);
     const endIso = endTime ? fromLocalDatetimeValue(endTime) : null;
+
+    // Guard: end_time must be after start_time
+    if (endIso && new Date(endIso).getTime() <= new Date(startIso).getTime()) {
+      setError("End time must be after start time");
+      setSaving(false);
+      return;
+    }
+
     const durationMs =
       endIso && startIso
-        ? new Date(endIso).getTime() - new Date(startIso).getTime()
+        ? Math.max(0, new Date(endIso).getTime() - new Date(startIso).getTime())
         : 0;
     const isBillable = category !== "Personal";
 
@@ -251,6 +259,34 @@ export default function EditTimeLogModal({
             new_value: c.newVal,
           }))
         );
+      }
+
+      // Auto-cascade: if end_time changed, update the next task's start_time to match
+      if (newEndIso && newEndIso !== log.end_time) {
+        const { data: nextTask } = await supabase
+          .from("time_logs")
+          .select("id, start_time, end_time, duration_ms")
+          .eq("user_id", log.user_id)
+          .gt("start_time", log.start_time)
+          .is("deleted_at", null)
+          .order("start_time", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
+        if (nextTask) {
+          const newEndMs = new Date(newEndIso).getTime();
+          const nextEndMs = nextTask.end_time ? new Date(nextTask.end_time).getTime() : null;
+          // Only cascade if it won't shrink the next task to zero/negative duration
+          if (!nextEndMs || newEndMs < nextEndMs) {
+            await supabase
+              .from("time_logs")
+              .update({
+                start_time: newEndIso,
+                ...(nextEndMs ? { duration_ms: nextEndMs - newEndMs } : {}),
+              })
+              .eq("id", nextTask.id);
+          }
+        }
       }
     }
 

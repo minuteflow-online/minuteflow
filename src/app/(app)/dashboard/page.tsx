@@ -128,6 +128,9 @@ export default function DashboardPage() {
   // Loading state
   const [loading, setLoading] = useState(true);
 
+  // Session action debounce — prevents double-taps on Clock In/Out/Break
+  const [sessionActionPending, setSessionActionPending] = useState(false);
+
   // VA has fixed/project-based task assignments
   const [hasFixedAssignments, setHasFixedAssignments] = useState(false);
 
@@ -391,7 +394,9 @@ export default function DashboardPage() {
     if (!activeTask?.logId || !userId) return;
     const now = new Date().toISOString();
     const logId = parseInt(activeTask.logId, 10);
-    const durationMs = taskElapsed * 1000;
+    // Guard: ensure duration is never negative (clock skew protection)
+    const startMs = activeTask.start_time ? new Date(activeTask.start_time).getTime() : Date.now();
+    const durationMs = Math.max(0, new Date(now).getTime() - startMs);
 
     if (logId) {
       await supabase
@@ -427,7 +432,8 @@ export default function DashboardPage() {
   // ─── Actions ──────────────────────────────────────────────
 
   const clockIn = useCallback(async () => {
-    if (!userId || !profile) return;
+    if (!userId || !profile || sessionActionPending) return;
+    setSessionActionPending(true);
     const now = new Date().toISOString();
 
     // Create a "Planning" time_log entry so clock-in registers in activity log
@@ -500,7 +506,8 @@ export default function DashboardPage() {
         setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
       }
     }
-  }, [userId, profile, supabase]);
+    setSessionActionPending(false);
+  }, [userId, profile, supabase, sessionActionPending]);
 
   const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null) => {
     if (!userId) return;
@@ -682,7 +689,9 @@ export default function DashboardPage() {
     try {
       const now = new Date().toISOString();
       const logId = parseInt(activeTask.logId, 10);
-      const durationMs = taskElapsed * 1000;
+      // Guard: ensure duration is never negative (clock skew protection)
+      const startMs = activeTask.start_time ? new Date(activeTask.start_time).getTime() : Date.now();
+      const durationMs = Math.max(0, new Date(now).getTime() - startMs);
 
       // Close the active task with status and memo
       if (logId) {
@@ -878,7 +887,8 @@ export default function DashboardPage() {
   const [showPostBreakPrompt, setShowPostBreakPrompt] = useState(false);
 
   const endBreak = useCallback(async () => {
-    if (!userId) return;
+    if (!userId || sessionActionPending) return;
+    setSessionActionPending(true);
     const now = new Date().toISOString();
 
     // Update the break log
@@ -931,7 +941,8 @@ export default function DashboardPage() {
     if (preBreakTask) {
       setShowPostBreakPrompt(true);
     }
-  }, [userId, supabase, session, breakElapsed, preBreakTask]);
+    setSessionActionPending(false);
+  }, [userId, supabase, session, breakElapsed, preBreakTask, sessionActionPending]);
 
   // Resume the pre-break task
   const resumePreBreakTask = useCallback(async () => {
@@ -2060,6 +2071,7 @@ export default function DashboardPage() {
         breakElapsedSeconds={breakElapsed}
         screenShareActive={screenShareActive}
         timezone={orgTimezone}
+        actionPending={sessionActionPending}
         onClockIn={clockIn}
         onClockOut={clockOut}
         onStartBreak={startBreak}
