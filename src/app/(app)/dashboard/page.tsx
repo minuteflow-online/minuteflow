@@ -153,6 +153,17 @@ export default function DashboardPage() {
   const pendingCaptureLogIdRef = useRef<number | null>(null);
   const streamPromptOnLoadRef = useRef(false);
 
+  // ─── Browser notification helper (surfaces above all tabs) ──
+  // Used when the VA is not looking at MinuteFlow (e.g. selected wrong screen share surface).
+  const notifyVA = useCallback((title: string, body: string) => {
+    // Try to focus the MinuteFlow tab
+    try { window.focus(); } catch {}
+    // Send a browser notification if permission is already granted
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification(title, { body });
+    }
+  }, []);
+
   // ─── Auth ──────────────────────────────────────────────────
 
   useEffect(() => {
@@ -290,9 +301,10 @@ export default function DashboardPage() {
     if (streamPromptOnLoadRef.current) return;
     streamPromptOnLoadRef.current = true; // Only run once
     if (sessionState === "clocked-in" && activeTask && !screenShareActive) {
+      notifyVA("⚠️ Screenshots stopped", "Your screen share stopped. Open MinuteFlow and re-share your screen.");
       setShowScreenShareAlert(true);
     }
-  }, [loading, sessionState, activeTask, screenShareActive]);
+  }, [loading, sessionState, activeTask, screenShareActive, notifyVA]);
 
   // ─── Screenshot polling (refresh counts every 15s) ───────
   useEffect(() => {
@@ -1322,6 +1334,7 @@ export default function DashboardPage() {
           await logCaptureFailure(logId, reason);
           consecutiveCaptureFailuresRef.current += 1;
           if (consecutiveCaptureFailuresRef.current >= 3) {
+            notifyVA("⚠️ Screenshots stopped", "Your screen share stopped. Open MinuteFlow and re-share your screen.");
             setShowScreenShareAlert(true);
           }
           return false;
@@ -1337,6 +1350,7 @@ export default function DashboardPage() {
         await logCaptureFailure(logId, reason);
         consecutiveCaptureFailuresRef.current += 1;
         if (consecutiveCaptureFailuresRef.current >= 3) {
+          notifyVA("⚠️ Screenshots stopped", "Your screen share stopped. Open MinuteFlow and re-share your screen.");
           setShowScreenShareAlert(true);
         }
         return false;
@@ -1674,12 +1688,13 @@ export default function DashboardPage() {
           if (result === 'granted') {
             scheduleCaptureSequence(newLogId);
           } else if (result === 'wrong-surface') {
+            notifyVA("⚠️ Wrong screen selected", "Please re-open MinuteFlow and select Entire Screen when sharing.");
             setShowWrongSurfaceError(true);
           }
         }
       }
     },
-    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus]
+    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA]
   );
 
   // ─── Screenshot (manual + fallback) ─────────────────────────
@@ -2155,6 +2170,7 @@ export default function DashboardPage() {
                   // Restart capture schedule with the restored log ID
                   scheduleCaptureSequence(activeLogIdRef.current);
                 } else if (result === 'wrong-surface') {
+                  notifyVA("⚠️ Wrong screen selected", "Please re-open MinuteFlow and select Entire Screen when sharing.");
                   setShowWrongSurfaceError(true);
                 }
               }}
@@ -2188,11 +2204,16 @@ export default function DashboardPage() {
               onClick={async () => {
                 disclaimerShownRef.current = true;
                 setShowScreenShareDisclaimer(false);
+                // Request notification permission so we can alert them if screen share breaks
+                if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+                  await Notification.requestPermission();
+                }
                 const result = await requestStream();
                 if (result === 'granted') {
                   const logId = pendingCaptureLogIdRef.current;
                   if (logId) scheduleCaptureSequence(logId);
                 } else if (result === 'wrong-surface') {
+                  notifyVA("⚠️ Wrong screen selected", "Please re-open MinuteFlow and select Entire Screen when sharing.");
                   setShowWrongSurfaceError(true);
                 }
               }}
@@ -2222,6 +2243,7 @@ export default function DashboardPage() {
                   const logId = pendingCaptureLogIdRef.current ?? activeLogIdRef.current;
                   if (logId) scheduleCaptureSequence(logId);
                 } else if (result === 'wrong-surface') {
+                  notifyVA("⚠️ Wrong screen selected", "Please re-open MinuteFlow and select Entire Screen when sharing.");
                   setShowWrongSurfaceError(true);
                 }
               }}

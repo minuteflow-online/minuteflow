@@ -288,6 +288,34 @@ export default function EditTimeLogModal({
           }
         }
       }
+
+      // Auto-cascade: if start_time changed, update the previous task's end_time to match
+      if (newStartIso !== log.start_time) {
+        const { data: prevTask } = await supabase
+          .from("time_logs")
+          .select("id, start_time, end_time, duration_ms")
+          .eq("user_id", log.user_id)
+          .lt("start_time", log.start_time)
+          .is("deleted_at", null)
+          .order("start_time", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (prevTask) {
+          const newStartMs = new Date(newStartIso).getTime();
+          const prevStartMs = new Date(prevTask.start_time).getTime();
+          // Only cascade if it won't shrink the previous task to zero/negative duration
+          if (newStartMs > prevStartMs) {
+            await supabase
+              .from("time_logs")
+              .update({
+                end_time: newStartIso,
+                duration_ms: newStartMs - prevStartMs,
+              })
+              .eq("id", prevTask.id);
+          }
+        }
+      }
     }
 
     setSaving(false);
