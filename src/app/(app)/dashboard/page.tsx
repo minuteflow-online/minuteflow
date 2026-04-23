@@ -147,6 +147,10 @@ export default function DashboardPage() {
   const lastCaptureTimeRef = useRef(0);
   const consecutiveCaptureFailuresRef = useRef(0);
   const [showScreenShareAlert, setShowScreenShareAlert] = useState(false);
+  const [showScreenShareDisclaimer, setShowScreenShareDisclaimer] = useState(false);
+  const [showWrongSurfaceError, setShowWrongSurfaceError] = useState(false);
+  const disclaimerShownRef = useRef(false);
+  const pendingCaptureLogIdRef = useRef<number | null>(null);
 
   // ─── Auth ──────────────────────────────────────────────────
 
@@ -350,6 +354,96 @@ export default function DashboardPage() {
     },
     [supabase]
   );
+
+  // ─── Capture Requests (admin "Capture Now") ───────────────
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase
+      .channel("capture-requests-for-user")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "capture_requests",
+          filter: `target_user_id=eq.${userId}`,
+        },
+        async (payload) => {
+          const request = payload.new as { id: number; status: string };
+          if (request.status !== "pending") return;
+
+          const logId = activeLogIdRef.current;
+          if (!logId) {
+            await supabase
+              .from("capture_requests")
+              .update({ status: "failed", completed_at: new Date().toISOString() })
+              .eq("id", request.id);
+            return;
+          }
+
+          const blob = await captureFrame();
+          if (!blob) {
+            await supabase
+              .from("capture_requests")
+              .update({ status: "failed", completed_at: new Date().toISOString() })
+              .eq("id", request.id);
+            return;
+          }
+
+          const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
+          const storagePath = `${userId}/${filename}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from("screenshots")
+            .upload(storagePath, blob, { contentType: "image/png" });
+
+          if (uploadError) {
+            await supabase
+              .from("capture_requests")
+              .update({ status: "failed", completed_at: new Date().toISOString() })
+              .eq("id", request.id);
+            return;
+          }
+
+          const { data: ssData } = await supabase
+            .from("task_screenshots")
+            .insert({
+              user_id: userId,
+              log_id: logId,
+              filename,
+              storage_path: storagePath,
+              screenshot_type: "remote",
+              capture_request_id: request.id,
+            })
+            .select()
+            .single();
+
+          await supabase
+            .from("capture_requests")
+            .update({
+              status: "completed",
+              log_id: logId,
+              screenshot_id: ssData?.id ?? null,
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", request.id);
+
+          if (ssData) {
+            setScreenshots((prev) => ({
+              ...prev,
+              [logId]: [...(prev[logId] || []), ssData as TaskScreenshot],
+            }));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // ─── Timers ───────────────────────────────────────────────
 
@@ -1131,8 +1225,8 @@ export default function DashboardPage() {
 
   /** Upload a blob to Supabase Storage and insert a task_screenshots record */
   const uploadScreenshot = useCallback(
-    async (blob: Blob, logId: number, screenshotType: 'start' | 'progress' | 'end' | 'manual') => {
-      if (!userId) return;
+    async (blob: Blob, logId: number, screenshotType: 'start' | 'progress' | 'end' | 'manual' | 'remote', captureRequestId?: number) => {
+      if (!userId) return undefined;
 
       const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
       const storagePath = `${userId}/${filename}`;
@@ -1143,7 +1237,7 @@ export default function DashboardPage() {
 
       if (uploadError) {
         console.error("Upload failed:", uploadError);
-        return;
+        return undefined;
       }
 
       const { data: ssData } = await supabase
@@ -1154,6 +1248,7 @@ export default function DashboardPage() {
           filename,
           storage_path: storagePath,
           screenshot_type: screenshotType,
+          ...(captureRequestId !== undefined ? { capture_request_id: captureRequestId } : {}),
         })
         .select()
         .single();
@@ -1164,6 +1259,8 @@ export default function DashboardPage() {
           [logId]: [...(prev[logId] || []), ssData as TaskScreenshot],
         }));
       }
+
+      return ssData ?? undefined;
     },
     [userId, supabase]
   );
@@ -1550,11 +1647,17 @@ export default function DashboardPage() {
         if (screenShareActive) {
           // Stream already active — just start the capture schedule
           scheduleCaptureSequence(newLogId);
+        } else if (!disclaimerShownRef.current) {
+          // First time this session — show disclaimer before prompting
+          pendingCaptureLogIdRef.current = newLogId;
+          setShowScreenShareDisclaimer(true);
         } else {
-          // First task of the session — prompt for screen share
-          const granted = await requestStream();
-          if (granted) {
+          // Disclaimer already acknowledged — go straight to share picker
+          const result = await requestStream();
+          if (result === 'granted') {
             scheduleCaptureSequence(newLogId);
+          } else if (result === 'wrong-surface') {
+            setShowWrongSurfaceError(true);
           }
         }
       }
@@ -2027,10 +2130,11 @@ export default function DashboardPage() {
               Please re-share your screen so your activity can be tracked.
             </p>
             <button
-              onClick={() => {
+              onClick={async () => {
                 setShowScreenShareAlert(false);
                 consecutiveCaptureFailuresRef.current = 0;
-                requestStream();
+                const result = await requestStream();
+                if (result === 'wrong-surface') setShowWrongSurfaceError(true);
               }}
               className="w-full bg-terracotta text-white rounded-lg py-2.5 text-sm font-medium hover:bg-terracotta/90 transition-colors"
             >
@@ -2041,6 +2145,73 @@ export default function DashboardPage() {
                 setShowScreenShareAlert(false);
                 consecutiveCaptureFailuresRef.current = 0;
               }}
+              className="w-full mt-2 text-xs text-stone hover:text-bark transition-colors py-1"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Screen Share Disclaimer — shown before the share picker on first task */}
+      {showScreenShareDisclaimer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4 text-center">
+            <div className="text-3xl mb-3">📷</div>
+            <h2 className="font-serif text-lg font-bold text-espresso mb-2">Screen Capture Active</h2>
+            <p className="text-sm text-bark mb-3">
+              MinuteFlow will capture screenshots of your <strong>entire screen</strong> while you&apos;re clocked in to track your work progress.
+            </p>
+            <p className="text-sm text-bark mb-4">
+              During work hours, keep only work-related tabs and apps open. If you need to open something personal, do it on your break — not while you&apos;re clocked in.
+            </p>
+            <button
+              onClick={async () => {
+                disclaimerShownRef.current = true;
+                setShowScreenShareDisclaimer(false);
+                const result = await requestStream();
+                if (result === 'granted') {
+                  const logId = pendingCaptureLogIdRef.current;
+                  if (logId) scheduleCaptureSequence(logId);
+                } else if (result === 'wrong-surface') {
+                  setShowWrongSurfaceError(true);
+                }
+              }}
+              className="w-full bg-terracotta text-white rounded-lg py-2.5 text-sm font-medium hover:bg-terracotta/90 transition-colors"
+            >
+              Got It — Share My Screen
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Wrong Surface Error — shown when user picks a window/tab instead of entire screen */}
+      {showWrongSurfaceError && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4 text-center">
+            <div className="text-3xl mb-3">🖥️</div>
+            <h2 className="font-serif text-lg font-bold text-espresso mb-2">Please Share Your Entire Screen</h2>
+            <p className="text-sm text-bark mb-4">
+              It looks like you shared a window or browser tab instead of your entire screen.
+              Please try again and select <strong>&quot;Entire Screen&quot;</strong> (or your monitor) from the share picker.
+            </p>
+            <button
+              onClick={async () => {
+                setShowWrongSurfaceError(false);
+                const result = await requestStream();
+                if (result === 'granted') {
+                  const logId = pendingCaptureLogIdRef.current ?? activeLogIdRef.current;
+                  if (logId) scheduleCaptureSequence(logId);
+                } else if (result === 'wrong-surface') {
+                  setShowWrongSurfaceError(true);
+                }
+              }}
+              className="w-full bg-terracotta text-white rounded-lg py-2.5 text-sm font-medium hover:bg-terracotta/90 transition-colors"
+            >
+              Try Again
+            </button>
+            <button
+              onClick={() => setShowWrongSurfaceError(false)}
               className="w-full mt-2 text-xs text-stone hover:text-bark transition-colors py-1"
             >
               Dismiss

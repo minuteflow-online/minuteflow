@@ -5,8 +5,8 @@ import { useRef, useState, useCallback, useEffect } from "react";
 export interface UseScreenCaptureReturn {
   /** Whether the screen-sharing stream is currently active */
   isActive: boolean;
-  /** Prompt the user to share their screen. Resolves true if granted, false otherwise. */
-  requestStream: () => Promise<boolean>;
+  /** Prompt the user to share their screen. */
+  requestStream: () => Promise<'granted' | 'denied' | 'wrong-surface'>;
   /** Grab a single frame from the active stream. Returns a PNG Blob, or null if no stream. */
   captureFrame: () => Promise<Blob | null>;
   /** Stop the stream and clean up. */
@@ -32,30 +32,37 @@ export function useScreenCapture(): UseScreenCaptureReturn {
     };
   }, []);
 
-  const requestStream = useCallback(async (): Promise<boolean> => {
+  const requestStream = useCallback(async (): Promise<'granted' | 'denied' | 'wrong-surface'> => {
     // Already have a live stream
     if (streamRef.current && streamRef.current.getVideoTracks().some((t) => t.readyState === "live")) {
       setIsActive(true);
-      return true;
+      return 'granted';
     }
 
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
-          // Force the browser to pre-select "Entire Screen" in the share dialog
+          // Hint the browser to pre-select "Entire Screen" in the share dialog
           displaySurface: "monitor",
-          // Request reasonable resolution — not ultra-high to keep file sizes manageable
           width: { ideal: 1920 },
           height: { ideal: 1080 },
         },
         audio: false,
       });
 
+      // Verify the user actually shared the entire screen (not a window or tab)
+      const videoTrack = stream.getVideoTracks()[0];
+      const settings = videoTrack?.getSettings() as MediaTrackSettings & { displaySurface?: string };
+      if (settings?.displaySurface && settings.displaySurface !== 'monitor') {
+        // Wrong surface — stop immediately and reject
+        stream.getTracks().forEach((t) => t.stop());
+        return 'wrong-surface';
+      }
+
       streamRef.current = stream;
       setIsActive(true);
 
       // Listen for the user clicking "Stop sharing" in the browser UI
-      const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.addEventListener("ended", () => {
           streamRef.current = null;
@@ -63,10 +70,10 @@ export function useScreenCapture(): UseScreenCaptureReturn {
         });
       }
 
-      return true;
+      return 'granted';
     } catch {
       // User denied or closed the dialog
-      return false;
+      return 'denied';
     }
   }, []);
 
