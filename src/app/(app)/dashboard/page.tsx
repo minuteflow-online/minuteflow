@@ -286,6 +286,72 @@ export default function DashboardPage() {
         }
       }
 
+      // After load: recover any pending capture requests missed during page refresh.
+      // If the VA refreshed their browser while a capture request was in-flight,
+      // the INSERT realtime event was missed. We catch those here.
+      if (userId && activeLogIdRef.current) {
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const { data: pendingCaptures } = await supabase
+          .from("capture_requests")
+          .select("id")
+          .eq("target_user_id", userId)
+          .eq("status", "pending")
+          .gte("created_at", fiveMinutesAgo);
+
+        if (pendingCaptures && pendingCaptures.length > 0) {
+          for (const req of pendingCaptures) {
+            const logId = activeLogIdRef.current;
+            const blob = await captureFrame();
+            if (!blob) {
+              await supabase
+                .from("capture_requests")
+                .update({ status: "failed", completed_at: new Date().toISOString() })
+                .eq("id", req.id);
+              continue;
+            }
+            const fname = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
+            const sPath = `${userId}/${fname}`;
+            const { error: upErr } = await supabase.storage
+              .from("screenshots")
+              .upload(sPath, blob, { contentType: "image/png" });
+            if (upErr) {
+              await supabase
+                .from("capture_requests")
+                .update({ status: "failed", completed_at: new Date().toISOString() })
+                .eq("id", req.id);
+              continue;
+            }
+            const { data: ssData } = await supabase
+              .from("task_screenshots")
+              .insert({
+                user_id: userId,
+                log_id: logId,
+                filename: fname,
+                storage_path: sPath,
+                screenshot_type: "remote",
+                capture_request_id: req.id,
+              })
+              .select()
+              .single();
+            await supabase
+              .from("capture_requests")
+              .update({
+                status: "completed",
+                log_id: logId,
+                screenshot_id: ssData?.id ?? null,
+                completed_at: new Date().toISOString(),
+              })
+              .eq("id", req.id);
+            if (ssData) {
+              setScreenshots((prev) => ({
+                ...prev,
+                [logId]: [...(prev[logId] || []), ssData as TaskScreenshot],
+              }));
+            }
+          }
+        }
+      }
+
       setLoading(false);
     }
 

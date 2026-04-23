@@ -4466,6 +4466,18 @@ function TeamMemberCard({
   onForceClockOut?: () => void;
   timezone: string;
 }) {
+  const [isCapturing, setIsCapturing] = useState(false);
+
+  // Clear "Requesting…" state when a new screenshot arrives for this member
+  const prevScreenshotIdRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    const newId = member.latestScreenshot?.id;
+    if (prevScreenshotIdRef.current !== undefined && newId !== prevScreenshotIdRef.current) {
+      setIsCapturing(false);
+    }
+    prevScreenshotIdRef.current = newId;
+  }, [member.latestScreenshot?.id]);
+
   const { profile, status, currentTask, hasExtension, latestScreenshot, todayScreenshots, todayHoursMs, todayTasks, wizardTimeMs } = member;
   const avatarColor = getAvatarColor(profile.id);
   const isOffline = status === "off";
@@ -4584,10 +4596,16 @@ function TeamMemberCard({
         {!isOffline ? (
           <>
             <button
-              onClick={onCaptureNow}
-              className="flex-1 rounded-md bg-terracotta py-1.5 text-center text-[11px] font-semibold text-white transition-all hover:bg-[#a85840]"
+              onClick={() => {
+                setIsCapturing(true);
+                onCaptureNow();
+                // Fallback: auto-clear after 20s in case capture fails silently
+                setTimeout(() => setIsCapturing(false), 20000);
+              }}
+              disabled={isCapturing}
+              className="flex-1 rounded-md bg-terracotta py-1.5 text-center text-[11px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Capture Now
+              {isCapturing ? "Requesting…" : "Capture Now"}
             </button>
             <button
               onClick={onMessage}
