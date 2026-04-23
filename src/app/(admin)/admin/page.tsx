@@ -325,7 +325,8 @@ export default function AdminPage() {
           .select("*")
           .gte("created_at", screenshotDateStart);
         if (screenshotDateEnd) q = q.lte("created_at", screenshotDateEnd);
-        return q.order("created_at", { ascending: false }).limit(200);
+        if (screenshotFilter !== "all") q = q.eq("user_id", screenshotFilter);
+        return q.order("created_at", { ascending: false }).limit(500);
       })(),
       supabase
         .from("time_logs")
@@ -375,7 +376,7 @@ export default function AdminPage() {
     }
 
     setLoading(false);
-  }, [screenshotDateFilter, screenshotCustomStart, screenshotCustomEnd, orgTimezone]);
+  }, [screenshotDateFilter, screenshotCustomStart, screenshotCustomEnd, orgTimezone, screenshotFilter]);
 
   useEffect(() => {
     fetchData();
