@@ -153,6 +153,11 @@ export default function DashboardPage() {
   const pendingCaptureLogIdRef = useRef<number | null>(null);
   const streamPromptOnLoadRef = useRef(false);
 
+  // ─── Capture Drop Banner ───────────────────────────────────
+  const [showCaptureDropBanner, setShowCaptureDropBanner] = useState(false);
+  const captureAlertIdRef = useRef<number | null>(null);
+  const prevScreenShareActiveRef = useRef(false);
+
   // ─── Browser notification helper (surfaces above all tabs) ──
   // Used when the VA is not looking at MinuteFlow (e.g. selected wrong screen share surface).
   const notifyVA = useCallback((title: string, body: string) => {
@@ -163,6 +168,28 @@ export default function DashboardPage() {
       new Notification(title, { body });
     }
   }, []);
+
+  // ─── Capture Drop Detection ────────────────────────────────
+  // When screen share goes from active → inactive while the VA is clocked in,
+  // show the sticky banner and log the event so admins can see it.
+  useEffect(() => {
+    const wasActive = prevScreenShareActiveRef.current;
+    prevScreenShareActiveRef.current = screenShareActive;
+
+    if (wasActive && !screenShareActive && sessionState !== "idle") {
+      // Stream just dropped — show the banner
+      setShowCaptureDropBanner(true);
+      captureAlertIdRef.current = null;
+
+      // Log to DB and send email via API
+      fetch("/api/capture-alerts", { method: "POST" })
+        .then((r) => r.json())
+        .then((data: { id?: number }) => {
+          if (data.id) captureAlertIdRef.current = data.id;
+        })
+        .catch(console.error);
+    }
+  }, [screenShareActive, sessionState]);
 
   // ─── Auth ──────────────────────────────────────────────────
 
@@ -2320,6 +2347,59 @@ export default function DashboardPage() {
             <button
               onClick={() => setShowWrongSurfaceError(false)}
               className="w-full mt-2 text-xs text-stone hover:text-bark transition-colors py-1"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Capture Drop Banner — sticky top bar when screen share stops mid-shift */}
+      {showCaptureDropBanner && (
+        <div className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between gap-3 bg-amber-500 px-4 py-2.5 shadow-md">
+          <div className="flex items-center gap-2 text-sm font-medium text-white">
+            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <span>Your screen share stopped. Please reshare to continue tracking.</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              onClick={async () => {
+                const result = await requestStream();
+                if (result === "granted") {
+                  setShowCaptureDropBanner(false);
+                  if (activeLogIdRef.current) scheduleCaptureSequence(activeLogIdRef.current);
+                  if (captureAlertIdRef.current) {
+                    fetch("/api/capture-alerts", {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id: captureAlertIdRef.current, action: "reshared" }),
+                    }).catch(console.error);
+                  }
+                } else if (result === "wrong-surface") {
+                  notifyVA("⚠️ Wrong screen selected", "Please select Entire Screen when sharing.");
+                  setShowWrongSurfaceError(true);
+                }
+              }}
+              className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-amber-600 transition-colors hover:bg-amber-50"
+            >
+              Reshare Now
+            </button>
+            <button
+              onClick={() => {
+                setShowCaptureDropBanner(false);
+                if (captureAlertIdRef.current) {
+                  fetch("/api/capture-alerts", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id: captureAlertIdRef.current, action: "dismissed" }),
+                  }).catch(console.error);
+                }
+              }}
+              className="px-2 py-1 text-xs text-white/80 transition-colors hover:text-white"
             >
               Dismiss
             </button>

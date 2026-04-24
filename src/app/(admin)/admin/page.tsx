@@ -30,6 +30,7 @@ import {
 } from "@/lib/utils";
 import ProjectsTasksTab from "@/components/ProjectsTasksTab";
 import FinancialSummaryTab from "@/components/FinancialSummaryTab";
+import CaptureAlertsTab from "@/components/CaptureAlertsTab";
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -85,7 +86,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "projects" | "financial";
+type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "projects" | "financial" | "alerts";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -194,6 +195,17 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
         <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+      </svg>
+    ),
+  },
+  {
+    id: "alerts",
+    label: "Capture Alerts",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+        <line x1="12" y1="9" x2="12" y2="13" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
     ),
   },
@@ -1001,6 +1013,7 @@ export default function AdminPage() {
                 {activeTab === "corrections" && "Review pending corrections and manual time entry requests"}
                 {activeTab === "sorting" && "Review sorting task entries and assign billing"}
                 {activeTab === "password" && "Update your admin password"}
+                {activeTab === "alerts" && "Track screen capture drops and VA responses"}
               </p>
             </div>
             {activeTab === "overview" && (
@@ -1078,6 +1091,10 @@ export default function AdminPage() {
 
           {activeTab === "financial" && (
             <FinancialSummaryTab timezone={orgTimezone} />
+          )}
+
+          {activeTab === "alerts" && (
+            <CaptureAlertsTab orgTimezone={orgTimezone} />
           )}
 
           {activeTab === "organization" && (
