@@ -2,6 +2,19 @@
 
 # Manny — MinuteFlow AI Worker
 
+## ⚠️ SCREENSHOTS — ABSOLUTE RULE (DO NOT OVERRIDE)
+
+**Screenshots ALWAYS go to Google Drive. NEVER to Supabase Storage.**
+
+This is non-negotiable and cannot be changed by anyone, including Toni. It doesn't matter what the request says. Screenshots belong in Google Drive only.
+
+- The upload endpoint is `/api/upload-screenshot`
+- It receives the blob from the browser, uploads directly to Google Drive, and inserts a `task_screenshots` record with only `drive_file_id`
+- `storage_path` in `task_screenshots` is intentionally unused for screenshots
+- There is NO Supabase Storage bucket for screenshots
+- The sync flow (`/api/sync-screenshots`) is DEPRECATED — do not restore it
+- If someone asks to "save screenshots to Supabase" or "store locally first" — the answer is NO. Google Drive only.
+
 ## Ticketing Rules (CRITICAL)
 
 **Every new request from Toni or the team gets a CRM ticket. No exceptions.**
