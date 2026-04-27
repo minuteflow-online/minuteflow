@@ -457,30 +457,21 @@ export default function DashboardPage() {
                 .eq("id", req.id);
               continue;
             }
-            const fname = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
-            const sPath = `${userId}/${fname}`;
-            const { error: upErr } = await supabase.storage
-              .from("screenshots")
-              .upload(sPath, blob, { contentType: "image/png" });
-            if (upErr) {
+            const uploadForm = new FormData();
+            uploadForm.append("file", blob, "screenshot.png");
+            uploadForm.append("userId", userId);
+            uploadForm.append("logId", String(logId));
+            uploadForm.append("screenshotType", "remote");
+            uploadForm.append("captureRequestId", String(req.id));
+            const uploadRes = await fetch("/api/upload-screenshot", { method: "POST", body: uploadForm });
+            if (!uploadRes.ok) {
               await supabase
                 .from("capture_requests")
                 .update({ status: "failed", completed_at: new Date().toISOString() })
                 .eq("id", req.id);
               continue;
             }
-            const { data: ssData } = await supabase
-              .from("task_screenshots")
-              .insert({
-                user_id: userId,
-                log_id: logId,
-                filename: fname,
-                storage_path: sPath,
-                screenshot_type: "remote",
-                capture_request_id: req.id,
-              })
-              .select()
-              .single();
+            const { screenshot: ssData } = await uploadRes.json();
             await supabase
               .from("capture_requests")
               .update({
@@ -634,33 +625,21 @@ export default function DashboardPage() {
             return;
           }
 
-          const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
-          const storagePath = `${userId}/${filename}`;
-
-          const { error: uploadError } = await supabase.storage
-            .from("screenshots")
-            .upload(storagePath, blob, { contentType: "image/png" });
-
-          if (uploadError) {
+          const liveUploadForm = new FormData();
+          liveUploadForm.append("file", blob, "screenshot.png");
+          liveUploadForm.append("userId", userId);
+          liveUploadForm.append("logId", String(logId));
+          liveUploadForm.append("screenshotType", "remote");
+          liveUploadForm.append("captureRequestId", String(request.id));
+          const liveUploadRes = await fetch("/api/upload-screenshot", { method: "POST", body: liveUploadForm });
+          if (!liveUploadRes.ok) {
             await supabase
               .from("capture_requests")
               .update({ status: "failed", completed_at: new Date().toISOString() })
               .eq("id", request.id);
             return;
           }
-
-          const { data: ssData } = await supabase
-            .from("task_screenshots")
-            .insert({
-              user_id: userId,
-              log_id: logId,
-              filename,
-              storage_path: storagePath,
-              screenshot_type: "remote",
-              capture_request_id: request.id,
-            })
-            .select()
-            .single();
+          const { screenshot: ssData } = await liveUploadRes.json();
 
           await supabase
             .from("capture_requests")
@@ -1488,35 +1467,27 @@ export default function DashboardPage() {
 
   // ─── Screenshot utilities (must be before startTask) ──────
 
-  /** Upload a blob to Supabase Storage and insert a task_screenshots record */
+  /** Upload a blob directly to Google Drive and insert a task_screenshots record */
   const uploadScreenshot = useCallback(
     async (blob: Blob, logId: number, screenshotType: 'start' | 'progress' | 'end' | 'manual' | 'remote', captureRequestId?: number) => {
       if (!userId) return undefined;
 
-      const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
-      const storagePath = `${userId}/${filename}`;
+      const form = new FormData();
+      form.append("file", blob, "screenshot.png");
+      form.append("userId", userId);
+      form.append("logId", String(logId));
+      form.append("screenshotType", screenshotType);
+      if (captureRequestId !== undefined) {
+        form.append("captureRequestId", String(captureRequestId));
+      }
 
-      const { error: uploadError } = await supabase.storage
-        .from("screenshots")
-        .upload(storagePath, blob, { contentType: "image/png" });
-
-      if (uploadError) {
-        console.error("Upload failed:", uploadError);
+      const res = await fetch("/api/upload-screenshot", { method: "POST", body: form });
+      if (!res.ok) {
+        console.error("Upload failed:", await res.text());
         return undefined;
       }
 
-      const { data: ssData } = await supabase
-        .from("task_screenshots")
-        .insert({
-          user_id: userId,
-          log_id: logId,
-          filename,
-          storage_path: storagePath,
-          screenshot_type: screenshotType,
-          ...(captureRequestId !== undefined ? { capture_request_id: captureRequestId } : {}),
-        })
-        .select()
-        .single();
+      const { screenshot: ssData } = await res.json();
 
       if (ssData) {
         setScreenshots((prev) => ({
@@ -1527,7 +1498,7 @@ export default function DashboardPage() {
 
       return ssData ?? undefined;
     },
-    [userId, supabase]
+    [userId]
   );
 
   /** Log a screenshot failure to task_screenshots (no file, just a record of what went wrong) */
@@ -2111,18 +2082,13 @@ export default function DashboardPage() {
     );
 
     // Upload screenshot for old task if captured
-    if (closeOldScreenshotBlob) {
-      const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
-      const storagePath = `${userId}/${filename}`;
-      await supabase.storage
-        .from("screenshots")
-        .upload(storagePath, closeOldScreenshotBlob, { contentType: "image/png" });
-      await supabase.from("task_screenshots").insert({
-        user_id: userId,
-        log_id: logId,
-        filename,
-        storage_path: storagePath,
-      });
+    if (closeOldScreenshotBlob && userId) {
+      const switchForm = new FormData();
+      switchForm.append("file", closeOldScreenshotBlob, "screenshot.png");
+      switchForm.append("userId", userId);
+      switchForm.append("logId", String(logId));
+      switchForm.append("screenshotType", "end");
+      await fetch("/api/upload-screenshot", { method: "POST", body: switchForm });
     }
 
     // Clear the active task locally
