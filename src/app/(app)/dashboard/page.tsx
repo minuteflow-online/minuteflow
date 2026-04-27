@@ -155,7 +155,7 @@ export default function DashboardPage() {
 
   // ─── Capture Drop Banner ───────────────────────────────────
   const [showCaptureDropBanner, setShowCaptureDropBanner] = useState(false);
-  const [bannerReason, setBannerReason] = useState<'screenshare' | 'sce'>('screenshare');
+  const [bannerReason, setBannerReason] = useState<'screenshare' | 'sce' | 'sce-login'>('screenshare');
   const sceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const captureAlertIdRef = useRef<number | null>(null);
   const prevScreenShareActiveRef = useRef(false);
@@ -173,8 +173,15 @@ export default function DashboardPage() {
   const notifyVA = useCallback((title: string, body: string) => {
     // Try to focus the MinuteFlow tab
     try { window.focus(); } catch {}
-    // Send a browser notification if permission is already granted
-    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    if (typeof Notification === 'undefined') return;
+    // If permission not yet asked, request it then send
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then((perm) => {
+        if (perm === 'granted') new Notification(title, { body });
+      }).catch(() => {});
+      return;
+    }
+    if (Notification.permission === 'granted') {
       new Notification(title, { body });
     }
   }, []);
@@ -187,9 +194,10 @@ export default function DashboardPage() {
     prevScreenShareActiveRef.current = screenShareActive;
 
     if (wasActive && !screenShareActive && sessionState !== "idle") {
-      // Stream just dropped — show the banner
+      // Stream just dropped — show the banner and fire OS notification
       setBannerReason('screenshare');
       setShowCaptureDropBanner(true);
+      notifyVA("⚠️ Screenshots stopped", "Your screen share stopped. Open MinuteFlow to reshare and keep capturing.");
       captureAlertIdRef.current = null;
       // Sync monitor refs so the continuous monitor knows an alert was already sent
       lastCaptureAlertTimeRef.current = Date.now();
@@ -237,9 +245,10 @@ export default function DashboardPage() {
       const COOLDOWN_MS = captureAlertCountRef.current === 0 ? 2 * 60 * 1000 : 5 * 60 * 1000;
       if (now - lastCaptureAlertTimeRef.current < COOLDOWN_MS) return;
 
-      // Show the amber banner and log to DB
+      // Show the amber banner, fire OS notification, and log to DB
       setBannerReason('screenshare');
       setShowCaptureDropBanner(true);
+      notifyVA("⚠️ Screenshots not running", "Open MinuteFlow and reshare your screen to continue tracking.");
       captureAlertIdRef.current = null;
       captureAlertCountRef.current += 1;
       lastCaptureAlertTimeRef.current = now;
@@ -272,11 +281,14 @@ export default function DashboardPage() {
         .select("last_seen")
         .eq("user_id", userId)
         .single();
-      if (!data?.last_seen) return;
-      const staleMs = Date.now() - new Date(data.last_seen).getTime();
+      // Treat missing heartbeat (never logged in) as stale — no record = extension offline
+      const staleMs = data?.last_seen
+        ? Date.now() - new Date(data.last_seen).getTime()
+        : Infinity;
       if (staleMs > 5 * 60 * 1000) {
         setBannerReason('sce');
         setShowCaptureDropBanner(true);
+        notifyVA("⚠️ Screenshots paused", "Your SCE extension went offline. Open MinuteFlow to reshare your screen.");
         captureAlertIdRef.current = null;
         fetch("/api/capture-alerts", { method: "POST" })
           .then((r) => r.json())
@@ -291,6 +303,14 @@ export default function DashboardPage() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionState, userId]);
+
+  // ─── Request notification permission on page load ─────────
+  // Do this early so off-tab alerts work before the VA even clocks in.
+  useEffect(() => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
 
   // ─── Auth ──────────────────────────────────────────────────
 
@@ -822,9 +842,31 @@ export default function DashboardPage() {
       if (sortingLog) {
         setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
       }
+
+      // Request notification permission at clock-in so off-tab alerts work
+      if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
+
+      // Check SCE at clock-in — alert immediately if extension isn't connected
+      if (userId) {
+        const { data: hb } = await supabase
+          .from("extension_heartbeats")
+          .select("last_seen")
+          .eq("user_id", userId)
+          .single();
+        const sceStaleMs = hb?.last_seen
+          ? Date.now() - new Date(hb.last_seen).getTime()
+          : Infinity;
+        if (sceStaleMs > 5 * 60 * 1000) {
+          setBannerReason('sce-login');
+          setShowCaptureDropBanner(true);
+          notifyVA("⚠️ SCE not connected", "Log in to your SCE extension to enable screenshots.");
+        }
+      }
     }
     setSessionActionPending(false);
-  }, [userId, profile, supabase, sessionActionPending]);
+  }, [userId, profile, supabase, sessionActionPending, notifyVA]);
 
   const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null) => {
     if (!userId) return;
@@ -2465,7 +2507,9 @@ export default function DashboardPage() {
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
             <span>
-              {bannerReason === 'sce'
+              {bannerReason === 'sce-login'
+                ? '⚠️ SCE not connected — please log in to your extension to enable screenshots.'
+                : bannerReason === 'sce'
                 ? '📷 Screenshots paused — your extension went offline. Reshare your screen to keep capturing.'
                 : 'Your screen share stopped. Please reshare to continue tracking.'}
             </span>
