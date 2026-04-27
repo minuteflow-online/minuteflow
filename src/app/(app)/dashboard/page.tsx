@@ -155,8 +155,18 @@ export default function DashboardPage() {
 
   // ─── Capture Drop Banner ───────────────────────────────────
   const [showCaptureDropBanner, setShowCaptureDropBanner] = useState(false);
+  const [bannerReason, setBannerReason] = useState<'screenshare' | 'sce'>('screenshare');
+  const sceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const captureAlertIdRef = useRef<number | null>(null);
   const prevScreenShareActiveRef = useRef(false);
+  // Continuous monitoring refs
+  const lastCaptureAlertTimeRef = useRef<number>(Date.now());
+  const captureAlertCountRef = useRef<number>(0);
+  const captureMonitorRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Kept in sync so interval callbacks always read current values
+  const screenShareActiveRef = useRef(screenShareActive);
+  const showCaptureDropBannerRef = useRef(showCaptureDropBanner);
+  const sessionStateRef = useRef(sessionState);
 
   // ─── Browser notification helper (surfaces above all tabs) ──
   // Used when the VA is not looking at MinuteFlow (e.g. selected wrong screen share surface).
@@ -178,8 +188,12 @@ export default function DashboardPage() {
 
     if (wasActive && !screenShareActive && sessionState !== "idle") {
       // Stream just dropped — show the banner
+      setBannerReason('screenshare');
       setShowCaptureDropBanner(true);
       captureAlertIdRef.current = null;
+      // Sync monitor refs so the continuous monitor knows an alert was already sent
+      lastCaptureAlertTimeRef.current = Date.now();
+      captureAlertCountRef.current += 1;
 
       // Log to DB and send email via API
       fetch("/api/capture-alerts", { method: "POST" })
@@ -190,6 +204,93 @@ export default function DashboardPage() {
         .catch(console.error);
     }
   }, [screenShareActive, sessionState]);
+
+  // ─── Keep refs in sync with state (for interval callbacks) ────
+  useEffect(() => {
+    screenShareActiveRef.current = screenShareActive;
+    if (screenShareActive) {
+      // Screen share is active again — reset alert cooldown
+      lastCaptureAlertTimeRef.current = Date.now();
+      captureAlertCountRef.current = 0;
+    }
+  }, [screenShareActive]);
+
+  useEffect(() => { showCaptureDropBannerRef.current = showCaptureDropBanner; }, [showCaptureDropBanner]);
+  useEffect(() => { sessionStateRef.current = sessionState; }, [sessionState]);
+
+  // ─── Continuous capture monitoring ────────────────────────────
+  // Polls every 30s. If VA is clocked in with no active screen share:
+  // - First alert fires 2 min after session starts (or 2 min after last reshare)
+  // - After each dismiss without resharing, re-alerts every 5 min
+  useEffect(() => {
+    if (captureMonitorRef.current) clearInterval(captureMonitorRef.current);
+    if (sessionState === "idle") return;
+
+    captureMonitorRef.current = setInterval(() => {
+      if (
+        sessionStateRef.current === "idle" ||
+        screenShareActiveRef.current ||
+        showCaptureDropBannerRef.current
+      ) return;
+
+      const now = Date.now();
+      const COOLDOWN_MS = captureAlertCountRef.current === 0 ? 2 * 60 * 1000 : 5 * 60 * 1000;
+      if (now - lastCaptureAlertTimeRef.current < COOLDOWN_MS) return;
+
+      // Show the amber banner and log to DB
+      setBannerReason('screenshare');
+      setShowCaptureDropBanner(true);
+      captureAlertIdRef.current = null;
+      captureAlertCountRef.current += 1;
+      lastCaptureAlertTimeRef.current = now;
+
+      fetch("/api/capture-alerts", { method: "POST" })
+        .then((r) => r.json())
+        .then((data: { id?: number }) => {
+          if (data.id) captureAlertIdRef.current = data.id;
+        })
+        .catch(console.error);
+    }, 30 * 1000);
+
+    return () => {
+      if (captureMonitorRef.current) clearInterval(captureMonitorRef.current);
+    };
+  }, [sessionState]);
+
+  // ─── SCE heartbeat monitor ─────────────────────────────────
+  // Every 2 min while clocked in: check if the extension last_seen is stale (>5 min).
+  // If so and screenshare is also inactive, trigger the amber banner so the VA
+  // knows to reshare screen as a fallback.
+  useEffect(() => {
+    if (sceCheckRef.current) clearInterval(sceCheckRef.current);
+    if (sessionState === "idle" || !userId) return;
+
+    const checkSce = async () => {
+      if (sessionStateRef.current === "idle" || screenShareActiveRef.current || showCaptureDropBannerRef.current) return;
+      const { data } = await supabase
+        .from("extension_heartbeats")
+        .select("last_seen")
+        .eq("user_id", userId)
+        .single();
+      if (!data?.last_seen) return;
+      const staleMs = Date.now() - new Date(data.last_seen).getTime();
+      if (staleMs > 5 * 60 * 1000) {
+        setBannerReason('sce');
+        setShowCaptureDropBanner(true);
+        captureAlertIdRef.current = null;
+        fetch("/api/capture-alerts", { method: "POST" })
+          .then((r) => r.json())
+          .then((d: { id?: number }) => { if (d.id) captureAlertIdRef.current = d.id; })
+          .catch(console.error);
+      }
+    };
+
+    sceCheckRef.current = setInterval(checkSce, 2 * 60 * 1000);
+    return () => {
+      if (sceCheckRef.current) clearInterval(sceCheckRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionState, userId]);
 
   // ─── Auth ──────────────────────────────────────────────────
 
@@ -2363,7 +2464,11 @@ export default function DashboardPage() {
               <line x1="12" y1="9" x2="12" y2="13" />
               <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
-            <span>Your screen share stopped. Please reshare to continue tracking.</span>
+            <span>
+              {bannerReason === 'sce'
+                ? '📷 Screenshots paused — your extension went offline. Reshare your screen to keep capturing.'
+                : 'Your screen share stopped. Please reshare to continue tracking.'}
+            </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button
