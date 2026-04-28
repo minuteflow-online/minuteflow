@@ -16,10 +16,13 @@ export async function signIn(
     return { error: "Email and password are required." };
   }
 
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
+  let error;
+  try {
+    const result = await supabase.auth.signInWithPassword({ email, password });
+    error = result.error;
+  } catch {
+    return { error: "Service temporarily unavailable. Please try again in a moment." };
+  }
 
   if (error) {
     return { error: error.message };
@@ -44,17 +47,19 @@ export async function signUp(
     return { error: "All fields are required." };
   }
 
-  const { error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      data: {
-        username,
-        full_name: fullName,
-        role,
+  let error;
+  try {
+    const result = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { username, full_name: fullName, role },
       },
-    },
-  });
+    });
+    error = result.error;
+  } catch {
+    return { error: "Service temporarily unavailable. Please try again in a moment." };
+  }
 
   if (error) {
     return { error: error.message };
@@ -75,9 +80,15 @@ export async function resetPassword(
     return { error: "Email is required." };
   }
 
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || ""}/auth/callback`,
-  });
+  let error;
+  try {
+    const result = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || ""}/auth/callback`,
+    });
+    error = result.error;
+  } catch {
+    return { error: "Service temporarily unavailable. Please try again in a moment." };
+  }
 
   if (error) {
     return { error: error.message };
@@ -88,6 +99,10 @@ export async function resetPassword(
 
 export async function signOut() {
   const supabase = await createClient();
-  await supabase.auth.signOut();
+  try {
+    await supabase.auth.signOut();
+  } catch {
+    // best-effort signout
+  }
   redirect("/login");
 }
