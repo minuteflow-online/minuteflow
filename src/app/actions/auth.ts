@@ -3,6 +3,17 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
+const SERVICE_UNAVAILABLE = "Service temporarily unavailable. Please try again in a moment.";
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), ms)
+    ),
+  ]);
+}
+
 export async function signIn(
   prevState: { error: string } | null,
   formData: FormData
@@ -18,10 +29,13 @@ export async function signIn(
 
   let error;
   try {
-    const result = await supabase.auth.signInWithPassword({ email, password });
+    const result = await withTimeout(
+      supabase.auth.signInWithPassword({ email, password }),
+      12000
+    );
     error = result.error;
   } catch {
-    return { error: "Service temporarily unavailable. Please try again in a moment." };
+    return { error: SERVICE_UNAVAILABLE };
   }
 
   if (error) {
@@ -49,16 +63,17 @@ export async function signUp(
 
   let error;
   try {
-    const result = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { username, full_name: fullName, role },
-      },
-    });
+    const result = await withTimeout(
+      supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { username, full_name: fullName, role } },
+      }),
+      12000
+    );
     error = result.error;
   } catch {
-    return { error: "Service temporarily unavailable. Please try again in a moment." };
+    return { error: SERVICE_UNAVAILABLE };
   }
 
   if (error) {
@@ -82,12 +97,15 @@ export async function resetPassword(
 
   let error;
   try {
-    const result = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || ""}/auth/callback`,
-    });
+    const result = await withTimeout(
+      supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || ""}/auth/callback`,
+      }),
+      12000
+    );
     error = result.error;
   } catch {
-    return { error: "Service temporarily unavailable. Please try again in a moment." };
+    return { error: SERVICE_UNAVAILABLE };
   }
 
   if (error) {
@@ -100,7 +118,7 @@ export async function resetPassword(
 export async function signOut() {
   const supabase = await createClient();
   try {
-    await supabase.auth.signOut();
+    await withTimeout(supabase.auth.signOut(), 8000);
   } catch {
     // best-effort signout
   }
