@@ -271,6 +271,9 @@ export default function ActivityLog({
       const batch = needSigned.slice(i, i + 20);
       const results = await Promise.all(
         batch.map(async (ss) => {
+          if (ss.drive_file_id) {
+            return { id: ss.id, url: `/api/drive-image?id=${ss.drive_file_id}` };
+          }
           const { data } = await supabase.storage
             .from("screenshots")
             .createSignedUrl(ss.storage_path, 3600);

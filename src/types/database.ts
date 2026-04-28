@@ -115,6 +115,7 @@ export interface TaskScreenshot {
   capture_request_id: number | null;
   failure_reason: string | null;
   created_at: string;
+  drive_file_id: string | null;
 }
 
 export interface CaptureRequest {
