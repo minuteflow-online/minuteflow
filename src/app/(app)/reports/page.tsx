@@ -158,16 +158,10 @@ export default function ReportsPage() {
       if (ssData.length > 0) {
         const urlBatch: Record<number, string> = {};
         const toSign = ssData.slice(0, 12);
-        const results = await Promise.all(
-          toSign.map(async (ss) => {
-            const { data } = await supabase.storage
-              .from("screenshots")
-              .createSignedUrl(ss.storage_path, 3600);
-            return { id: ss.id, url: data?.signedUrl || "" };
-          })
-        );
-        results.forEach((r) => {
-          if (r.url) urlBatch[r.id] = r.url;
+        toSign.forEach((ss) => {
+          if (ss.drive_file_id) {
+            urlBatch[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
+          }
         });
         setSignedUrls(urlBatch);
       } else {
