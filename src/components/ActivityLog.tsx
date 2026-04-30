@@ -328,7 +328,7 @@ export default function ActivityLog({
     const pastOH: TimeLog[] = [];
 
     logs.forEach((log) => {
-      const logDate = new Date(log.start_time).toLocaleDateString("en-CA", { timeZone: tz });
+      const logDate = log.session_date || new Date(log.start_time).toLocaleDateString("en-CA", { timeZone: tz });
       if (logDate === todayStr) {
         today.push(log);
       } else if (log.progress === "in_progress") {

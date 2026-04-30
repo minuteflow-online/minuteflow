@@ -753,6 +753,7 @@ export default function DashboardPage() {
     const now = new Date().toISOString();
 
     // Create a "Planning" time_log entry so clock-in registers in activity log
+    const clockInSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
     const { data: sortingLog } = await supabase
       .from("time_logs")
       .insert({
@@ -769,6 +770,7 @@ export default function DashboardPage() {
         start_time: now,
         billable: true,
         billing_type: "hourly",
+        session_date: clockInSessionDate,
       })
       .select()
       .single();
@@ -795,7 +797,7 @@ export default function DashboardPage() {
         clocked_in: true,
         clock_in_time: now,
         active_task: sortingTask,
-        session_date: new Date().toISOString().split("T")[0],
+        session_date: clockInSessionDate,
         updated_at: now,
       },
       { onConflict: "user_id" }
@@ -812,7 +814,7 @@ export default function DashboardPage() {
         clocked_in: true,
         clock_in_time: now,
         active_task: sortingTask,
-        session_date: new Date().toISOString().split("T")[0],
+        session_date: clockInSessionDate,
       } as Session));
       setSessionState("clocked-in");
       setSessionElapsed(0);
@@ -893,6 +895,7 @@ export default function DashboardPage() {
             end_time: now,
             duration_ms: 0,
             billable: false,
+            session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
           })
           .select()
           .single();
@@ -1125,6 +1128,7 @@ export default function DashboardPage() {
         progress: null,
         billing_type: activeTask.billing_type || "hourly",
         task_rate: activeTask.task_rate ?? null,
+        session_date: null,
         created_at: activeTask.start_time,
         deleted_at: null,
       };
@@ -1174,6 +1178,7 @@ export default function DashboardPage() {
         start_time: now,
         billable: true,
         billing_type: "hourly",
+        session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
       })
       .select()
       .single();
@@ -1306,6 +1311,7 @@ export default function DashboardPage() {
         billable: isBillable,
         billing_type: preBreakTask.billing_type || "hourly",
         task_rate: preBreakTask.task_rate ?? null,
+        session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
       })
       .select()
       .single();
@@ -1370,6 +1376,7 @@ export default function DashboardPage() {
         billable: isBillable,
         billing_type: log.billing_type || "hourly",
         task_rate: log.task_rate ?? null,
+        session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
       })
       .select()
       .single();
@@ -1714,6 +1721,7 @@ export default function DashboardPage() {
             billing_type: "fixed",
             task_rate: formData.task_rate ?? null,
             progress: progressValue,
+            session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
           })
           .select()
           .single();
@@ -1785,6 +1793,7 @@ export default function DashboardPage() {
           form_fill_ms: formData.form_fill_ms || 0,
           billing_type: formData.billing_type || "hourly",
           task_rate: formData.task_rate ?? null,
+          session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
         })
         .select()
         .single();
@@ -1812,6 +1821,7 @@ export default function DashboardPage() {
       // Auto-clock in if idle
       const clockInTime =
         sessionState === "idle" ? now : session?.clock_in_time || now;
+      const taskSessionDate = session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
 
       await supabase.from("sessions").upsert(
         {
@@ -1819,7 +1829,7 @@ export default function DashboardPage() {
           clocked_in: true,
           clock_in_time: clockInTime,
           active_task: newActiveTask,
-          session_date: new Date().toISOString().split("T")[0],
+          session_date: taskSessionDate,
           updated_at: now,
         },
         { onConflict: "user_id" }
@@ -1842,7 +1852,7 @@ export default function DashboardPage() {
           clocked_in: true,
           clock_in_time: now,
           active_task: newActiveTask,
-          session_date: new Date().toISOString().split("T")[0],
+          session_date: taskSessionDate,
           updated_at: now,
         } as Session));
         setSessionState("clocked-in");
@@ -2010,7 +2020,7 @@ export default function DashboardPage() {
           clocked_in: true,
           clock_in_time: session?.clock_in_time || liveLog.start_time,
           active_task: task,
-          session_date: new Date().toISOString().split("T")[0],
+          session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
           updated_at: now,
         },
         { onConflict: "user_id" }
@@ -2026,7 +2036,7 @@ export default function DashboardPage() {
           clocked_in: true,
           clock_in_time: session?.clock_in_time || liveLog.start_time,
           active_task: task,
-          session_date: new Date().toISOString().split("T")[0],
+          session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
           updated_at: now,
         } as Session));
         setSessionState("clocked-in");

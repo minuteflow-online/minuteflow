@@ -183,6 +183,7 @@ export default function EditTimeLogModal({
         internal_memo: internalMemo || null,
         is_manual: true,
         manual_status: manualStatus,
+        session_date: startTime.slice(0, 10) || null,
       });
 
       if (insertError) {

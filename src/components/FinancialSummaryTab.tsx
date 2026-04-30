@@ -44,6 +44,7 @@ interface LogRow {
   form_fill_ms: number;
   billing_type: "hourly" | "fixed";
   task_rate: number | null;
+  session_date: string | null;
 }
 
 interface VaFixedAssignment {
@@ -236,10 +237,10 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       supabase
         .from("time_logs")
         .select(
-          "id, user_id, full_name, task_name, category, account, client_name, start_time, end_time, duration_ms, billable, form_fill_ms, billing_type, task_rate"
+          "id, user_id, full_name, task_name, category, account, client_name, start_time, end_time, duration_ms, billable, form_fill_ms, billing_type, task_rate, session_date"
         )
-        .gte("start_time", rangeStart)
-        .lte("start_time", rangeEnd)
+        .gte("session_date", startDate)
+        .lte("session_date", endDate)
         .not("end_time", "is", null)
         .gt("duration_ms", 0),
       supabase
@@ -462,7 +463,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       ut.categoryMs[log.category] += log.duration_ms;
 
       // Day breakdown
-      const day = log.start_time.slice(0, 10);
+      const day = log.session_date || log.start_time.slice(0, 10);
       if (!ut.dayBreakdown[day]) ut.dayBreakdown[day] = { ms: 0, paidMs: 0 };
       ut.dayBreakdown[day].ms += log.duration_ms;
       if (!UNPAID_CATEGORIES.includes(log.category)) {

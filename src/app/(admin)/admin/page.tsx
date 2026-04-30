@@ -330,7 +330,7 @@ export default function AdminPage() {
     ] = await Promise.all([
       supabase.from("profiles").select("*"),
       supabase.from("sessions").select("*"),
-      supabase.from("time_logs").select("*").gte("start_time", today),
+      supabase.from("time_logs").select("*").eq("session_date", new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone })),
       (() => {
         let q = supabase
           .from("task_screenshots")

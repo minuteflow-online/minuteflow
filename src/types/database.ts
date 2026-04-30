@@ -100,6 +100,7 @@ export interface TimeLog {
   billing_type: BillingType;
   task_rate: number | null;
   manual_status: 'pending' | 'approved' | 'denied' | null;
+  session_date: string | null;
   created_at: string;
   deleted_at: string | null;
 }

@@ -138,8 +138,8 @@ export default function ReportsPage() {
         supabase
           .from("time_logs")
           .select("*")
-          .gte("start_time", qStart)
-          .lte("start_time", qEnd)
+          .gte("session_date", qStart.slice(0, 10))
+          .lte("session_date", qEnd.slice(0, 10))
           .order("start_time", { ascending: true }),
         supabase.from("profiles").select("*"),
         supabase
@@ -282,7 +282,7 @@ export default function ReportsPage() {
     const buildDay = (d: Date, label: string): DailyData => {
       const dateStr = d.toISOString().slice(0, 10);
       const dayLogs = filteredLogs.filter(
-        (l) => l.start_time && l.start_time.slice(0, 10) === dateStr
+        (l) => (l.session_date || (l.start_time && l.start_time.slice(0, 10))) === dateStr
       );
       return {
         label,

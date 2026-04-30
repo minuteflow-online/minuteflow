@@ -155,8 +155,8 @@ export default function TeamPage() {
         supabase
           .from("time_logs")
           .select("*")
-          .gte("start_time", startISO)
-          .lte("start_time", endISO),
+          .gte("session_date", moodStart)
+          .lte("session_date", moodEnd),
         supabase
           .from("task_screenshots")
           .select("*")
@@ -1132,9 +1132,9 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
     if (isToday) return [];
     const byDate: Record<string, { logs: TimeLog[]; dateSort: number; isoDate: string }> = {};
     member.todayLogs.forEach((log) => {
-      const d = new Date(log.start_time);
-      const isoDate = formatDateLocalTZ(d, timezone); // "YYYY-MM-DD" in org timezone
-      const key = d.toLocaleDateString("en-US", { timeZone: timezone, weekday: "short", month: "short", day: "numeric" });
+      const isoDate = log.session_date || formatDateLocalTZ(new Date(log.start_time), timezone); // "YYYY-MM-DD"
+      const d = new Date(isoDate + "T12:00:00"); // noon to avoid DST edge cases
+      const key = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
       const dateSort = new Date(isoDate).getTime();
       if (!byDate[key]) byDate[key] = { logs: [], dateSort, isoDate };
       byDate[key].logs.push(log);
