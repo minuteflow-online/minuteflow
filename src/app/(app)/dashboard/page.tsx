@@ -917,7 +917,7 @@ export default function DashboardPage() {
         else if (shiftHours >= 6) allowedBreakMs = 25 * 60 * 1000;
         else if (shiftHours >= 5) allowedBreakMs = 20 * 60 * 1000;
         else if (shiftHours >= 4) allowedBreakMs = 15 * 60 * 1000;
-        // Under 4 hours = no billable break allowed
+        else allowedBreakMs = 10 * 60 * 1000; // Under 4 hours: 10 min allowed
 
         // Fetch all completed break logs for this session
         const { data: breakLogs } = await supabase

@@ -261,6 +261,7 @@ export default function TopNav({ user }: TopNavProps) {
         else if (shiftHours >= 6) allowedBreakMs = 25 * 60 * 1000;
         else if (shiftHours >= 5) allowedBreakMs = 20 * 60 * 1000;
         else if (shiftHours >= 4) allowedBreakMs = 15 * 60 * 1000;
+        else allowedBreakMs = 10 * 60 * 1000; // Under 4 hours: 10 min allowed
 
         const { data: breakLogs } = await supabase
           .from("time_logs")
