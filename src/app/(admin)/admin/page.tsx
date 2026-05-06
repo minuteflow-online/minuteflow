@@ -10,6 +10,7 @@ import {
   type TimeLog,
   type TaskScreenshot,
   type ExtensionHeartbeat,
+  type ExtensionUploadStatus,
   type TimeCorrectionRequest,
   type BreakCorrectionRequest,
   type OrganizationSettings,
@@ -236,6 +237,7 @@ export default function AdminPage() {
   const [allScreenshots, setAllScreenshots] = useState<TaskScreenshot[]>([]);
   const [allLogs, setAllLogs] = useState<TimeLog[]>([]);
   const [heartbeats, setHeartbeats] = useState<ExtensionHeartbeat[]>([]);
+  const [extensionUploadStatus, setExtensionUploadStatus] = useState<ExtensionUploadStatus[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -321,6 +323,7 @@ export default function AdminPage() {
       screenshotsRes,
       allLogsRes,
       heartbeatsRes,
+      uploadStatusRes,
       authRes,
       correctionsRes,
       sortingRes,
@@ -346,6 +349,7 @@ export default function AdminPage() {
         .order("start_time", { ascending: false })
         .limit(500),
       supabase.from("extension_heartbeats").select("*"),
+      supabase.from("extension_upload_status").select("*"),
       supabase.auth.getUser(),
       supabase
         .from("time_correction_requests")
@@ -377,6 +381,7 @@ export default function AdminPage() {
     setAllScreenshots((screenshotsRes.data ?? []) as TaskScreenshot[]);
     setAllLogs((allLogsRes.data ?? []) as TimeLog[]);
     setHeartbeats((heartbeatsRes.data ?? []) as ExtensionHeartbeat[]);
+    setExtensionUploadStatus((uploadStatusRes.data ?? []) as ExtensionUploadStatus[]);
     setCorrectionRequests((correctionsRes.data ?? []) as TimeCorrectionRequest[]);
     setSortingReviews((sortingRes.data ?? []) as SortingReview[]);
     setBreakCorrectionRequests((breakCorrectionsRes.data ?? []) as BreakCorrectionRequest[]);
@@ -1040,6 +1045,7 @@ export default function AdminPage() {
               setMessageTarget={setMessageTarget}
               onRefresh={fetchData}
               orgTimezone={orgTimezone}
+              extensionUploadStatus={extensionUploadStatus}
             />
           )}
 
@@ -1222,6 +1228,7 @@ function OverviewTab({
   setMessageTarget,
   onRefresh,
   orgTimezone,
+  extensionUploadStatus,
 }: {
   stats: { activeCount: number; todayHoursMs: number; todayScreenshots: number; todayTasks: number; wizardTimeMs: number };
   profiles: Profile[];
@@ -1250,6 +1257,7 @@ function OverviewTab({
   setMessageTarget: (id: string) => void;
   onRefresh: () => void;
   orgTimezone: string;
+  extensionUploadStatus: ExtensionUploadStatus[];
 }) {
   return (
     <>
@@ -1286,6 +1294,69 @@ function OverviewTab({
           ))}
         </div>
       </div>
+
+      {/* Extension Upload Status */}
+      {extensionUploadStatus.length > 0 && (
+        <div className="mb-6 rounded-xl border border-sand bg-white">
+          <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
+            <h2 className="text-sm font-bold text-espresso">Screenshot Upload Status</h2>
+            <span className="text-[11px] text-bark">Updated every 30s by the extension</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-parchment bg-parchment/40">
+                  <th className="px-5 py-2.5 text-left font-semibold text-bark">VA</th>
+                  <th className="px-5 py-2.5 text-right font-semibold text-bark">Uploaded Today</th>
+                  <th className="px-5 py-2.5 text-right font-semibold text-bark">Pending Upload</th>
+                  <th className="px-5 py-2.5 text-right font-semibold text-bark">Failures</th>
+                  <th className="px-5 py-2.5 text-right font-semibold text-bark">Last Reported</th>
+                </tr>
+              </thead>
+              <tbody>
+                {extensionUploadStatus.map((row) => {
+                  const profile = profiles.find((p) => p.id === row.user_id);
+                  if (!profile) return null;
+                  const isStale = new Date(row.last_reported_at).getTime() < Date.now() - 5 * 60 * 1000;
+                  const hasPending = row.queued_count > 0;
+                  const hasFailures = row.consecutive_failures >= 3;
+                  return (
+                    <tr key={row.user_id} className="border-b border-parchment last:border-b-0 hover:bg-parchment/20">
+                      <td className="px-5 py-3 font-medium text-espresso">{profile.full_name || profile.username}</td>
+                      <td className="px-5 py-3 text-right text-espresso">{row.uploaded_today}</td>
+                      <td className="px-5 py-3 text-right">
+                        {hasPending ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-soft px-2 py-0.5 text-[10px] font-semibold text-amber">
+                            {row.queued_count} pending
+                          </span>
+                        ) : (
+                          <span className="text-sage">0</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        {hasFailures ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-terracotta-soft px-2 py-0.5 text-[10px] font-semibold text-terracotta">
+                            {row.consecutive_failures} failures
+                          </span>
+                        ) : (
+                          <span className="text-sage">{row.consecutive_failures}</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3 text-right text-bark">
+                        {isStale ? (
+                          <span className="text-terracotta">{getTimeAgo(new Date(row.last_reported_at))}</span>
+                        ) : (
+                          getTimeAgo(new Date(row.last_reported_at))
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Recent Activity Feed */}
       <div className="rounded-xl border border-sand bg-white">

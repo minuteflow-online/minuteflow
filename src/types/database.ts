@@ -378,3 +378,11 @@ export interface VaTaskAssignment {
     project_tags?: { id: number; account: string; project_name: string };
   };
 }
+
+export interface ExtensionUploadStatus {
+  user_id: string;
+  queued_count: number;
+  uploaded_today: number;
+  consecutive_failures: number;
+  last_reported_at: string;
+}
