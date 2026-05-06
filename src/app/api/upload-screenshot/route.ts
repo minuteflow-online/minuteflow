@@ -11,14 +11,11 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const GOOGLE_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID!;
 
 function getGoogleAuth() {
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-  );
-  oauth2Client.setCredentials({
-    refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
+  const keyJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!);
+  return new google.auth.GoogleAuth({
+    credentials: keyJson,
+    scopes: ["https://www.googleapis.com/auth/drive.file"],
   });
-  return oauth2Client;
 }
 
 function sanitizeFilename(name: string): string {
