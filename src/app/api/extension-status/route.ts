@@ -6,6 +6,8 @@ export const dynamic = "force-dynamic";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const RESEND_API_KEY = process.env.RESEND_API_KEY!;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
+const TELEGRAM_GROUP_CHAT_ID = process.env.TELEGRAM_GROUP_CHAT_ID!;
 
 function createServiceClient() {
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -34,6 +36,17 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
+    // Check existing version before upsert so we can detect upgrades
+    const { data: existingStatus } = await supabase
+      .from("extension_upload_status")
+      .select("extension_version")
+      .eq("user_id", userId)
+      .single();
+
+    const previousVersion = existingStatus?.extension_version ?? null;
+    const newVersion = version ? String(version) : null;
+    const versionChanged = newVersion && newVersion !== previousVersion;
+
     // Upsert upload status row for this VA
     const { error: upsertError } = await supabase
       .from("extension_upload_status")
@@ -51,6 +64,31 @@ export async function POST(request: NextRequest) {
 
     if (upsertError) {
       return Response.json({ error: upsertError.message }, { status: 500 });
+    }
+
+    // Notify Telegram group when a VA installs or updates the extension
+    if (versionChanged && TELEGRAM_BOT_TOKEN && TELEGRAM_GROUP_CHAT_ID) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, username")
+        .eq("id", userId)
+        .single();
+
+      const vaName = profile?.full_name || profile?.username || "A team member";
+      const action = previousVersion ? "updated" : "installed";
+      const versionLine = previousVersion
+        ? `${previousVersion} → ${newVersion}`
+        : `v${newVersion}`;
+
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_GROUP_CHAT_ID,
+          text: `🔌 *${vaName}* ${action} the MinuteFlow extension (${versionLine})`,
+          parse_mode: "Markdown",
+        }),
+      });
     }
 
     // Send admin alert exactly when failures hit 3 (once per streak — extension sends flag)

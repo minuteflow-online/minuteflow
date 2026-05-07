@@ -3,7 +3,8 @@
  *
  * Responsibilities:
  * 1. Auto-capture screenshots on task start/end and at random intervals
- * 2. Queue screenshots locally and upload to Drive in batches (max 25/cycle, every 30s)
+ * 2. Local-first upload: save locally → upload to Drive immediately → delete local on success
+ *    (retry alarm picks up any items that failed the immediate upload)
  * 3. Poll for remote capture requests from admin
  * 4. Poll for new messages and relay to content script as toast notifications
  * 5. Send heartbeat to server so admin knows extension is active
@@ -101,15 +102,81 @@ async function blobToDataUrl(blob) {
 }
 
 // ---------------------------------------------------------------------------
-// Screenshot Queue (local-first)
+// Screenshot Queue (local-first, immediate upload)
 // ---------------------------------------------------------------------------
 
 /**
- * Capture a screenshot and add it to the local queue.
- * Used for all auto-scheduled captures (start, progress, end).
- * The retry loop will upload it to Drive within the next 30s.
+ * Remove a single item from the local queue by its ID.
+ * Called after a confirmed successful upload to Drive.
  */
-async function captureToQueue(screenshotType = 'progress', logId = null, captureRequestId = null) {
+async function removeFromQueue(itemId) {
+  const stored = await chrome.storage.local.get('mf_screenshot_queue');
+  const queue = (stored.mf_screenshot_queue || []).filter(i => i.id !== itemId);
+  await chrome.storage.local.set({ mf_screenshot_queue: queue });
+}
+
+/**
+ * Upload a single queued item to Drive.
+ * Returns true on success (caller should remove from queue).
+ * Returns false on failure (caller should leave in queue for retry).
+ */
+async function uploadQueueItem(item) {
+  try {
+    const res = await fetch(item.dataUrl);
+    const blob = await res.blob();
+
+    const formData = new FormData();
+    formData.append('file', blob, 'screenshot.png');
+    formData.append('userId', item.userId);
+    formData.append('logId', String(item.logId));
+    formData.append('screenshotType', item.screenshotType);
+    if (item.captureRequestId) {
+      formData.append('captureRequestId', String(item.captureRequestId));
+    }
+
+    const uploadRes = await fetch(`${CONFIG.API_BASE}/api/upload-screenshot`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (uploadRes.ok) {
+      // Step 3: Drive confirmed — safe to delete local copy
+      await removeFromQueue(item.id);
+      console.log(`[MinuteFlow] Drive confirmed → local deleted: ${item.screenshotType} (${item.id})`);
+
+      if (item.captureRequestId) {
+        const data = await uploadRes.json();
+        await DB.query('capture_requests', {
+          method: 'PATCH',
+          filters: `id=eq.${item.captureRequestId}`,
+          body: {
+            status: 'captured',
+            screenshot_id: data.screenshot?.id || null,
+            completed_at: new Date().toISOString(),
+          },
+        });
+      }
+      return true;
+    } else {
+      console.warn(`[MinuteFlow] Upload failed, keeping local copy for retry: ${item.screenshotType}`);
+      return false;
+    }
+  } catch (err) {
+    console.error('[MinuteFlow] Upload error, keeping local copy for retry:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Capture a screenshot using the 3-step local-first flow:
+ * 1. Save to chrome.storage.local immediately
+ * 2. Upload to Google Drive right away
+ * 3. Drive confirms → delete local copy
+ *
+ * If the upload fails, the item stays in local storage and the retry
+ * alarm (drainUploadQueue) will pick it up within 30 seconds.
+ */
+async function captureLocalThenUpload(screenshotType = 'progress', logId = null, captureRequestId = null) {
   const session = await DB.getSession();
   if (!session) {
     console.warn('[MinuteFlow] Not authenticated, skipping capture');
@@ -137,21 +204,25 @@ async function captureToQueue(screenshotType = 'progress', logId = null, capture
       timestamp: new Date().toISOString(),
     };
 
+    // Step 1: Save locally first — screenshot is safe regardless of what happens next
     const stored = await chrome.storage.local.get('mf_screenshot_queue');
     const queue = stored.mf_screenshot_queue || [];
     queue.push(item);
     await chrome.storage.local.set({ mf_screenshot_queue: queue });
+    console.log(`[MinuteFlow] Saved locally: ${screenshotType} (queue: ${queue.length})`);
 
-    console.log(`[MinuteFlow] Queued ${screenshotType} screenshot (queue: ${queue.length})`);
+    // Step 2 + 3: Upload immediately → delete local on Drive confirmation
+    await uploadQueueItem(item);
   } catch (err) {
-    console.error('[MinuteFlow] Failed to queue screenshot:', err.message);
+    console.error('[MinuteFlow] Failed to capture/save screenshot:', err.message);
   }
 }
 
 /**
- * Drain the upload queue: upload up to UPLOAD_BATCH_SIZE screenshots to Drive.
- * Called every 30 seconds by the minuteflow-upload-retry alarm.
- * Tracks consecutive failures and reports status to the server after each cycle.
+ * Retry alarm handler: attempt to upload any screenshots still in local storage.
+ * Under normal operation the queue should be empty — items are uploaded immediately
+ * by captureLocalThenUpload and removed from local storage on Drive confirmation.
+ * This only runs every 30s to catch items whose immediate upload failed (network hiccup, etc).
  */
 async function drainUploadQueue() {
   const session = await DB.getSession();
@@ -166,9 +237,10 @@ async function drainUploadQueue() {
   ]);
 
   const queue = stored.mf_screenshot_queue || [];
-  if (queue.length === 0) return; // Nothing to do
+  if (queue.length === 0) return; // Nothing to retry
 
-  // Reset daily counter if it's a new day
+  console.log(`[MinuteFlow] Retry drain: ${queue.length} item(s) waiting`);
+
   const today = new Date().toISOString().slice(0, 10);
   let uploadedToday = stored.mf_upload_today_date === today
     ? (stored.mf_upload_today_count || 0)
@@ -176,77 +248,33 @@ async function drainUploadQueue() {
   let consecutiveFailures = stored.mf_consecutive_failures || 0;
   let alertSent = stored.mf_alert_sent || false;
 
-  // Take up to UPLOAD_BATCH_SIZE items from the front of the queue
+  // Retry up to UPLOAD_BATCH_SIZE items
   const batch = queue.slice(0, CONFIG.UPLOAD_BATCH_SIZE);
-  const remaining = queue.slice(CONFIG.UPLOAD_BATCH_SIZE);
-
   let successCount = 0;
-  const retryItems = []; // Items that failed — put back in queue
 
   for (const item of batch) {
-    try {
-      // Reconstitute blob from data URL
-      const res = await fetch(item.dataUrl);
-      const blob = await res.blob();
-
-      const formData = new FormData();
-      formData.append('file', blob, 'screenshot.png');
-      formData.append('userId', item.userId);
-      formData.append('logId', String(item.logId));
-      formData.append('screenshotType', item.screenshotType);
-      if (item.captureRequestId) {
-        formData.append('captureRequestId', String(item.captureRequestId));
-      }
-
-      const uploadRes = await fetch(`${CONFIG.API_BASE}/api/upload-screenshot`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (uploadRes.ok) {
-        successCount++;
-        uploadedToday++;
-
-        // If this was a remote capture, update its status
-        if (item.captureRequestId) {
-          const data = await uploadRes.json();
-          await DB.query('capture_requests', {
-            method: 'PATCH',
-            filters: `id=eq.${item.captureRequestId}`,
-            body: {
-              status: 'captured',
-              screenshot_id: data.screenshot?.id || null,
-              completed_at: new Date().toISOString(),
-            },
-          });
-        }
-      } else {
-        retryItems.push(item);
-      }
-    } catch (err) {
-      console.error('[MinuteFlow] Upload failed for queued item:', err.message);
-      retryItems.push(item);
+    const ok = await uploadQueueItem(item); // removes from queue internally on success
+    if (ok) {
+      successCount++;
+      uploadedToday++;
     }
   }
 
-  // Rebuild queue: failed items first, then anything beyond the batch
-  const newQueue = [...retryItems, ...remaining];
+  // Re-read queue after uploadQueueItem calls (it modifies storage directly)
+  const afterStored = await chrome.storage.local.get('mf_screenshot_queue');
+  const newQueue = afterStored.mf_screenshot_queue || [];
 
   // Update consecutive failure counter
   if (batch.length > 0) {
     if (successCount > 0) {
-      // At least one succeeded — streak is broken
       consecutiveFailures = 0;
       alertSent = false;
     } else {
-      // Entire batch failed
       consecutiveFailures += 1;
     }
   }
 
-  // Persist updated state
   await chrome.storage.local.set({
-    mf_screenshot_queue: newQueue,
     mf_upload_today_date: today,
     mf_upload_today_count: uploadedToday,
     mf_consecutive_failures: consecutiveFailures,
@@ -254,18 +282,14 @@ async function drainUploadQueue() {
   });
 
   console.log(
-    `[MinuteFlow] Upload drain: ${successCount}/${batch.length} uploaded, ` +
-    `${newQueue.length} remaining, ${consecutiveFailures} consecutive failures`
+    `[MinuteFlow] Retry drain: ${successCount}/${batch.length} retried successfully, ` +
+    `${newQueue.length} still waiting, ${consecutiveFailures} consecutive failures`
   );
 
-  // Report status to server (for admin dashboard)
   await reportUploadStatus(session.user.id, newQueue.length, uploadedToday, consecutiveFailures);
 
-  // Trigger admin alert exactly once per failure streak (at 3 failures)
   if (consecutiveFailures === 3 && !alertSent) {
     await chrome.storage.local.set({ mf_alert_sent: true });
-    // reportUploadStatus already sends consecutiveFailures=3 to the server,
-    // which triggers the email there. Nothing extra needed here.
   }
 }
 
@@ -373,7 +397,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'minuteflow-1min') {
     console.log('[MinuteFlow] 1-minute capture triggered');
     if (currentTaskLogId) {
-      await captureToQueue('progress', currentTaskLogId);
+      await captureLocalThenUpload('progress', currentTaskLogId);
     }
     return;
   }
@@ -381,14 +405,14 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'minuteflow-3min') {
     console.log('[MinuteFlow] 3-minute capture triggered');
     if (currentTaskLogId) {
-      await captureToQueue('progress', currentTaskLogId);
+      await captureLocalThenUpload('progress', currentTaskLogId);
     }
     return;
   }
 
   if (alarm.name === 'minuteflow-checkin') {
     console.log('[MinuteFlow] Random check-in capture triggered');
-    await captureToQueue('progress', currentTaskLogId);
+    await captureLocalThenUpload('progress', currentTaskLogId);
     if (currentTaskLogId) {
       scheduleNextCheckin();
     }
@@ -420,7 +444,7 @@ async function onTaskStart(logId) {
   console.log(`[MinuteFlow] Task started: log_id=${logId}`);
 
   // Immediate start screenshot → goes to queue
-  await captureToQueue('start', logId);
+  await captureLocalThenUpload('start', logId);
 
   // 1 and 3 minute follow-up screenshots
   chrome.alarms.create('minuteflow-1min', { delayInMinutes: 1 });
@@ -435,7 +459,7 @@ async function onTaskEnd(logId) {
   console.log(`[MinuteFlow] Task ended: log_id=${logId || currentTaskLogId}`);
 
   // End screenshot → goes to queue
-  await captureToQueue('end', logId || currentTaskLogId);
+  await captureLocalThenUpload('end', logId || currentTaskLogId);
 
   cancelCheckin();
   currentTaskLogId = null;
