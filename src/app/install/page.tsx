@@ -28,11 +28,10 @@ export default function InstallPage() {
                   Click below to download the MinuteFlow extension. After downloading, unzip the file.
                 </p>
                 <a
-                  href="/minuteflow-extension.zip"
-                  download
+                  href="/api/download-extension"
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-terracotta text-white text-sm font-semibold hover:bg-[#a85840] transition-colors"
                 >
-                  Download Extension (.zip)
+                  ⬇ Download Extension (.zip)
                 </a>
               </div>
             </div>
@@ -43,11 +42,14 @@ export default function InstallPage() {
                 2
               </div>
               <div>
-                <h3 className="text-sm font-bold text-espresso">Unzip the file</h3>
+                <h3 className="text-sm font-bold text-espresso">Extract the zip file</h3>
                 <p className="text-xs text-bark mt-1">
-                  <strong>Windows:</strong> Right-click the downloaded file &rarr; <strong>Extract All</strong> &rarr; click Extract.<br />
-                  <strong>Mac:</strong> Double-click the downloaded file to unzip it.<br />
-                  You should see a folder called <code className="bg-parchment px-1.5 py-0.5 rounded text-terracotta text-[11px]">chrome-extension</code>.
+                  <strong>⚠️ Important:</strong> You must fully extract the zip — don&apos;t just open it.<br /><br />
+                  <strong>Windows:</strong> Right-click the downloaded file &rarr; <strong>Extract All…</strong> &rarr; click <strong>Extract</strong>.<br />
+                  <strong>Mac:</strong> Double-click the downloaded file to extract it.<br /><br />
+                  After extracting, you should see a folder called{" "}
+                  <code className="bg-parchment px-1.5 py-0.5 rounded text-terracotta text-[11px]">chrome-extension</code>.
+                  That folder is what you&apos;ll load in Step 4.
                 </p>
               </div>
             </div>
