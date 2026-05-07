@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=360">
+  <title>MinuteFlow</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 340px;
+      min-height: 200px;
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #faf8f5;
+      color: #5a3e2b;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid #e8ddd0;
+    }
+
+    .header-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #c4704b, #d4a574);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .header-text h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #5a3e2b;
+      line-height: 1.2;
+    }
+
+    .header-text p {
+      font-size: 11px;
+      color: #a08060;
+    }
+
+    /* Status badge */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .status-badge.online {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .status-badge.offline {
+      background: #ffeaea;
+      color: #c62828;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .status-dot.online { background: #4caf50; }
+    .status-dot.offline { background: #ef5350; }
+
+    /* Login form */
+    .login-container {
+      padding: 20px;
+    }
+
+    .login-container h2 {
+      font-size: 15px;
+      margin-bottom: 4px;
+      color: #5a3e2b;
+    }
+
+    .login-container .subtitle {
+      font-size: 12px;
+      color: #a08060;
+      margin-bottom: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #6b5744;
+      margin-bottom: 4px;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d4c4b0;
+      border-radius: 6px;
+      font-size: 13px;
+      background: #fff;
+      color: #5a3e2b;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+
+    .form-group input:focus {
+      border-color: #c4704b;
+      box-shadow: 0 0 0 2px rgba(196, 112, 75, 0.15);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      width: 100%;
+    }
+
+    .btn-primary {
+      background: #c4704b;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #a85d3c;
+    }
+
+    .btn-primary:disabled {
+      background: #d4c4b0;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: #f0e8dd;
+      color: #6b5744;
+    }
+
+    .btn-secondary:hover {
+      background: #e8ddd0;
+    }
+
+    .btn-danger {
+      background: #ffeaea;
+      color: #c62828;
+      font-size: 12px;
+      padding: 6px 12px;
+    }
+
+    .btn-danger:hover {
+      background: #ffcccc;
+    }
+
+    .error-msg {
+      color: #c62828;
+      font-size: 12px;
+      margin-top: 8px;
+      display: none;
+    }
+
+    .error-msg.visible {
+      display: block;
+    }
+
+    /* Logged-in dashboard */
+    .dashboard {
+      padding: 16px 20px;
+    }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .user-info .name {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .user-info .email {
+      font-size: 11px;
+      color: #a08060;
+    }
+
+    /* Stats */
+    .stats-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .stat-card {
+      flex: 1;
+      padding: 10px;
+      background: #fff;
+      border: 1px solid #e8ddd0;
+      border-radius: 8px;
+      text-align: center;
+    }
+
+    .stat-card .value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #c4704b;
+    }
+
+    .stat-card .label {
+      font-size: 10px;
+      color: #a08060;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 2px;
+    }
+
+    /* Active task */
+    .active-task {
+      padding: 10px 12px;
+      background: #fff;
+      border: 1px solid #c4704b;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+
+    .active-task .task-label {
+      font-size: 10px;
+      color: #a08060;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .active-task .task-name {
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+
+    .no-task {
+      padding: 10px 12px;
+      background: #f5f0ea;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      text-align: center;
+      font-size: 12px;
+      color: #a08060;
+    }
+
+    /* Action buttons */
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .actions .btn {
+      flex: 1;
+    }
+
+    /* Footer */
+    .footer {
+      padding: 12px 20px;
+      border-top: 1px solid #e8ddd0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .footer .version {
+      font-size: 10px;
+      color: #c4b8a8;
+    }
+
+    /* Loading spinner */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Hidden */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">MF</div>
+    <div class="header-text">
+      <h1>MinuteFlow</h1>
+      <p>Screen Capture Extension</p>
+    </div>
+  </div>
+
+  <!-- Login View -->
+  <div id="login-view" class="login-container">
+    <h2>Sign In</h2>
+    <p class="subtitle">Use your MinuteFlow account</p>
+
+    <form id="login-form">
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" placeholder="you@example.com" required autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Your password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary" id="login-btn">
+        Sign In
+      </button>
+      <div class="error-msg" id="login-error"></div>
+    </form>
+  </div>
+
+  <!-- Dashboard View -->
+  <div id="dashboard-view" class="hidden">
+    <div class="dashboard">
+      <div class="user-info">
+        <div>
+          <div class="name" id="user-name">—</div>
+          <div class="email" id="user-email">—</div>
+        </div>
+        <span class="status-badge online" id="status-badge">
+          <span class="status-dot online"></span>
+          Connected
+        </span>
+      </div>
+
+      <!-- Active Task -->
+      <div id="active-task-container">
+        <div class="no-task" id="no-task">No active task</div>
+        <div class="active-task hidden" id="active-task">
+          <div class="task-label">Active Task</div>
+          <div class="task-name" id="task-name">—</div>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="value" id="stat-captures">0</div>
+          <div class="label">Captures Today</div>
+        </div>
+        <div class="stat-card">
+          <div class="value" id="stat-status">Idle</div>
+          <div class="label">Capture Mode</div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="actions">
+        <button class="btn btn-primary" id="capture-btn" title="Take screenshot now">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+            <circle cx="12" cy="13" r="4"/>
+          </svg>
+          Capture Now
+        </button>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <span class="version">v1.0.2</span>
+      <button class="btn btn-danger" id="logout-btn">Sign Out</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

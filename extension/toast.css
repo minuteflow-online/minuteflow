@@ -1,0 +1,132 @@
+/* MinuteFlow Toast Notification Styles */
+
+#minuteflow-toast-container {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 2147483647; /* Max z-index to ensure it's always on top */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.minuteflow-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #faf8f5; /* Warm cream — matches MinuteFlow design */
+  border: 1px solid #d4a574; /* Terracotta border */
+  border-left: 4px solid #c4704b; /* Strong terracotta accent */
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.06);
+  max-width: 380px;
+  min-width: 280px;
+  pointer-events: all;
+  opacity: 0;
+  transform: translateX(100%);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.minuteflow-toast-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.minuteflow-toast-exit {
+  opacity: 0;
+  transform: translateX(100%);
+}
+
+.minuteflow-toast-icon {
+  flex-shrink: 0;
+  color: #c4704b; /* Terracotta */
+  margin-top: 2px;
+}
+
+.minuteflow-toast-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.minuteflow-toast-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #5a3e2b; /* Dark brown */
+  margin-bottom: 2px;
+  line-height: 1.3;
+}
+
+.minuteflow-toast-body {
+  font-size: 13px;
+  color: #6b5744; /* Medium brown */
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.minuteflow-toast-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: #a08060;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin: -4px -4px 0 0;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.minuteflow-toast-close:hover {
+  opacity: 1;
+  color: #c4704b;
+}
+
+/* Capture Indicator — brief flash to confirm screenshot was taken */
+
+.minuteflow-capture-indicator {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(196, 112, 75, 0.95); /* Terracotta */
+  color: #fff;
+  border-radius: 20px;
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  pointer-events: none;
+}
+
+.minuteflow-capture-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.minuteflow-capture-exit {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-10px);
+}
+
+.minuteflow-capture-dot {
+  width: 8px;
+  height: 8px;
+  background: #ff6b6b;
+  border-radius: 50%;
+  animation: minuteflow-pulse 1s ease-in-out infinite;
+}
+
+@keyframes minuteflow-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
