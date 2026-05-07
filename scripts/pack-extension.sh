@@ -11,8 +11,9 @@
 #   - Signing key at /home/redbot/manny-bot/minuteflow-extension-key.pem
 #
 # After running, the new files are in public/:
-#   public/minuteflow-extension.crx  ← VAs install this (auto-update enabled)
-#   public/minuteflow-extension.zip  ← legacy fallback
+#   public/minuteflow-extension.crx       ← VAs install this (auto-update enabled)
+#   public/minuteflow-extension.zip       ← legacy fallback
+#   public/minuteflow-extension-store.zip ← Chrome Web Store submission (update_url stripped)
 #
 # Also update public/extension-updates.xml if the version changed.
 
@@ -63,10 +64,36 @@ with zipfile.ZipFile('$PUBLIC_DIR/minuteflow-extension.zip', 'w', zipfile.ZIP_DE
 rm -rf "$TMPDIR"
 cd -
 
+# Pack as store-ready ZIP (strips update_url — required for Chrome Web Store submission)
+echo "🏪 Creating store-ready ZIP (no update_url)..."
+STORE_TMPDIR=$(mktemp -d)
+cp -r "$EXTENSION_DIR/." "$STORE_TMPDIR/"
+# Strip update_url from manifest for Web Store compliance
+node -e "
+const fs = require('fs');
+const path = '$STORE_TMPDIR/manifest.json';
+const m = JSON.parse(fs.readFileSync(path, 'utf8'));
+delete m.update_url;
+fs.writeFileSync(path, JSON.stringify(m, null, 2));
+"
+cd "$STORE_TMPDIR"
+python3 -c "
+import zipfile, os
+with zipfile.ZipFile('$PUBLIC_DIR/minuteflow-extension-store.zip', 'w', zipfile.ZIP_DEFLATED) as z:
+    for root, dirs, files in os.walk('.'):
+        for f in files:
+            filepath = os.path.join(root, f)
+            arcname = os.path.relpath(filepath, '.')
+            z.write(filepath, arcname)
+"
+rm -rf "$STORE_TMPDIR"
+cd -
+
 echo ""
 echo "✅ Done!"
 echo "   CRX: $PUBLIC_DIR/minuteflow-extension.crx"
 echo "   ZIP: $PUBLIC_DIR/minuteflow-extension.zip"
+echo "   Store ZIP: $PUBLIC_DIR/minuteflow-extension-store.zip (no update_url)"
 echo ""
 echo "⚠️  If version changed, update public/extension-updates.xml:"
 echo "   <updatecheck codebase='https://minuteflow.click/minuteflow-extension.crx' version='$VERSION' />"
