@@ -1307,6 +1307,7 @@ function OverviewTab({
               <thead>
                 <tr className="border-b border-parchment bg-parchment/40">
                   <th className="px-5 py-2.5 text-left font-semibold text-bark">VA</th>
+                  <th className="px-5 py-2.5 text-left font-semibold text-bark">Version</th>
                   <th className="px-5 py-2.5 text-right font-semibold text-bark">Uploaded Today</th>
                   <th className="px-5 py-2.5 text-right font-semibold text-bark">Pending Upload</th>
                   <th className="px-5 py-2.5 text-right font-semibold text-bark">Failures</th>
@@ -1323,6 +1324,15 @@ function OverviewTab({
                   return (
                     <tr key={row.user_id} className="border-b border-parchment last:border-b-0 hover:bg-parchment/20">
                       <td className="px-5 py-3 font-medium text-espresso">{profile.full_name || profile.username}</td>
+                      <td className="px-5 py-3 text-left">
+                        {row.extension_version ? (
+                          <span className="inline-flex items-center rounded-full bg-sage-soft px-2 py-0.5 text-[10px] font-semibold text-sage">
+                            v{row.extension_version}
+                          </span>
+                        ) : (
+                          <span className="text-bark">—</span>
+                        )}
+                      </td>
                       <td className="px-5 py-3 text-right text-espresso">{row.uploaded_today}</td>
                       <td className="px-5 py-3 text-right">
                         {hasPending ? (

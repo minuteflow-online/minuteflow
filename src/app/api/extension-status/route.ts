@@ -21,7 +21,7 @@ function createServiceClient() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { userId, queued, uploadedToday, consecutiveFailures } = body;
+    const { userId, queued, uploadedToday, consecutiveFailures, version } = body;
 
     if (
       !userId ||
@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
           uploaded_today: uploadedToday,
           consecutive_failures: consecutiveFailures,
           last_reported_at: new Date().toISOString(),
+          ...(version ? { extension_version: String(version) } : {}),
         },
         { onConflict: "user_id" }
       );

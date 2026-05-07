@@ -385,4 +385,5 @@ export interface ExtensionUploadStatus {
   uploaded_today: number;
   consecutive_failures: number;
   last_reported_at: string;
+  extension_version: string | null;
 }
