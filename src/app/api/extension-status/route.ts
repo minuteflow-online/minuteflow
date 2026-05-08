@@ -3,6 +3,19 @@ import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+/** Returns true if version string `a` is strictly greater than `b` (semver comparison). */
+function isNewerVersion(a: string, b: string): boolean {
+  const av = a.split(".").map(Number);
+  const bv = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(av.length, bv.length); i++) {
+    const ai = av[i] ?? 0;
+    const bi = bv[i] ?? 0;
+    if (ai > bi) return true;
+    if (ai < bi) return false;
+  }
+  return false;
+}
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const RESEND_API_KEY = process.env.RESEND_API_KEY!;
@@ -45,7 +58,15 @@ export async function POST(request: NextRequest) {
 
     const previousVersion = existingStatus?.extension_version ?? null;
     const newVersion = version ? String(version) : null;
-    const versionChanged = newVersion && newVersion !== previousVersion;
+
+    // Only treat as an upgrade if the new version is strictly greater than what's stored.
+    // This prevents ping-pong between two machines running different extension versions.
+    const isUpgrade =
+      newVersion !== null &&
+      (previousVersion === null || isNewerVersion(newVersion, previousVersion));
+
+    // Only update the stored version when it's a genuine upgrade — never downgrade.
+    const versionUpdate = isUpgrade ? { extension_version: newVersion } : {};
 
     // Upsert upload status row for this VA
     const { error: upsertError } = await supabase
@@ -57,7 +78,7 @@ export async function POST(request: NextRequest) {
           uploaded_today: uploadedToday,
           consecutive_failures: consecutiveFailures,
           last_reported_at: new Date().toISOString(),
-          ...(version ? { extension_version: String(version) } : {}),
+          ...versionUpdate,
         },
         { onConflict: "user_id" }
       );
@@ -66,8 +87,8 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: upsertError.message }, { status: 500 });
     }
 
-    // Notify Telegram group when a VA installs or updates the extension
-    if (versionChanged && TELEGRAM_BOT_TOKEN && TELEGRAM_GROUP_CHAT_ID) {
+    // Notify Telegram group only on genuine installs or upgrades (never on downgrades/same)
+    if (isUpgrade && TELEGRAM_BOT_TOKEN && TELEGRAM_GROUP_CHAT_ID) {
       const { data: profile } = await supabase
         .from("profiles")
         .select("full_name, username")
