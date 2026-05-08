@@ -25,16 +25,9 @@ export default function ExtSubmitPage() {
             >
               ↓ Extension ZIP (for Web Store)
             </a>
-            <a
-              href="/minuteflow-extension.crx"
-              download
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-sand bg-white text-espresso text-sm font-semibold hover:bg-parchment transition-colors"
-            >
-              ↓ .CRX File (for sideloading / internal use)
-            </a>
           </div>
           <p className="text-xs text-bark mt-3">
-            Upload the <strong>ZIP</strong> to the Chrome Web Store developer dashboard. The .CRX is for manual installs only.
+            Upload the <strong>ZIP</strong> to the Chrome Web Store developer dashboard.
           </p>
         </div>
 
