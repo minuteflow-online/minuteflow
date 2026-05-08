@@ -3,6 +3,6 @@
   <app appid='fmdeffelkhgmljefgajenaalbpngjbko'>
     <updatecheck
       codebase='https://minuteflow.click/minuteflow-extension.crx'
-      version='1.1.0' />
+      version='1.1.2' />
   </app>
 </gupdate>

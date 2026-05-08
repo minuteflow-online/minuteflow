@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MinuteFlow Screen Capture",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Silent screenshot capture for MinuteFlow time tracking. Captures active tab only — no bookmarks, no personal data leaking.",
   "update_url": "https://minuteflow.click/extension-updates.xml",
   "permissions": [

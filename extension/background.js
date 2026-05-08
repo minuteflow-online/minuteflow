@@ -37,7 +37,7 @@ const CONFIG = {
   CHECKIN_MAX_MS: 8 * 60 * 1000,
 
   // Extension version
-  VERSION: '1.1.1',
+  VERSION: '1.1.2',
 
   // API base
   API_BASE: 'https://minuteflow.click',
@@ -58,10 +58,20 @@ let currentTaskLogId = null; // The active time_log.id we're tracking
 /**
  * Capture the visible area of the currently active tab.
  * Returns a Blob (PNG image).
+ *
+ * Uses lastFocusedWindow (normal window type) so that if the extension popup
+ * is open, we still capture the underlying browser tab — not the popup window.
  */
 async function captureActiveTab() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    // Get the last focused normal browser window (excludes extension popups)
+    const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+    if (!win || !win.id) {
+      console.warn('[MinuteFlow] No browser window found');
+      return null;
+    }
+
+    const [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
     if (!tab || !tab.id) {
       console.warn('[MinuteFlow] No active tab found');
       return null;
@@ -72,7 +82,7 @@ async function captureActiveTab() {
       return null;
     }
 
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+    const dataUrl = await chrome.tabs.captureVisibleTab(win.id, {
       format: 'png',
       quality: 90,
     });
@@ -82,6 +92,26 @@ async function captureActiveTab() {
     return blob;
   } catch (err) {
     console.error('[MinuteFlow] Capture failed:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Fetch the active log ID from the sessions table.
+ * Used as a fallback when currentTaskLogId is null (e.g. after service worker restart).
+ */
+async function fetchActiveLogIdFromDB(userId) {
+  try {
+    const rows = await DB.query('sessions', {
+      filters: `user_id=eq.${userId}&select=active_task&limit=1`,
+    });
+    if (!rows || rows.length === 0) return null;
+    const activeTask = rows[0].active_task;
+    if (!activeTask) return null;
+    const logId = activeTask.logId || activeTask.log_id;
+    return logId ? (parseInt(logId, 10) || logId) : null;
+  } catch (err) {
+    console.warn('[MinuteFlow] fetchActiveLogIdFromDB failed:', err.message);
     return null;
   }
 }
@@ -183,7 +213,11 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
     return;
   }
 
-  const resolvedLogId = logId || currentTaskLogId;
+  // Prefer explicit logId, then in-memory, then DB fallback
+  let resolvedLogId = logId || currentTaskLogId;
+  if (!resolvedLogId) {
+    resolvedLogId = await fetchActiveLogIdFromDB(session.user.id);
+  }
   if (!resolvedLogId) {
     console.warn('[MinuteFlow] No active log ID, skipping capture');
     return;
@@ -328,7 +362,12 @@ async function captureAndUpload(screenshotType = 'manual', logId = null, capture
   if (!blob) return null;
 
   try {
-    const resolvedLogId = logId || currentTaskLogId;
+    // Prefer explicit logId, then in-memory currentTaskLogId, then DB fallback
+    // (service worker restarts clear currentTaskLogId — DB always has the truth)
+    let resolvedLogId = logId || currentTaskLogId;
+    if (!resolvedLogId) {
+      resolvedLogId = await fetchActiveLogIdFromDB(session.user.id);
+    }
     if (!resolvedLogId) {
       console.warn('[MinuteFlow] No active log ID, skipping upload');
       return null;
