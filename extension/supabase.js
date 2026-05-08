@@ -158,11 +158,12 @@ async function query(table, { method = 'GET', filters = '', body = null, headers
     opts.body = JSON.stringify(body);
   }
 
-  // For INSERT, we want the response body back
-  if (method === 'POST') {
+  // For INSERT/PATCH, we want the response body back — but don't overwrite
+  // if the caller already set a Prefer header (e.g. resolution=merge-duplicates)
+  if (method === 'POST' && !opts.headers['Prefer']) {
     opts.headers['Prefer'] = 'return=representation';
   }
-  if (method === 'PATCH') {
+  if (method === 'PATCH' && !opts.headers['Prefer']) {
     opts.headers['Prefer'] = 'return=representation';
   }
 

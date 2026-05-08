@@ -37,7 +37,7 @@ const CONFIG = {
   CHECKIN_MAX_MS: 8 * 60 * 1000,
 
   // Extension version
-  VERSION: '1.1.0',
+  VERSION: '1.1.1',
 
   // API base
   API_BASE: 'https://minuteflow.click',
@@ -568,6 +568,7 @@ async function sendHeartbeat() {
   try {
     await DB.query('extension_heartbeats', {
       method: 'POST',
+      filters: 'on_conflict=user_id',
       body: {
         user_id: session.user.id,
         extension_version: CONFIG.VERSION,
