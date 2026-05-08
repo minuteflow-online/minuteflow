@@ -225,6 +225,10 @@ logoutBtn.addEventListener('click', () => {
 
 // Initialize + auto-refresh every 10 seconds
 (async () => {
+  // Always read version from manifest so it never drifts
+  const versionEl = document.querySelector('.version');
+  if (versionEl) versionEl.textContent = 'v' + chrome.runtime.getManifest().version;
+
   const status = await checkStatus();
   loadDashboard(status);
 
