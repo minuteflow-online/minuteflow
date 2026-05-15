@@ -284,6 +284,27 @@
       flex: 1;
     }
 
+    /* Screen share reminder */
+    .screen-share-notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 9px 12px;
+      background: #fff8f0;
+      border: 1px solid #f0d8c0;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-size: 11px;
+      color: #7a5030;
+      line-height: 1.4;
+    }
+
+    .screen-share-notice .notice-icon {
+      font-size: 14px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
     /* Footer */
     .footer {
       padding: 12px 20px;
@@ -369,6 +390,12 @@
           <div class="task-label">Active Task</div>
           <div class="task-name" id="task-name">—</div>
         </div>
+      </div>
+
+      <!-- Screen share reminder -->
+      <div class="screen-share-notice">
+        <span class="notice-icon">🖥️</span>
+        <span>Share your <strong>work screen</strong> so all activity is captured correctly.</span>
       </div>
 
       <!-- Stats -->

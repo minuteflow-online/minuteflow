@@ -37,7 +37,7 @@ const CONFIG = {
   CHECKIN_MAX_MS: 8 * 60 * 1000,
 
   // Extension version
-  VERSION: '1.1.2',
+  VERSION: '1.1.3',
 
   // API base
   API_BASE: 'https://minuteflow.click',
@@ -50,6 +50,21 @@ let pollingIntervalId = null;
 let heartbeatIntervalId = null;
 let checkinTimeoutId = null;
 let currentTaskLogId = null; // The active time_log.id we're tracking
+
+// ---------------------------------------------------------------------------
+// MinuteFlow URL Detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true if the given URL belongs to the MinuteFlow app.
+ * Progress captures are skipped when the VA is on MinuteFlow — we only
+ * want to capture their actual work, not the time-tracking app itself.
+ * (Start/end captures are still allowed regardless of active tab.)
+ */
+function isMinuteFlowUrl(url) {
+  if (!url) return false;
+  return url.includes('minuteflow.click') || url.includes('minuteflow.online');
+}
 
 // ---------------------------------------------------------------------------
 // Screenshot Capture
@@ -211,6 +226,24 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
   if (!session) {
     console.warn('[MinuteFlow] Not authenticated, skipping capture');
     return;
+  }
+
+  // For progress captures: skip if VA is currently on a MinuteFlow tab.
+  // We only want to capture their actual work — not the time-tracking app itself.
+  // Start/end captures are always allowed (once per task, Toni said that's fine).
+  if (screenshotType === 'progress') {
+    try {
+      const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+      if (win && win.id) {
+        const [activeTab] = await chrome.tabs.query({ active: true, windowId: win.id });
+        if (activeTab && activeTab.url && isMinuteFlowUrl(activeTab.url)) {
+          console.log('[MinuteFlow] Progress capture skipped — VA is on MinuteFlow tab');
+          return;
+        }
+      }
+    } catch (err) {
+      // Non-fatal: if we can't check, proceed with capture
+    }
   }
 
   // Prefer explicit logId, then in-memory, then DB fallback
