@@ -914,66 +914,73 @@ export default function DashboardPage() {
 
         // Break tier table (shift hours → allowed break ms)
         const shiftHours = shiftMs / (1000 * 60 * 60);
-        let allowedBreakMs = 0;
-        if (shiftHours >= 8) allowedBreakMs = 45 * 60 * 1000;
-        else if (shiftHours >= 7) allowedBreakMs = 30 * 60 * 1000;
-        else if (shiftHours >= 6) allowedBreakMs = 25 * 60 * 1000;
-        else if (shiftHours >= 5) allowedBreakMs = 20 * 60 * 1000;
-        else if (shiftHours >= 4) allowedBreakMs = 15 * 60 * 1000;
-        else allowedBreakMs = 10 * 60 * 1000; // Under 4 hours: 10 min allowed
 
-        // Fetch all completed break logs for this session
-        const { data: breakLogs } = await supabase
-          .from("time_logs")
-          .select("id, duration_ms, start_time")
-          .eq("user_id", userId)
-          .eq("category", "Break")
-          .gte("start_time", clockInTime)
-          .lte("start_time", now)
-          .not("end_time", "is", null)
-          .order("start_time", { ascending: true });
+        // Skip stale sessions — shift > 16 hours means the session was never reset between days,
+        // which would incorrectly pull breaks from multiple workdays into one window.
+        if (shiftHours <= 16) {
+          let allowedBreakMs = 0;
+          if (shiftHours >= 8) allowedBreakMs = 45 * 60 * 1000;
+          else if (shiftHours >= 7) allowedBreakMs = 30 * 60 * 1000;
+          else if (shiftHours >= 6) allowedBreakMs = 25 * 60 * 1000;
+          else if (shiftHours >= 5) allowedBreakMs = 20 * 60 * 1000;
+          else if (shiftHours >= 4) allowedBreakMs = 15 * 60 * 1000;
+          else allowedBreakMs = 10 * 60 * 1000; // Under 4 hours: 10 min allowed
 
-        if (breakLogs && breakLogs.length > 0) {
-          const totalBreakMs = breakLogs.reduce((sum, b) => sum + (b.duration_ms || 0), 0);
-          const excessMs = Math.max(0, totalBreakMs - allowedBreakMs);
+          // Fetch completed break logs for this session, filtered by session_date to avoid cross-day accumulation
+          const { data: breakLogs } = await supabase
+            .from("time_logs")
+            .select("id, duration_ms, start_time")
+            .eq("user_id", userId)
+            .eq("category", "Break")
+            .eq("session_date", sessionDate)
+            .gte("start_time", clockInTime)
+            .lte("start_time", now)
+            .not("end_time", "is", null)
+            .order("start_time", { ascending: true });
 
-          if (excessMs > 0) {
-            // Determine which break logs to flip to non-billable (latest first, consuming excess)
-            const sortedDesc = [...breakLogs].sort(
-              (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
-            );
-            let remaining = excessMs;
-            const idsToFlip: number[] = [];
+          if (breakLogs && breakLogs.length > 0) {
+            const totalBreakMs = breakLogs.reduce((sum, b) => sum + (b.duration_ms || 0), 0);
+            const excessMs = Math.max(0, totalBreakMs - allowedBreakMs);
 
-            for (const bl of sortedDesc) {
-              if (remaining <= 0) break;
-              idsToFlip.push(bl.id);
-              remaining -= (bl.duration_ms || 0);
-            }
+            // Minimum 1-minute threshold — avoids flagging rounding noise (e.g. 13-25 second overages)
+            if (excessMs >= 60 * 1000) {
+              // Determine which break logs to flip to non-billable (latest first, consuming excess)
+              const sortedDesc = [...breakLogs].sort(
+                (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
+              );
+              let remaining = excessMs;
+              const idsToFlip: number[] = [];
 
-            // Flip excess break logs to non-billable
-            if (idsToFlip.length > 0) {
+              for (const bl of sortedDesc) {
+                if (remaining <= 0) break;
+                idsToFlip.push(bl.id);
+                remaining -= (bl.duration_ms || 0);
+              }
+
+              // Flip excess break logs to non-billable
+              if (idsToFlip.length > 0) {
+                await supabase
+                  .from("time_logs")
+                  .update({ billable: false })
+                  .in("id", idsToFlip);
+              }
+
+              // Create a break_correction_request for admin review
               await supabase
-                .from("time_logs")
-                .update({ billable: false })
-                .in("id", idsToFlip);
+                .from("break_correction_requests")
+                .insert({
+                  user_id: userId,
+                  session_date: sessionDate,
+                  clock_in_time: clockInTime,
+                  clock_out_time: now,
+                  shift_duration_ms: shiftMs,
+                  total_break_ms: totalBreakMs,
+                  allowed_break_ms: allowedBreakMs,
+                  excess_break_ms: excessMs,
+                  break_log_ids: breakLogs.map((b) => b.id),
+                  status: "pending",
+                });
             }
-
-            // Create a break_correction_request for admin review
-            await supabase
-              .from("break_correction_requests")
-              .insert({
-                user_id: userId,
-                session_date: sessionDate,
-                clock_in_time: clockInTime,
-                clock_out_time: now,
-                shift_duration_ms: shiftMs,
-                total_break_ms: totalBreakMs,
-                allowed_break_ms: allowedBreakMs,
-                excess_break_ms: excessMs,
-                break_log_ids: breakLogs.map((b) => b.id),
-                status: "pending",
-              });
           }
         }
       }
