@@ -263,10 +263,11 @@ export default function EditTimeLogModal({
       }
 
       // Auto-cascade: if end_time changed, update the next task's start_time to match
+      // Exception: never cascade into a "Clock In" entry — it should remain independent
       if (newEndIso && newEndIso !== log.end_time) {
         const { data: nextTask } = await supabase
           .from("time_logs")
-          .select("id, start_time, end_time, duration_ms")
+          .select("id, start_time, end_time, duration_ms, task_name")
           .eq("user_id", log.user_id)
           .gt("start_time", log.start_time)
           .is("deleted_at", null)
@@ -274,7 +275,7 @@ export default function EditTimeLogModal({
           .limit(1)
           .maybeSingle();
 
-        if (nextTask) {
+        if (nextTask && nextTask.task_name !== "Clock In") {
           const newEndMs = new Date(newEndIso).getTime();
           const nextEndMs = nextTask.end_time ? new Date(nextTask.end_time).getTime() : null;
           // Only cascade if it won't shrink the next task to zero/negative duration

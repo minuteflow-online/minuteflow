@@ -1890,7 +1890,9 @@ export default function DashboardPage() {
       }
 
       // ─── Screen capture: request stream on first task, then schedule ───
-      if (logData) {
+      // Skip screenshots during Break and Personal tasks
+      const shouldCapture = formData.category !== "Break" && formData.category !== "Personal";
+      if (logData && shouldCapture) {
         const newLogId = logData.id;
         if (screenShareActive) {
           // Stream already active — just start the capture schedule
