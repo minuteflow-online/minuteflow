@@ -853,6 +853,48 @@ export default function DashboardPage() {
     if (!userId) return;
     const now = new Date().toISOString();
 
+    // ─── Safety net: close any orphaned open task logs before clocking out ───
+    // Catches logs that were missed by state-based stopCurrentTask calls.
+    {
+      const { data: orphanedLogs } = await supabase
+        .from("time_logs")
+        .select("id, start_time")
+        .eq("user_id", userId)
+        .is("end_time", null)
+        .neq("category", "Break")
+        .neq("category", "Clock Out")
+        .neq("category", "Planning");
+
+      if (orphanedLogs && orphanedLogs.length > 0) {
+        for (const orphan of orphanedLogs) {
+          const logStartMs = orphan.start_time
+            ? new Date(orphan.start_time).getTime()
+            : Date.now();
+          const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+          await supabase
+            .from("time_logs")
+            .update({ end_time: now, duration_ms: logDurationMs })
+            .eq("id", orphan.id);
+        }
+        setTimeLogs((prev) =>
+          prev.map((log) => {
+            const match = orphanedLogs.find((o) => o.id === log.id);
+            if (match && !log.end_time) {
+              const logStartMs = match.start_time
+                ? new Date(match.start_time).getTime()
+                : Date.now();
+              return {
+                ...log,
+                end_time: now,
+                duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
+              } as TimeLog;
+            }
+            return log;
+          })
+        );
+      }
+    }
+
     const upsertPayload: Record<string, unknown> = {
       user_id: userId,
       clocked_in: false,
@@ -1765,10 +1807,52 @@ export default function DashboardPage() {
         }
       }
 
-      // Stop previous active task
-      if (activeTask) {
-        await stopCurrentTask();
+      // ─── No negotiations: close ALL open task logs at DB level ───
+      // This prevents concurrent running tasks even if React state is out of sync.
+      // Rule: when a new task starts, every previous task ends. No exceptions.
+      {
+        const { data: openLogs } = await supabase
+          .from("time_logs")
+          .select("id, start_time")
+          .eq("user_id", userId)
+          .is("end_time", null)
+          .neq("category", "Break")
+          .neq("category", "Clock Out")
+          .neq("category", "Planning");
+
+        if (openLogs && openLogs.length > 0) {
+          for (const openLog of openLogs) {
+            const logStartMs = openLog.start_time
+              ? new Date(openLog.start_time).getTime()
+              : Date.now();
+            const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+            await supabase
+              .from("time_logs")
+              .update({ end_time: now, duration_ms: logDurationMs })
+              .eq("id", openLog.id);
+          }
+          // Sync React state to match
+          setTimeLogs((prev) =>
+            prev.map((log) => {
+              const match = openLogs.find((o) => o.id === log.id);
+              if (match && !log.end_time) {
+                const logStartMs = match.start_time
+                  ? new Date(match.start_time).getTime()
+                  : Date.now();
+                return {
+                  ...log,
+                  end_time: now,
+                  duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
+                } as TimeLog;
+              }
+              return log;
+            })
+          );
+        }
       }
+      setActiveTask(null);
+      setTaskElapsed(0);
+      setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
 
       const isBillable =
         formData.category !== "Personal";
