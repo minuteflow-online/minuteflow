@@ -138,9 +138,9 @@ export default function EditTimeLogModal({
     const startIso = fromLocalDatetimeValue(startTime);
     const endIso = endTime ? fromLocalDatetimeValue(endTime) : null;
 
-    // Guard: end_time must be after start_time
-    if (endIso && new Date(endIso).getTime() <= new Date(startIso).getTime()) {
-      setError("End time must be after start time");
+    // Guard: end_time must not be before start_time (equal is OK — Clock Out entries have 0 duration)
+    if (endIso && new Date(endIso).getTime() < new Date(startIso).getTime()) {
+      setError("End time cannot be before start time");
       setSaving(false);
       return;
     }

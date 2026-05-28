@@ -157,7 +157,8 @@ export default function TeamPage() {
           .from("time_logs")
           .select("*")
           .gte("session_date", moodStart)
-          .lte("session_date", moodEnd),
+          .lte("session_date", moodEnd)
+          .is("deleted_at", null),
         supabase
           .from("task_screenshots")
           .select("*")
