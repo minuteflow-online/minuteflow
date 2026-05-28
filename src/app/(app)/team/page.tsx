@@ -145,8 +145,9 @@ export default function TeamPage() {
     const startISO = rangeStart.toISOString();
     const endISO = rangeEnd.toISOString();
 
-    const moodStart = rangeStart.toISOString().split("T")[0];
-    const moodEnd = rangeEnd.toISOString().split("T")[0];
+    const tz = orgTimezone || "UTC";
+    const moodStart = formatDateLocalTZ(rangeStart, tz);
+    const moodEnd = formatDateLocalTZ(rangeEnd, tz);
 
     const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes, orgRes] =
       await Promise.all([
