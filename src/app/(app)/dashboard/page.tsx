@@ -334,6 +334,7 @@ export default function DashboardPage() {
 
     async function loadData() {
       setLoading(true);
+      try {
 
       const [profileRes, sessionRes, allProfilesRes, allSessionsRes, logsRes, ssRes, orgSettingsRes] =
         await Promise.all([
@@ -491,7 +492,11 @@ export default function DashboardPage() {
         }
       }
 
-      setLoading(false);
+      } catch (err) {
+        console.error("[Dashboard] loadData error:", err);
+      } finally {
+        setLoading(false);
+      }
     }
 
     loadData();
