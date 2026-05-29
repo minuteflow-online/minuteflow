@@ -316,11 +316,18 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function getUser() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        setUserId(user.id);
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) {
+          setUserId(user.id);
+        } else {
+          setLoading(false); // no user found — stop the skeleton
+        }
+      } catch (err) {
+        console.error("[Dashboard] getUser error:", err);
+        setLoading(false); // auth threw — stop the skeleton so page doesn't hang
       }
     }
     getUser();
