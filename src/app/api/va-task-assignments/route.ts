@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("va_task_assignments")
     .select(
-      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, assigned_by, assigned_at, status, instructions, profiles!va_task_assignments_va_id_fkey(id, full_name, username, position), project_task_assignments(id, task_library_id, project_tag_id, billing_type, task_rate, show_in_assignment, task_library(id, task_name), project_tags(id, account, project_name))"
+      "id, va_id, project_task_assignment_id, billing_type, rate, assignment_type, assigned_by, assigned_at, status, instructions, quantity_claimed, profiles!va_task_assignments_va_id_fkey(id, full_name, username, position), project_task_assignments(id, task_library_id, project_tag_id, billing_type, task_rate, show_in_assignment, task_library(id, task_name), project_tags(id, account, project_name))"
     )
     .order("assigned_at", { ascending: false });
 
@@ -219,7 +219,7 @@ export async function PATCH(request: Request) {
   const isAdmin = profile?.role === "admin";
 
   const body = await request.json();
-  const { id, billing_type, rate, assignment_type, status, instructions } = body;
+  const { id, billing_type, rate, assignment_type, status, instructions, va_id: new_va_id, quantity_claimed } = body;
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
@@ -227,7 +227,7 @@ export async function PATCH(request: Request) {
 
   // VAs can only update status on their own assignments
   if (!isAdmin) {
-    if (billing_type || rate !== undefined || assignment_type || instructions !== undefined) {
+    if (billing_type || rate !== undefined || assignment_type || instructions !== undefined || new_va_id || quantity_claimed !== undefined) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
     // Verify ownership
@@ -247,6 +247,10 @@ export async function PATCH(request: Request) {
   if (assignment_type !== undefined) updates.assignment_type = assignment_type;
   if (status !== undefined) updates.status = status;
   if (instructions !== undefined) updates.instructions = instructions;
+  // Admin-only: reassign to different VA
+  if (isAdmin && new_va_id !== undefined) updates.va_id = new_va_id;
+  // Admin-only: update quantity claimed
+  if (isAdmin && quantity_claimed !== undefined) updates.quantity_claimed = Math.max(1, Math.floor(Number(quantity_claimed) || 1));
 
   if (Object.keys(updates).length === 0) {
     return Response.json({ error: "Nothing to update" }, { status: 400 });

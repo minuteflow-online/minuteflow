@@ -20,6 +20,7 @@ interface Assignment {
   rate: number | null;
   status: AssignmentStatus;
   instructions: string | null;
+  quantity_claimed: number | null;
   profiles: { id: string; full_name: string; username: string; position: string | null } | null;
   project_task_assignments: {
     id: number;
@@ -252,11 +253,18 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
                 >
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-xs font-medium text-espresso truncate">{taskName}</span>
-                    <span
-                      className={`shrink-0 px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${STATUS_COLORS[a.status]}`}
-                    >
-                      {STATUS_LABELS[a.status]}
-                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {a.quantity_claimed != null && a.quantity_claimed > 1 && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-sky-100 text-sky-700">
+                          ×{a.quantity_claimed}
+                        </span>
+                      )}
+                      <span
+                        className={`px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${STATUS_COLORS[a.status]}`}
+                      >
+                        {STATUS_LABELS[a.status]}
+                      </span>
+                    </div>
                   </div>
                   <div className="text-[10px] text-stone mt-0.5 truncate">
                     {account}
