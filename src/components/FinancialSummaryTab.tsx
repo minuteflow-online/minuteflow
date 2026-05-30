@@ -101,11 +101,14 @@ const VIRTUAL_CONCIERGE = "Virtual Concierge";
 const VC_BILLED_CATEGORIES = ["Break", "Planning", "Sorting Tasks", "Sorting"];
 
 const PAYMENT_METHODS = [
+  { value: "gcash", label: "GCash" },
+  { value: "bank_deposit", label: "Bank Deposit" },
+  { value: "paypal", label: "PayPal" },
+  { value: "remittance", label: "Remittance" },
   { value: "bank_transfer", label: "Bank Transfer" },
   { value: "check", label: "Check" },
   { value: "zelle", label: "Zelle" },
   { value: "cash", label: "Cash" },
-  { value: "paypal", label: "PayPal" },
   { value: "venmo", label: "Venmo" },
   { value: "other", label: "Other" },
 ];
@@ -212,6 +215,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
 
   // Modal state
   const [showVaPaymentModal, setShowVaPaymentModal] = useState<string | null>(null); // va user_id
+  const [editingVaPayment, setEditingVaPayment] = useState<VaPaymentRow | null>(null);
   const [showClientPaymentModal, setShowClientPaymentModal] = useState<string | null>(null); // account name
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showExpenseUpload, setShowExpenseUpload] = useState(false);
@@ -705,6 +709,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const saveVaPayment = async (vaId: string, form: {
     amount: string; payment_date: string; payment_method: string;
     confirmation_number: string; notes: string;
+    period_start: string; period_end: string;
   }) => {
     const { error } = await supabase.from("va_payments").insert({
       va_id: vaId,
@@ -760,6 +765,25 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const deleteVaPayment = async (paymentId: number) => {
     if (!confirm("Delete this payment record?")) return;
     await supabase.from("va_payments").delete().eq("id", paymentId);
+    fetchData();
+  };
+
+  const updateVaPayment = async (paymentId: number, form: {
+    amount: string; payment_date: string; payment_method: string;
+    confirmation_number: string; notes: string;
+    period_start: string; period_end: string;
+  }) => {
+    const { error } = await supabase.from("va_payments").update({
+      amount: parseFloat(form.amount),
+      payment_date: form.payment_date,
+      payment_method: form.payment_method,
+      confirmation_number: form.confirmation_number || null,
+      period_start: form.period_start || null,
+      period_end: form.period_end || null,
+      notes: form.notes || null,
+    }).eq("id", paymentId);
+    if (error) { alert("Error updating payment: " + error.message); return; }
+    setEditingVaPayment(null);
     fetchData();
   };
 
@@ -1285,13 +1309,22 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                                             <td className="py-1.5 text-bark">{p.confirmation_number || "—"}</td>
                                             <td className="py-1.5 text-right font-semibold text-emerald-600">{fmtMoney(Number(p.amount))}</td>
                                             <td className="py-1.5">
-                                              <button
-                                                onClick={(e) => { e.stopPropagation(); deleteVaPayment(p.id); }}
-                                                className="text-red-400 hover:text-red-600 text-[10px] cursor-pointer"
-                                                title="Delete"
-                                              >
-                                                ✕
-                                              </button>
+                                              <div className="flex items-center gap-1.5">
+                                                <button
+                                                  onClick={(e) => { e.stopPropagation(); setEditingVaPayment(p); }}
+                                                  className="text-bark/40 hover:text-terracotta text-[10px] cursor-pointer"
+                                                  title="Edit"
+                                                >
+                                                  ✏️
+                                                </button>
+                                                <button
+                                                  onClick={(e) => { e.stopPropagation(); deleteVaPayment(p.id); }}
+                                                  className="text-red-400 hover:text-red-600 text-[10px] cursor-pointer"
+                                                  title="Delete"
+                                                >
+                                                  ✕
+                                                </button>
+                                              </div>
                                             </td>
                                           </tr>
                                         ))}
@@ -1573,6 +1606,25 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         />
       )}
 
+      {/* ── Edit VA Payment Modal ──────────────────────── */}
+      {editingVaPayment !== null && (
+        <PaymentModal
+          title="Edit Payment"
+          defaultDate={editingVaPayment.payment_date}
+          onClose={() => setEditingVaPayment(null)}
+          onSave={(form) => updateVaPayment(editingVaPayment.id, form)}
+          initialValues={{
+            amount: String(editingVaPayment.amount),
+            payment_date: editingVaPayment.payment_date,
+            payment_method: editingVaPayment.payment_method,
+            confirmation_number: editingVaPayment.confirmation_number ?? "",
+            notes: editingVaPayment.notes ?? "",
+            period_start: editingVaPayment.period_start ?? "",
+            period_end: editingVaPayment.period_end ?? "",
+          }}
+        />
+      )}
+
       {/* ── Client Payment Modal ────────────────────────── */}
       {showClientPaymentModal !== null && (
         <ClientPaymentModal
@@ -1691,6 +1743,7 @@ function PaymentModal({
   defaultDate,
   onClose,
   onSave,
+  initialValues,
 }: {
   title: string;
   defaultDate: string;
@@ -1698,19 +1751,28 @@ function PaymentModal({
   onSave: (form: {
     amount: string; payment_date: string; payment_method: string;
     confirmation_number: string; notes: string;
+    period_start: string; period_end: string;
   }) => void;
+  initialValues?: {
+    amount: string; payment_date: string; payment_method: string;
+    confirmation_number: string; notes: string;
+    period_start?: string; period_end?: string;
+  };
 }) {
-  const [amount, setAmount] = useState("");
-  const [paymentDate, setPaymentDate] = useState(defaultDate);
-  const [method, setMethod] = useState("bank_transfer");
-  const [confirmation, setConfirmation] = useState("");
-  const [notes, setNotes] = useState("");
+  const [amount, setAmount] = useState(initialValues?.amount ?? "");
+  const [paymentDate, setPaymentDate] = useState(initialValues?.payment_date ?? defaultDate);
+  const [method, setMethod] = useState(initialValues?.payment_method ?? "gcash");
+  const [confirmation, setConfirmation] = useState(initialValues?.confirmation_number ?? "");
+  const [notes, setNotes] = useState(initialValues?.notes ?? "");
+  const [periodStart, setPeriodStart] = useState(initialValues?.period_start ?? "");
+  const [periodEnd, setPeriodEnd] = useState(initialValues?.period_end ?? "");
   const [saving, setSaving] = useState(false);
+  const isEdit = !!initialValues;
 
   const handleSave = async () => {
     if (!amount || parseFloat(amount) <= 0) { alert("Please enter a valid amount."); return; }
     setSaving(true);
-    await onSave({ amount, payment_date: paymentDate, payment_method: method, confirmation_number: confirmation, notes });
+    await onSave({ amount, payment_date: paymentDate, payment_method: method, confirmation_number: confirmation, notes, period_start: periodStart, period_end: periodEnd });
     setSaving(false);
   };
 
@@ -1720,12 +1782,12 @@ function PaymentModal({
         <h3 className="text-sm font-bold text-espresso mb-4">{title}</h3>
         <div className="space-y-3">
           <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Amount ($)</label>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Amount</label>
             <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
               className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" placeholder="0.00" />
           </div>
           <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Date</label>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Payment Date</label>
             <input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)}
               className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
           </div>
@@ -1737,10 +1799,24 @@ function PaymentModal({
             </select>
           </div>
           <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Confirmation / Check #</label>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Confirmation #</label>
             <input type="text" value={confirmation} onChange={(e) => setConfirmation(e.target.value)}
               className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" placeholder="Optional" />
           </div>
+          {isEdit && (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Period Start</label>
+                <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Period End</label>
+                <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Notes</label>
             <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)}
@@ -1753,7 +1829,7 @@ function PaymentModal({
           </button>
           <button onClick={handleSave} disabled={saving}
             className="rounded-lg bg-terracotta px-4 py-2 text-[12px] font-semibold text-white hover:bg-terracotta/80 transition-colors disabled:opacity-50 cursor-pointer">
-            {saving ? "Saving..." : "Save Payment"}
+            {saving ? "Saving..." : isEdit ? "Update Payment" : "Save Payment"}
           </button>
         </div>
       </div>
