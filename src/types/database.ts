@@ -221,6 +221,7 @@ export interface Invoice {
   from_name: string;
   from_address: string | null;
   from_email: string | null;
+  from_phone: string | null;
   from_logo_url: string | null;
   to_name: string;
   to_contact: string | null;
@@ -234,11 +235,16 @@ export interface Invoice {
   tax_rate: number;
   tax_amount: number;
   total: number;
+  adjustment_amount: number;
   amount_paid: number;
   currency: string;
   notes: string | null;
   payment_terms: string | null;
+  payment_link: string | null;
+  reminder_enabled: boolean;
+  account_name: string | null;
   is_manual: boolean;
+  previous_balance: number;
   created_by: string | null;
   sent_at: string | null;
   created_at: string;

@@ -74,9 +74,9 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `${invoice.from_name || "MinuteFlow"} <noreply@minuteflow.click>`,
+      from: `${invoice.from_name || "Toni Colina"} <noreply@minuteflow.click>`,
       to: [invoice.to_email],
-      subject: `Invoice ${invoice.invoice_number} from ${invoice.from_name || "MinuteFlow"}`,
+      subject: `Invoice ${invoice.invoice_number} — ${invoice.from_name || "Toni Colina"}`,
       html,
     }),
   });
@@ -101,11 +101,12 @@ export async function POST(request: Request) {
   return Response.json({ success: true });
 }
 
-/* ── Build Invoice HTML Email ─────────────────────────────── */
+/* ── Types ────────────────────────────────────────────────── */
 
 interface InvoiceRow {
   invoice_number: string;
   from_name: string;
+  from_phone: string | null;
   from_address: string | null;
   from_email: string | null;
   from_logo_url: string | null;
@@ -115,13 +116,14 @@ interface InvoiceRow {
   to_address: string | null;
   issue_date: string;
   due_date: string | null;
-  payment_terms: string | null;
   subtotal: number;
-  tax_rate: number;
-  tax_amount: number;
+  adjustment_amount: number | null;
   total: number;
   currency: string;
   notes: string | null;
+  payment_link: string | null;
+  reminder_enabled: boolean | null;
+  account_name: string | null;
   status: string;
 }
 
@@ -129,9 +131,12 @@ interface LineItemRow {
   description: string;
   va_name: string | null;
   quantity: number;
-  unit_price: number;
-  amount: number;
+  project: string | null;
+  account_name: string | null;
+  client_memo: string | null;
 }
+
+/* ── Helpers ──────────────────────────────────────────────── */
 
 function formatCurrency(amount: number, currency = "USD") {
   return new Intl.NumberFormat("en-US", {
@@ -140,27 +145,74 @@ function formatCurrency(amount: number, currency = "USD") {
   }).format(amount);
 }
 
-function paymentTermsLabel(terms: string | null) {
-  const labels: Record<string, string> = {
-    due_on_receipt: "Due on Receipt",
-    net_15: "Net 15",
-    net_30: "Net 30",
-    net_45: "Net 45",
-    net_60: "Net 60",
-  };
-  return labels[terms || ""] || terms || "Net 30";
+function fmtHours(h: number): string {
+  const hrs = Math.floor(h);
+  const mins = Math.round((h - hrs) * 60);
+  return mins > 0 ? `${hrs} hrs ${mins} mins` : `${hrs} hrs`;
 }
 
+/* ── Build Invoice HTML Email ─────────────────────────────── */
+
 function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[], timezone = "UTC"): string {
-  const lineItemsHtml = items
+  const totalHours = items.reduce((s, li) => s + Number(li.quantity), 0);
+  const adjustment = Number(invoice.adjustment_amount || 0);
+  const invoiceAmount = Number(invoice.subtotal);
+  const finalTotal = Number(invoice.total);
+
+  // Issue date formatted
+  const issueDateFmt = new Date(invoice.issue_date + "T12:00:00Z").toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: timezone,
+  });
+
+  // Task summary: group by description
+  const taskMap: Record<string, number> = {};
+  items.forEach((li) => {
+    const k = li.description || "Other";
+    taskMap[k] = (taskMap[k] || 0) + Number(li.quantity);
+  });
+  const taskSummary = Object.entries(taskMap).sort((a, b) => b[1] - a[1]);
+
+  // Project summary: group by project
+  const projMap: Record<string, number> = {};
+  items.forEach((li) => {
+    const k = li.project || li.account_name || "Unassigned";
+    projMap[k] = (projMap[k] || 0) + Number(li.quantity);
+  });
+  const projSummary = Object.entries(projMap).sort((a, b) => b[1] - a[1]);
+
+  // Time allocation rows
+  const timeRows = items
     .map(
       (li) => `
       <tr>
-        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${li.description}</td>
-        <td style="padding: 10px 8px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px;">${li.va_name || "-"}</td>
-        <td style="padding: 10px 8px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${Number(li.quantity).toFixed(2)}</td>
-        <td style="padding: 10px 8px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency(Number(li.unit_price), invoice.currency)}</td>
-        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px; text-align: right; font-weight: 600;">${formatCurrency(Number(li.amount), invoice.currency)}</td>
+        <td style="padding:8px 12px; border-bottom:1px solid #e8e0d4; text-align:right; font-size:13px; color:#3d2b1f; font-weight:600;">${Math.round(Number(li.quantity) * 60)}</td>
+        <td style="padding:8px 12px; border-bottom:1px solid #e8e0d4; font-size:13px; color:#3d2b1f;">${li.description}</td>
+        <td style="padding:8px 12px; border-bottom:1px solid #e8e0d4; font-size:13px; color:#6b5e52;">${li.project || li.account_name || "—"}</td>
+        <td style="padding:8px 12px; border-bottom:1px solid #e8e0d4; font-size:12px; color:#6b5e52;">${li.client_memo || "—"}</td>
+      </tr>`
+    )
+    .join("");
+
+  // Task summary rows
+  const taskRows = taskSummary
+    .map(
+      ([task, hrs]) => `
+      <tr>
+        <td style="padding:5px 0; font-size:13px; color:#e8e0d4;">${task}</td>
+        <td style="padding:5px 0; font-size:13px; color:#ffffff; text-align:right; font-weight:600; white-space:nowrap;">${fmtHours(hrs)}</td>
+      </tr>`
+    )
+    .join("");
+
+  // Project summary rows
+  const projRows = projSummary
+    .map(
+      ([proj, hrs]) => `
+      <tr>
+        <td style="padding:5px 0; font-size:13px; color:#e8e0d4;">${proj}</td>
+        <td style="padding:5px 0; font-size:13px; color:#ffffff; text-align:right; font-weight:600; white-space:nowrap;">${fmtHours(hrs)}</td>
       </tr>`
     )
     .join("");
@@ -171,107 +223,130 @@ function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[], timezone =
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
-<body style="margin: 0; padding: 0; background-color: #faf6f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-  <div style="max-width: 640px; margin: 0 auto; padding: 32px 16px;">
-    <!-- Header -->
-    <div style="background: #fff; border-radius: 12px; border: 1px solid #e8e0d4; overflow: hidden;">
-      <div style="padding: 32px;">
-        <!-- From / Invoice header -->
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="vertical-align: top;">
-              ${invoice.from_logo_url ? `<img src="${invoice.from_logo_url}" alt="" style="height: 40px; width: auto; margin-bottom: 8px;" />` : ""}
-              <div style="font-size: 18px; font-weight: 700; color: #3d2b1f;">${invoice.from_name}</div>
-              ${invoice.from_address ? `<div style="font-size: 12px; color: #6b5e52; margin-top: 4px; white-space: pre-line;">${invoice.from_address}</div>` : ""}
-              ${invoice.from_email ? `<div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">${invoice.from_email}</div>` : ""}
-            </td>
-            <td style="vertical-align: top; text-align: right;">
-              <div style="font-size: 28px; font-weight: 700; color: #c0704e;">INVOICE</div>
-              <div style="font-size: 14px; font-weight: 600; color: #3d2b1f; margin-top: 4px;">${invoice.invoice_number}</div>
-              <div style="font-size: 11px; color: #6b5e52; margin-top: 8px;">
-                <strong style="color: #3d2b1f;">Issue Date:</strong> ${new Date(invoice.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: timezone })}
-              </div>
-              ${
-                invoice.due_date
-                  ? `<div style="font-size: 11px; color: #6b5e52; margin-top: 2px;">
-                      <strong style="color: #3d2b1f;">Due Date:</strong> ${new Date(invoice.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: timezone })}
-                    </div>`
-                  : ""
-              }
-              ${
-                invoice.payment_terms
-                  ? `<div style="font-size: 11px; color: #6b5e52; margin-top: 2px;">
-                      <strong style="color: #3d2b1f;">Terms:</strong> ${paymentTermsLabel(invoice.payment_terms)}
-                    </div>`
-                  : ""
-              }
-            </td>
-          </tr>
-        </table>
+<body style="margin:0; padding:0; background-color:#f5f0e8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="max-width:680px; margin:0 auto; padding:24px 16px;">
 
-        <!-- Bill To -->
-        <div style="margin-top: 24px; padding: 16px; background: #faf6f0; border-radius: 8px;">
-          <div style="font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b5e52; margin-bottom: 4px;">Bill To</div>
-          <div style="font-size: 14px; font-weight: 700; color: #3d2b1f;">${invoice.to_name}</div>
-          ${invoice.to_contact ? `<div style="font-size: 12px; color: #6b5e52;">${invoice.to_contact}</div>` : ""}
-          ${invoice.to_email ? `<div style="font-size: 12px; color: #6b5e52;">${invoice.to_email}</div>` : ""}
-          ${invoice.to_address ? `<div style="font-size: 12px; color: #6b5e52; margin-top: 4px; white-space: pre-line;">${invoice.to_address}</div>` : ""}
-        </div>
+    <!-- ── PAGE 1 ─────────────────────────────────────── -->
 
-        <!-- Line Items -->
-        <table style="width: 100%; border-collapse: collapse; margin-top: 24px; border: 1px solid #e8e0d4; border-radius: 8px; overflow: hidden;">
-          <thead>
-            <tr style="background: #faf6f0;">
-              <th style="padding: 10px 12px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b5e52; border-bottom: 1px solid #e8e0d4;">Description</th>
-              <th style="padding: 10px 8px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b5e52; border-bottom: 1px solid #e8e0d4;">VA</th>
-              <th style="padding: 10px 8px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b5e52; border-bottom: 1px solid #e8e0d4;">Hours</th>
-              <th style="padding: 10px 8px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b5e52; border-bottom: 1px solid #e8e0d4;">Rate</th>
-              <th style="padding: 10px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b5e52; border-bottom: 1px solid #e8e0d4;">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${lineItemsHtml}
-          </tbody>
-        </table>
-
-        <!-- Totals -->
-        <table style="width: 280px; margin-left: auto; margin-top: 16px; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Subtotal</td>
-            <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(Number(invoice.subtotal), invoice.currency)}</td>
-          </tr>
-          ${
-            Number(invoice.tax_rate) > 0
-              ? `<tr>
-                  <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Tax (${Number(invoice.tax_rate)}%)</td>
-                  <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right;">${formatCurrency(Number(invoice.tax_amount), invoice.currency)}</td>
-                </tr>`
-              : ""
-          }
-          <tr>
-            <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Total</td>
-            <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #c0704e; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(Number(invoice.total), invoice.currency)}</td>
-          </tr>
-        </table>
-
-        ${
-          invoice.notes
-            ? `<!-- Notes -->
-              <div style="margin-top: 24px; padding: 16px; background: #faf6f0; border-radius: 8px;">
-                <div style="font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b5e52; margin-bottom: 4px;">Notes</div>
-                <div style="font-size: 12px; color: #6b5e52; white-space: pre-line;">${invoice.notes}</div>
-              </div>`
-            : ""
-        }
-      </div>
-
-      <!-- Footer -->
-      <div style="padding: 16px 32px; background: #faf6f0; border-top: 1px solid #e8e0d4; text-align: center;">
-        <div style="font-size: 11px; color: #9e9080;">
-          Sent by ${invoice.from_name} via MinuteFlow
-        </div>
-      </div>
+    <!-- Yellow header card -->
+    <div style="background:#f5c842; border-radius:12px 12px 0 0; padding:28px 32px;">
+      <table style="width:100%; border-collapse:collapse;">
+        <tr>
+          <!-- Left: invoice info + client -->
+          <td style="vertical-align:top; width:55%;">
+            <div style="font-size:12px; font-weight:700; color:#5a4000; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">
+              INVOICE: ${issueDateFmt}
+            </div>
+            <div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">FOR:</div>
+            <div style="font-size:22px; font-weight:800; color:#2d1a00; line-height:1.2; margin-bottom:6px;">${invoice.to_name}</div>
+            ${invoice.to_email ? `<div style="font-size:12px; color:#5a4000;">${invoice.to_email}</div>` : ""}
+            ${invoice.to_contact ? `<div style="font-size:12px; color:#5a4000;">${invoice.to_contact}</div>` : ""}
+            <div style="margin-top:16px;">
+              <div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px;">INVOICE AMOUNT</div>
+              <div style="font-size:28px; font-weight:800; color:#2d1a00;">${formatCurrency(finalTotal, invoice.currency)}</div>
+            </div>
+          </td>
+          <!-- Right: sender info -->
+          <td style="vertical-align:top; text-align:right; padding-left:20px;">
+            ${invoice.account_name ? `<div style="font-size:12px; font-weight:700; color:#5a4000; margin-bottom:4px;">${invoice.account_name}</div>` : ""}
+            <div style="font-size:15px; font-weight:700; color:#2d1a00;">${invoice.from_name}</div>
+            ${invoice.from_phone ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_phone}</div>` : ""}
+            ${invoice.from_email ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_email}</div>` : ""}
+            ${invoice.payment_link ? `
+            <div style="margin-top:12px;">
+              <div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Pay Online</div>
+              <a href="${invoice.payment_link}" style="display:inline-block; background:#2d1a00; color:#f5c842; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Click to Pay</a>
+            </div>` : ""}
+          </td>
+        </tr>
+      </table>
     </div>
+
+    <!-- Invoice Summary box -->
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:20px 32px;">
+      <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden;">
+        <tr style="background:#faf6f0;">
+          <td style="padding:12px 16px; text-align:center; border-right:1px solid #e8e0d4;">
+            <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Total Hours</div>
+            <div style="font-size:20px; font-weight:700; color:#3d2b1f; margin-top:4px;">${totalHours.toFixed(2)}</div>
+          </td>
+          <td style="padding:12px 16px; text-align:center; border-right:1px solid #e8e0d4;">
+            <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Invoice Amount</div>
+            <div style="font-size:20px; font-weight:700; color:#3d2b1f; margin-top:4px;">${formatCurrency(invoiceAmount, invoice.currency)}</div>
+          </td>
+          <td style="padding:12px 16px; text-align:center; border-right:1px solid #e8e0d4;">
+            <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Adjustment</div>
+            <div style="font-size:20px; font-weight:700; color:#3d2b1f; margin-top:4px;">${adjustment > 0 ? `− ${formatCurrency(adjustment)}` : "$0"}</div>
+          </td>
+          <td style="padding:12px 16px; text-align:center;">
+            <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Final Amount</div>
+            <div style="font-size:20px; font-weight:700; color:#c0704e; margin-top:4px;">${formatCurrency(finalTotal, invoice.currency)}</div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Task + Project Summary (navy) -->
+    <div style="background:#2d3a4a; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:20px 32px;">
+      <table style="width:100%; border-collapse:collapse;">
+        <tr>
+          <!-- Task Summary -->
+          <td style="vertical-align:top; width:50%; padding-right:16px; border-right:1px solid #4a5568;">
+            <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Top Task Summary</div>
+            <table style="width:100%; border-collapse:collapse;">
+              ${taskRows}
+            </table>
+          </td>
+          <!-- Project Summary -->
+          <td style="vertical-align:top; padding-left:16px;">
+            <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Top Deliverables / Objectives</div>
+            <table style="width:100%; border-collapse:collapse;">
+              ${projRows}
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    ${invoice.notes ? `
+    <!-- Notes -->
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 32px;">
+      <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; margin-bottom:6px;">Notes</div>
+      <div style="font-size:13px; color:#3d2b1f; white-space:pre-line;">${invoice.notes}</div>
+    </div>` : ""}
+
+    <!-- ── PAGE 2 ─────────────────────────────────────── -->
+
+    <!-- Divider -->
+    <div style="background:#e8e0d4; height:2px; margin:0;"></div>
+
+    <!-- Time Allocation heading -->
+    <div style="background:#f5c842; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:12px 32px;">
+      <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#2d1a00;">Detailed Time Allocation</div>
+    </div>
+
+    <!-- Time Allocation table -->
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; border-bottom:1px solid #e8e0d4; border-radius:0 0 12px 12px; overflow:hidden;">
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr style="background:#faf6f0;">
+            <th style="padding:10px 12px; text-align:right; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4; white-space:nowrap;">Time in Minutes</th>
+            <th style="padding:10px 12px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Task Description</th>
+            <th style="padding:10px 12px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Deliverables / Objectives</th>
+            <th style="padding:10px 12px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Memo</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${timeRows}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:16px 0; text-align:center;">
+      <div style="font-size:11px; color:#9e9080;">Sent by ${invoice.from_name} · MinuteFlow</div>
+    </div>
+
   </div>
 </body>
 </html>`;

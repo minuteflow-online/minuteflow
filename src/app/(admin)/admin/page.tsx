@@ -5140,6 +5140,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [invoiceNotes, setInvoiceNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Generate-by mode
+  const [generateBy, setGenerateBy] = useState<"client" | "account">("client");
+  const [selectedAccount, setSelectedAccount] = useState<string>("");
+  const [accountList, setAccountList] = useState<string[]>([]);
+
+  // Manual total / adjustment
+  const [invoiceTotal, setInvoiceTotal] = useState("");
+  const [adjustmentAmount, setAdjustmentAmount] = useState("0");
+
+  // New invoice fields
+  const [paymentLink, setPaymentLink] = useState("");
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [fromName, setFromName] = useState("");
+  const [fromPhone, setFromPhone] = useState("");
+
   // Manual invoice state
   const [manualDescription, setManualDescription] = useState("");
   const [manualAmount, setManualAmount] = useState("");
@@ -5169,14 +5184,24 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   const fetchInvoices = useCallback(async () => {
     const sb = createClient();
-    const [invRes, clientsRes, orgRes] = await Promise.all([
+    const [invRes, clientsRes, orgRes, accRes] = await Promise.all([
       sb.from("invoices").select("*").order("created_at", { ascending: false }),
       sb.from("clients").select("*").eq("active", true).order("name"),
       sb.from("organization_settings").select("*").limit(1).single(),
+      fetch("/api/accounts"),
     ]);
     setInvoices((invRes.data ?? []) as Invoice[]);
     setClients((clientsRes.data ?? []) as Client[]);
-    if (orgRes.data) setOrgSettings(orgRes.data as OrganizationSettings);
+    if (orgRes.data) {
+      setOrgSettings(orgRes.data as OrganizationSettings);
+      setFromName(orgRes.data.org_name || "");
+    }
+    const accData = await accRes.json();
+    const names: string[] = (accData.accounts ?? [])
+      .filter((a: { active: boolean }) => a.active !== false)
+      .map((a: { name: string }) => a.name)
+      .sort();
+    setAccountList(names);
     setLoading(false);
   }, []);
 
@@ -5237,17 +5262,13 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     return `MF-${year}-${String(maxNum + 1).padStart(3, "0")}`;
   }, [invoices]);
 
-  /* ── Fetch billable logs for selected client + date range ── */
+  /* ── Fetch billable logs for selected filter + date range ── */
 
   const fetchBillableLogs = async () => {
-    if (!selectedClientId || !dateFrom || !dateTo) return;
+    if (generateBy === "client" && !selectedClientId) return;
+    if (generateBy === "account" && !selectedAccount) return;
+    if (!dateFrom || !dateTo) return;
     setLoadingLogs(true);
-
-    const client = clients.find((c) => c.id === selectedClientId);
-    if (!client) {
-      setLoadingLogs(false);
-      return;
-    }
 
     // Get all log_ids already on invoices (to exclude them)
     const { data: existingItems } = await supabase
@@ -5257,50 +5278,41 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
     const usedLogIds = new Set((existingItems ?? []).map((item: { log_id: number | null }) => item.log_id));
 
-    // Fetch billable time_logs for this client in range
-    const { data: logs } = await supabase
+    // Build query based on generateBy mode
+    let query = supabase
       .from("time_logs")
       .select("*")
-      .eq("client_name", client.name)
       .eq("billable", true)
       .gte("start_time", new Date(dateFrom).toISOString())
       .lte("start_time", new Date(dateTo + "T23:59:59").toISOString())
       .order("start_time", { ascending: true });
 
+    if (generateBy === "client") {
+      const client = clients.find((c) => c.id === selectedClientId);
+      if (!client) { setLoadingLogs(false); return; }
+      query = query.eq("client_name", client.name);
+    } else {
+      query = query.eq("account", selectedAccount);
+    }
+
+    const { data: logs } = await query;
     const availableLogs = ((logs ?? []) as TimeLog[]).filter((l) => !usedLogIds.has(l.id));
 
-    // Group by VA
-    const byVa = new Map<string, TimeLog[]>();
-    availableLogs.forEach((log) => {
-      const vaName = log.full_name || log.username;
-      if (!byVa.has(vaName)) byVa.set(vaName, []);
-      byVa.get(vaName)!.push(log);
-    });
-
-    const items: LineItemDraft[] = [];
-    byVa.forEach((vaLogs, vaName) => {
-      // Find profile to get pay_rate
-      const profile = profiles.find(
-        (p) => p.full_name === vaName || p.username === vaName
-      );
-      const rate = client.default_hourly_rate ?? profile?.pay_rate ?? 0;
-
-      vaLogs.forEach((log) => {
-        const hours = log.duration_ms / 3600000;
-        items.push({
-          log_id: log.id,
-          description: log.task_name,
-          va_name: vaName,
-          account_name: log.account || "",
-          category: log.category,
-          project: log.project || "",
-          client_memo: log.client_memo || "",
-          quantity: Math.round(hours * 100) / 100,
-          unit_price: rate,
-          amount: Math.round(hours * rate * 100) / 100,
-          service_date: new Date(log.start_time).toISOString().split("T")[0],
-        });
-      });
+    const items: LineItemDraft[] = availableLogs.map((log) => {
+      const hours = log.duration_ms / 3600000;
+      return {
+        log_id: log.id,
+        description: log.task_name,
+        va_name: log.full_name || log.username,
+        account_name: log.account || "",
+        category: log.category,
+        project: log.project || "",
+        client_memo: log.client_memo || "",
+        quantity: Math.round(hours * 100) / 100,
+        unit_price: 0,
+        amount: 0,
+        service_date: new Date(log.start_time).toISOString().split("T")[0],
+      };
     });
 
     setLineItems(items);
@@ -5310,45 +5322,50 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   /* ── Save invoice ─────────────────────────────────────────── */
 
   const handleSaveInvoice = async (sendNow: boolean) => {
-    if (!selectedClient || lineItems.length === 0) return;
+    if (lineItems.length === 0) return;
     setSaving(true);
 
     const invoiceNumber = generateInvoiceNumber();
-    const paymentTerms = selectedClient.payment_terms || "net_30";
     const issueDate = new Date().toISOString().split("T")[0];
+    const manualTotal = parseFloat(invoiceTotal) || 0;
+    const adjustment = parseFloat(adjustmentAmount) || 0;
+    const finalTotal = manualTotal - adjustment;
 
-    // Calculate due date from payment terms
-    let dueDays = 30;
-    if (paymentTerms === "due_on_receipt") dueDays = 0;
-    else if (paymentTerms === "net_15") dueDays = 15;
-    else if (paymentTerms === "net_45") dueDays = 45;
-    else if (paymentTerms === "net_60") dueDays = 60;
-
-    const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + dueDays);
+    // Determine billing target (client or account)
+    const billingClient = clients.find((c) => c.id === selectedClientId);
+    const toName = billingClient?.name || selectedAccount || "Client";
+    const toEmail = billingClient?.email || null;
+    const toContact = billingClient?.contact_name || null;
+    const toAddress = billingClient
+      ? [billingClient.address, billingClient.city, billingClient.state, billingClient.zip, billingClient.country].filter(Boolean).join(", ") || null
+      : null;
 
     const invoiceData = {
       invoice_number: invoiceNumber,
-      client_id: selectedClient.id,
-      status: sendNow ? "sent" : "draft",
-      from_name: orgSettings?.org_name || "MinuteFlow",
+      client_id: billingClient?.id || null,
+      account_name: generateBy === "account" ? selectedAccount : (billingClient ? null : null),
+      status: sendNow ? "sent" as const : "draft" as const,
+      from_name: fromName || orgSettings?.org_name || "Toni Colina",
+      from_phone: fromPhone || null,
       from_address: orgSettings?.address || null,
       from_email: orgSettings?.billing_email || null,
       from_logo_url: orgSettings?.logo_url || null,
-      to_name: selectedClient.name,
-      to_contact: selectedClient.contact_name,
-      to_email: selectedClient.email,
-      to_address: [selectedClient.address, selectedClient.city, selectedClient.state, selectedClient.zip, selectedClient.country].filter(Boolean).join(", ") || null,
-      to_logo_url: selectedClient.logo_url,
+      to_name: toName,
+      to_contact: toContact,
+      to_email: toEmail,
+      to_address: toAddress,
       issue_date: issueDate,
-      due_date: dueDate.toISOString().split("T")[0],
-      subtotal,
-      tax_rate: taxRate,
-      tax_amount: taxAmount,
-      total,
-      currency: selectedClient.currency || "USD",
+      due_date: null,
+      subtotal: manualTotal,
+      tax_rate: 0,
+      tax_amount: 0,
+      total: finalTotal,
+      adjustment_amount: adjustment,
+      currency: billingClient?.currency || "USD",
       notes: invoiceNotes || null,
-      payment_terms: paymentTerms,
+      payment_link: paymentLink || null,
+      reminder_enabled: reminderEnabled,
+      payment_terms: null,
       sent_at: sendNow ? new Date().toISOString() : null,
     };
 
@@ -5374,16 +5391,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       project: li.project || null,
       client_memo: li.client_memo || null,
       quantity: li.quantity,
-      unit_price: li.unit_price,
-      amount: li.amount,
+      unit_price: 0,
+      amount: 0,
       service_date: li.service_date || null,
       sort_order: idx,
     }));
 
     await supabase.from("invoice_line_items").insert(lineItemsData);
 
-    // If sending now, also fire email
-    if (sendNow && selectedClient.email) {
+    // If sending now, fire email
+    if (sendNow && toEmail) {
       try {
         await fetch("/api/invoices/send", {
           method: "POST",
@@ -5391,17 +5408,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           body: JSON.stringify({ invoice_id: newInvoice.id }),
         });
       } catch {
-        // Email send failed, but invoice is saved
+        // Email failed but invoice saved
       }
     }
 
     setSaving(false);
     setView("list");
     setSelectedClientId(null);
+    setSelectedAccount("");
     setDateFrom("");
     setDateTo("");
     setLineItems([]);
-    setTaxRate(0);
+    setInvoiceTotal("");
+    setAdjustmentAmount("0");
+    setPaymentLink("");
+    setReminderEnabled(false);
     setInvoiceNotes("");
     fetchInvoices();
   };
@@ -5689,11 +5710,20 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   /* ── CREATE VIEW ──────────────────────────────────────────── */
 
   if (view === "create") {
+    const canFetch = dateFrom && dateTo && (
+      (generateBy === "client" && selectedClientId) ||
+      (generateBy === "account" && selectedAccount)
+    );
+    const manualTotalNum = parseFloat(invoiceTotal) || 0;
+    const adjustmentNum = parseFloat(adjustmentAmount) || 0;
+    const finalTotal = manualTotalNum - adjustmentNum;
+    const totalHours = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+
     return (
       <>
         <div className="mb-4 flex items-center justify-between">
           <button
-            onClick={() => { setView("list"); setLineItems([]); setSelectedClientId(null); }}
+            onClick={() => { setView("list"); setLineItems([]); setSelectedClientId(null); setSelectedAccount(""); setInvoiceTotal(""); setAdjustmentAmount("0"); }}
             className="flex items-center gap-1.5 text-[13px] font-medium text-bark transition-colors hover:text-terracotta cursor-pointer"
           >
             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -5706,65 +5736,103 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         <div className="rounded-xl border border-sand bg-white p-6">
           <h3 className="mb-6 font-serif text-lg font-bold text-espresso">Generate New Invoice</h3>
 
-          {/* Step 1: Select Client */}
+          {/* Step 1: Filter By */}
           <div className="mb-6">
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">
-              Step 1: Select Client
+            <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-bark">
+              Step 1: Filter Time Logs By
             </label>
-            <select
-              value={selectedClientId ?? ""}
-              onChange={(e) => {
-                setSelectedClientId(e.target.value ? Number(e.target.value) : null);
-                setLineItems([]);
-              }}
-              className="w-full max-w-xs rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer"
-            >
-              <option value="">Choose a client...</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+            <div className="flex gap-2 mb-4">
+              <button
+                onClick={() => { setGenerateBy("client"); setSelectedAccount(""); setLineItems([]); }}
+                className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${generateBy === "client" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}
+              >
+                By Client
+              </button>
+              <button
+                onClick={() => { setGenerateBy("account"); setSelectedClientId(null); setLineItems([]); }}
+                className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${generateBy === "account" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}
+              >
+                By Account
+              </button>
+            </div>
+
+            {generateBy === "client" ? (
+              <select
+                value={selectedClientId ?? ""}
+                onChange={(e) => { setSelectedClientId(e.target.value ? Number(e.target.value) : null); setLineItems([]); }}
+                className="w-full max-w-xs rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer"
+              >
+                <option value="">Choose a client...</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="flex flex-wrap gap-4">
+                <select
+                  value={selectedAccount}
+                  onChange={(e) => { setSelectedAccount(e.target.value); setLineItems([]); }}
+                  className="w-full max-w-xs rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer"
+                >
+                  <option value="">Choose an account...</option>
+                  {accountList.map((a) => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-bark">Bill To (optional)</label>
+                  <select
+                    value={selectedClientId ?? ""}
+                    onChange={(e) => setSelectedClientId(e.target.value ? Number(e.target.value) : null)}
+                    className="w-full max-w-xs rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer"
+                  >
+                    <option value="">Choose billing client...</option>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Step 2: Date Range */}
-          {selectedClientId && (
-            <div className="mb-6">
-              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">
-                Step 2: Select Date Range
-              </label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="date"
-                  value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                  className="rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                />
-                <span className="text-[12px] text-bark">to</span>
-                <input
-                  type="date"
-                  value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
-                  className="rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                />
-                <button
-                  onClick={fetchBillableLogs}
-                  disabled={!dateFrom || !dateTo}
-                  className="rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {loadingLogs ? "Loading..." : "Fetch Time Logs"}
-                </button>
-              </div>
+          <div className="mb-6">
+            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">
+              Step 2: Select Date Range
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+              />
+              <span className="text-[12px] text-bark">to</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+              />
+              <button
+                onClick={fetchBillableLogs}
+                disabled={!canFetch}
+                className="rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {loadingLogs ? "Loading..." : "Fetch Time Logs"}
+              </button>
             </div>
-          )}
+          </div>
 
-          {/* Step 3: Preview Line Items */}
+          {/* Step 3: Review Time Logs */}
           {lineItems.length > 0 && (
             <div className="mb-6">
-              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">
-                Step 3: Review Line Items
-              </label>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-bark">
+                  Step 3: Review Time Logs ({lineItems.length} entries · {totalHours.toFixed(2)} hrs)
+                </label>
+              </div>
 
               <div className="rounded-lg border border-sand overflow-hidden">
                 <div className="overflow-x-auto">
@@ -5772,66 +5840,24 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     <thead>
                       <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
                         <th className="px-3 py-2.5">VA</th>
-                        <th className="px-3 py-2.5">Description</th>
-                        <th className="px-3 py-2.5">Date</th>
-                        <th className="px-3 py-2.5 text-right">Hours</th>
-                        <th className="px-3 py-2.5 text-right">Rate</th>
-                        <th className="px-3 py-2.5 text-right">Amount</th>
+                        <th className="px-3 py-2.5">Task Description</th>
+                        <th className="px-3 py-2.5">Deliverables / Objectives</th>
+                        <th className="px-3 py-2.5 text-right">Minutes</th>
+                        <th className="px-3 py-2.5">Memo</th>
                         <th className="px-3 py-2.5 text-center">Remove</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-parchment">
                       {lineItems.map((li, idx) => (
                         <tr key={idx} className="hover:bg-parchment/20 transition-colors">
-                          <td className="px-3 py-2.5 font-medium text-espresso">{li.va_name}</td>
-                          <td className="px-3 py-2.5 text-bark max-w-[200px] truncate">{li.description}</td>
-                          <td className="px-3 py-2.5 text-bark">{li.service_date}</td>
-                          <td className="px-3 py-2.5 text-right">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={li.quantity}
-                              onChange={(e) => {
-                                const newItems = [...lineItems];
-                                const qty = parseFloat(e.target.value) || 0;
-                                newItems[idx] = {
-                                  ...newItems[idx],
-                                  quantity: qty,
-                                  amount: Math.round(qty * newItems[idx].unit_price * 100) / 100,
-                                };
-                                setLineItems(newItems);
-                              }}
-                              className="w-16 rounded border border-sand px-1.5 py-1 text-right text-[11px] outline-none focus:border-terracotta"
-                            />
-                          </td>
-                          <td className="px-3 py-2.5 text-right">
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={li.unit_price}
-                              onChange={(e) => {
-                                const newItems = [...lineItems];
-                                const price = parseFloat(e.target.value) || 0;
-                                newItems[idx] = {
-                                  ...newItems[idx],
-                                  unit_price: price,
-                                  amount: Math.round(newItems[idx].quantity * price * 100) / 100,
-                                };
-                                setLineItems(newItems);
-                              }}
-                              className="w-20 rounded border border-sand px-1.5 py-1 text-right text-[11px] outline-none focus:border-terracotta"
-                            />
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-medium text-espresso">
-                            {formatCurrency(li.amount)}
-                          </td>
+                          <td className="px-3 py-2.5 font-medium text-espresso text-[11px]">{li.va_name}</td>
+                          <td className="px-3 py-2.5 text-bark max-w-[180px] truncate">{li.description}</td>
+                          <td className="px-3 py-2.5 text-bark">{li.project || li.account_name || "-"}</td>
+                          <td className="px-3 py-2.5 text-right text-bark">{Math.round(li.quantity * 60)}</td>
+                          <td className="px-3 py-2.5 text-bark text-[11px] max-w-[180px] truncate">{li.client_memo || "-"}</td>
                           <td className="px-3 py-2.5 text-center">
                             <button
-                              onClick={() => {
-                                setLineItems(lineItems.filter((_, i) => i !== idx));
-                              }}
+                              onClick={() => setLineItems(lineItems.filter((_, i) => i !== idx))}
                               className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-red-50 hover:text-red-500 cursor-pointer"
                             >
                               &times;
@@ -5844,61 +5870,113 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </div>
               </div>
 
-              {/* Totals */}
-              <div className="mt-4 flex justify-end">
-                <div className="w-72 space-y-2 rounded-lg border border-sand bg-parchment/30 p-4">
-                  <div className="flex justify-between text-[12px]">
-                    <span className="text-bark">Subtotal</span>
-                    <span className="font-medium text-espresso">{formatCurrency(subtotal)}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-[12px]">
-                    <span className="text-bark">Tax Rate (%)</span>
+              {/* Invoice Amount */}
+              <div className="mt-5 grid grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  {/* Sender info */}
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Name</label>
                     <input
-                      type="number"
-                      step="0.1"
-                      min="0"
-                      max="100"
-                      value={taxRate}
-                      onChange={(e) => setTaxRate(parseFloat(e.target.value) || 0)}
-                      className="w-16 rounded border border-sand px-1.5 py-1 text-right text-[11px] outline-none focus:border-terracotta"
+                      type="text"
+                      value={fromName}
+                      onChange={(e) => setFromName(e.target.value)}
+                      placeholder="e.g. Toni Colina"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
                     />
                   </div>
-                  <div className="flex justify-between text-[12px]">
-                    <span className="text-bark">Tax</span>
-                    <span className="text-espresso">{formatCurrency(taxAmount)}</span>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Phone</label>
+                    <input
+                      type="text"
+                      value={fromPhone}
+                      onChange={(e) => setFromPhone(e.target.value)}
+                      placeholder="e.g. +1 (555) 000-0000"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                    />
                   </div>
-                  <div className="flex justify-between border-t border-sand pt-2 text-[13px]">
-                    <span className="font-bold text-espresso">Total</span>
-                    <span className="font-bold text-terracotta">{formatCurrency(total)}</span>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Link</label>
+                    <input
+                      type="url"
+                      value={paymentLink}
+                      onChange={(e) => setPaymentLink(e.target.value)}
+                      placeholder="https://..."
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setReminderEnabled(!reminderEnabled)}
+                      className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer ${reminderEnabled ? "bg-terracotta" : "bg-sand"}`}
+                    >
+                      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${reminderEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
+                    </button>
+                    <span className="text-[13px] text-bark">Daily reminder email (includes payment link)</span>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Notes</label>
+                    <textarea
+                      value={invoiceNotes}
+                      onChange={(e) => setInvoiceNotes(e.target.value)}
+                      placeholder="Payment instructions, Zelle info, etc."
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone resize-none"
+                      rows={3}
+                    />
                   </div>
                 </div>
-              </div>
 
-              {/* Notes */}
-              <div className="mt-4">
-                <label className="mb-1 block text-[11px] font-semibold text-bark">Notes</label>
-                <textarea
-                  value={invoiceNotes}
-                  onChange={(e) => setInvoiceNotes(e.target.value)}
-                  placeholder="Payment instructions, thank you note, etc."
-                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone resize-none"
-                  rows={3}
-                />
+                <div>
+                  <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-bark">Invoice Summary</label>
+                  <div className="rounded-lg border border-sand bg-parchment/30 p-5 space-y-3">
+                    <div className="flex justify-between text-[12px]">
+                      <span className="text-bark">Total Hours</span>
+                      <span className="font-medium text-espresso">{totalHours.toFixed(2)} hrs</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[12px]">
+                      <span className="text-bark">Invoice Amount ($)</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={invoiceTotal}
+                        onChange={(e) => setInvoiceTotal(e.target.value)}
+                        placeholder="0.00"
+                        className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] font-semibold text-espresso outline-none focus:border-terracotta bg-white"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[12px]">
+                      <span className="text-bark">Adjustment / Discount ($)</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={adjustmentAmount}
+                        onChange={(e) => setAdjustmentAmount(e.target.value)}
+                        placeholder="0.00"
+                        className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
+                      />
+                    </div>
+                    <div className="flex justify-between border-t border-sand pt-2 text-[14px]">
+                      <span className="font-bold text-espresso">Final Invoice Amount</span>
+                      <span className="font-bold text-terracotta">{formatCurrency(finalTotal)}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Actions */}
               <div className="mt-6 flex justify-end gap-3">
                 <button
                   onClick={() => handleSaveInvoice(false)}
-                  disabled={saving}
+                  disabled={saving || !invoiceTotal || parseFloat(invoiceTotal) <= 0}
                   className="rounded-lg border border-sand px-5 py-2.5 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta disabled:opacity-50 cursor-pointer"
                 >
                   {saving ? "Saving..." : "Save as Draft"}
                 </button>
                 <button
                   onClick={() => handleSaveInvoice(true)}
-                  disabled={saving || !selectedClient?.email}
-                  title={!selectedClient?.email ? "Client has no email address" : ""}
+                  disabled={saving || !invoiceTotal || parseFloat(invoiceTotal) <= 0 || !selectedClient?.email}
+                  title={!selectedClient?.email ? "Select a billing client with an email to send" : ""}
                   className="rounded-lg bg-terracotta px-5 py-2.5 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {saving ? "Sending..." : "Send Invoice"}
@@ -5908,10 +5986,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           )}
 
           {/* Empty state after fetching with no results */}
-          {selectedClientId && dateFrom && dateTo && lineItems.length === 0 && !loadingLogs && (
+          {canFetch && dateFrom && dateTo && lineItems.length === 0 && !loadingLogs && (
             <div className="rounded-lg border border-dashed border-sand bg-parchment/30 px-6 py-10 text-center">
               <p className="text-[13px] text-bark">
-                No uninvoiced billable time logs found for this client in the selected date range.
+                No uninvoiced billable time logs found for the selected filter and date range.
               </p>
             </div>
           )}
@@ -6188,23 +6266,104 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               {inv.to_address && <p className="mt-1 text-[12px] text-bark whitespace-pre-line">{inv.to_address}</p>}
             </div>
 
-            {/* Detailed Report — Line Items Table */}
+            {/* Invoice Summary Box */}
+            <div className="mb-6 rounded-lg border border-sand bg-parchment/30 p-5">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div className="text-center">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Total Hours</p>
+                  <p className="mt-1 text-[18px] font-bold text-espresso">
+                    {selectedLineItems.reduce((s, li) => s + Number(li.quantity), 0).toFixed(2)}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Invoice Amount</p>
+                  <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(Number(inv.subtotal), inv.currency)}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Adjustment</p>
+                  <p className="mt-1 text-[18px] font-bold text-espresso">
+                    {Number(inv.adjustment_amount || 0) > 0 ? `− ${formatCurrency(Number(inv.adjustment_amount))}` : "$0"}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Final Amount</p>
+                  <p className="mt-1 text-[18px] font-bold text-terracotta">{formatCurrency(Number(inv.total), inv.currency)}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Task Summary + Project Summary */}
+            {selectedLineItems.length > 0 && (() => {
+              // Group by task name
+              const taskMap: Record<string, number> = {};
+              selectedLineItems.forEach((li) => {
+                const key = li.description || "Unknown";
+                taskMap[key] = (taskMap[key] || 0) + Number(li.quantity);
+              });
+              const taskSummary = Object.entries(taskMap).sort((a, b) => b[1] - a[1]);
+
+              // Group by project
+              const projMap: Record<string, number> = {};
+              selectedLineItems.forEach((li) => {
+                const key = li.project || li.account_name || "Unassigned";
+                projMap[key] = (projMap[key] || 0) + Number(li.quantity);
+              });
+              const projSummary = Object.entries(projMap).sort((a, b) => b[1] - a[1]);
+
+              const fmtH = (h: number) => {
+                const hrs = Math.floor(h);
+                const mins = Math.round((h - hrs) * 60);
+                return mins > 0 ? `${hrs} hrs ${mins} mins` : `${hrs} hrs`;
+              };
+
+              return (
+                <div className="mb-6 grid grid-cols-2 gap-4">
+                  <div className="rounded-lg bg-espresso p-4">
+                    <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-amber">Top Task Summary</p>
+                    <div className="space-y-2">
+                      {taskSummary.map(([task, hrs]) => (
+                        <div key={task} className="flex items-center justify-between">
+                          <span className="text-[12px] text-parchment/80 truncate max-w-[65%]">{task}</span>
+                          <span className="text-[12px] font-semibold text-white">{fmtH(hrs)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-espresso p-4">
+                    <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-amber">Top Deliverables / Objectives</p>
+                    <div className="space-y-2">
+                      {projSummary.map(([proj, hrs]) => (
+                        <div key={proj} className="flex items-center justify-between">
+                          <span className="text-[12px] text-parchment/80 truncate max-w-[65%]">{proj}</span>
+                          <span className="text-[12px] font-semibold text-white">{fmtH(hrs)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Time Allocation Table */}
             <div className="mb-6 rounded-lg border border-sand overflow-hidden">
+              <div className="px-4 py-2.5 bg-parchment/30 border-b border-sand">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-bark">Detailed Time Allocation</p>
+              </div>
               <table className="w-full text-left text-[12px]">
                 <thead>
-                  <tr className="border-b border-sand bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
-                    <th className="px-4 py-3">Task Name</th>
-                    <th className="px-3 py-3">Project</th>
-                    <th className="px-3 py-3 text-right">Minutes</th>
-                    <th className="px-4 py-3">Client Memo</th>
+                  <tr className="border-b border-sand bg-parchment/20 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                    <th className="px-4 py-3 text-right">Time in Minutes</th>
+                    <th className="px-3 py-3">Task Description</th>
+                    <th className="px-3 py-3">Deliverables / Objectives</th>
+                    <th className="px-4 py-3">Memo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-parchment">
                   {selectedLineItems.map((li) => (
                     <tr key={li.id} className="hover:bg-parchment/20 transition-colors">
-                      <td className="px-4 py-3 text-espresso">{li.description}</td>
+                      <td className="px-4 py-3 text-right font-medium text-espresso">{Math.round(Number(li.quantity) * 60)}</td>
+                      <td className="px-3 py-3 text-bark">{li.description}</td>
                       <td className="px-3 py-3 text-bark">{li.project || li.account_name || "-"}</td>
-                      <td className="px-3 py-3 text-right text-bark">{Math.round(Number(li.quantity) * 60)}</td>
                       <td className="px-4 py-3 text-bark text-[11px] max-w-[250px]">{li.client_memo || "-"}</td>
                     </tr>
                   ))}
@@ -6215,20 +6374,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             {/* Totals */}
             <div className="flex justify-end">
               <div className="w-72 space-y-2">
-                <div className="flex justify-between text-[12px]">
-                  <span className="text-bark">Subtotal</span>
-                  <span className="font-medium text-espresso">{formatCurrency(Number(inv.subtotal))}</span>
-                </div>
-                {Number(inv.tax_rate) > 0 && (
-                  <div className="flex justify-between text-[12px]">
-                    <span className="text-bark">Tax ({Number(inv.tax_rate)}%)</span>
-                    <span className="text-espresso">{formatCurrency(Number(inv.tax_amount))}</span>
-                  </div>
-                )}
-                <div className="flex justify-between border-t border-sand pt-2 text-[14px]">
-                  <span className="font-bold text-espresso">Total</span>
-                  <span className="font-bold text-terracotta">{formatCurrency(Number(inv.total), inv.currency)}</span>
-                </div>
                 {Number(inv.amount_paid || 0) > 0 && (
                   <div className="flex justify-between text-[12px]">
                     <span className="text-sage font-semibold">Amount Paid</span>
@@ -6252,11 +6397,26 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               </div>
             </div>
 
-            {/* Notes */}
-            {inv.notes && (
-              <div className="mt-8 rounded-lg bg-parchment/30 p-4">
-                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-bark">Notes</p>
-                <p className="text-[12px] text-bark whitespace-pre-line">{inv.notes}</p>
+            {/* Notes + Payment Link */}
+            {(inv.notes || inv.payment_link) && (
+              <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {inv.notes && (
+                  <div className="rounded-lg bg-parchment/30 p-4">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-bark">Notes</p>
+                    <p className="text-[12px] text-bark whitespace-pre-line">{inv.notes}</p>
+                  </div>
+                )}
+                {inv.payment_link && (
+                  <div className="rounded-lg bg-parchment/30 p-4">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-bark">Payment Link</p>
+                    <a href={inv.payment_link} target="_blank" rel="noopener noreferrer" className="text-[12px] text-terracotta hover:underline break-all">
+                      {inv.payment_link}
+                    </a>
+                    {inv.reminder_enabled && (
+                      <p className="mt-2 text-[11px] text-bark">🔔 Daily reminder emails active</p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
