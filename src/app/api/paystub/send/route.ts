@@ -62,21 +62,20 @@ export async function POST(request: Request) {
     return Response.json({ error: "VA has no email on file" }, { status: 400 });
   }
 
-  // Build time range — interpret dates as UTC day boundaries
-  const startIso = `${start_date}T00:00:00.000Z`;
-  const endIso = `${end_date}T23:59:59.999Z`;
-
+  // Filter by session_date (local date) — same as Financial tab.
+  // Using start_time UTC would miss early-morning PH entries whose UTC timestamp
+  // falls on the previous calendar day.
   const { data: logs } = await adminClient
     .from("time_logs")
-    .select("start_time, end_time, duration_ms, task_name, category")
+    .select("start_time, end_time, duration_ms, task_name, category, session_date")
     .eq("user_id", user_id)
-    .gte("start_time", startIso)
-    .lte("start_time", endIso)
+    .gte("session_date", start_date)
+    .lte("session_date", end_date)
     .order("start_time", { ascending: true });
 
   const entries = logs ?? [];
 
-  // Group by date (UTC date from start_time)
+  // Group by session_date (local date) — matches Financial tab logic
   const byDate: Record<string, number> = {};
   let totalMs = 0;
 
@@ -87,7 +86,8 @@ export async function POST(request: Request) {
     if (!log.duration_ms) continue;
     if (EXCLUDED_TASKS.includes(log.task_name)) continue;
     const ms = Number(log.duration_ms);
-    const dateKey = (log.start_time as string).split("T")[0]; // "2026-05-10"
+    // Use session_date (local date VA was working), fall back to UTC date
+    const dateKey = (log.session_date as string) || (log.start_time as string).split("T")[0];
     byDate[dateKey] = (byDate[dateKey] || 0) + ms;
     totalMs += ms;
   }
