@@ -150,6 +150,12 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Payment fields
+  const todayIso = new Date().toLocaleDateString("en-CA");
+  const [paymentMethod, setPaymentMethod] = useState<string>("gcash");
+  const [confirmationNumber, setConfirmationNumber] = useState<string>("");
+  const [paymentDate, setPaymentDate] = useState<string>(todayIso);
+
   // Only show active profiles with a pay rate
   const eligibleProfiles = profiles.filter((p) => p.is_active);
 
@@ -217,6 +223,9 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
           end_date: range.end,
           pay_period_label: range.label,
           preview: false,
+          payment_method: paymentMethod,
+          confirmation_number: confirmationNumber || null,
+          payment_date: paymentDate,
         }),
       });
       const data = await res.json();
@@ -227,7 +236,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate]);
 
   const PRESET_OPTIONS: { value: PeriodPreset; label: string }[] = [
     { value: "this_week", label: "This Week (Mon–Sun)" },
@@ -420,6 +429,51 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                   <span className="text-terracotta text-base">{formatCurrency(preview.grossPay)}</span>
                 </div>
                 <div className="text-xs text-bark/40 mt-1">To: {preview.vaEmail}</div>
+              </div>
+
+              {/* Payment Details */}
+              <div className="px-5 py-4 border-t border-linen space-y-3">
+                <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide">Payment Details</div>
+                <div>
+                  <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                    Payment Method
+                  </label>
+                  <select
+                    value={paymentMethod}
+                    onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  >
+                    <option value="gcash">Gcash</option>
+                    <option value="bank_deposit">Bank Deposit</option>
+                    <option value="paypal">Paypal</option>
+                    <option value="remittance">Remittance</option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                      Confirmation #
+                    </label>
+                    <input
+                      type="text"
+                      value={confirmationNumber}
+                      onChange={(e) => setConfirmationNumber(e.target.value)}
+                      placeholder="e.g. TXN123456"
+                      className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                      Payment Date
+                    </label>
+                    <input
+                      type="date"
+                      value={paymentDate}
+                      onChange={(e) => setPaymentDate(e.target.value)}
+                      className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Send button */}

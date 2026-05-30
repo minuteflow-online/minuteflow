@@ -31,7 +31,16 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { user_id, start_date, end_date, pay_period_label, preview = false } = body;
+  const {
+    user_id,
+    start_date,
+    end_date,
+    pay_period_label,
+    preview = false,
+    payment_method,
+    confirmation_number,
+    payment_date,
+  } = body;
 
   if (!user_id || !start_date || !end_date) {
     return Response.json(
@@ -127,6 +136,9 @@ export async function POST(request: Request) {
     totalHours,
     payRate,
     grossPay,
+    paymentMethod: payment_method ?? null,
+    confirmationNumber: confirmation_number ?? null,
+    paymentDate: payment_date ?? null,
   });
 
   const resendRes = await fetch("https://api.resend.com/emails", {
@@ -149,6 +161,21 @@ export async function POST(request: Request) {
       { error: `Failed to send email: ${resendError}` },
       { status: 500 }
     );
+  }
+
+  // Save payment record to va_payments
+  if (payment_method) {
+    await adminClient.from("va_payments").insert({
+      va_id: user_id,
+      amount: grossPay,
+      payment_date: payment_date || new Date().toISOString().split("T")[0],
+      payment_method,
+      confirmation_number: confirmation_number ?? null,
+      period_start: start_date,
+      period_end: end_date,
+      notes: `Paystub for ${periodLabel}`,
+      recorded_by: user.id,
+    });
   }
 
   return Response.json({
@@ -202,10 +229,20 @@ interface PaystubData {
   totalHours: number;
   payRate: number;
   grossPay: number;
+  paymentMethod: string | null;
+  confirmationNumber: string | null;
+  paymentDate: string | null;
 }
 
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  gcash: "Gcash",
+  bank_deposit: "Bank Deposit",
+  paypal: "Paypal",
+  remittance: "Remittance",
+};
+
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, paymentMethod, confirmationNumber, paymentDate } = data;
 
   const rowsHtml = Object.entries(byDate)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -289,6 +326,26 @@ function buildPaystubEmail(data: PaystubData): string {
           </tr>
         </table>
       </div>
+
+      ${paymentMethod ? `
+      <!-- Payment Details -->
+      <div style="padding: 20px 32px; border-top: 1px solid #e8e0d4;">
+        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 12px;">Payment Details</div>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 5px 0; font-size: 12px; color: #6b5e52; width: 140px;">Payment Method</td>
+            <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500;">${PAYMENT_METHOD_LABELS[paymentMethod] ?? paymentMethod}</td>
+          </tr>
+          ${paymentDate ? `<tr>
+            <td style="padding: 5px 0; font-size: 12px; color: #6b5e52;">Payment Date</td>
+            <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500;">${formatDate(paymentDate)}</td>
+          </tr>` : ""}
+          ${confirmationNumber ? `<tr>
+            <td style="padding: 5px 0; font-size: 12px; color: #6b5e52;">Confirmation #</td>
+            <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500;">${confirmationNumber}</td>
+          </tr>` : ""}
+        </table>
+      </div>` : ""}
 
       <!-- Footer -->
       <div style="padding: 16px 32px; background: #faf6f0; border-top: 1px solid #e8e0d4; text-align: center;">
