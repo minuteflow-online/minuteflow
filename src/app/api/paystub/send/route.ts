@@ -41,6 +41,7 @@ export async function POST(request: Request) {
     confirmation_number,
     payment_date,
     personal_message,
+    custom_amount,
   } = body;
 
   if (!user_id || !start_date || !end_date) {
@@ -109,6 +110,25 @@ export async function POST(request: Request) {
     pay_period_label ||
     `${formatDate(start_date)} – ${formatDate(end_date)}`;
 
+  // Fetch previous payments for this VA in the period (by payment_date)
+  const { data: prevPaymentsRaw } = await adminClient
+    .from("va_payments")
+    .select("id, amount, payment_date, payment_method, notes, confirmation_number")
+    .eq("va_id", user_id)
+    .gte("payment_date", start_date)
+    .lte("payment_date", end_date)
+    .order("payment_date", { ascending: true });
+
+  const previousPayments = (prevPaymentsRaw ?? []).map((p) => ({
+    id: p.id as string,
+    amount: Number(p.amount),
+    payment_date: p.payment_date as string,
+    payment_method: p.payment_method as string,
+    notes: p.notes as string | null,
+    confirmation_number: p.confirmation_number as string | null,
+  }));
+  const previousTotal = previousPayments.reduce((sum, p) => sum + p.amount, 0);
+
   // Preview mode — return numbers only (include payment_accounts so UI can show account details)
   if (preview) {
     return Response.json({
@@ -121,6 +141,8 @@ export async function POST(request: Request) {
       grossPay,
       byDate,
       paymentAccounts: (vaProfile.payment_accounts ?? {}) as Record<string, Record<string, string>>,
+      previousPayments,
+      previousTotal,
     });
   }
 
@@ -129,12 +151,15 @@ export async function POST(request: Request) {
   // even if the email fails for any reason.
 
   // Step 1: Record payment to va_payments
+  // Use custom_amount if provided (Toni overrode the calculated amount), otherwise use grossPay
+  const paymentAmount = custom_amount != null ? Number(custom_amount) : grossPay;
+
   let paymentRecorded = false;
   let paymentError: string | null = null;
   if (payment_method) {
     const { error: insertError } = await adminClient.from("va_payments").insert({
       va_id: user_id,
-      amount: grossPay,
+      amount: paymentAmount,
       payment_date: payment_date || new Date().toISOString().split("T")[0],
       payment_method,
       confirmation_number: confirmation_number ?? null,
@@ -172,6 +197,9 @@ export async function POST(request: Request) {
       totalHours,
       payRate,
       grossPay,
+      amountPaid: paymentAmount,
+      previousPayments,
+      previousTotal,
       paymentMethod: payment_method ?? null,
       confirmationNumber: confirmation_number ?? null,
       paymentDate: payment_date ?? null,
@@ -257,6 +285,15 @@ function formatDateLabel(iso: string): string {
 
 /* ── Email HTML Builder ───────────────────────────────────── */
 
+interface PreviousPayment {
+  id: string;
+  amount: number;
+  payment_date: string;
+  payment_method: string;
+  notes: string | null;
+  confirmation_number: string | null;
+}
+
 interface PaystubData {
   vaName: string;
   vaEmail: string;
@@ -265,6 +302,9 @@ interface PaystubData {
   totalHours: number;
   payRate: number;
   grossPay: number;
+  amountPaid: number;
+  previousPayments: PreviousPayment[];
+  previousTotal: number;
   paymentMethod: string | null;
   confirmationNumber: string | null;
   paymentDate: string | null;
@@ -280,7 +320,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, amountPaid, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails } = data;
 
   const rowsHtml = Object.entries(byDate)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -359,11 +399,31 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}</td>
           </tr>
           <tr>
-            <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Gross Pay</td>
-            <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #c0704e; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(grossPay)}</td>
+            <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Gross Pay</td>
+            <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(grossPay)}</td>
+          </tr>
+          ${previousTotal > 0 ? `<tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #9e9080;">Previous Payments</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #9e9080; text-align: right;">− ${formatCurrency(previousTotal)}</td>
+          </tr>` : ""}
+          <tr>
+            <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Amount Paid</td>
+            <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #c0704e; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(amountPaid)}</td>
           </tr>
         </table>
       </div>
+
+      ${previousPayments.length > 0 ? `
+      <!-- Previous Payments -->
+      <div style="padding: 20px 32px; border-top: 1px solid #e8e0d4;">
+        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 12px;">Previous Payments This Period</div>
+        <table style="width: 100%; border-collapse: collapse;">
+          ${previousPayments.map((p) => `<tr>
+            <td style="padding: 5px 0; font-size: 12px; color: #6b5e52;">${formatDate(p.payment_date)} · ${PAYMENT_METHOD_LABELS[p.payment_method] ?? p.payment_method}</td>
+            <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500; text-align: right;">${formatCurrency(p.amount)}</td>
+          </tr>`).join("")}
+        </table>
+      </div>` : ""}
 
       ${personalMessage ? `
       <!-- Personal Message -->

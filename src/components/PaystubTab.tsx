@@ -10,6 +10,15 @@ interface Props {
 
 type PeriodPreset = "this_week" | "last_week" | "this_first_half" | "this_second_half" | "last_first_half" | "last_second_half" | "this_month" | "last_month" | "custom";
 
+interface PreviousPayment {
+  id: string;
+  amount: number;
+  payment_date: string;
+  payment_method: string;
+  notes: string | null;
+  confirmation_number: string | null;
+}
+
 interface PreviewData {
   vaName: string;
   vaEmail: string;
@@ -19,6 +28,8 @@ interface PreviewData {
   grossPay: number;
   byDate: Record<string, number>;
   paymentAccounts?: Record<string, Record<string, string>>;
+  previousPayments: PreviousPayment[];
+  previousTotal: number;
 }
 
 /* ── Date helpers ─────────────────────────────────────────── */
@@ -153,6 +164,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
 
   // Payment fields
   const todayIso = new Date().toLocaleDateString("en-CA");
+  const [customAmount, setCustomAmount] = useState<string>("");
   const [paymentMethod, setPaymentMethod] = useState<string>("gcash");
   const [personalMessage, setPersonalMessage] = useState<string>("");
   const [confirmationNumber, setConfirmationNumber] = useState<string>("");
@@ -200,6 +212,9 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to calculate.");
       setPreview(data);
+      // Default amount = gross pay minus any previous payments (net balance)
+      const net = data.grossPay - (data.previousTotal || 0);
+      setCustomAmount(net.toFixed(2));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
@@ -230,6 +245,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
           confirmation_number: confirmationNumber || null,
           payment_date: paymentDate,
           personal_message: personalMessage.trim() || null,
+          custom_amount: customAmount !== "" ? parseFloat(customAmount) : undefined,
         }),
       });
       const data = await res.json();
@@ -248,7 +264,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount]);
 
   const PRESET_OPTIONS: { value: PeriodPreset; label: string }[] = [
     { value: "this_week", label: "This Week (Mon–Sun)" },
@@ -372,7 +388,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                 <div className="text-sm font-semibold text-bark">Paystub sent!</div>
                 {preview && (
                   <div className="text-xs text-bark/60">
-                    Sent to {preview.vaEmail} · {formatCurrency(preview.grossPay)} for {preview.totalHours.toFixed(2)} hrs
+                    Sent to {preview.vaEmail} · {formatCurrency(customAmount !== "" ? parseFloat(customAmount) : preview.grossPay)} for {preview.totalHours.toFixed(2)} hrs
                   </div>
                 )}
                 <button
@@ -445,11 +461,63 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                   <span>Rate</span>
                   <span>{formatCurrency(preview.payRate)}/hr</span>
                 </div>
-                <div className="flex justify-between items-center font-bold text-bark border-t border-linen pt-2">
+                <div className="flex justify-between items-center font-semibold text-bark border-t border-linen pt-2">
                   <span className="text-sm">Gross Pay</span>
-                  <span className="text-terracotta text-base">{formatCurrency(preview.grossPay)}</span>
+                  <span className="text-sm">{formatCurrency(preview.grossPay)}</span>
                 </div>
+                {preview.previousTotal > 0 && (
+                  <div className="flex justify-between items-center text-xs text-bark/50 mt-1">
+                    <span>Previous Payments</span>
+                    <span>− {formatCurrency(preview.previousTotal)}</span>
+                  </div>
+                )}
                 <div className="text-xs text-bark/40 mt-1">To: {preview.vaEmail}</div>
+              </div>
+
+              {/* Previous Payments */}
+              {preview.previousPayments.length > 0 && (
+                <div className="px-5 py-3 border-t border-linen bg-amber-50/40">
+                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Previous Payments This Period</div>
+                  <div className="space-y-1">
+                    {preview.previousPayments.map((p) => (
+                      <div key={p.id} className="flex justify-between items-center text-xs text-bark/70">
+                        <span>
+                          {new Date(p.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}
+                          {" · "}
+                          <span className="capitalize">{p.payment_method.replace(/_/g, " ")}</span>
+                          {p.notes ? <span className="text-bark/40"> · {p.notes}</span> : null}
+                        </span>
+                        <span className="font-semibold text-bark/80">{formatCurrency(p.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Editable Payment Amount */}
+              <div className="px-5 py-4 border-t border-linen">
+                <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                  Amount to Pay
+                  {preview.previousTotal > 0 && (
+                    <span className="normal-case font-normal text-bark/40 ml-1">(adjusted for previous payments)</span>
+                  )}
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-bark/50">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={customAmount}
+                    onChange={(e) => setCustomAmount(e.target.value)}
+                    className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-terracotta bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  />
+                </div>
+                {customAmount !== "" && parseFloat(customAmount) !== preview.grossPay - preview.previousTotal && (
+                  <p className="text-xs text-bark/40 mt-1">
+                    Default: {formatCurrency(preview.grossPay - preview.previousTotal)} · You entered: {formatCurrency(parseFloat(customAmount) || 0)}
+                  </p>
+                )}
               </div>
 
               {/* Payment Details */}
