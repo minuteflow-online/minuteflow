@@ -80,8 +80,12 @@ export async function POST(request: Request) {
   const byDate: Record<string, number> = {};
   let totalMs = 0;
 
+  // Exclude Clock In / Clocked Out — these are session markers, not payable time
+  const EXCLUDED_TASKS = ["Clock In", "Clocked Out"];
+
   for (const log of entries) {
     if (!log.duration_ms) continue;
+    if (EXCLUDED_TASKS.includes(log.task_name)) continue;
     const ms = Number(log.duration_ms);
     const dateKey = (log.start_time as string).split("T")[0]; // "2026-05-10"
     byDate[dateKey] = (byDate[dateKey] || 0) + ms;
