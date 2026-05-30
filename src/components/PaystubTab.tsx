@@ -18,6 +18,7 @@ interface PreviewData {
   payRate: number;
   grossPay: number;
   byDate: Record<string, number>;
+  paymentAccounts?: Record<string, Record<string, string>>;
 }
 
 /* ── Date helpers ─────────────────────────────────────────── */
@@ -148,10 +149,12 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paymentWarning, setPaymentWarning] = useState<string | null>(null);
 
   // Payment fields
   const todayIso = new Date().toLocaleDateString("en-CA");
   const [paymentMethod, setPaymentMethod] = useState<string>("gcash");
+  const [personalMessage, setPersonalMessage] = useState<string>("");
   const [confirmationNumber, setConfirmationNumber] = useState<string>("");
   const [paymentDate, setPaymentDate] = useState<string>(todayIso);
 
@@ -207,6 +210,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const handleSend = useCallback(async () => {
     if (!preview) return;
     setError(null);
+    setPaymentWarning(null);
     setSending(true);
 
     const range = getRange();
@@ -225,17 +229,26 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
           payment_method: paymentMethod,
           confirmation_number: confirmationNumber || null,
           payment_date: paymentDate,
+          personal_message: personalMessage.trim() || null,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to send.");
       setSent(true);
+      // Show warnings for partial failures
+      if (data.paymentError && data.emailError) {
+        setPaymentWarning(`Both payment recording and email failed. Please log this payment manually in the Financial page.`);
+      } else if (data.paymentError) {
+        setPaymentWarning(`Paystub emailed, but payment record failed to save: ${data.paymentError}. Please log this payment manually.`);
+      } else if (data.emailError) {
+        setPaymentWarning(`Payment recorded ✓, but paystub email failed to send: ${data.emailError}. You may need to notify ${preview?.vaName} directly.`);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage]);
 
   const PRESET_OPTIONS: { value: PeriodPreset; label: string }[] = [
     { value: "this_week", label: "This Week (Mon–Sun)" },
@@ -353,20 +366,27 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
           )}
 
           {sent && (
-            <div className="rounded-xl border border-sage/40 bg-sage-soft p-6 text-center space-y-2">
-              <div className="text-3xl">✅</div>
-              <div className="text-sm font-semibold text-bark">Paystub sent!</div>
-              {preview && (
-                <div className="text-xs text-bark/60">
-                  Sent to {preview.vaEmail} · {formatCurrency(preview.grossPay)} for {preview.totalHours.toFixed(2)} hrs
+            <div className="space-y-3">
+              <div className="rounded-xl border border-sage/40 bg-sage-soft p-6 text-center space-y-2">
+                <div className="text-3xl">✅</div>
+                <div className="text-sm font-semibold text-bark">Paystub sent!</div>
+                {preview && (
+                  <div className="text-xs text-bark/60">
+                    Sent to {preview.vaEmail} · {formatCurrency(preview.grossPay)} for {preview.totalHours.toFixed(2)} hrs
+                  </div>
+                )}
+                <button
+                  onClick={() => { setPreview(null); setSent(false); setSelectedUserId(""); setPaymentWarning(null); }}
+                  className="mt-3 text-xs text-terracotta underline underline-offset-2"
+                >
+                  Send another
+                </button>
+              </div>
+              {paymentWarning && (
+                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  ⚠️ {paymentWarning}
                 </div>
               )}
-              <button
-                onClick={() => { setPreview(null); setSent(false); setSelectedUserId(""); }}
-                className="mt-3 text-xs text-terracotta underline underline-offset-2"
-              >
-                Send another
-              </button>
             </div>
           )}
 
@@ -450,6 +470,29 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                     <option value="remittance">Remittance</option>
                   </select>
                 </div>
+                {/* Show stored account details for the selected method */}
+                {(() => {
+                  const accts = preview.paymentAccounts ?? {};
+                  const details = accts[paymentMethod];
+                  if (!details || !Object.values(details).some(Boolean)) {
+                    return (
+                      <p className="text-[11px] text-bark/40 italic">
+                        No account details saved for this method. Go to Team → expand VA → Payment Accounts → Edit.
+                      </p>
+                    );
+                  }
+                  return (
+                    <div className="rounded-lg bg-parchment border border-linen px-3 py-2 text-xs text-bark/70 space-y-0.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-bark/40 mb-1">Sending to</div>
+                      {Object.entries(details).filter(([, v]) => v).map(([k, v]) => (
+                        <div key={k} className="flex gap-2">
+                          <span className="capitalize text-bark/50">{k.replace(/_/g, " ")}:</span>
+                          <span className="font-medium text-bark">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
@@ -475,6 +518,20 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Personal Message */}
+              <div className="px-5 py-4 border-t border-linen">
+                <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                  Personal Message <span className="normal-case font-normal text-bark/40">(optional)</span>
+                </label>
+                <textarea
+                  value={personalMessage}
+                  onChange={(e) => setPersonalMessage(e.target.value)}
+                  placeholder="e.g. Great work this pay period! Thank you for your hard work."
+                  rows={3}
+                  className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30 resize-none"
+                />
               </div>
 
               {/* Send button */}

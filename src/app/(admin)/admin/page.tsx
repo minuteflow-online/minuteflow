@@ -1701,6 +1701,31 @@ function TeamManagementTab({
     setDeletingUser(false);
   };
 
+  // Payment accounts modal state
+  const [paymentAccountsTarget, setPaymentAccountsTarget] = useState<Profile | null>(null);
+  const [paymentAccountsForm, setPaymentAccountsForm] = useState<Record<string, Record<string, string>>>({});
+  const [savingPaymentAccounts, setSavingPaymentAccounts] = useState(false);
+
+  const openPaymentAccountsModal = (profile: Profile) => {
+    setPaymentAccountsTarget(profile);
+    setPaymentAccountsForm((profile.payment_accounts as Record<string, Record<string, string>>) ?? {});
+  };
+
+  const savePaymentAccounts = async () => {
+    if (!paymentAccountsTarget) return;
+    setSavingPaymentAccounts(true);
+    try {
+      await fetch("/api/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: paymentAccountsTarget.id, payment_accounts: paymentAccountsForm }),
+      });
+      fetchData();
+      setPaymentAccountsTarget(null);
+    } catch { /* silently fail */ }
+    setSavingPaymentAccounts(false);
+  };
+
   // Team assignment modal state
   const [teamAssignTarget, setTeamAssignTarget] = useState<Profile | null>(null);
   const [teamAssignments, setTeamAssignments] = useState<string[]>([]);
@@ -2453,6 +2478,31 @@ function TeamManagementTab({
                           <p className="mt-0.5 text-espresso font-medium">{p.can_see_available_tasks ? "Enabled" : "Disabled"}</p>
                         </div>
                       </div>
+                      {/* Payment Accounts */}
+                      <div className="mt-4 pt-4 border-t border-sand/50">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Payment Accounts</span>
+                          <button
+                            onClick={() => openPaymentAccountsModal(p)}
+                            className="text-[11px] text-terracotta hover:underline font-medium"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                        {p.payment_accounts && Object.keys(p.payment_accounts).length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {Object.entries(p.payment_accounts as Record<string, Record<string, string>>).map(([method, details]) => (
+                              <div key={method} className="text-[11px] bg-parchment border border-sand rounded-lg px-2 py-1">
+                                <span className="font-semibold capitalize">{method.replace(/_/g, " ")}</span>
+                                {" · "}
+                                {Object.values(details).filter(Boolean).join(" · ")}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-bark/40 italic">No payment accounts set. Click Edit to add.</p>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -2586,6 +2636,161 @@ function TeamManagementTab({
                 className="rounded-lg bg-red-500 px-4 py-2 text-[12px] font-semibold text-white transition-all hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
                 {deletingUser ? "Deleting..." : "Delete Permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Payment Accounts Modal ─────────────────────────────── */}
+      {paymentAccountsTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={() => setPaymentAccountsTarget(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl bg-white shadow-xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-linen bg-parchment flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-espresso">Payment Accounts</h3>
+                <p className="text-[11px] text-bark mt-0.5">{paymentAccountsTarget.full_name}</p>
+              </div>
+              <button
+                onClick={() => setPaymentAccountsTarget(null)}
+                className="text-bark/40 hover:text-bark text-lg leading-none"
+              >✕</button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
+              <p className="text-[12px] text-bark/60">
+                Enter the payment account details for each method. These will automatically appear on the VA&apos;s paystub when that method is used.
+              </p>
+
+              {/* GCash */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-bark/50">GCash</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-bark/60 mb-1">Phone Number</label>
+                    <input
+                      type="text"
+                      placeholder="09XXXXXXXXX"
+                      value={paymentAccountsForm.gcash?.number ?? ""}
+                      onChange={(e) => setPaymentAccountsForm((f) => ({ ...f, gcash: { ...f.gcash, number: e.target.value } }))}
+                      className="w-full border border-linen rounded-lg px-3 py-1.5 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-bark/60 mb-1">Account Name</label>
+                    <input
+                      type="text"
+                      placeholder="Full name"
+                      value={paymentAccountsForm.gcash?.name ?? ""}
+                      onChange={(e) => setPaymentAccountsForm((f) => ({ ...f, gcash: { ...f.gcash, name: e.target.value } }))}
+                      className="w-full border border-linen rounded-lg px-3 py-1.5 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Bank Deposit */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-bark/50">Bank Deposit / Bank Transfer</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-bark/60 mb-1">Bank Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. BDO, BPI"
+                      value={paymentAccountsForm.bank_deposit?.bank_name ?? ""}
+                      onChange={(e) => setPaymentAccountsForm((f) => ({
+                        ...f,
+                        bank_deposit: { ...f.bank_deposit, bank_name: e.target.value },
+                        bank_transfer: { ...f.bank_transfer, bank_name: e.target.value },
+                      }))}
+                      className="w-full border border-linen rounded-lg px-3 py-1.5 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-bark/60 mb-1">Account Number</label>
+                    <input
+                      type="text"
+                      placeholder="XXXXXXXXXXXX"
+                      value={paymentAccountsForm.bank_deposit?.account_number ?? ""}
+                      onChange={(e) => setPaymentAccountsForm((f) => ({
+                        ...f,
+                        bank_deposit: { ...f.bank_deposit, account_number: e.target.value },
+                        bank_transfer: { ...f.bank_transfer, account_number: e.target.value },
+                      }))}
+                      className="w-full border border-linen rounded-lg px-3 py-1.5 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-bark/60 mb-1">Account Name</label>
+                  <input
+                    type="text"
+                    placeholder="Full name on bank account"
+                    value={paymentAccountsForm.bank_deposit?.account_name ?? ""}
+                    onChange={(e) => setPaymentAccountsForm((f) => ({
+                      ...f,
+                      bank_deposit: { ...f.bank_deposit, account_name: e.target.value },
+                      bank_transfer: { ...f.bank_transfer, account_name: e.target.value },
+                    }))}
+                    className="w-full border border-linen rounded-lg px-3 py-1.5 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  />
+                </div>
+              </div>
+
+              {/* PayPal */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-bark/50">PayPal</div>
+                <div>
+                  <label className="block text-[11px] text-bark/60 mb-1">Email</label>
+                  <input
+                    type="email"
+                    placeholder="paypal@email.com"
+                    value={paymentAccountsForm.paypal?.email ?? ""}
+                    onChange={(e) => setPaymentAccountsForm((f) => ({ ...f, paypal: { ...f.paypal, email: e.target.value } }))}
+                    className="w-full border border-linen rounded-lg px-3 py-1.5 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  />
+                </div>
+              </div>
+
+              {/* Remittance */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-bark/50">Remittance</div>
+                <div>
+                  <label className="block text-[11px] text-bark/60 mb-1">Details</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Western Union · Full Name"
+                    value={paymentAccountsForm.remittance?.details ?? ""}
+                    onChange={(e) => setPaymentAccountsForm((f) => ({ ...f, remittance: { ...f.remittance, details: e.target.value } }))}
+                    className="w-full border border-linen rounded-lg px-3 py-1.5 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-linen flex justify-end gap-2">
+              <button
+                onClick={() => setPaymentAccountsTarget(null)}
+                className="rounded-lg border border-sand px-4 py-2 text-[12px] font-medium text-bark hover:border-terracotta hover:text-terracotta cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={savePaymentAccounts}
+                disabled={savingPaymentAccounts}
+                className="rounded-lg bg-terracotta px-4 py-2 text-[12px] font-semibold text-white hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {savingPaymentAccounts ? "Saving..." : "Save Payment Accounts"}
               </button>
             </div>
           </div>

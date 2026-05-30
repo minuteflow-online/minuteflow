@@ -10,6 +10,15 @@ export const VA_POSITION_OPTIONS = [
 
 export type VaPosition = typeof VA_POSITION_OPTIONS[number];
 
+export interface PaymentAccountDetails {
+  gcash?: { number?: string; name?: string };
+  bank_deposit?: { bank?: string; account?: string; name?: string };
+  paypal?: { email?: string };
+  remittance?: { details?: string };
+  bank_transfer?: { bank?: string; account?: string; name?: string };
+  [key: string]: Record<string, string | undefined> | undefined;
+}
+
 export interface Profile {
   id: string;
   username: string;
@@ -21,6 +30,7 @@ export interface Profile {
   pay_rate_type: 'hourly' | 'daily' | 'monthly';
   is_active: boolean;
   can_see_available_tasks: boolean;
+  payment_accounts: PaymentAccountDetails | null;
   created_at: string;
 }
 

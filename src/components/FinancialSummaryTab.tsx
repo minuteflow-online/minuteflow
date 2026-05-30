@@ -523,10 +523,12 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
 
     const activeVaIds = new Set(vaProfiles.map((p) => p.id));
 
-    // Collect all VA IDs that have either time logs OR fixed assignments
+    // Collect all VA IDs that have time logs, fixed assignments, OR payments in the period
+    // (so a VA who was paid but logged no time still appears with correct balance)
     const allVaIds = new Set([
       ...Object.keys(userTotals),
       ...Object.keys(assignmentsByVa),
+      ...Object.keys(vaPaymentsByUser),
     ]);
 
     const rows = Array.from(allVaIds)

@@ -40,6 +40,7 @@ export async function POST(request: Request) {
     payment_method,
     confirmation_number,
     payment_date,
+    personal_message,
   } = body;
 
   if (!user_id || !start_date || !end_date) {
@@ -53,10 +54,10 @@ export async function POST(request: Request) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // Fetch VA profile
+  // Fetch VA profile (include payment_accounts for display on paystub)
   const { data: vaProfile, error: profileError } = await adminClient
     .from("profiles")
-    .select("full_name, pay_rate, pay_rate_type")
+    .select("full_name, pay_rate, pay_rate_type, payment_accounts")
     .eq("id", user_id)
     .single();
 
@@ -108,7 +109,7 @@ export async function POST(request: Request) {
     pay_period_label ||
     `${formatDate(start_date)} – ${formatDate(end_date)}`;
 
-  // Preview mode — return numbers only
+  // Preview mode — return numbers only (include payment_accounts so UI can show account details)
   if (preview) {
     return Response.json({
       preview: true,
@@ -119,53 +120,19 @@ export async function POST(request: Request) {
       payRate,
       grossPay,
       byDate,
+      paymentAccounts: (vaProfile.payment_accounts ?? {}) as Record<string, Record<string, string>>,
     });
   }
 
-  // Send mode — build and email the paystub
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) {
-    return Response.json({ error: "Resend API key not configured" }, { status: 500 });
-  }
+  // Send mode — save payment record FIRST, then send email.
+  // Doing it in this order ensures the payment is always tracked,
+  // even if the email fails for any reason.
 
-  const html = buildPaystubEmail({
-    vaName: vaProfile.full_name,
-    vaEmail,
-    payPeriod: periodLabel,
-    byDate,
-    totalHours,
-    payRate,
-    grossPay,
-    paymentMethod: payment_method ?? null,
-    confirmationNumber: confirmation_number ?? null,
-    paymentDate: payment_date ?? null,
-  });
-
-  const resendRes = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: "MinuteFlow <noreply@minuteflow.click>",
-      to: [vaEmail],
-      subject: `Your MinuteFlow Paystub — ${periodLabel}`,
-      html,
-    }),
-  });
-
-  if (!resendRes.ok) {
-    const resendError = await resendRes.text();
-    return Response.json(
-      { error: `Failed to send email: ${resendError}` },
-      { status: 500 }
-    );
-  }
-
-  // Save payment record to va_payments
+  // Step 1: Record payment to va_payments
+  let paymentRecorded = false;
+  let paymentError: string | null = null;
   if (payment_method) {
-    await adminClient.from("va_payments").insert({
+    const { error: insertError } = await adminClient.from("va_payments").insert({
       va_id: user_id,
       amount: grossPay,
       payment_date: payment_date || new Date().toISOString().split("T")[0],
@@ -174,8 +141,73 @@ export async function POST(request: Request) {
       period_start: start_date,
       period_end: end_date,
       notes: `Paystub for ${periodLabel}`,
+      personal_message: personal_message ?? null,
       recorded_by: user.id,
     });
+    if (insertError) {
+      console.error("va_payments insert error:", insertError.message);
+      paymentError = insertError.message;
+    } else {
+      paymentRecorded = true;
+    }
+  }
+
+  // Step 2: Send paystub email
+  const resendKey = process.env.RESEND_API_KEY;
+  let emailSent = false;
+  let emailError: string | null = null;
+
+  if (!resendKey) {
+    emailError = "Resend API key not configured";
+  } else {
+    // Extract payment account details for the selected method
+    const paymentAccounts = (vaProfile.payment_accounts ?? {}) as Record<string, Record<string, string>>;
+    const accountDetails = payment_method ? (paymentAccounts[payment_method] ?? null) : null;
+
+    const html = buildPaystubEmail({
+      vaName: vaProfile.full_name,
+      vaEmail,
+      payPeriod: periodLabel,
+      byDate,
+      totalHours,
+      payRate,
+      grossPay,
+      paymentMethod: payment_method ?? null,
+      confirmationNumber: confirmation_number ?? null,
+      paymentDate: payment_date ?? null,
+      personalMessage: personal_message ?? null,
+      accountDetails,
+    });
+
+    const resendRes = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "MinuteFlow <noreply@minuteflow.click>",
+        to: [vaEmail],
+        subject: `Your MinuteFlow Paystub — ${periodLabel}`,
+        html,
+      }),
+    });
+
+    if (resendRes.ok) {
+      emailSent = true;
+    } else {
+      const resendErr = await resendRes.text();
+      emailError = `Failed to send email: ${resendErr}`;
+      console.error("Resend error:", emailError);
+    }
+  }
+
+  // If nothing worked at all, return an error
+  if (!paymentRecorded && !emailSent) {
+    return Response.json(
+      { error: emailError || paymentError || "Both payment recording and email failed." },
+      { status: 500 }
+    );
   }
 
   return Response.json({
@@ -184,6 +216,10 @@ export async function POST(request: Request) {
     totalHours,
     grossPay,
     payPeriod: periodLabel,
+    paymentRecorded,
+    paymentError,
+    emailSent,
+    emailError,
   });
 }
 
@@ -232,6 +268,8 @@ interface PaystubData {
   paymentMethod: string | null;
   confirmationNumber: string | null;
   paymentDate: string | null;
+  personalMessage: string | null;
+  accountDetails: Record<string, string> | null;
 }
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
@@ -242,7 +280,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, paymentMethod, confirmationNumber, paymentDate } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails } = data;
 
   const rowsHtml = Object.entries(byDate)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -327,6 +365,13 @@ function buildPaystubEmail(data: PaystubData): string {
         </table>
       </div>
 
+      ${personalMessage ? `
+      <!-- Personal Message -->
+      <div style="padding: 20px 32px; border-top: 1px solid #e8e0d4; background: #fdf9f5;">
+        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 8px;">Message</div>
+        <p style="font-size: 13px; color: #3d2b1f; line-height: 1.6; margin: 0; font-style: italic;">"${personalMessage}"</p>
+      </div>` : ""}
+
       ${paymentMethod ? `
       <!-- Payment Details -->
       <div style="padding: 20px 32px; border-top: 1px solid #e8e0d4;">
@@ -344,6 +389,10 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 5px 0; font-size: 12px; color: #6b5e52;">Confirmation #</td>
             <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500;">${confirmationNumber}</td>
           </tr>` : ""}
+          ${accountDetails ? Object.entries(accountDetails).filter(([,v]) => v).map(([k, v]) => `<tr>
+            <td style="padding: 5px 0; font-size: 12px; color: #6b5e52; text-transform: capitalize;">${k.replace(/_/g, " ")}</td>
+            <td style="padding: 5px 0; font-size: 12px; color: #3d2b1f; font-weight: 500;">${v}</td>
+          </tr>`).join("") : ""}
         </table>
       </div>` : ""}
 
