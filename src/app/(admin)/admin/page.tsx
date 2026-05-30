@@ -32,6 +32,7 @@ import {
 import ProjectsTasksTab from "@/components/ProjectsTasksTab";
 import FinancialSummaryTab from "@/components/FinancialSummaryTab";
 import CaptureAlertsTab from "@/components/CaptureAlertsTab";
+import PaystubTab from "@/components/PaystubTab";
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -87,7 +88,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "projects" | "financial" | "alerts";
+type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -166,6 +167,18 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
         <line x1="16" y1="13" x2="8" y2="13" />
         <line x1="16" y1="17" x2="8" y2="17" />
         <polyline points="10 9 9 9 8 9" />
+      </svg>
+    ),
+  },
+  {
+    id: "paystubs",
+    label: "Paystubs",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <rect x="2" y="5" width="20" height="14" rx="2" />
+        <line x1="2" y1="10" x2="22" y2="10" />
+        <line x1="6" y1="15" x2="10" y2="15" />
+        <line x1="14" y1="15" x2="18" y2="15" />
       </svg>
     ),
   },
@@ -1014,6 +1027,7 @@ export default function AdminPage() {
                 {activeTab === "accounts" && "Manage accounts and link them to clients"}
                 {activeTab === "clients" && "Manage clients"}
                 {activeTab === "invoices" && "Generate and manage client invoices"}
+                {activeTab === "paystubs" && "Calculate and send paystubs to your VAs"}
                 {activeTab === "organization" && "Edit organization settings"}
                 {activeTab === "corrections" && "Review pending corrections and manual time entry requests"}
                 {activeTab === "sorting" && "Review sorting task entries and assign billing"}
@@ -1093,6 +1107,10 @@ export default function AdminPage() {
 
           {activeTab === "invoices" && (
             <InvoicesTab profiles={profiles} orgTimezone={orgTimezone} />
+          )}
+
+          {activeTab === "paystubs" && (
+            <PaystubTab profiles={profiles} orgTimezone={orgTimezone} />
           )}
 
           {activeTab === "financial" && (
