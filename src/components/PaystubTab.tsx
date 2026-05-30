@@ -8,7 +8,7 @@ interface Props {
   orgTimezone: string;
 }
 
-type PeriodPreset = "this_week" | "last_week" | "this_biweek" | "last_biweek" | "this_month" | "last_month" | "custom";
+type PeriodPreset = "this_week" | "last_week" | "this_first_half" | "this_second_half" | "last_first_half" | "last_second_half" | "this_month" | "last_month" | "custom";
 
 interface PreviewData {
   vaName: string;
@@ -70,37 +70,36 @@ function getPeriodRange(preset: PeriodPreset, tz: string): { start: string; end:
     return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
   }
 
-  if (preset === "this_biweek") {
-    // 1st–15th or 16th–end of month
-    const day = local.getDate();
+  if (preset === "this_first_half") {
     const yr = local.getFullYear();
     const mo = local.getMonth();
-    if (day <= 15) {
-      const start = dateToIso(new Date(yr, mo, 1));
-      const end = dateToIso(new Date(yr, mo, 15));
-      return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
-    } else {
-      const start = dateToIso(new Date(yr, mo, 16));
-      const end = dateToIso(new Date(yr, mo + 1, 0)); // last day of month
-      return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
-    }
+    const start = dateToIso(new Date(yr, mo, 1));
+    const end = dateToIso(new Date(yr, mo, 15));
+    return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
   }
 
-  if (preset === "last_biweek") {
-    const day = local.getDate();
+  if (preset === "this_second_half") {
     const yr = local.getFullYear();
     const mo = local.getMonth();
-    if (day <= 15) {
-      // previous month's second half
-      const start = dateToIso(new Date(yr, mo - 1, 16));
-      const end = dateToIso(new Date(yr, mo, 0));
-      return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
-    } else {
-      // this month's first half
-      const start = dateToIso(new Date(yr, mo, 1));
-      const end = dateToIso(new Date(yr, mo, 15));
-      return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
-    }
+    const start = dateToIso(new Date(yr, mo, 16));
+    const end = dateToIso(new Date(yr, mo + 1, 0)); // last day of month
+    return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
+  }
+
+  if (preset === "last_first_half") {
+    const yr = local.getFullYear();
+    const mo = local.getMonth();
+    const start = dateToIso(new Date(yr, mo - 1, 1));
+    const end = dateToIso(new Date(yr, mo - 1, 15));
+    return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
+  }
+
+  if (preset === "last_second_half") {
+    const yr = local.getFullYear();
+    const mo = local.getMonth();
+    const start = dateToIso(new Date(yr, mo - 1, 16));
+    const end = dateToIso(new Date(yr, mo, 0)); // last day of prev month
+    return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
   }
 
   if (preset === "this_month") {
@@ -141,7 +140,7 @@ function formatDateLabel(iso: string): string {
 
 export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
-  const [preset, setPreset] = useState<PeriodPreset>("last_biweek");
+  const [preset, setPreset] = useState<PeriodPreset>("last_second_half");
   const [customStart, setCustomStart] = useState<string>("");
   const [customEnd, setCustomEnd] = useState<string>("");
   const [preview, setPreview] = useState<PreviewData | null>(null);
@@ -241,10 +240,12 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const PRESET_OPTIONS: { value: PeriodPreset; label: string }[] = [
     { value: "this_week", label: "This Week (Mon–Sun)" },
     { value: "last_week", label: "Last Week (Mon–Sun)" },
-    { value: "this_biweek", label: "This Half-Month (1–15 or 16–end)" },
-    { value: "last_biweek", label: "Last Half-Month" },
-    { value: "this_month", label: "This Month" },
-    { value: "last_month", label: "Last Month" },
+    { value: "this_first_half", label: "This Month: 1st Half (1–15)" },
+    { value: "this_second_half", label: "This Month: 2nd Half (16–end)" },
+    { value: "last_first_half", label: "Last Month: 1st Half (1–15)" },
+    { value: "last_second_half", label: "Last Month: 2nd Half (16–end)" },
+    { value: "this_month", label: "This Month (Full)" },
+    { value: "last_month", label: "Last Month (Full)" },
     { value: "custom", label: "Custom Range" },
   ];
 
