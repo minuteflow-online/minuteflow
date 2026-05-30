@@ -162,6 +162,9 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [paymentWarning, setPaymentWarning] = useState<string | null>(null);
 
+  // Company name (editable, shown on paystub email)
+  const [companyName, setCompanyName] = useState<string>("MinuteFlow");
+
   // Payment fields
   const todayIso = new Date().toLocaleDateString("en-CA");
   const [customAmount, setCustomAmount] = useState<string>("");
@@ -246,6 +249,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
           payment_date: paymentDate,
           personal_message: personalMessage.trim() || null,
           custom_amount: customAmount !== "" ? parseFloat(customAmount) : undefined,
+          company_name: companyName.trim() || "MinuteFlow",
         }),
       });
       const data = await res.json();
@@ -264,7 +268,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, companyName]);
 
   const PRESET_OPTIONS: { value: PeriodPreset; label: string }[] = [
     { value: "this_week", label: "This Week (Mon–Sun)" },
@@ -359,6 +363,20 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
             </p>
           )}
 
+          {/* Company Name */}
+          <div>
+            <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+              Company Name <span className="normal-case font-normal text-bark/40">(shown on paystub)</span>
+            </label>
+            <input
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="e.g. MinuteFlow"
+              className="w-full border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+            />
+          </div>
+
           {/* Calculate button */}
           <button
             onClick={handleCalculate}
@@ -374,7 +392,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
         </div>
 
         {/* Right: Preview */}
-        <div>
+        <div className="space-y-3">
           {!preview && !sent && (
             <div className="h-full min-h-48 flex items-center justify-center border border-dashed border-linen rounded-xl text-bark/30 text-sm">
               Select a VA and period, then click Calculate
@@ -382,31 +400,34 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
           )}
 
           {sent && (
-            <div className="space-y-3">
-              <div className="rounded-xl border border-sage/40 bg-sage-soft p-6 text-center space-y-2">
-                <div className="text-3xl">✅</div>
-                <div className="text-sm font-semibold text-bark">Paystub sent!</div>
-                {preview && (
-                  <div className="text-xs text-bark/60">
-                    Sent to {preview.vaEmail} · {formatCurrency(customAmount !== "" ? parseFloat(customAmount) : preview.grossPay)} for {preview.totalHours.toFixed(2)} hrs
-                  </div>
-                )}
-                <button
-                  onClick={() => { setPreview(null); setSent(false); setSelectedUserId(""); setPaymentWarning(null); }}
-                  className="mt-3 text-xs text-terracotta underline underline-offset-2"
-                >
-                  Send another
-                </button>
-              </div>
-              {paymentWarning && (
-                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  ⚠️ {paymentWarning}
+            <div className="rounded-xl border border-sage/40 bg-sage-soft px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-xl">✅</span>
+                <div>
+                  <div className="text-sm font-semibold text-bark">Paystub sent!</div>
+                  {preview && (
+                    <div className="text-xs text-bark/60">
+                      Sent to {preview.vaEmail} · {formatCurrency(customAmount !== "" ? parseFloat(customAmount) : preview.grossPay)}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
+              <button
+                onClick={() => { setPreview(null); setSent(false); setSelectedUserId(""); setPaymentWarning(null); }}
+                className="text-xs text-terracotta underline underline-offset-2 shrink-0"
+              >
+                Send another
+              </button>
             </div>
           )}
 
-          {preview && !sent && (
+          {paymentWarning && (
+            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              ⚠️ {paymentWarning}
+            </div>
+          )}
+
+          {preview && (
             <div className="rounded-xl border border-linen bg-white overflow-hidden">
               {/* Paystub preview header */}
               <div className="px-5 py-4 bg-parchment border-b border-linen flex items-center justify-between">
@@ -604,13 +625,19 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
 
               {/* Send button */}
               <div className="px-5 py-4 border-t border-linen">
-                <button
-                  onClick={handleSend}
-                  disabled={sending}
-                  className="w-full py-2.5 rounded-lg bg-terracotta text-white text-sm font-semibold hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {sending ? "Sending…" : `Send Paystub to ${preview.vaName}`}
-                </button>
+                {sent ? (
+                  <div className="w-full py-2.5 rounded-lg bg-sage-soft border border-sage/40 text-center text-sm font-semibold text-bark/60">
+                    ✓ Paystub Sent
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleSend}
+                    disabled={sending}
+                    className="w-full py-2.5 rounded-lg bg-terracotta text-white text-sm font-semibold hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {sending ? "Sending…" : `Send Paystub to ${preview.vaName}`}
+                  </button>
+                )}
               </div>
             </div>
           )}
