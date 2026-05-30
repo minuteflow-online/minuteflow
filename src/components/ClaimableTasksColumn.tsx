@@ -11,6 +11,9 @@ interface ClaimableTask {
   billing_type: string | null;
   task_rate: number | null;
   instructions: string | null;
+  quantity: number;
+  claimed_slots: number;
+  remaining_slots: number;
   task_library: { id: number; task_name: string; billing_type: string; default_rate: number | null } | null;
   project_tags: { id: number; account: string; project_name: string } | null;
 }
@@ -44,6 +47,8 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState<number | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  // quantity_claimed picker: task.id → chosen qty
+  const [claimQty, setClaimQty] = useState<Record<number, number>>({});
 
   /* ── Fetch claimable tasks ── */
   const fetchClaimable = useCallback(async () => {
@@ -63,13 +68,16 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
   }, [fetchClaimable]);
 
   /* ── Claim a task ── */
-  const handleClaim = async (ptaId: number) => {
+  const handleClaim = async (ptaId: number, remaining: number) => {
+    const qty = claimQty[ptaId] ?? 1;
+    if (qty < 1 || qty > remaining) return;
+
     setClaiming(ptaId);
     try {
       const res = await fetch("/api/claimable-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_task_assignment_id: ptaId }),
+        body: JSON.stringify({ project_task_assignment_id: ptaId, quantity_claimed: qty }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -78,6 +86,7 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
       }
       // Remove from list immediately
       setTasks((prev) => prev.filter((t) => t.id !== ptaId));
+      setClaimQty((prev) => { const c = { ...prev }; delete c[ptaId]; return c; });
       // Notify parent to refresh assignments
       onClaimed?.();
     } catch {
@@ -113,6 +122,9 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
             const isClaiming = claiming === t.id;
             const isExpanded = expandedId === t.id;
             const hasInstructions = !!t.instructions;
+            const remaining = t.remaining_slots;
+            const isMultiSlot = t.quantity > 1;
+            const selectedQty = claimQty[t.id] ?? 1;
 
             return (
               <div
@@ -129,6 +141,11 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
                       {hasInstructions && (
                         <span className="px-1 py-0.5 rounded text-[8px] font-semibold bg-indigo-100 text-indigo-600">
                           📋
+                        </span>
+                      )}
+                      {isMultiSlot && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-amber-100 text-amber-700">
+                          {remaining} of {t.quantity} left
                         </span>
                       )}
                       {rate != null && (
@@ -163,12 +180,37 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
                       </div>
                     )}
 
+                    {/* Quantity picker — only shown when more than 1 slot is available */}
+                    {isMultiSlot && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-[10px] font-semibold text-stone whitespace-nowrap">
+                          How many do you want to take?
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={remaining}
+                          value={selectedQty}
+                          onChange={(e) => {
+                            const val = Math.min(remaining, Math.max(1, parseInt(e.target.value) || 1));
+                            setClaimQty((prev) => ({ ...prev, [t.id]: val }));
+                          }}
+                          className="w-16 rounded-lg border border-sand px-2 py-1 text-xs text-espresso outline-none text-center"
+                        />
+                        <span className="text-[10px] text-stone">of {remaining} available</span>
+                      </div>
+                    )}
+
                     <button
-                      onClick={() => handleClaim(t.id)}
+                      onClick={() => handleClaim(t.id, remaining)}
                       disabled={isClaiming}
                       className="w-full px-3 py-2 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
                     >
-                      {isClaiming ? "Claiming..." : "Claim This Task"}
+                      {isClaiming
+                        ? "Claiming..."
+                        : isMultiSlot && selectedQty > 1
+                        ? `Claim ${selectedQty} Slots`
+                        : "Claim This Task"}
                     </button>
                   </div>
                 )}
@@ -177,7 +219,7 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
                 {!isExpanded && (
                   <div className="px-2.5 pb-2 bg-parchment/20">
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleClaim(t.id); }}
+                      onClick={(e) => { e.stopPropagation(); handleClaim(t.id, remaining); }}
                       disabled={isClaiming}
                       className="w-full px-3 py-1.5 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
                     >

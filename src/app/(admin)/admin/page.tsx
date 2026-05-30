@@ -5178,6 +5178,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [paymentNotes, setPaymentNotes] = useState("");
   const [savingPayment, setSavingPayment] = useState(false);
 
+  // Edit invoice state
+  const [editingInvoice, setEditingInvoice] = useState(false);
+  const [editSubtotal, setEditSubtotal] = useState("");
+  const [editAdjustment, setEditAdjustment] = useState("0");
+  const [editPaymentLink, setEditPaymentLink] = useState("");
+  const [editFromName, setEditFromName] = useState("");
+  const [editFromPhone, setEditFromPhone] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editDueDate, setEditDueDate] = useState("");
+  const [editReminderEnabled, setEditReminderEnabled] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Send-to override (for test sends)
+  const [sendToEmail, setSendToEmail] = useState("");
+
   const supabase = createClient();
 
   /* ── Fetch invoices + clients ─────────────────────────────── */
@@ -5413,7 +5428,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
 
     setSaving(false);
-    setView("list");
+
+    // Reset create form
     setSelectedClientId(null);
     setSelectedAccount("");
     setDateFrom("");
@@ -5424,7 +5440,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setPaymentLink("");
     setReminderEnabled(false);
     setInvoiceNotes("");
-    fetchInvoices();
+
+    await fetchInvoices();
+
+    if (!sendNow) {
+      // Navigate to detail view so Toni can preview the invoice
+      await openInvoiceDetail(newInvoice as unknown as Invoice);
+    } else {
+      setView("list");
+    }
   };
 
   /* ── Save manual (past) invoice ──────────────────────────── */
@@ -5580,6 +5604,18 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setSendError("");
     setSendSuccess("");
     setShowPaymentForm(false);
+    setEditingInvoice(false);
+
+    // Init edit fields
+    setEditSubtotal(String(invoice.subtotal ?? ""));
+    setEditAdjustment(String(invoice.adjustment_amount ?? "0"));
+    setEditPaymentLink(invoice.payment_link ?? "");
+    setEditFromName(invoice.from_name ?? "");
+    setEditFromPhone(invoice.from_phone ?? "");
+    setEditNotes(invoice.notes ?? "");
+    setEditDueDate(invoice.due_date ?? "");
+    setEditReminderEnabled(invoice.reminder_enabled ?? false);
+    setSendToEmail(invoice.to_email ?? "");
 
     const [lineItemsRes, paymentsRes] = await Promise.all([
       supabase
@@ -5610,7 +5646,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       const res = await fetch("/api/invoices/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoice_id: invoice.id }),
+        body: JSON.stringify({
+          invoice_id: invoice.id,
+          ...(sendToEmail && sendToEmail !== invoice.to_email ? { override_email: sendToEmail } : {}),
+        }),
       });
 
       if (!res.ok) {
@@ -5629,6 +5668,50 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
 
     setSending(false);
+  };
+
+  /* ── Update invoice fields ────────────────────────────────── */
+
+  const handleUpdateInvoice = async () => {
+    if (!selectedInvoice) return;
+    setSavingEdit(true);
+
+    const subtotal = parseFloat(editSubtotal) || Number(selectedInvoice.subtotal);
+    const adjustment = parseFloat(editAdjustment) || 0;
+    const total = subtotal - adjustment;
+
+    const updateData: Record<string, unknown> = {
+      subtotal,
+      adjustment_amount: adjustment,
+      total,
+      payment_link: editPaymentLink || null,
+      from_name: editFromName || selectedInvoice.from_name,
+      from_phone: editFromPhone || null,
+      notes: editNotes || null,
+      reminder_enabled: editReminderEnabled,
+    };
+    if (editDueDate) updateData.due_date = editDueDate;
+
+    await supabase.from("invoices").update(updateData).eq("id", selectedInvoice.id);
+
+    setSelectedInvoice((prev) =>
+      prev
+        ? {
+            ...prev,
+            subtotal,
+            adjustment_amount: adjustment,
+            total,
+            payment_link: editPaymentLink || null,
+            from_name: editFromName || prev.from_name,
+            notes: editNotes || null,
+            due_date: editDueDate || prev.due_date,
+          }
+        : null
+    );
+
+    setEditingInvoice(false);
+    setSavingEdit(false);
+    fetchInvoices();
   };
 
   /* ── Mark as paid ─────────────────────────────────────────── */
@@ -5971,7 +6054,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   disabled={saving || !invoiceTotal || parseFloat(invoiceTotal) <= 0}
                   className="rounded-lg border border-sand px-5 py-2.5 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta disabled:opacity-50 cursor-pointer"
                 >
-                  {saving ? "Saving..." : "Save as Draft"}
+                  {saving ? "Saving..." : "Save & Preview"}
                 </button>
                 <button
                   onClick={() => handleSaveInvoice(true)}
@@ -6166,21 +6249,30 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             Back to Invoices
           </button>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setEditingInvoice(!editingInvoice);
+                if (!editingInvoice) {
+                  setEditSubtotal(String(inv.subtotal ?? ""));
+                  setEditAdjustment(String(inv.adjustment_amount ?? "0"));
+                  setEditPaymentLink(inv.payment_link ?? "");
+                  setEditFromName(inv.from_name ?? "");
+                  setEditFromPhone(inv.from_phone ?? "");
+                  setEditNotes(inv.notes ?? "");
+                  setEditDueDate(inv.due_date ?? "");
+                  setEditReminderEnabled(inv.reminder_enabled ?? false);
+                }
+              }}
+              className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${editingInvoice ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}
+            >
+              {editingInvoice ? "✕ Cancel Edit" : "✏️ Edit Invoice"}
+            </button>
             {inv.status !== "paid" && inv.status !== "cancelled" && (
               <button
                 onClick={() => setShowPaymentForm(true)}
                 className="rounded-lg bg-amber px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-amber/80 cursor-pointer"
               >
                 Record Payment
-              </button>
-            )}
-            {(inv.status === "draft" || inv.status === "sent") && inv.to_email && (
-              <button
-                onClick={() => handleSendInvoice(inv)}
-                disabled={sending}
-                className="rounded-lg bg-slate-blue px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-slate-blue/80 disabled:opacity-50 cursor-pointer"
-              >
-                {sending ? "Sending..." : inv.status === "sent" ? "Resend Email" : "Send via Email"}
               </button>
             )}
             {inv.status !== "paid" && inv.status !== "cancelled" && (
@@ -6211,60 +6303,153 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </div>
         )}
 
-        {/* Invoice Preview */}
-        <div className="rounded-xl border border-sand bg-white print:border-none print:shadow-none" id="invoice-preview">
-          <div className="p-8">
-            {/* Header */}
-            <div className="mb-8 flex items-start justify-between">
+        {/* Send Email Panel */}
+        {(inv.status === "draft" || inv.status === "sent") && (
+          <div className="mb-4 rounded-xl border border-sand bg-white p-4">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-bark">Send Invoice Email</p>
+            <div className="flex items-center gap-3">
+              <input
+                type="email"
+                value={sendToEmail}
+                onChange={(e) => setSendToEmail(e.target.value)}
+                placeholder="recipient@email.com"
+                className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+              />
+              <button
+                onClick={() => handleSendInvoice(inv)}
+                disabled={sending || !sendToEmail}
+                className="rounded-lg bg-slate-blue px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-slate-blue/80 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
+              >
+                {sending ? "Sending..." : inv.status === "sent" ? "Resend Email" : "Send via Email"}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[11px] text-stone">
+              {inv.to_email ? `Default: ${inv.to_email} — change above to send a test to yourself` : "No client email on file — type any address above"}
+            </p>
+          </div>
+        )}
+
+        {/* Edit Panel */}
+        {editingInvoice && (
+          <div className="mb-4 rounded-xl border border-terracotta/30 bg-white p-5">
+            <h4 className="mb-4 font-serif text-[15px] font-bold text-espresso">Edit Invoice</h4>
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                {inv.from_logo_url && (
-                  <img src={inv.from_logo_url} alt="" className="mb-3 h-12 w-auto" />
-                )}
-                <h2 className="font-serif text-2xl font-bold text-espresso">{inv.from_name}</h2>
-                {inv.from_address && (
-                  <p className="mt-1 text-[12px] text-bark whitespace-pre-line">{inv.from_address}</p>
-                )}
-                {inv.from_email && (
-                  <p className="mt-0.5 text-[12px] text-bark">{inv.from_email}</p>
-                )}
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Invoice Amount ($)</label>
+                <input type="number" step="0.01" min="0" value={editSubtotal} onChange={(e) => setEditSubtotal(e.target.value)}
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Adjustment / Discount ($)</label>
+                <input type="number" step="0.01" min="0" value={editAdjustment} onChange={(e) => setEditAdjustment(e.target.value)}
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Final Amount</label>
+                <div className="rounded-lg border border-sand bg-parchment/50 px-3 py-2 text-[14px] font-bold text-terracotta">
+                  {formatCurrency((parseFloat(editSubtotal) || 0) - (parseFloat(editAdjustment) || 0))}
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Due Date</label>
+                <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)}
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Name</label>
+                <input type="text" value={editFromName} onChange={(e) => setEditFromName(e.target.value)}
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Phone</label>
+                <input type="text" value={editFromPhone} onChange={(e) => setEditFromPhone(e.target.value)}
+                  placeholder="+1 (555) 000-0000"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Link</label>
+                <input type="url" value={editPaymentLink} onChange={(e) => setEditPaymentLink(e.target.value)}
+                  placeholder="https://..."
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+              </div>
+              <div className="flex items-center gap-3 pt-5">
+                <button
+                  onClick={() => setEditReminderEnabled(!editReminderEnabled)}
+                  className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer ${editReminderEnabled ? "bg-terracotta" : "bg-sand"}`}
+                >
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${editReminderEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
+                </button>
+                <span className="text-[13px] text-bark">Daily reminder email</span>
+              </div>
+              <div className="col-span-2">
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Notes</label>
+                <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder="Payment instructions, Zelle info, etc."
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone resize-none"
+                  rows={3} />
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-3">
+              <button onClick={() => setEditingInvoice(false)}
+                className="rounded-lg border border-sand px-4 py-2 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer">
+                Cancel
+              </button>
+              <button onClick={handleUpdateInvoice} disabled={savingEdit}
+                className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50 cursor-pointer">
+                {savingEdit ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Invoice Preview */}
+        <div className="rounded-xl border border-sand overflow-hidden print:border-none print:shadow-none" id="invoice-preview">
+          {/* Yellow Header */}
+          <div className="bg-[#f5c842] px-8 py-7">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">
+                  INVOICE: {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: orgTimezone })}
+                </div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-[#5a4000] mb-0.5">FOR:</div>
+                <div className="text-[22px] font-extrabold text-[#2d1a00] leading-tight mb-1">{inv.to_name}</div>
+                {inv.to_email && <div className="text-[12px] text-[#5a4000]">{inv.to_email}</div>}
+                {inv.to_contact && <div className="text-[12px] text-[#5a4000]">{inv.to_contact}</div>}
+                <div className="mt-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-[#5a4000]">INVOICE AMOUNT</div>
+                  <div className="text-[28px] font-extrabold text-[#2d1a00]">{formatCurrency(Number(inv.total), inv.currency)}</div>
+                </div>
               </div>
               <div className="text-right">
-                <h1 className="font-serif text-3xl font-bold text-terracotta">INVOICE</h1>
-                <p className="mt-1 text-[13px] font-semibold text-espresso">{inv.invoice_number}</p>
-                <div className="mt-2 space-y-0.5 text-[11px] text-bark">
-                  <p>
-                    <span className="font-semibold text-espresso">Issue Date:</span>{" "}
-                    {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
-                  </p>
-                  {inv.due_date && (
-                    <p>
-                      <span className="font-semibold text-espresso">Due Date:</span>{" "}
-                      {new Date(inv.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
-                    </p>
-                  )}
-                  {inv.payment_terms && (
-                    <p>
-                      <span className="font-semibold text-espresso">Terms:</span>{" "}
-                      {paymentTermsLabel(inv.payment_terms)}
-                    </p>
-                  )}
-                </div>
-                <div className="mt-3">
+                <div className="text-[15px] font-bold text-[#2d1a00]">{inv.from_name}</div>
+                {inv.from_phone && (
+                  <div className="text-[12px] text-[#5a4000] mt-0.5">{inv.from_phone}</div>
+                )}
+                {inv.from_email && <div className="text-[12px] text-[#5a4000] mt-0.5">{inv.from_email}</div>}
+                {inv.payment_link && (
+                  <div className="mt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-[#5a4000] mb-1">Pay Online</div>
+                    <a href={inv.payment_link} target="_blank" rel="noopener noreferrer"
+                      className="inline-block bg-[#2d1a00] text-[#f5c842] text-[12px] font-bold px-4 py-1.5 rounded-md hover:opacity-90 transition-opacity">
+                      Click to Pay
+                    </a>
+                  </div>
+                )}
+                <div className="mt-4">
                   <span className={`inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase ${statusBadge(inv.status)}`}>
                     {statusLabel(inv.status)}
                   </span>
                 </div>
+                <div className="mt-2 text-[11px] text-[#5a4000] space-y-0.5 text-right">
+                  <div><span className="font-semibold">#{inv.invoice_number}</span></div>
+                  {inv.due_date && (
+                    <div>Due: {new Date(inv.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}</div>
+                  )}
+                </div>
               </div>
             </div>
-
-            {/* Bill To */}
-            <div className="mb-8 rounded-lg bg-parchment/50 p-4">
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-bark">Bill To</p>
-              <p className="text-[14px] font-bold text-espresso">{inv.to_name}</p>
-              {inv.to_contact && <p className="text-[12px] text-bark">{inv.to_contact}</p>}
-              {inv.to_email && <p className="text-[12px] text-bark">{inv.to_email}</p>}
-              {inv.to_address && <p className="mt-1 text-[12px] text-bark whitespace-pre-line">{inv.to_address}</p>}
-            </div>
+          </div>
+          <div className="bg-white p-8">
 
             {/* Invoice Summary Box */}
             <div className="mb-6 rounded-lg border border-sand bg-parchment/30 p-5">

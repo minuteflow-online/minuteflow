@@ -146,14 +146,15 @@ export async function PATCH(request: Request) {
     return Response.json({ success: true, updated: ids.length });
   }
 
-  // Update billing_type, task_rate, instructions, and/or show_in_assignment on a single assignment
-  const { id, billing_type, task_rate, instructions, show_in_assignment } = body;
-  if (id && (billing_type !== undefined || task_rate !== undefined || instructions !== undefined || show_in_assignment !== undefined)) {
+  // Update billing_type, task_rate, instructions, show_in_assignment, and/or quantity on a single assignment
+  const { id, billing_type, task_rate, instructions, show_in_assignment, quantity } = body;
+  if (id && (billing_type !== undefined || task_rate !== undefined || instructions !== undefined || show_in_assignment !== undefined || quantity !== undefined)) {
     const updates: Record<string, unknown> = {};
     if (billing_type !== undefined) updates.billing_type = billing_type;
     if (task_rate !== undefined) updates.task_rate = task_rate;
     if (instructions !== undefined) updates.instructions = instructions;
     if (show_in_assignment !== undefined) updates.show_in_assignment = show_in_assignment;
+    if (quantity !== undefined) updates.quantity = quantity === null ? null : Math.max(1, Math.floor(Number(quantity) || 1));
 
     const { error } = await supabase
       .from("project_task_assignments")
@@ -166,7 +167,7 @@ export async function PATCH(request: Request) {
     return Response.json({ success: true });
   }
 
-  return Response.json({ error: "reorder[] or id with billing_type/task_rate/instructions/show_in_assignment is required" }, { status: 400 });
+  return Response.json({ error: "reorder[] or id with billing_type/task_rate/instructions/show_in_assignment/quantity is required" }, { status: 400 });
 }
 
 /** DELETE: Remove task assignment(s) from a project */

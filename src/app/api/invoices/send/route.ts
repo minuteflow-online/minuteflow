@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { invoice_id } = body;
+  const { invoice_id, override_email } = body;
 
   if (!invoice_id) {
     return Response.json({ error: "invoice_id is required" }, { status: 400 });
@@ -38,8 +38,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invoice not found" }, { status: 404 });
   }
 
-  if (!invoice.to_email) {
-    return Response.json({ error: "Invoice has no recipient email" }, { status: 400 });
+  const recipientEmail = override_email || invoice.to_email;
+  if (!recipientEmail) {
+    return Response.json({ error: "No recipient email — enter a send-to email address above the Send button" }, { status: 400 });
   }
 
   // Fetch line items
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
     },
     body: JSON.stringify({
       from: `${invoice.from_name || "Toni Colina"} <noreply@minuteflow.click>`,
-      to: [invoice.to_email],
+      to: [recipientEmail],
       subject: `Invoice ${invoice.invoice_number} — ${invoice.from_name || "Toni Colina"}`,
       html,
     }),

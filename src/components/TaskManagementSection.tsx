@@ -26,6 +26,7 @@ interface VaTaskAssignmentRow {
   status: AssignmentStatus;
   instructions: string | null;
   assigned_at: string | null;
+  quantity_claimed?: number;
   profiles: { id: string; full_name: string; username: string; position: string | null } | null;
   project_task_assignments: {
     id: number;
@@ -34,6 +35,7 @@ interface VaTaskAssignmentRow {
     billing_type: BillingType | null;
     task_rate: number | null;
     show_in_assignment?: boolean;
+    quantity?: number | null;
     task_library: { id: number; task_name: string } | null;
     project_tags: { id: number; account: string; project_name: string } | null;
   } | null;
@@ -118,10 +120,15 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
   const [addProjectId, setAddProjectId] = useState<string>("");
   const [addBillingType, setAddBillingType] = useState<BillingType>("fixed");
   const [addRate, setAddRate] = useState<string>("");
+  const [addQuantity, setAddQuantity] = useState<string>("1");
   const [addVaId, setAddVaId] = useState<string>(""); // empty = up for grabs
   const [addInstructions, setAddInstructions] = useState<string>("");
   const [addingTask, setAddingTask] = useState(false);
   const [loadingOptions, setLoadingOptions] = useState(false);
+
+  /* ── Reassign VA state (for assigned rows) ── */
+  const [reassigningVa, setReassigningVa] = useState<Record<number, string>>({});
+  const [savingReassign, setSavingReassign] = useState<number | null>(null);
 
   /* ── Fetch assignments (fixed + project-based only) ── */
   const fetchAssignments = useCallback(async () => {
@@ -223,7 +230,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
         return;
       }
 
-      // Update PTA billing type, rate, and instructions (for claimable tasks)
+      // Update PTA billing type, rate, instructions, and quantity (for claimable tasks)
       await fetch("/api/project-task-assignments", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -232,6 +239,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
           billing_type: addBillingType,
           task_rate: addRate ? parseFloat(addRate) : null,
           instructions: addInstructions.trim() || null,
+          quantity: addQuantity ? Math.max(1, parseInt(addQuantity) || 1) : 1,
         }),
       });
 
@@ -270,6 +278,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
       setAddProjectId("");
       setAddBillingType("fixed");
       setAddRate("");
+      setAddQuantity("1");
       setAddVaId("");
       setAddInstructions("");
       fetchAssignments();
@@ -472,6 +481,30 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
     }
   };
 
+  /* ── Reassign VA on already-assigned row ── */
+  const handleReassignVa = async (a: VaTaskAssignmentRow) => {
+    const newVaId = reassigningVa[a.id];
+    if (!newVaId || a._isUnassigned) return;
+    setSavingReassign(a.id);
+    try {
+      await fetch("/api/va-task-assignments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: a.id, va_id: newVaId }),
+      });
+      setReassigningVa((prev) => {
+        const copy = { ...prev };
+        delete copy[a.id];
+        return copy;
+      });
+      fetchAssignments();
+    } catch {
+      console.error("Failed to reassign VA");
+    } finally {
+      setSavingReassign(null);
+    }
+  };
+
   /* ── Bulk toggle show_in_assignment ── */
   const handleBulkToggle = async (show: boolean) => {
     // Collect the PTA IDs for all selected rows
@@ -637,7 +670,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                   </select>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 {/* Billing Type */}
                 <div>
                   <label className="text-[10px] text-stone font-semibold block mb-0.5">Billing Type</label>
@@ -660,6 +693,21 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                     value={addRate}
                     onChange={(e) => setAddRate(e.target.value)}
                     placeholder="0.00"
+                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                  />
+                </div>
+                {/* Quantity */}
+                <div>
+                  <label className="text-[10px] text-stone font-semibold block mb-0.5">
+                    Quantity <span className="font-normal text-stone/70">(slots)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={addQuantity}
+                    onChange={(e) => setAddQuantity(e.target.value)}
+                    placeholder="1"
                     className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
                   />
                 </div>
@@ -749,7 +797,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
           )}
 
           {/* Header */}
-          <div className="grid grid-cols-[32px_1fr_1fr_1fr_80px_90px_100px_60px] gap-2 px-3 py-2 bg-parchment/50 border-b border-sand text-[10px] font-bold text-stone uppercase tracking-wide">
+          <div className="grid grid-cols-[32px_1fr_1fr_1fr_50px_80px_90px_100px_60px] gap-2 px-3 py-2 bg-parchment/50 border-b border-sand text-[10px] font-bold text-stone uppercase tracking-wide">
             <span className="flex items-center justify-center">
               <input
                 type="checkbox"
@@ -762,6 +810,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
             <span>Task</span>
             <span>Account / Project</span>
             <span>VA</span>
+            <span title="Quantity / Claimed">Qty</span>
             <span>Type</span>
             <span>Rate</span>
             <span>Status</span>
@@ -782,7 +831,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                 {/* Row */}
                 <div
                   onClick={() => handleExpand(a.id)}
-                  className={`grid grid-cols-[32px_1fr_1fr_1fr_80px_90px_100px_60px] gap-2 px-3 py-2.5 text-xs cursor-pointer transition-colors ${
+                  className={`grid grid-cols-[32px_1fr_1fr_1fr_50px_80px_90px_100px_60px] gap-2 px-3 py-2.5 text-xs cursor-pointer transition-colors ${
                     isExpanded ? "bg-parchment/30" : "hover:bg-parchment/20"
                   } ${selectedIds.has(a.id) ? "bg-sage-soft/10" : ""}`}
                 >
@@ -797,7 +846,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                   </span>
                   <span className="font-medium text-espresso truncate">{taskName}</span>
                   <span className="text-stone truncate">{account} / {project}</span>
-                  {/* VA column: inline assign dropdown for unassigned */}
+                  {/* VA column: inline assign for unassigned; editable dropdown for assigned */}
                   <span className={`truncate ${a._isUnassigned ? "text-orange-500 italic" : "text-espresso"}`} onClick={(e) => e.stopPropagation()}>
                     {a._isUnassigned ? (
                       <span className="flex items-center gap-1">
@@ -822,7 +871,50 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                           </button>
                         )}
                       </span>
-                    ) : vaName}
+                    ) : reassigningVa[a.id] !== undefined ? (
+                      <span className="flex items-center gap-1">
+                        <select
+                          value={reassigningVa[a.id]}
+                          onChange={(e) => setReassigningVa((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                          className="w-full rounded border border-sand px-1 py-0.5 text-[10px] text-espresso bg-white outline-none"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <option value="">Select VA...</option>
+                          {vaList.map((v) => (
+                            <option key={v.id} value={v.id}>{v.full_name}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleReassignVa(a); }}
+                          disabled={savingReassign === a.id || !reassigningVa[a.id]}
+                          className="shrink-0 px-1.5 py-0.5 rounded bg-sage text-white text-[9px] font-bold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer"
+                        >
+                          {savingReassign === a.id ? "..." : "✓"}
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setReassigningVa((prev) => { const c = { ...prev }; delete c[a.id]; return c; }); }}
+                          className="shrink-0 px-1 py-0.5 rounded text-[9px] text-stone hover:text-espresso cursor-pointer"
+                        >✕</button>
+                      </span>
+                    ) : (
+                      <span
+                        className="flex items-center gap-1 group cursor-pointer"
+                        onClick={(e) => { e.stopPropagation(); setReassigningVa((prev) => ({ ...prev, [a.id]: a.va_id ?? "" })); }}
+                        title="Click to reassign VA"
+                      >
+                        <span>{vaName}</span>
+                        <span className="opacity-0 group-hover:opacity-60 text-[9px] text-stone transition-opacity">✏️</span>
+                      </span>
+                    )}
+                  </span>
+                  {/* Qty column: total / claimed */}
+                  <span className="text-stone text-[10px]" onClick={(e) => e.stopPropagation()}>
+                    {(() => {
+                      const totalQty = pta?.quantity ?? 1;
+                      const claimed = a._isUnassigned ? 0 : (a.quantity_claimed ?? 1);
+                      if (totalQty === 1 && claimed === 1 && !a._isUnassigned) return <span className="text-stone/50">—</span>;
+                      return <span className={claimed > 0 ? "text-espresso font-medium" : "text-stone/50"}>{claimed}/{totalQty}</span>;
+                    })()}
                   </span>
                   <span className="text-stone capitalize">{a.billing_type}</span>
                   {/* Rate column: click to edit */}
