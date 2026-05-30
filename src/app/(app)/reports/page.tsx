@@ -64,6 +64,8 @@ export default function ReportsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole>("va");
   const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
+  const [selectedAccount, setSelectedAccount] = useState<string>("all");
+  const [selectedClient, setSelectedClient] = useState<string>("all");
 
   /* ── Fetch org timezone on mount ────────────────────────── */
 
@@ -186,15 +188,28 @@ export default function ReportsPage() {
     }
   }, [startISO, endISO, fetchData, dateRange, appliedStart]);
 
-  /* ── Filter by selected VA ───────────────────────────────── */
+  /* ── Filter by selected VA / Account / Client ───────────── */
 
-  const filteredLogs = useMemo(
-    () =>
-      selectedVA === "all"
-        ? logs
-        : logs.filter((l) => l.user_id === selectedVA),
-    [logs, selectedVA]
-  );
+  const filteredLogs = useMemo(() => {
+    let result = selectedVA === "all" ? logs : logs.filter((l) => l.user_id === selectedVA);
+    if (selectedAccount !== "all") result = result.filter((l) => l.account === selectedAccount);
+    if (selectedClient !== "all") result = result.filter((l) => l.client_name === selectedClient);
+    return result;
+  }, [logs, selectedVA, selectedAccount, selectedClient]);
+
+  /* ── Derived filter options ──────────────────────────────── */
+
+  const accountOptions = useMemo(() => {
+    const accounts = new Set<string>();
+    logs.forEach((l) => { if (l.account) accounts.add(l.account); });
+    return Array.from(accounts).sort();
+  }, [logs]);
+
+  const clientOptions = useMemo(() => {
+    const clients = new Set<string>();
+    logs.forEach((l) => { if (l.client_name) clients.add(l.client_name); });
+    return Array.from(clients).sort();
+  }, [logs]);
 
   const filteredScreenshots = useMemo(
     () =>
@@ -381,6 +396,39 @@ export default function ReportsPage() {
         totalMs: map[p.id]?.totalMs || 0,
         taskCount: map[p.id]?.taskCount || 0,
       }))
+      .sort((a, b) => b.totalMs - a.totalMs);
+  }, [filteredLogs, profiles]);
+
+  /* ── VA Breakdown (per-VA hours + projects + tasks) ─────── */
+
+  const vaBreakdown = useMemo(() => {
+    const map: Record<string, {
+      profile: Profile | undefined;
+      totalMs: number;
+      projects: Record<string, number>;
+      tasks: Record<string, number>;
+    }> = {};
+
+    filteredLogs
+      .filter((l) => l.end_time && l.category !== "Break")
+      .forEach((l) => {
+        if (!map[l.user_id]) {
+          map[l.user_id] = {
+            profile: profiles.find((p) => p.id === l.user_id),
+            totalMs: 0,
+            projects: {},
+            tasks: {},
+          };
+        }
+        map[l.user_id].totalMs += l.duration_ms || 0;
+        const proj = l.project || "No Project";
+        map[l.user_id].projects[proj] = (map[l.user_id].projects[proj] || 0) + (l.duration_ms || 0);
+        const task = l.task_name || "Untitled";
+        map[l.user_id].tasks[task] = (map[l.user_id].tasks[task] || 0) + (l.duration_ms || 0);
+      });
+
+    return Object.values(map)
+      .filter((v) => v.totalMs > 0)
       .sort((a, b) => b.totalMs - a.totalMs);
   }, [filteredLogs, profiles]);
 
@@ -576,6 +624,32 @@ export default function ReportsPage() {
                     {p.full_name || p.username || "Unknown"}
                   </option>
                 ))}
+            </select>
+          )}
+          {/* Account Filter */}
+          {accountOptions.length > 0 && (
+            <select
+              value={selectedAccount}
+              onChange={(e) => setSelectedAccount(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] font-semibold text-espresso shadow-sm outline-none focus:border-terracotta"
+            >
+              <option value="all">All Accounts</option>
+              {accountOptions.map((a) => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+          )}
+          {/* Client Filter */}
+          {clientOptions.length > 0 && (
+            <select
+              value={selectedClient}
+              onChange={(e) => setSelectedClient(e.target.value)}
+              className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] font-semibold text-espresso shadow-sm outline-none focus:border-terracotta"
+            >
+              <option value="all">All Clients</option>
+              {clientOptions.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
             </select>
           )}
           <button
@@ -966,6 +1040,79 @@ export default function ReportsPage() {
               </div>
             </div>
           </div>
+
+          {/* VA Breakdown */}
+          {vaBreakdown.length > 0 && (
+            <div className="mb-6 rounded-xl border border-sand bg-white">
+              <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
+                <h3 className="text-sm font-bold text-espresso">
+                  {selectedAccount !== "all"
+                    ? `Team — ${selectedAccount}`
+                    : selectedClient !== "all"
+                    ? `Team — ${selectedClient}`
+                    : "Team Breakdown"}
+                </h3>
+                <span className="text-[11px] text-bark">{vaBreakdown.length} member{vaBreakdown.length !== 1 ? "s" : ""}</span>
+              </div>
+              <div className="divide-y divide-parchment">
+                {vaBreakdown.map((va, i) => {
+                  const name = va.profile?.full_name || va.profile?.username || "Unknown";
+                  const initials = getInitials(name);
+                  const avatarColor = getAvatarColor(name);
+                  const topProjects = Object.entries(va.projects)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 3);
+                  const topTasks = Object.entries(va.tasks)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 3);
+                  return (
+                    <div key={va.profile?.id || i} className="px-5 py-4">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                          style={{ backgroundColor: avatarColor }}
+                        >
+                          {initials}
+                        </div>
+                        <div className="flex-1">
+                          <div className="text-[13px] font-bold text-espresso">{name}</div>
+                          {va.profile?.position && (
+                            <div className="text-[11px] text-bark">{va.profile.position}</div>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <div className="font-serif text-base font-bold text-sage">{formatDuration(va.totalMs)}</div>
+                          <div className="text-[10px] text-bark">{Object.values(va.tasks).length} task{Object.values(va.tasks).length !== 1 ? "s" : ""}</div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 pl-11">
+                        {/* Top Projects */}
+                        <div>
+                          <div className="text-[10px] font-semibold uppercase tracking-wide text-bark mb-1.5">Top Projects</div>
+                          {topProjects.map(([proj, ms]) => (
+                            <div key={proj} className="flex items-center gap-2 py-0.5">
+                              <span className="flex-1 text-[12px] text-espresso truncate">{proj}</span>
+                              <span className="text-[11px] font-semibold text-walnut shrink-0">{formatDuration(ms)}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {/* Top Tasks */}
+                        <div>
+                          <div className="text-[10px] font-semibold uppercase tracking-wide text-bark mb-1.5">Top Tasks</div>
+                          {topTasks.map(([task, ms]) => (
+                            <div key={task} className="flex items-center gap-2 py-0.5">
+                              <span className="flex-1 text-[12px] text-espresso truncate">{task}</span>
+                              <span className="text-[11px] font-semibold text-terracotta shrink-0">{formatDuration(ms)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Screenshot Gallery */}
           <div className="rounded-xl border border-sand bg-white">
