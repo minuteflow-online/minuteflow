@@ -160,6 +160,21 @@ function methodLabel(method: string): string {
   return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
 }
 
+function fmtPeriodRange(start: string | null, end: string | null, timezone = "UTC"): string {
+  if (!start || !end) return "—";
+  const s = new Date(start + "T12:00:00Z");
+  const e = new Date(end + "T12:00:00Z");
+  const sMonth = s.toLocaleDateString("en-US", { month: "short", timeZone: timezone });
+  const eMonth = e.toLocaleDateString("en-US", { month: "short", timeZone: timezone });
+  const sDay = s.toLocaleDateString("en-US", { day: "numeric", timeZone: timezone });
+  const eDay = e.toLocaleDateString("en-US", { day: "numeric", timeZone: timezone });
+  const eYear = e.toLocaleDateString("en-US", { year: "numeric", timeZone: timezone });
+  if (sMonth === eMonth) {
+    return `${sMonth} ${sDay}–${eDay}, ${eYear}`;
+  }
+  return `${sMonth} ${sDay} – ${eMonth} ${eDay}, ${eYear}`;
+}
+
 /* ── Component ──────────────────────────────────────────── */
 
 export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: string }) {
@@ -1253,7 +1268,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                                     <table className="w-full text-[11px]">
                                       <thead>
                                         <tr className="text-[9px] font-semibold uppercase tracking-wider text-bark/60">
-                                          <th className="py-1 text-left">Date</th>
+                                          <th className="py-1 text-left">Paid On</th>
+                                          <th className="py-1 text-left">Pay Period</th>
                                           <th className="py-1 text-left">Method</th>
                                           <th className="py-1 text-left">Conf #</th>
                                           <th className="py-1 text-right">Amount</th>
@@ -1264,6 +1280,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                                         {row.payments.map((p) => (
                                           <tr key={p.id} className="border-t border-parchment/50">
                                             <td className="py-1.5 text-espresso">{fmtDateFull(p.payment_date, timezone)}</td>
+                                            <td className="py-1.5 text-bark/80 font-medium">{fmtPeriodRange(p.period_start, p.period_end, timezone)}</td>
                                             <td className="py-1.5 text-bark">{methodLabel(p.payment_method)}</td>
                                             <td className="py-1.5 text-bark">{p.confirmation_number || "—"}</td>
                                             <td className="py-1.5 text-right font-semibold text-emerald-600">{fmtMoney(Number(p.amount))}</td>
