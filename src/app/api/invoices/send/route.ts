@@ -52,15 +52,17 @@ export async function POST(request: Request) {
 
   const items = lineItems ?? [];
 
-  // Fetch org timezone
+  // Fetch org settings
   const { data: orgSettings } = await serviceClient
     .from("organization_settings")
-    .select("timezone")
+    .select("timezone, registered_business_name, dba")
     .single();
   const orgTimezone = orgSettings?.timezone || "UTC";
+  const orgRegisteredName = orgSettings?.registered_business_name || null;
+  const orgDba = orgSettings?.dba || null;
 
   // Build HTML email
-  const html = buildInvoiceEmail(invoice, items, orgTimezone);
+  const html = buildInvoiceEmail(invoice, items, orgTimezone, orgRegisteredName, orgDba);
 
   // Send via Resend
   const resendKey = process.env.RESEND_API_KEY;
@@ -114,6 +116,7 @@ interface InvoiceRow {
   to_name: string;
   to_contact: string | null;
   to_email: string | null;
+  to_phone: string | null;
   to_address: string | null;
   issue_date: string;
   due_date: string | null;
@@ -125,6 +128,7 @@ interface InvoiceRow {
   payment_link: string | null;
   reminder_enabled: boolean | null;
   account_name: string | null;
+  service_type: string | null;
   status: string;
 }
 
@@ -154,7 +158,13 @@ function fmtHours(h: number): string {
 
 /* ── Build Invoice HTML Email ─────────────────────────────── */
 
-function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[], timezone = "UTC"): string {
+function buildInvoiceEmail(
+  invoice: InvoiceRow,
+  items: LineItemRow[],
+  timezone = "UTC",
+  orgRegisteredName: string | null = null,
+  orgDba: string | null = null
+): string {
   const totalHours = items.reduce((s, li) => s + Number(li.quantity), 0);
   const adjustment = Number(invoice.adjustment_amount || 0);
   const invoiceAmount = Number(invoice.subtotal);
@@ -235,13 +245,15 @@ function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[], timezone =
         <tr>
           <!-- Left: invoice info + client -->
           <td style="vertical-align:top; width:55%;">
-            <div style="font-size:12px; font-weight:700; color:#5a4000; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">
+            <div style="font-size:12px; font-weight:700; color:#5a4000; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;">
               INVOICE: ${issueDateFmt}
             </div>
-            <div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">FOR:</div>
-            <div style="font-size:22px; font-weight:800; color:#2d1a00; line-height:1.2; margin-bottom:6px;">${invoice.to_name}</div>
-            ${invoice.to_email ? `<div style="font-size:12px; color:#5a4000;">${invoice.to_email}</div>` : ""}
+            ${invoice.service_type ? `<div style="font-size:11px; color:#5a4000; margin-bottom:6px; font-style:italic;">${invoice.service_type}</div>` : "<div style=\"margin-bottom:6px;\"></div>"}
+            <div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">BILL TO:</div>
+            <div style="font-size:22px; font-weight:800; color:#2d1a00; line-height:1.2; margin-bottom:4px;">${invoice.to_name}</div>
             ${invoice.to_contact ? `<div style="font-size:12px; color:#5a4000;">${invoice.to_contact}</div>` : ""}
+            ${invoice.to_email ? `<div style="font-size:12px; color:#5a4000;">${invoice.to_email}</div>` : ""}
+            ${invoice.to_phone ? `<div style="font-size:12px; color:#5a4000;">${invoice.to_phone}</div>` : ""}
             <div style="margin-top:16px;">
               <div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px;">INVOICE AMOUNT</div>
               <div style="font-size:28px; font-weight:800; color:#2d1a00;">${formatCurrency(finalTotal, invoice.currency)}</div>
@@ -249,8 +261,10 @@ function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[], timezone =
           </td>
           <!-- Right: sender info -->
           <td style="vertical-align:top; text-align:right; padding-left:20px;">
-            ${invoice.account_name ? `<div style="font-size:12px; font-weight:700; color:#5a4000; margin-bottom:4px;">${invoice.account_name}</div>` : ""}
-            <div style="font-size:15px; font-weight:700; color:#2d1a00;">${invoice.from_name}</div>
+            ${invoice.account_name ? `<div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">Account: ${invoice.account_name}</div>` : ""}
+            ${orgRegisteredName ? `<div style="font-size:15px; font-weight:800; color:#2d1a00; line-height:1.3;">${orgRegisteredName}</div>` : `<div style="font-size:15px; font-weight:700; color:#2d1a00;">${invoice.from_name}</div>`}
+            ${orgDba && orgDba !== orgRegisteredName ? `<div style="font-size:11px; color:#5a4000; margin-top:1px;">DBA: ${orgDba}</div>` : ""}
+            ${!orgRegisteredName && invoice.from_name ? "" : orgRegisteredName !== invoice.from_name ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_name}</div>` : ""}
             ${invoice.from_phone ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_phone}</div>` : ""}
             ${invoice.from_email ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_email}</div>` : ""}
             ${invoice.payment_link ? `
@@ -263,8 +277,16 @@ function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[], timezone =
       </table>
     </div>
 
+    <!-- Tab 1 label -->
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:10px 32px 0 32px;">
+      <span style="display:inline-flex; align-items:center; gap:8px;">
+        <span style="display:inline-block; background:#f5c842; color:#2d1a00; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1px; padding:3px 8px; border-radius:4px;">TAB 1</span>
+        <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Invoice Summary</span>
+      </span>
+    </div>
+
     <!-- Invoice Summary box -->
-    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:20px 32px;">
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:12px 32px 20px 32px;">
       <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden;">
         <tr style="background:#faf6f0;">
           <td style="padding:12px 16px; text-align:center; border-right:1px solid #e8e0d4;">
@@ -316,14 +338,15 @@ function buildInvoiceEmail(invoice: InvoiceRow, items: LineItemRow[], timezone =
       <div style="font-size:13px; color:#3d2b1f; white-space:pre-line;">${invoice.notes}</div>
     </div>` : ""}
 
-    <!-- ── PAGE 2 ─────────────────────────────────────── -->
+    <!-- ── TAB 2: DETAILED TIME ALLOCATION ───────────── -->
 
-    <!-- Divider -->
-    <div style="background:#e8e0d4; height:2px; margin:0;"></div>
+    <!-- Tab divider -->
+    <div style="background:#e8e0d4; height:3px; margin:0;"></div>
 
-    <!-- Time Allocation heading -->
-    <div style="background:#f5c842; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:12px 32px;">
-      <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#2d1a00;">Detailed Time Allocation</div>
+    <!-- Tab 2 header -->
+    <div style="background:#2d1a00; border-left:1px solid #2d1a00; border-right:1px solid #2d1a00; padding:10px 32px; display:flex; align-items:center; gap:16px;">
+      <div style="display:inline-block; background:#f5c842; color:#2d1a00; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1px; padding:4px 10px; border-radius:4px; margin-right:10px;">TAB 2</div>
+      <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842;">Detailed Time Allocation</span>
     </div>
 
     <!-- Time Allocation table -->

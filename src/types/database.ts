@@ -187,6 +187,8 @@ export interface OrganizationSettings {
   timezone: string;
   billing_email: string | null;
   billing_info: Record<string, unknown>;
+  registered_business_name: string | null;
+  dba: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -243,6 +245,8 @@ export interface Invoice {
   payment_link: string | null;
   reminder_enabled: boolean;
   account_name: string | null;
+  service_type: string | null;
+  to_phone: string | null;
   is_manual: boolean;
   previous_balance: number;
   created_by: string | null;

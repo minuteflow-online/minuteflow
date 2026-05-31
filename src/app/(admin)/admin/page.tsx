@@ -3800,6 +3800,8 @@ function OrganizationTab() {
 
   // Form state
   const [orgName, setOrgName] = useState("");
+  const [registeredBusinessName, setRegisteredBusinessName] = useState("");
+  const [dba, setDba] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [address, setAddress] = useState("");
   const [timezone, setTimezone] = useState("");
@@ -3817,6 +3819,8 @@ function OrganizationTab() {
         const s = data as OrganizationSettings;
         setSettings(s);
         setOrgName(s.org_name || "");
+        setRegisteredBusinessName(s.registered_business_name || "");
+        setDba(s.dba || "");
         setLogoUrl(s.logo_url || "");
         setAddress(s.address || "");
         setTimezone(s.timezone || "UTC");
@@ -3835,6 +3839,8 @@ function OrganizationTab() {
 
     const updatePayload = {
       org_name: orgName || "MinuteFlow",
+      registered_business_name: registeredBusinessName || null,
+      dba: dba || null,
       logo_url: logoUrl || null,
       address: address || null,
       timezone: timezone || "UTC",
@@ -3902,6 +3908,32 @@ function OrganizationTab() {
             onChange={(e) => setOrgName(e.target.value)}
             className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
             placeholder="Your Organization"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">
+            Registered Business Name
+          </label>
+          <input
+            type="text"
+            value={registeredBusinessName}
+            onChange={(e) => setRegisteredBusinessName(e.target.value)}
+            className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
+            placeholder="Legal registered name of the business"
+          />
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">
+            Doing Business As (DBA)
+          </label>
+          <input
+            type="text"
+            value={dba}
+            onChange={(e) => setDba(e.target.value)}
+            className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
+            placeholder="Trade name / DBA"
           />
         </div>
 
@@ -5144,16 +5176,24 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [generateBy, setGenerateBy] = useState<"client" | "account">("client");
   const [selectedAccount, setSelectedAccount] = useState<string>("");
   const [accountList, setAccountList] = useState<string[]>([]);
+  const [accountToClientMap, setAccountToClientMap] = useState<Record<string, number>>({});
 
   // Manual total / adjustment
   const [invoiceTotal, setInvoiceTotal] = useState("");
   const [adjustmentAmount, setAdjustmentAmount] = useState("0");
 
   // New invoice fields
+  const [serviceType, setServiceType] = useState("");
   const [paymentLink, setPaymentLink] = useState("");
   const [reminderEnabled, setReminderEnabled] = useState(false);
   const [fromName, setFromName] = useState("");
   const [fromPhone, setFromPhone] = useState("");
+
+  // Step 3 filters
+  const [filterVA, setFilterVA] = useState("");
+  const [filterTask, setFilterTask] = useState("");
+  const [filterDeliverable, setFilterDeliverable] = useState("");
+  const [filterMemo, setFilterMemo] = useState("");
 
   // Manual invoice state
   const [manualDescription, setManualDescription] = useState("");
@@ -5209,7 +5249,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setClients((clientsRes.data ?? []) as Client[]);
     if (orgRes.data) {
       setOrgSettings(orgRes.data as OrganizationSettings);
-      setFromName(orgRes.data.org_name || "");
+      setFromName(orgRes.data.registered_business_name || orgRes.data.org_name || "");
     }
     const accData = await accRes.json();
     const names: string[] = (accData.accounts ?? [])
@@ -5217,6 +5257,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       .map((a: { name: string }) => a.name)
       .sort();
     setAccountList(names);
+
+    // Build account name → client_id map from mappings
+    const acMap: Record<string, number> = {};
+    const allAccounts: { id: number; name: string }[] = accData.accounts ?? [];
+    for (const m of accData.mappings ?? []) {
+      const acc = allAccounts.find((a) => a.id === m.account_id);
+      if (acc && m.client_id) acMap[acc.name] = m.client_id;
+    }
+    setAccountToClientMap(acMap);
+
     setLoading(false);
   }, []);
 
@@ -5250,6 +5300,33 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     return clients.find((c) => c.id === selectedClientId) ?? null;
   }, [clients, selectedClientId]);
 
+  // Auto-populate Bill To when account is selected and has a mapped client
+  useEffect(() => {
+    if (generateBy === "account" && selectedAccount && accountToClientMap[selectedAccount]) {
+      setSelectedClientId(accountToClientMap[selectedAccount]);
+    }
+  }, [selectedAccount, accountToClientMap, generateBy]);
+
+  // Auto-calculate invoice total from client default_hourly_rate × total hours
+  useEffect(() => {
+    if (lineItems.length > 0 && selectedClient?.default_hourly_rate) {
+      const totalHrs = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+      const autoTotal = Math.round(totalHrs * selectedClient.default_hourly_rate * 100) / 100;
+      setInvoiceTotal(String(autoTotal));
+    }
+  }, [lineItems, selectedClient]);
+
+  // Filtered line items for Step 3 display
+  const filteredLineItems = useMemo(() => {
+    return lineItems.filter((li) => {
+      const vaOk = !filterVA || (li.va_name || "").toLowerCase().includes(filterVA.toLowerCase());
+      const taskOk = !filterTask || li.description.toLowerCase().includes(filterTask.toLowerCase());
+      const delivOk = !filterDeliverable || (li.project || li.account_name || "").toLowerCase().includes(filterDeliverable.toLowerCase());
+      const memoOk = !filterMemo || (li.client_memo || "").toLowerCase().includes(filterMemo.toLowerCase());
+      return vaOk && taskOk && delivOk && memoOk;
+    });
+  }, [lineItems, filterVA, filterTask, filterDeliverable, filterMemo]);
+
   const subtotal = useMemo(() => {
     return lineItems.reduce((sum, li) => sum + li.amount, 0);
   }, [lineItems]);
@@ -5261,6 +5338,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const total = useMemo(() => {
     return subtotal + taxAmount;
   }, [subtotal, taxAmount]);
+
+  /* ── Inline line item editor ──────────────────────────────── */
+
+  const updateLineItem = (logId: number | null, idx: number, updates: Partial<LineItemDraft>) => {
+    setLineItems((prev) =>
+      prev.map((li, i) => (i === idx ? { ...li, ...updates } : li))
+    );
+  };
 
   /* ── Generate next invoice number ─────────────────────────── */
 
@@ -5360,7 +5445,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       client_id: billingClient?.id || null,
       account_name: generateBy === "account" ? selectedAccount : (billingClient ? null : null),
       status: sendNow ? "sent" as const : "draft" as const,
-      from_name: fromName || orgSettings?.org_name || "Toni Colina",
+      from_name: fromName || orgSettings?.registered_business_name || orgSettings?.org_name || "Toni Colina",
       from_phone: fromPhone || null,
       from_address: orgSettings?.address || null,
       from_email: orgSettings?.billing_email || null,
@@ -5368,7 +5453,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       to_name: toName,
       to_contact: toContact,
       to_email: toEmail,
+      to_phone: billingClient?.phone || null,
       to_address: toAddress,
+      service_type: serviceType || null,
       issue_date: issueDate,
       due_date: null,
       subtotal: manualTotal,
@@ -5437,9 +5524,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setLineItems([]);
     setInvoiceTotal("");
     setAdjustmentAmount("0");
+    setServiceType("");
     setPaymentLink("");
     setReminderEnabled(false);
     setInvoiceNotes("");
+    setFilterVA("");
+    setFilterTask("");
+    setFilterDeliverable("");
+    setFilterMemo("");
 
     await fetchInvoices();
 
@@ -5801,6 +5893,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     const adjustmentNum = parseFloat(adjustmentAmount) || 0;
     const finalTotal = manualTotalNum - adjustmentNum;
     const totalHours = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+    const filteredHours = filteredLineItems.reduce((sum, li) => sum + li.quantity, 0);
+    const isFiltered = filteredLineItems.length !== lineItems.length;
 
     return (
       <>
@@ -5913,8 +6007,40 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             <div className="mb-6">
               <div className="mb-1.5 flex items-center justify-between">
                 <label className="text-[11px] font-semibold uppercase tracking-wider text-bark">
-                  Step 3: Review Time Logs ({lineItems.length} entries · {totalHours.toFixed(2)} hrs)
+                  Step 3: Review Time Logs ({isFiltered ? `${filteredLineItems.length} of ` : ""}{lineItems.length} entries · {isFiltered ? `${filteredHours.toFixed(2)} of ` : ""}{totalHours.toFixed(2)} hrs · {isFiltered ? `${Math.round(filteredHours * 60)} of ` : ""}{Math.round(totalHours * 60)} min)
                 </label>
+              </div>
+
+              {/* Filter bar */}
+              <div className="mb-2 grid grid-cols-4 gap-2 rounded-lg border border-sand bg-parchment/30 p-2">
+                <input
+                  type="text"
+                  placeholder="🔍 Filter VA..."
+                  value={filterVA}
+                  onChange={(e) => setFilterVA(e.target.value)}
+                  className="rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white"
+                />
+                <input
+                  type="text"
+                  placeholder="🔍 Filter Task..."
+                  value={filterTask}
+                  onChange={(e) => setFilterTask(e.target.value)}
+                  className="rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white"
+                />
+                <input
+                  type="text"
+                  placeholder="🔍 Filter Deliverables..."
+                  value={filterDeliverable}
+                  onChange={(e) => setFilterDeliverable(e.target.value)}
+                  className="rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white"
+                />
+                <input
+                  type="text"
+                  placeholder="🔍 Filter Memo..."
+                  value={filterMemo}
+                  onChange={(e) => setFilterMemo(e.target.value)}
+                  className="rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white"
+                />
               </div>
 
               <div className="rounded-lg border border-sand overflow-hidden">
@@ -5931,23 +6057,46 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-parchment">
-                      {lineItems.map((li, idx) => (
-                        <tr key={idx} className="hover:bg-parchment/20 transition-colors">
-                          <td className="px-3 py-2.5 font-medium text-espresso text-[11px]">{li.va_name}</td>
-                          <td className="px-3 py-2.5 text-bark max-w-[180px] truncate">{li.description}</td>
-                          <td className="px-3 py-2.5 text-bark">{li.project || li.account_name || "-"}</td>
-                          <td className="px-3 py-2.5 text-right text-bark">{Math.round(li.quantity * 60)}</td>
-                          <td className="px-3 py-2.5 text-bark text-[11px] max-w-[180px] truncate">{li.client_memo || "-"}</td>
-                          <td className="px-3 py-2.5 text-center">
-                            <button
-                              onClick={() => setLineItems(lineItems.filter((_, i) => i !== idx))}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-red-50 hover:text-red-500 cursor-pointer"
-                            >
-                              &times;
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredLineItems.map((li) => {
+                        const realIdx = lineItems.indexOf(li);
+                        return (
+                          <tr key={realIdx} className="hover:bg-parchment/20 transition-colors">
+                            <td className="px-3 py-2 font-medium text-espresso text-[11px] whitespace-nowrap">{li.va_name}</td>
+                            <td className="px-3 py-2 max-w-[200px]">
+                              <input
+                                value={li.description}
+                                onChange={(e) => updateLineItem(li.log_id, realIdx, { description: e.target.value })}
+                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors"
+                              />
+                            </td>
+                            <td className="px-3 py-2 max-w-[160px]">
+                              <input
+                                value={li.project || ""}
+                                onChange={(e) => updateLineItem(li.log_id, realIdx, { project: e.target.value })}
+                                placeholder="—"
+                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors placeholder:text-stone"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right text-bark whitespace-nowrap">{Math.round(li.quantity * 60)}</td>
+                            <td className="px-3 py-2 max-w-[180px]">
+                              <input
+                                value={li.client_memo || ""}
+                                onChange={(e) => updateLineItem(li.log_id, realIdx, { client_memo: e.target.value })}
+                                placeholder="—"
+                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark text-[11px] outline-none focus:border-terracotta hover:border-sand transition-colors placeholder:text-stone"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <button
+                                onClick={() => setLineItems(lineItems.filter((_, i) => i !== realIdx))}
+                                className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-red-50 hover:text-red-500 cursor-pointer"
+                              >
+                                &times;
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -5956,6 +6105,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               {/* Invoice Amount */}
               <div className="mt-5 grid grid-cols-2 gap-6">
                 <div className="space-y-4">
+                  {/* Type of Services */}
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Type of Services</label>
+                    <input
+                      type="text"
+                      value={serviceType}
+                      onChange={(e) => setServiceType(e.target.value)}
+                      placeholder="e.g. Virtual Assistant Services"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                    />
+                  </div>
                   {/* Sender info */}
                   <div>
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Name</label>
