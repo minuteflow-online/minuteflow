@@ -31,6 +31,11 @@ interface ProjectTag {
   project_name: string;
 }
 
+interface TaskOption {
+  id: number;
+  task_name: string;
+}
+
 interface CorrectionRequestModalProps {
   log: TimeLog;
   currentUserId: string;
@@ -57,6 +62,7 @@ export default function CorrectionRequestModal({
   const [allProjects, setAllProjects] = useState<ProjectTag[]>([]);
   const [allClientNames, setAllClientNames] = useState<string[]>([]);
   const [accountClientMap, setAccountClientMap] = useState<Record<string, string>>({});
+  const [tasksByProject, setTasksByProject] = useState<Record<number, TaskOption[]>>({});
 
   const fetchFormData = useCallback(async () => {
     try {
@@ -80,6 +86,7 @@ export default function CorrectionRequestModal({
       if (optRes.ok) {
         const data = await optRes.json();
         if (data.projects?.length > 0) setAllProjects(data.projects);
+        if (data.tasksByProject) setTasksByProject(data.tasksByProject);
       }
       if (clientRes.ok) {
         const data = await clientRes.json();
@@ -155,8 +162,19 @@ export default function CorrectionRequestModal({
     ? (fieldValues["account"] || "")
     : (log.account || "");
 
+  // Derive the corrected project value (if that field is also selected)
+  const correctedProject = selectedFields.has("project")
+    ? (fieldValues["project"] || "")
+    : (log.project || "");
+
   // Projects filtered by account
   const filteredProjects = allProjects.filter((p) => p.account === correctedAccount);
+
+  // Tasks filtered by selected project
+  const selectedProjectTag = allProjects.find((p) => p.project_name === correctedProject);
+  const filteredTasks: TaskOption[] = selectedProjectTag
+    ? (tasksByProject[selectedProjectTag.id] ?? [])
+    : [];
 
   const handleSubmit = async () => {
     if (selectedFields.size === 0) {
@@ -298,6 +316,44 @@ export default function CorrectionRequestModal({
           ))}
         </select>
       );
+    }
+
+    if (fieldKey === "task_name") {
+      if (filteredTasks.length > 0) {
+        return (
+          <div className="space-y-1">
+            <select
+              value={filteredTasks.find((t) => t.task_name === val) ? val : (val ? "__other__" : "")}
+              onChange={(e) => {
+                if (e.target.value === "__other__") {
+                  setFieldVal(fieldKey, "");
+                } else {
+                  setFieldVal(fieldKey, e.target.value);
+                }
+              }}
+              className="mt-1 w-full rounded border border-sand px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+            >
+              <option value="">
+                {!correctedProject ? "Select project first..." : "Select task..."}
+              </option>
+              {filteredTasks.map((t) => (
+                <option key={t.id} value={t.task_name}>{t.task_name}</option>
+              ))}
+              <option value="__other__">✏️ Custom name...</option>
+            </select>
+            {val && !filteredTasks.find((t) => t.task_name === val) && (
+              <input
+                type="text"
+                value={val === "__other__" ? "" : val}
+                onChange={(e) => setFieldVal(fieldKey, e.target.value)}
+                placeholder="Type task name..."
+                className="w-full rounded border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
+              />
+            )}
+          </div>
+        );
+      }
+      // Fall through to free-text if no tasks configured for the project
     }
 
     if (fieldKey.includes("time")) {

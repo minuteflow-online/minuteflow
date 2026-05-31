@@ -3797,11 +3797,14 @@ function OrganizationTab() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [uploadingOrgLogo, setUploadingOrgLogo] = useState(false);
+  const orgLogoFileRef = useRef<HTMLInputElement>(null);
 
   // Form state
   const [orgName, setOrgName] = useState("");
   const [registeredBusinessName, setRegisteredBusinessName] = useState("");
   const [dba, setDba] = useState("");
+  const [taxId, setTaxId] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [address, setAddress] = useState("");
   const [timezone, setTimezone] = useState("");
@@ -3821,6 +3824,7 @@ function OrganizationTab() {
         setOrgName(s.org_name || "");
         setRegisteredBusinessName(s.registered_business_name || "");
         setDba(s.dba || "");
+        setTaxId(s.tax_id || "");
         setLogoUrl(s.logo_url || "");
         setAddress(s.address || "");
         setTimezone(s.timezone || "UTC");
@@ -3832,6 +3836,32 @@ function OrganizationTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const handleOrgLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingOrgLogo(true);
+    setSaveError("");
+    try {
+      const ext = file.name.split(".").pop() || "png";
+      const path = `org/logo-${Date.now()}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from("logos")
+        .upload(path, file, { upsert: true });
+      if (uploadError) {
+        setSaveError(`Logo upload failed: ${uploadError.message}`);
+        setUploadingOrgLogo(false);
+        return;
+      }
+      const { data: urlData } = supabase.storage.from("logos").getPublicUrl(path);
+      setLogoUrl(urlData.publicUrl);
+    } catch {
+      setSaveError("Logo upload failed");
+    } finally {
+      setUploadingOrgLogo(false);
+      if (orgLogoFileRef.current) orgLogoFileRef.current.value = "";
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setSaveError("");
@@ -3841,6 +3871,7 @@ function OrganizationTab() {
       org_name: orgName || "MinuteFlow",
       registered_business_name: registeredBusinessName || null,
       dba: dba || null,
+      tax_id: taxId || null,
       logo_url: logoUrl || null,
       address: address || null,
       timezone: timezone || "UTC",
@@ -3939,14 +3970,65 @@ function OrganizationTab() {
 
         <div>
           <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">
-            Logo URL
+            Organization Logo
+          </label>
+          {logoUrl ? (
+            <div className="flex items-center gap-3 mb-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={logoUrl} alt="Org logo" className="h-12 w-auto max-w-[120px] rounded border border-sand object-contain" />
+              <button
+                type="button"
+                onClick={() => setLogoUrl("")}
+                className="text-[11px] text-red-500 hover:underline"
+              >
+                Remove
+              </button>
+            </div>
+          ) : null}
+          <input
+            ref={orgLogoFileRef}
+            type="file"
+            accept="image/*"
+            onChange={handleOrgLogoUpload}
+            className="hidden"
+            id="org-logo-upload"
+          />
+          <label
+            htmlFor="org-logo-upload"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-sand px-4 py-2 text-[13px] font-medium text-bark transition-all hover:border-terracotta hover:text-terracotta"
+          >
+            {uploadingOrgLogo ? (
+              <>
+                <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+                  <path d="M12 2a10 10 0 0 1 10 10" />
+                </svg>
+                Uploading...
+              </>
+            ) : (
+              <>
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                {logoUrl ? "Replace Logo" : "Upload Logo"}
+              </>
+            )}
+          </label>
+          <p className="mt-1 text-[10px] text-stone">PNG, JPG, SVG. Shows on invoices.</p>
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">
+            Tax ID / EIN
           </label>
           <input
-            type="url"
-            value={logoUrl}
-            onChange={(e) => setLogoUrl(e.target.value)}
+            type="text"
+            value={taxId}
+            onChange={(e) => setTaxId(e.target.value)}
             className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
-            placeholder="https://example.com/logo.png"
+            placeholder="12-3456789"
           />
         </div>
 
@@ -5277,7 +5359,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   /* ── Computed ──────────────────────────────────────────────── */
 
   const filteredInvoices = useMemo(() => {
-    if (statusFilter === "all") return invoices;
+    if (statusFilter === "all") return invoices.filter((inv) => inv.status !== "trash");
     return invoices.filter((inv) => inv.status === statusFilter);
   }, [invoices, statusFilter]);
 
@@ -5838,6 +5920,109 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     fetchInvoices();
   };
 
+  /* ── Trash invoice (soft delete) ─────────────────────────── */
+
+  const handleTrashInvoice = async (invoice: Invoice) => {
+    await supabase
+      .from("invoices")
+      .update({ status: "trash" as const })
+      .eq("id", invoice.id);
+    fetchInvoices();
+  };
+
+  const handleRestoreInvoice = async (invoice: Invoice) => {
+    await supabase
+      .from("invoices")
+      .update({ status: "draft" as const })
+      .eq("id", invoice.id);
+    fetchInvoices();
+    setStatusFilter("draft");
+  };
+
+  /* ── Save draft early (no line items required) ────────────── */
+
+  const handleSaveDraft = async () => {
+    if (!selectedClientId && !selectedAccount) return;
+    setSaving(true);
+
+    const invoiceNumber = generateInvoiceNumber();
+    const issueDate = new Date().toISOString().split("T")[0];
+    const manualTotal = parseFloat(invoiceTotal) || 0;
+    const adjustment = parseFloat(adjustmentAmount) || 0;
+    const finalTotal = manualTotal - adjustment;
+
+    const billingClient = clients.find((c) => c.id === selectedClientId);
+    const toName = billingClient?.name || selectedAccount || "Client";
+
+    const invoiceData = {
+      invoice_number: invoiceNumber,
+      client_id: billingClient?.id || null,
+      account_name: generateBy === "account" ? selectedAccount : null,
+      status: "draft" as const,
+      from_name: fromName || orgSettings?.registered_business_name || orgSettings?.org_name || "MinuteFlow",
+      from_phone: fromPhone || null,
+      from_address: orgSettings?.address || null,
+      from_email: orgSettings?.billing_email || null,
+      from_logo_url: orgSettings?.logo_url || null,
+      to_name: toName,
+      to_contact: billingClient?.contact_name || null,
+      to_email: billingClient?.email || null,
+      to_phone: billingClient?.phone || null,
+      to_address: billingClient
+        ? [billingClient.address, billingClient.city, billingClient.state, billingClient.zip, billingClient.country].filter(Boolean).join(", ") || null
+        : null,
+      service_type: serviceType || null,
+      issue_date: issueDate,
+      due_date: null,
+      subtotal: manualTotal,
+      tax_rate: 0,
+      tax_amount: 0,
+      total: finalTotal,
+      adjustment_amount: adjustment,
+      currency: billingClient?.currency || "USD",
+      notes: invoiceNotes || null,
+      payment_link: paymentLink || null,
+      reminder_enabled: reminderEnabled,
+      payment_terms: null,
+      sent_at: null,
+    };
+
+    const { data: newInvoice, error } = await supabase
+      .from("invoices")
+      .insert(invoiceData)
+      .select()
+      .single();
+
+    if (error || !newInvoice) {
+      setSaving(false);
+      return;
+    }
+
+    // Save line items if any exist
+    if (lineItems.length > 0) {
+      const lineItemsData = lineItems.map((li, idx) => ({
+        invoice_id: newInvoice.id,
+        log_id: li.log_id,
+        description: li.description,
+        va_name: li.va_name,
+        account_name: li.account_name || null,
+        category: li.category || null,
+        project: li.project || null,
+        client_memo: li.client_memo || null,
+        quantity: li.quantity,
+        unit_price: 0,
+        amount: 0,
+        service_date: li.service_date || null,
+        sort_order: idx,
+      }));
+      await supabase.from("invoice_line_items").insert(lineItemsData);
+    }
+
+    setSaving(false);
+    await fetchInvoices();
+    await openInvoiceDetail(newInvoice as unknown as Invoice);
+  };
+
   /* ── Helpers ──────────────────────────────────────────────── */
 
   const formatCurrency = (amount: number, currency = "USD") => {
@@ -5855,6 +6040,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       partially_paid: { bg: "bg-amber-soft", text: "text-amber" },
       overdue: { bg: "bg-red-50", text: "text-red-600" },
       cancelled: { bg: "bg-stone/10", text: "text-stone" },
+      trash: { bg: "bg-red-50", text: "text-red-400" },
     };
     const s = styles[status] || styles.draft;
     return `${s.bg} ${s.text}`;
@@ -5862,6 +6048,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   const statusLabel = (status: Invoice["status"]) => {
     if (status === "partially_paid") return "Partial";
+    if (status === "trash") return "Trash";
     return status.charAt(0).toUpperCase() + status.slice(1);
   };
 
@@ -5908,6 +6095,20 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             </svg>
             Back to Invoices
           </button>
+          {(selectedClientId || selectedAccount) && (
+            <button
+              onClick={handleSaveDraft}
+              disabled={saving}
+              className="flex items-center gap-1.5 rounded-lg border border-sand px-3.5 py-2 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta disabled:opacity-50 cursor-pointer"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              {saving ? "Saving..." : "Save Draft"}
+            </button>
+          )}
         </div>
 
         <div className="rounded-xl border border-sand bg-white p-6">
@@ -6900,7 +7101,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       {/* Filter + New buttons */}
       <div className="mb-4 flex items-center justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          {(["all", "draft", "sent", "partially_paid", "paid", "overdue", "cancelled"] as const).map((status) => (
+          {(["all", "draft", "sent", "partially_paid", "paid", "overdue", "cancelled", "trash"] as const).map((status) => (
             <button
               key={status}
               onClick={() => setStatusFilter(status)}
@@ -7021,7 +7222,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                             </svg>
                           </button>
                         )}
-                        {inv.status !== "paid" && inv.status !== "cancelled" && (
+                        {inv.status !== "paid" && inv.status !== "cancelled" && inv.status !== "trash" && (
                           <button
                             onClick={() => handleMarkPaid(inv)}
                             title="Mark Paid"
@@ -7029,6 +7230,31 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                           >
                             <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          </button>
+                        )}
+                        {inv.status === "trash" ? (
+                          <button
+                            onClick={() => handleRestoreInvoice(inv)}
+                            title="Restore from Trash"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sand text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                          >
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="1 4 1 10 7 10" />
+                              <path d="M3.51 15a9 9 0 1 0 .49-3.5" />
+                            </svg>
+                          </button>
+                        ) : (inv.status === "draft" || inv.status === "sent") && (
+                          <button
+                            onClick={() => handleTrashInvoice(inv)}
+                            title="Move to Trash"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sand text-bark transition-all hover:border-red-400 hover:text-red-400 cursor-pointer"
+                          >
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                              <path d="M10 11v6M14 11v6" />
+                              <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
                             </svg>
                           </button>
                         )}

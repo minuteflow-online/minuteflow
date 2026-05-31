@@ -189,6 +189,7 @@ export interface OrganizationSettings {
   billing_info: Record<string, unknown>;
   registered_business_name: string | null;
   dba: string | null;
+  tax_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -219,7 +220,7 @@ export interface Invoice {
   id: number;
   invoice_number: string;
   client_id: number | null;
-  status: 'draft' | 'sent' | 'paid' | 'partially_paid' | 'overdue' | 'cancelled';
+  status: 'draft' | 'sent' | 'paid' | 'partially_paid' | 'overdue' | 'cancelled' | 'trash';
   from_name: string;
   from_address: string | null;
   from_email: string | null;
