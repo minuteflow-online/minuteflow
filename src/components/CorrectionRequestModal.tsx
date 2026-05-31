@@ -56,6 +56,7 @@ export default function CorrectionRequestModal({
   const [dbAccounts, setDbAccounts] = useState<string[]>([]);
   const [allProjects, setAllProjects] = useState<ProjectTag[]>([]);
   const [allClientNames, setAllClientNames] = useState<string[]>([]);
+  const [accountClientMap, setAccountClientMap] = useState<Record<string, string>>({});
 
   const fetchFormData = useCallback(async () => {
     try {
@@ -64,11 +65,16 @@ export default function CorrectionRequestModal({
         fetch("/api/task-form-options"),
         fetch("/api/clients"),
       ]);
+
+      let accountList: { id: number; name: string; active: boolean }[] = [];
+      let clientList: { id: number; name: string; active: boolean }[] = [];
+
       if (accRes.ok) {
         const data = await accRes.json();
-        const active = (data.accounts ?? [])
-          .filter((a: { active: boolean }) => a.active)
-          .map((a: { name: string }) => a.name);
+        accountList = data.accounts ?? [];
+        const active = accountList
+          .filter((a) => a.active)
+          .map((a) => a.name);
         setDbAccounts(active);
       }
       if (optRes.ok) {
@@ -77,11 +83,31 @@ export default function CorrectionRequestModal({
       }
       if (clientRes.ok) {
         const data = await clientRes.json();
-        const names: string[] = (data.clients ?? [])
-          .filter((c: { active: boolean }) => c.active !== false)
-          .map((c: { name: string }) => c.name)
+        clientList = data.clients ?? [];
+        const names: string[] = clientList
+          .filter((c) => c.active !== false)
+          .map((c) => c.name)
           .sort();
         setAllClientNames(names);
+      }
+
+      // Build account→client map
+      if (accountList.length > 0 && clientList.length > 0) {
+        const supabase = createClient();
+        const { data: mappings } = await supabase
+          .from("account_client_map")
+          .select("account_id, client_id");
+        if (mappings) {
+          const map: Record<string, string> = {};
+          for (const m of mappings) {
+            const account = accountList.find((a) => a.id === m.account_id);
+            const client = clientList.find((c) => c.id === m.client_id);
+            if (account && client) {
+              map[account.name] = client.name;
+            }
+          }
+          setAccountClientMap(map);
+        }
       }
     } catch {}
   }, []);
@@ -179,7 +205,21 @@ export default function CorrectionRequestModal({
       return (
         <select
           value={val}
-          onChange={(e) => setFieldVal(fieldKey, e.target.value)}
+          onChange={(e) => {
+            const newAccount = e.target.value;
+            setFieldVal(fieldKey, newAccount);
+            // Auto-populate client when account is selected
+            const mappedClient = newAccount ? accountClientMap[newAccount] : "";
+            if (mappedClient) {
+              // Add client_name to selected fields and set its value
+              setSelectedFields((prev) => {
+                const next = new Set(prev);
+                next.add("client_name");
+                return next;
+              });
+              setFieldValues((fv) => ({ ...fv, client_name: mappedClient }));
+            }
+          }}
           className="mt-1 w-full rounded border border-sand px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
         >
           <option value="">Select account...</option>
