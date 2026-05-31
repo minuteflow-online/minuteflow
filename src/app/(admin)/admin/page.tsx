@@ -5281,6 +5281,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   // Inline cell custom-edit mode (combo dropdown → text input switch)
   const [customEditCell, setCustomEditCell] = useState<{ idx: number; field: "desc" | "project" } | null>(null);
 
+  // Undo stack for line item removals (up to 20)
+  const [undoStack, setUndoStack] = useState<LineItemDraft[][]>([]);
+
+  // Invoice summary — hours & rate fields
+  const [hoursNotBilled, setHoursNotBilled] = useState("");
+  const [hoursNotBilledLabel, setHoursNotBilledLabel] = useState("Volunteer");
+  const [rateAmount, setRateAmount] = useState("");
+
   // Manual invoice state
   const [manualDescription, setManualDescription] = useState("");
   const [manualAmount, setManualAmount] = useState("");
@@ -5373,6 +5381,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     let paid = 0;
     let overdue = 0;
     invoices.forEach((inv) => {
+      if (inv.status === "trash") return; // trash excluded from all totals
       totalInvoiced += Number(inv.total);
       if (inv.status === "sent") outstanding += Number(inv.total);
       if (inv.status === "partially_paid") outstanding += Number(inv.total) - Number(inv.amount_paid || 0);
@@ -5399,8 +5408,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       const totalHrs = lineItems.reduce((sum, li) => sum + li.quantity, 0);
       const autoTotal = Math.round(totalHrs * selectedClient.default_hourly_rate * 100) / 100;
       setInvoiceTotal(String(autoTotal));
+      if (!rateAmount) setRateAmount(String(selectedClient.default_hourly_rate));
     }
-  }, [lineItems, selectedClient]);
+  }, [lineItems, selectedClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Unique option lists for Step 3 filter panels
   const filterVAOptions = useMemo(() => [...new Set(lineItems.map(li => li.va_name || "").filter(Boolean))].sort(), [lineItems]);
@@ -5567,6 +5577,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       reminder_enabled: reminderEnabled,
       payment_terms: null,
       sent_at: sendNow ? new Date().toISOString() : null,
+      rate_amount: rateAmount ? parseFloat(rateAmount) : null,
+      hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
+      hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
     };
 
     const { data: newInvoice, error } = await supabase
@@ -5620,12 +5633,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setDateFrom("");
     setDateTo("");
     setLineItems([]);
+    setUndoStack([]);
     setInvoiceTotal("");
     setAdjustmentAmount("0");
     setServiceType("");
     setPaymentLink("");
     setReminderEnabled(false);
     setInvoiceNotes("");
+    setHoursNotBilled("");
+    setHoursNotBilledLabel("Volunteer");
+    setRateAmount("");
     setFilterVAValues(new Set<string>());
     setFilterTaskValues(new Set<string>());
     setFilterDelivValues(new Set<string>());
@@ -5809,6 +5826,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setEditDueDate(invoice.due_date ?? "");
     setEditReminderEnabled(invoice.reminder_enabled ?? false);
     setSendToEmail(invoice.to_email ?? "");
+    setRateAmount(invoice.rate_amount != null ? String(invoice.rate_amount) : "");
+    setHoursNotBilled(invoice.hours_not_billed != null ? String(invoice.hours_not_billed) : "");
+    setHoursNotBilledLabel(invoice.hours_not_billed_label || "Volunteer");
 
     const [lineItemsRes, paymentsRes] = await Promise.all([
       supabase
@@ -5882,6 +5902,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       from_phone: editFromPhone || null,
       notes: editNotes || null,
       reminder_enabled: editReminderEnabled,
+      rate_amount: rateAmount ? parseFloat(rateAmount) : null,
+      hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
+      hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
     };
     if (editDueDate) updateData.due_date = editDueDate;
 
@@ -5898,6 +5921,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             from_name: editFromName || prev.from_name,
             notes: editNotes || null,
             due_date: editDueDate || prev.due_date,
+            rate_amount: rateAmount ? parseFloat(rateAmount) : null,
+            hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
+            hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
           }
         : null
     );
@@ -5958,6 +5984,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setStatusFilter("draft");
   };
 
+  const handlePermanentDelete = async (invoice: Invoice) => {
+    if (!confirm(`Permanently delete invoice ${invoice.invoice_number}? This cannot be undone.`)) return;
+    await supabase.from("invoice_line_items").delete().eq("invoice_id", invoice.id);
+    await supabase.from("invoice_payments").delete().eq("invoice_id", invoice.id);
+    await supabase.from("invoices").delete().eq("id", invoice.id);
+    fetchInvoices();
+  };
+
   /* ── Save draft early (no line items required) ────────────── */
 
   const handleSaveDraft = async () => {
@@ -6004,6 +6038,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       reminder_enabled: reminderEnabled,
       payment_terms: null,
       sent_at: null,
+      rate_amount: rateAmount ? parseFloat(rateAmount) : null,
+      hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
+      hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
     };
 
     const { data: newInvoice, error } = await supabase
@@ -6229,6 +6266,18 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 <label className="text-[11px] font-semibold uppercase tracking-wider text-bark">
                   Step 3: Review Time Logs ({isFiltered ? `${filteredLineItems.length} of ` : ""}{lineItems.length} entries · {isFiltered ? `${filteredHours.toFixed(2)} of ` : ""}{totalHours.toFixed(2)} hrs · {isFiltered ? `${Math.round(filteredHours * 60)} of ` : ""}{Math.round(totalHours * 60)} min)
                 </label>
+                {undoStack.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const prev = undoStack[undoStack.length - 1];
+                      setUndoStack((s) => s.slice(0, -1));
+                      setLineItems(prev);
+                    }}
+                    className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                  >
+                    ↩ Undo {undoStack.length > 1 ? `(${undoStack.length})` : ""}
+                  </button>
+                )}
               </div>
 
               {/* Filter bar – Excel-style checkbox dropdowns */}
@@ -6445,7 +6494,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                             </td>
                             <td className="px-3 py-2 text-center">
                               <button
-                                onClick={() => setLineItems(lineItems.filter((_, i) => i !== realIdx))}
+                                onClick={() => {
+                                  setUndoStack((prev) => [...prev.slice(-19), lineItems]);
+                                  setLineItems(lineItems.filter((_, i) => i !== realIdx));
+                                }}
+                                title="Remove from invoice (not from log)"
                                 className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-red-50 hover:text-red-500 cursor-pointer"
                               >
                                 &times;
@@ -6528,10 +6581,54 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 <div>
                   <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-bark">Invoice Summary</label>
                   <div className="rounded-lg border border-sand bg-parchment/30 p-5 space-y-3">
+                    {/* Rate */}
+                    <div className="flex items-center justify-between text-[12px]">
+                      <span className="text-bark">Rate ($/hr)</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={rateAmount}
+                        onChange={(e) => setRateAmount(e.target.value)}
+                        placeholder="e.g. 25.00"
+                        className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
+                      />
+                    </div>
+                    {/* Gross Hours */}
                     <div className="flex justify-between text-[12px]">
-                      <span className="text-bark">Total Hours</span>
+                      <span className="text-bark">Gross Hours</span>
                       <span className="font-medium text-espresso">{totalHours.toFixed(2)} hrs</span>
                     </div>
+                    {/* Hours Not Billed */}
+                    <div className="flex items-center justify-between gap-2 text-[12px]">
+                      <div className="flex items-center gap-2 flex-1">
+                        <span className="text-bark whitespace-nowrap">Hours Not Billed</span>
+                        <input
+                          type="text"
+                          value={hoursNotBilledLabel}
+                          onChange={(e) => setHoursNotBilledLabel(e.target.value)}
+                          placeholder="Label (e.g. Volunteer)"
+                          className="flex-1 rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white placeholder:text-stone"
+                        />
+                      </div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={hoursNotBilled}
+                        onChange={(e) => setHoursNotBilled(e.target.value)}
+                        placeholder="0.00"
+                        className="w-24 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
+                      />
+                    </div>
+                    {/* Total Hours Billed */}
+                    <div className="flex justify-between text-[12px]">
+                      <span className="text-bark">Total Hours Billed</span>
+                      <span className="font-medium text-espresso">
+                        {(totalHours - (parseFloat(hoursNotBilled) || 0)).toFixed(2)} hrs
+                      </span>
+                    </div>
+                    {/* Invoice Amount */}
                     <div className="flex items-center justify-between text-[12px]">
                       <span className="text-bark">Invoice Amount ($)</span>
                       <input
@@ -6938,7 +7035,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-[15px] font-bold text-[#2d1a00]">{inv.from_name}</div>
+                {orgSettings?.registered_business_name
+                  ? <div className="text-[15px] font-bold text-[#2d1a00]">{orgSettings.registered_business_name}</div>
+                  : <div className="text-[15px] font-bold text-[#2d1a00]">{inv.from_name}</div>
+                }
+                {orgSettings?.dba && orgSettings.dba !== orgSettings?.registered_business_name && (
+                  <div className="text-[11px] text-[#5a4000] mt-0.5">DBA: {orgSettings.dba}</div>
+                )}
+                {orgSettings?.registered_business_name && inv.from_name !== orgSettings.registered_business_name && (
+                  <div className="text-[12px] text-[#5a4000] mt-0.5">{inv.from_name}</div>
+                )}
                 {inv.from_phone && (
                   <div className="text-[12px] text-[#5a4000] mt-0.5">{inv.from_phone}</div>
                 )}
@@ -6970,28 +7076,53 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
             {/* Invoice Summary Box */}
             <div className="mb-6 rounded-lg border border-sand bg-parchment/30 p-5">
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <div className="text-center">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Total Hours</p>
-                  <p className="mt-1 text-[18px] font-bold text-espresso">
-                    {selectedLineItems.reduce((s, li) => s + Number(li.quantity), 0).toFixed(2)}
-                  </p>
-                </div>
-                <div className="text-center">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Invoice Amount</p>
-                  <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(Number(inv.subtotal), inv.currency)}</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Adjustment</p>
-                  <p className="mt-1 text-[18px] font-bold text-espresso">
-                    {Number(inv.adjustment_amount || 0) > 0 ? `− ${formatCurrency(Number(inv.adjustment_amount))}` : "$0"}
-                  </p>
-                </div>
-                <div className="text-center">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Final Amount</p>
-                  <p className="mt-1 text-[18px] font-bold text-terracotta">{formatCurrency(Number(inv.total), inv.currency)}</p>
-                </div>
-              </div>
+              {(() => {
+                const grossHours = selectedLineItems.reduce((s, li) => s + Number(li.quantity), 0);
+                const notBilled = Number(inv.hours_not_billed || 0);
+                const billedHours = grossHours - notBilled;
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-4">
+                      {inv.rate_amount != null && (
+                        <div className="text-center">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Rate</p>
+                          <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(Number(inv.rate_amount))}/hr</p>
+                        </div>
+                      )}
+                      <div className="text-center">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Gross Hours</p>
+                        <p className="mt-1 text-[18px] font-bold text-espresso">{grossHours.toFixed(2)}</p>
+                      </div>
+                      {notBilled > 0 && (
+                        <div className="text-center">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">{inv.hours_not_billed_label || "Not Billed"}</p>
+                          <p className="mt-1 text-[18px] font-bold text-espresso">{notBilled.toFixed(2)} hrs</p>
+                        </div>
+                      )}
+                      <div className="text-center">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Hours Billed</p>
+                        <p className="mt-1 text-[18px] font-bold text-espresso">{billedHours.toFixed(2)}</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 border-t border-sand pt-4">
+                      <div className="text-center">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Invoice Amount</p>
+                        <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(Number(inv.subtotal), inv.currency)}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Adjustment</p>
+                        <p className="mt-1 text-[18px] font-bold text-espresso">
+                          {Number(inv.adjustment_amount || 0) > 0 ? `− ${formatCurrency(Number(inv.adjustment_amount))}` : "$0"}
+                        </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Final Amount</p>
+                        <p className="mt-1 text-[18px] font-bold text-terracotta">{formatCurrency(Number(inv.total), inv.currency)}</p>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {/* Task Summary + Project Summary */}
@@ -7390,16 +7521,32 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                           </button>
                         )}
                         {inv.status === "trash" ? (
-                          <button
-                            onClick={() => handleRestoreInvoice(inv)}
-                            title="Restore from Trash"
-                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sand text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
-                          >
-                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <polyline points="1 4 1 10 7 10" />
-                              <path d="M3.51 15a9 9 0 1 0 .49-3.5" />
-                            </svg>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleRestoreInvoice(inv)}
+                              title="Restore from Trash"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sand text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                            >
+                              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <polyline points="1 4 1 10 7 10" />
+                                <path d="M3.51 15a9 9 0 1 0 .49-3.5" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => handlePermanentDelete(inv)}
+                              title="Permanently Delete"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sand text-bark transition-all hover:border-red-500 hover:text-red-500 cursor-pointer"
+                            >
+                              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                                <path d="M10 11v6M14 11v6" />
+                                <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </>
                         ) : (inv.status === "draft" || inv.status === "sent") && (
                           <button
                             onClick={() => handleTrashInvoice(inv)}

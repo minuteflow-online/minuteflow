@@ -79,6 +79,7 @@ export async function POST(request: Request) {
     body: JSON.stringify({
       from: `${invoice.from_name || "Toni Colina"} <noreply@minuteflow.click>`,
       to: [recipientEmail],
+      ...(invoice.from_email ? { reply_to: invoice.from_email } : {}),
       subject: `Invoice ${invoice.invoice_number} — ${invoice.from_name || "Toni Colina"}`,
       html,
     }),
@@ -130,6 +131,9 @@ interface InvoiceRow {
   account_name: string | null;
   service_type: string | null;
   status: string;
+  rate_amount: number | null;
+  hours_not_billed: number | null;
+  hours_not_billed_label: string | null;
 }
 
 interface LineItemRow {
@@ -165,7 +169,9 @@ function buildInvoiceEmail(
   orgRegisteredName: string | null = null,
   orgDba: string | null = null
 ): string {
-  const totalHours = items.reduce((s, li) => s + Number(li.quantity), 0);
+  const grossHours = items.reduce((s, li) => s + Number(li.quantity), 0);
+  const notBilledHours = Number(invoice.hours_not_billed || 0);
+  const totalHours = grossHours - notBilledHours;
   const adjustment = Number(invoice.adjustment_amount || 0);
   const invoiceAmount = Number(invoice.subtotal);
   const finalTotal = Number(invoice.total);
@@ -287,10 +293,25 @@ function buildInvoiceEmail(
 
     <!-- Invoice Summary box -->
     <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:12px 32px 20px 32px;">
-      <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden;">
+      <!-- Top row: hours + amounts -->
+      <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px 8px 0 0; overflow:hidden;">
         <tr style="background:#faf6f0;">
+          ${invoice.rate_amount != null ? `
           <td style="padding:12px 16px; text-align:center; border-right:1px solid #e8e0d4;">
-            <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Total Hours</div>
+            <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Rate</div>
+            <div style="font-size:20px; font-weight:700; color:#3d2b1f; margin-top:4px;">${formatCurrency(invoice.rate_amount!, invoice.currency)}/hr</div>
+          </td>` : ""}
+          <td style="padding:12px 16px; text-align:center; border-right:1px solid #e8e0d4;">
+            <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Gross Hours</div>
+            <div style="font-size:20px; font-weight:700; color:#3d2b1f; margin-top:4px;">${grossHours.toFixed(2)}</div>
+          </td>
+          ${notBilledHours > 0 ? `
+          <td style="padding:12px 16px; text-align:center; border-right:1px solid #e8e0d4;">
+            <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${invoice.hours_not_billed_label || "Not Billed"}</div>
+            <div style="font-size:20px; font-weight:700; color:#3d2b1f; margin-top:4px;">${notBilledHours.toFixed(2)}</div>
+          </td>` : ""}
+          <td style="padding:12px 16px; text-align:center; border-right:1px solid #e8e0d4;">
+            <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Total Hours Billed</div>
             <div style="font-size:20px; font-weight:700; color:#3d2b1f; margin-top:4px;">${totalHours.toFixed(2)}</div>
           </td>
           <td style="padding:12px 16px; text-align:center; border-right:1px solid #e8e0d4;">
