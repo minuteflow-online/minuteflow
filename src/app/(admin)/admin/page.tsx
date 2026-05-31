@@ -5234,6 +5234,7 @@ interface LineItemDraft {
   unit_price: number; // rate
   amount: number;
   service_date: string;
+  start_time: string;
 }
 
 function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezone: string }) {
@@ -5327,17 +5328,50 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   // Send-to override (for test sends)
   const [sendToEmail, setSendToEmail] = useState("");
 
+  // Holding cell for items removed from create view
+  const [removedLineItems, setRemovedLineItems] = useState<LineItemDraft[]>([]);
+
+  // Edit mode line items (editable copy of selectedLineItems)
+  const [editLineItemsState, setEditLineItemsState] = useState<InvoiceLineItem[]>([]);
+  const [removedEditItems, setRemovedEditItems] = useState<InvoiceLineItem[]>([]);
+  const [editUndoStack, setEditUndoStack] = useState<InvoiceLineItem[][]>([]);
+  const [editFilterVAValues, setEditFilterVAValues] = useState<Set<string>>(new Set<string>());
+  const [editFilterTaskValues, setEditFilterTaskValues] = useState<Set<string>>(new Set<string>());
+  const [editFilterDelivValues, setEditFilterDelivValues] = useState<Set<string>>(new Set<string>());
+  const [editFilterMemoValues, setEditFilterMemoValues] = useState<Set<string>>(new Set<string>());
+  const [editOpenFilterPanel, setEditOpenFilterPanel] = useState<string | null>(null);
+  const [editFilterSearch, setEditFilterSearch] = useState("");
+  const [editCustomCell, setEditCustomCell] = useState<{ idx: number; field: "desc" | "project" } | null>(null);
+
+  // All project_tags from DB (for Deliverables dropdown)
+  const [allProjectTags, setAllProjectTags] = useState<string[]>([]);
+
+  // "Uncheck All" sentinel booleans for Step 3 filters
+  const [filterVANone, setFilterVANone] = useState(false);
+  const [filterTaskNone, setFilterTaskNone] = useState(false);
+  const [filterDelivNone, setFilterDelivNone] = useState(false);
+  const [filterMemoNone, setFilterMemoNone] = useState(false);
+  const [editFilterVANone, setEditFilterVANone] = useState(false);
+  const [editFilterTaskNone, setEditFilterTaskNone] = useState(false);
+  const [editFilterDelivNone, setEditFilterDelivNone] = useState(false);
+  const [editFilterMemoNone, setEditFilterMemoNone] = useState(false);
+
+  // Holding cell reassignment overrides (per-index maps)
+  const [removedItemOverrides, setRemovedItemOverrides] = useState<Map<number, { account: string; client: string }>>(new Map());
+  const [removedEditOverrides, setRemovedEditOverrides] = useState<Map<number, { account: string; client: string }>>(new Map());
+
   const supabase = createClient();
 
   /* ── Fetch invoices + clients ─────────────────────────────── */
 
   const fetchInvoices = useCallback(async () => {
     const sb = createClient();
-    const [invRes, clientsRes, orgRes, accRes] = await Promise.all([
+    const [invRes, clientsRes, orgRes, accRes, tagsRes] = await Promise.all([
       sb.from("invoices").select("*").order("created_at", { ascending: false }),
       sb.from("clients").select("*").eq("active", true).order("name"),
       sb.from("organization_settings").select("*").limit(1).single(),
       fetch("/api/accounts"),
+      sb.from("project_tags").select("project_name").eq("is_active", true).order("sort_order"),
     ]);
     setInvoices((invRes.data ?? []) as Invoice[]);
     setClients((clientsRes.data ?? []) as Client[]);
@@ -5345,6 +5379,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       setOrgSettings(orgRes.data as OrganizationSettings);
       setFromName(orgRes.data.registered_business_name || orgRes.data.org_name || "");
     }
+    const tagNames: string[] = (tagsRes.data ?? []).map((t: { project_name: string }) => t.project_name).filter(Boolean);
+    setAllProjectTags(tagNames);
     const accData = await accRes.json();
     const names: string[] = (accData.accounts ?? [])
       .filter((a: { active: boolean }) => a.active !== false)
@@ -5420,20 +5456,43 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   // Options for inline combo dropdowns
   const taskDescOptions = useMemo(() => [...new Set(lineItems.map(li => li.description))].sort(), [lineItems]);
-  const getDelivOptions = useCallback((taskDesc: string) =>
-    [...new Set(lineItems.filter(li => li.description === taskDesc).map(li => li.project || "").filter(Boolean))].sort()
-  , [lineItems]);
+  const getDelivOptions = useCallback((taskDesc: string) => {
+    const fromLineItems = [...new Set(lineItems.filter(li => li.description === taskDesc).map(li => li.project || "").filter(Boolean))];
+    return [...new Set([...allProjectTags, ...fromLineItems])].sort();
+  }, [lineItems, allProjectTags]);
 
   // Filtered line items for Step 3 display
   const filteredLineItems = useMemo(() => {
     return lineItems.filter((li) => {
-      const vaOk = filterVAValues.size === 0 || filterVAValues.has(li.va_name || "");
-      const taskOk = filterTaskValues.size === 0 || filterTaskValues.has(li.description);
-      const delivOk = filterDelivValues.size === 0 || filterDelivValues.has(li.project || "");
-      const memoOk = filterMemoValues.size === 0 || filterMemoValues.has(li.client_memo || "");
+      const vaOk = filterVANone ? false : (filterVAValues.size === 0 || filterVAValues.has(li.va_name || ""));
+      const taskOk = filterTaskNone ? false : (filterTaskValues.size === 0 || filterTaskValues.has(li.description));
+      const delivOk = filterDelivNone ? false : (filterDelivValues.size === 0 || filterDelivValues.has(li.project || ""));
+      const memoOk = filterMemoNone ? false : (filterMemoValues.size === 0 || filterMemoValues.has(li.client_memo || ""));
       return vaOk && taskOk && delivOk && memoOk;
     });
-  }, [lineItems, filterVAValues, filterTaskValues, filterDelivValues, filterMemoValues]);
+  }, [lineItems, filterVAValues, filterTaskValues, filterDelivValues, filterMemoValues, filterVANone, filterTaskNone, filterDelivNone, filterMemoNone]);
+
+  // Edit mode filter options
+  const editFilterVAOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.va_name || "").filter(Boolean))].sort(), [editLineItemsState]);
+  const editFilterTaskOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.description).filter(Boolean))].sort(), [editLineItemsState]);
+  const editFilterDelivOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.project || "").filter(Boolean))].sort(), [editLineItemsState]);
+  const editFilterMemoOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.client_memo || "").filter(Boolean))].sort(), [editLineItemsState]);
+
+  const filteredEditLineItems = useMemo(() => {
+    return editLineItemsState.filter((li) => {
+      const vaOk = editFilterVANone ? false : (editFilterVAValues.size === 0 || editFilterVAValues.has(li.va_name || ""));
+      const taskOk = editFilterTaskNone ? false : (editFilterTaskValues.size === 0 || editFilterTaskValues.has(li.description));
+      const delivOk = editFilterDelivNone ? false : (editFilterDelivValues.size === 0 || editFilterDelivValues.has(li.project || ""));
+      const memoOk = editFilterMemoNone ? false : (editFilterMemoValues.size === 0 || editFilterMemoValues.has(li.client_memo || ""));
+      return vaOk && taskOk && delivOk && memoOk;
+    });
+  }, [editLineItemsState, editFilterVAValues, editFilterTaskValues, editFilterDelivValues, editFilterMemoValues, editFilterVANone, editFilterTaskNone, editFilterDelivNone, editFilterMemoNone]);
+
+  const editTaskDescOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.description))].sort(), [editLineItemsState]);
+  const getEditDelivOptions = useCallback((taskDesc: string) => {
+    const fromEditItems = [...new Set(editLineItemsState.filter(li => li.description === taskDesc).map(li => li.project || "").filter(Boolean))];
+    return [...new Set([...allProjectTags, ...fromEditItems])].sort();
+  }, [editLineItemsState, allProjectTags]);
 
   const subtotal = useMemo(() => {
     return lineItems.reduce((sum, li) => sum + li.amount, 0);
@@ -5478,13 +5537,23 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (!dateFrom || !dateTo) return;
     setLoadingLogs(true);
 
-    // Get all log_ids already on invoices (to exclude them)
+    // Only exclude log_ids from invoices that are sent/paid (not drafts/trash - those can be re-used)
+    const { data: activeInvoices } = await supabase
+      .from("invoices")
+      .select("id")
+      .in("status", ["sent", "paid", "partially_paid", "overdue", "ready_to_send"]);
+    const activeInvoiceIds = new Set((activeInvoices ?? []).map((inv: { id: number }) => inv.id));
+
     const { data: existingItems } = await supabase
       .from("invoice_line_items")
-      .select("log_id")
+      .select("log_id, invoice_id")
       .not("log_id", "is", null);
 
-    const usedLogIds = new Set((existingItems ?? []).map((item: { log_id: number | null }) => item.log_id));
+    const usedLogIds = new Set(
+      (existingItems ?? [])
+        .filter((item: { log_id: number | null; invoice_id: number }) => activeInvoiceIds.has(item.invoice_id))
+        .map((item: { log_id: number | null; invoice_id: number }) => item.log_id)
+    );
 
     // Build query based on generateBy mode
     let query = supabase
@@ -5511,7 +5580,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       return {
         log_id: log.id,
         description: log.task_name,
-        va_name: log.full_name || log.username,
+        va_name: log.username,
         account_name: log.account || "",
         category: log.category,
         project: log.project || "",
@@ -5520,6 +5589,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         unit_price: 0,
         amount: 0,
         service_date: new Date(log.start_time).toISOString().split("T")[0],
+        start_time: log.start_time,
       };
     });
 
@@ -5607,6 +5677,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       unit_price: 0,
       amount: 0,
       service_date: li.service_date || null,
+      start_time: li.start_time || null,
       sort_order: idx,
     }));
 
@@ -5650,6 +5721,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setOpenFilterPanel(null);
     setFilterPanelSearch("");
     setCustomEditCell(null);
+    setRemovedLineItems([]);
 
     await fetchInvoices();
 
@@ -5843,7 +5915,18 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         .order("payment_date", { ascending: false }),
     ]);
 
-    setSelectedLineItems((lineItemsRes.data ?? []) as InvoiceLineItem[]);
+    const items = (lineItemsRes.data ?? []) as InvoiceLineItem[];
+    setSelectedLineItems(items);
+    setEditLineItemsState(items);
+    setRemovedEditItems([]);
+    setEditUndoStack([]);
+    setEditFilterVAValues(new Set<string>());
+    setEditFilterTaskValues(new Set<string>());
+    setEditFilterDelivValues(new Set<string>());
+    setEditFilterMemoValues(new Set<string>());
+    setEditOpenFilterPanel(null);
+    setEditFilterSearch("");
+    setEditCustomCell(null);
     setInvoicePayments((paymentsRes.data ?? []) as InvoicePayment[]);
     setView("detail");
   };
@@ -5883,6 +5966,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setSending(false);
   };
 
+  /* ── Mark as Ready to Send ────────────────────────────────── */
+  const handleMarkReadyToSend = async (invoice: Invoice) => {
+    await supabase
+      .from("invoices")
+      .update({ status: "ready_to_send" as Invoice["status"] })
+      .eq("id", invoice.id);
+    setSelectedInvoice((prev) => prev ? { ...prev, status: "ready_to_send" as Invoice["status"] } : null);
+    fetchInvoices();
+  };
+
   /* ── Update invoice fields ────────────────────────────────── */
 
   const handleUpdateInvoice = async () => {
@@ -5909,6 +6002,30 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (editDueDate) updateData.due_date = editDueDate;
 
     await supabase.from("invoices").update(updateData).eq("id", selectedInvoice.id);
+
+    // Save line item changes
+    for (const li of editLineItemsState) {
+      await supabase.from("invoice_line_items").update({
+        description: li.description,
+        project: li.project,
+        client_memo: li.client_memo,
+        va_name: li.va_name,
+      }).eq("id", li.id);
+    }
+    // Remove line items that were deleted
+    for (const li of removedEditItems) {
+      await supabase.from("invoice_line_items").delete().eq("id", li.id);
+    }
+    // Refresh selectedLineItems
+    const { data: refreshedItems } = await supabase
+      .from("invoice_line_items")
+      .select("*")
+      .eq("invoice_id", selectedInvoice.id)
+      .order("sort_order", { ascending: true });
+    const refreshed = (refreshedItems ?? []) as InvoiceLineItem[];
+    setSelectedLineItems(refreshed);
+    setEditLineItemsState(refreshed);
+    setRemovedEditItems([]);
 
     setSelectedInvoice((prev) =>
       prev
@@ -6074,6 +6191,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       await supabase.from("invoice_line_items").insert(lineItemsData);
     }
 
+    setRemovedLineItems([]);
     setSaving(false);
     await fetchInvoices();
     await openInvoiceDetail(newInvoice as unknown as Invoice);
@@ -6097,6 +6215,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       overdue: { bg: "bg-red-50", text: "text-red-600" },
       cancelled: { bg: "bg-stone/10", text: "text-stone" },
       trash: { bg: "bg-red-50", text: "text-red-400" },
+      ready_to_send: { bg: "bg-amber-soft", text: "text-amber" },
     };
     const s = styles[status] || styles.draft;
     return `${s.bg} ${s.text}`;
@@ -6105,6 +6224,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const statusLabel = (status: Invoice["status"]) => {
     if (status === "partially_paid") return "Partial";
     if (status === "trash") return "Trash";
+    if (status === "ready_to_send") return "Ready to Send";
     return status.charAt(0).toUpperCase() + status.slice(1);
   };
 
@@ -6288,17 +6408,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 <div className="grid grid-cols-4 gap-2 rounded-lg border border-sand bg-parchment/30 p-2">
                   {(
                     [
-                      { key: "va", label: "VA", values: filterVAValues, setValues: setFilterVAValues, options: filterVAOptions },
-                      { key: "task", label: "Task", values: filterTaskValues, setValues: setFilterTaskValues, options: filterTaskOptions },
-                      { key: "deliv", label: "Deliverables", values: filterDelivValues, setValues: setFilterDelivValues, options: filterDelivOptions },
-                      { key: "memo", label: "Memo", values: filterMemoValues, setValues: setFilterMemoValues, options: filterMemoOptions },
-                    ] as { key: string; label: string; values: Set<string>; setValues: (v: Set<string>) => void; options: string[] }[]
-                  ).map(({ key, label, values, setValues, options }) => {
+                      { key: "va", label: "VA", values: filterVAValues, setValues: setFilterVAValues, options: filterVAOptions, none: filterVANone, setNone: setFilterVANone },
+                      { key: "task", label: "Task", values: filterTaskValues, setValues: setFilterTaskValues, options: filterTaskOptions, none: filterTaskNone, setNone: setFilterTaskNone },
+                      { key: "deliv", label: "Deliverables", values: filterDelivValues, setValues: setFilterDelivValues, options: filterDelivOptions, none: filterDelivNone, setNone: setFilterDelivNone },
+                      { key: "memo", label: "Memo", values: filterMemoValues, setValues: setFilterMemoValues, options: filterMemoOptions, none: filterMemoNone, setNone: setFilterMemoNone },
+                    ] as { key: string; label: string; values: Set<string>; setValues: (v: Set<string>) => void; options: string[]; none: boolean; setNone: (v: boolean) => void }[]
+                  ).map(({ key, label, values, setValues, options, none, setNone }) => {
                     const isOpen = openFilterPanel === key;
                     const searchedOpts = filterPanelSearch && isOpen
                       ? options.filter(o => o.toLowerCase().includes(filterPanelSearch.toLowerCase()))
                       : options;
-                    const activeCount = values.size;
+                    const activeCount = none ? -1 : values.size;
                     return (
                       <div key={key} className="relative z-50">
                         <button
@@ -6309,12 +6429,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                             setFilterPanelSearch("");
                           }}
                           className={`flex w-full items-center justify-between gap-1 rounded border px-2 py-1.5 text-[11px] cursor-pointer transition-colors ${
-                            activeCount > 0
+                            none || activeCount > 0
                               ? "border-terracotta bg-terracotta/10 font-semibold text-terracotta"
                               : "border-sand bg-white text-bark hover:border-terracotta"
                           }`}
                         >
-                          <span>🔽 {label}{activeCount > 0 ? ` (${activeCount})` : ""}</span>
+                          <span>🔽 {label}{none ? " (none)" : activeCount > 0 ? ` (${activeCount})` : ""}</span>
                           <svg className="h-3 w-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="6 9 12 15 18 9" />
                           </svg>
@@ -6338,19 +6458,32 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                               <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-parchment/30">
                                 <input
                                   type="checkbox"
-                                  checked={values.size === 0}
-                                  onChange={() => setValues(new Set<string>())}
+                                  checked={!none && values.size === 0}
+                                  onChange={() => { setValues(new Set<string>()); setNone(false); }}
                                   className="accent-terracotta"
                                 />
                                 <span className="text-[11px] font-semibold text-espresso">(Select All)</span>
+                              </label>
+                              <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-parchment/30">
+                                <input
+                                  type="checkbox"
+                                  checked={none}
+                                  onChange={() => { setNone(true); setValues(new Set<string>()); }}
+                                  className="accent-terracotta"
+                                />
+                                <span className="text-[11px] font-semibold text-stone">(Uncheck All)</span>
                               </label>
                               {searchedOpts.map((opt) => (
                                 <label key={opt} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-parchment/30">
                                   <input
                                     type="checkbox"
-                                    checked={values.size === 0 || values.has(opt)}
+                                    checked={!none && (values.size === 0 || values.has(opt))}
                                     onChange={() => {
-                                      if (values.size === 0) {
+                                      setNone(false);
+                                      if (none) {
+                                        // Was in "none" mode → selecting one item
+                                        setValues(new Set<string>([opt]));
+                                      } else if (values.size === 0) {
                                         // All selected → uncheck this one item
                                         const next = new Set<string>(options.filter(o => o !== opt));
                                         setValues(next);
@@ -6377,7 +6510,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                             <div className="flex justify-end gap-3 border-t border-sand p-2">
                               <button
                                 type="button"
-                                onClick={() => { setValues(new Set<string>()); setOpenFilterPanel(null); }}
+                                onClick={() => { setValues(new Set<string>()); setNone(false); setOpenFilterPanel(null); }}
                                 className="cursor-pointer text-[11px] text-bark hover:text-terracotta"
                               >
                                 Clear
@@ -6403,6 +6536,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   <table className="w-full text-left text-[12px]">
                     <thead>
                       <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                        <th className="px-3 py-2.5">Date</th>
+                        <th className="px-3 py-2.5">Time</th>
                         <th className="px-3 py-2.5">VA</th>
                         <th className="px-3 py-2.5">Deliverables / Objectives</th>
                         <th className="px-3 py-2.5">Task Description</th>
@@ -6416,9 +6551,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         const realIdx = lineItems.indexOf(li);
                         return (
                           <tr key={realIdx} className="hover:bg-parchment/20 transition-colors">
+                            <td className="px-3 py-2 text-bark text-[11px] whitespace-nowrap">{li.service_date ? new Date(li.service_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone }) : "—"}</td>
+                            <td className="px-3 py-2 text-bark text-[11px] whitespace-nowrap">{li.start_time ? new Date(li.start_time).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: orgTimezone }) : "—"}</td>
                             <td className="px-3 py-2 font-medium text-espresso text-[11px] whitespace-nowrap">{li.va_name}</td>
                             {/* Deliverables / Objectives — first; options linked to this row's task description */}
-                            <td className="px-3 py-2 max-w-[160px]">
+                            <td className="px-3 py-2 max-w-[220px]">
                               {customEditCell?.idx === realIdx && customEditCell?.field === "project" ? (
                                 <input
                                   autoFocus
@@ -6430,6 +6567,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                                 />
                               ) : (
                                 <select
+                                  title={li.project || ""}
                                   value={li.project || ""}
                                   onChange={(e) => {
                                     if (e.target.value === "__custom__") {
@@ -6454,7 +6592,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                               )}
                             </td>
                             {/* Task Description — second; options are all unique descriptions in line items */}
-                            <td className="px-3 py-2 max-w-[200px]">
+                            <td className="px-3 py-2 max-w-[220px]">
                               {customEditCell?.idx === realIdx && customEditCell?.field === "desc" ? (
                                 <input
                                   autoFocus
@@ -6466,6 +6604,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                                 />
                               ) : (
                                 <select
+                                  title={li.description}
                                   value={li.description}
                                   onChange={(e) => {
                                     if (e.target.value === "__custom__") {
@@ -6485,21 +6624,25 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                             </td>
                             <td className="px-3 py-2 text-right text-bark whitespace-nowrap">{Math.round(li.quantity * 60)}</td>
                             <td className="px-3 py-2 max-w-[180px]">
-                              <input
+                              <textarea
                                 value={li.client_memo || ""}
                                 onChange={(e) => updateLineItem(li.log_id, realIdx, { client_memo: e.target.value })}
+                                onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = t.scrollHeight + "px"; }}
                                 placeholder="—"
-                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors placeholder:text-stone"
+                                rows={1}
+                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors placeholder:text-stone resize-none overflow-hidden whitespace-pre-wrap break-words"
                               />
                             </td>
                             <td className="px-3 py-2 text-center">
                               <button
                                 onClick={() => {
+                                  const removed = lineItems[realIdx];
                                   setUndoStack((prev) => [...prev.slice(-19), lineItems]);
                                   setLineItems(lineItems.filter((_, i) => i !== realIdx));
+                                  setRemovedLineItems((prev) => [...prev, removed]);
                                 }}
-                                title="Remove from invoice (not from log)"
-                                className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-red-50 hover:text-red-500 cursor-pointer"
+                                title="Move to holding area (not deleted from log)"
+                                className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-amber-soft hover:text-amber cursor-pointer"
                               >
                                 &times;
                               </button>
@@ -6511,6 +6654,60 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   </table>
                 </div>
               </div>
+
+              {/* Removed Items Holding Cell */}
+              {removedLineItems.length > 0 && (
+                <div className="mt-3 rounded-lg border border-amber/30 bg-amber-soft/20 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-amber">
+                      On Hold ({removedLineItems.length}) — removed from invoice, NOT deleted from time log
+                    </p>
+                    <button
+                      onClick={() => setRemovedLineItems([])}
+                      className="text-[10px] text-stone hover:text-red-500 cursor-pointer transition-colors"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {removedLineItems.map((li, idx) => (
+                      <div key={idx} className="flex items-start justify-between rounded bg-white/60 px-3 py-1.5 text-[11px] gap-2">
+                        <span className="text-bark break-words min-w-0 flex-1">
+                          {li.service_date ? new Date(li.service_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone }) + " · " : ""}{li.va_name} · {li.description} · {Math.round(li.quantity * 60)} min
+                        </span>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <select
+                            value={removedItemOverrides.get(idx)?.account ?? ""}
+                            onChange={(e) => setRemovedItemOverrides(prev => { const next = new Map(prev); next.set(idx, { ...(prev.get(idx) ?? { account: "", client: "" }), account: e.target.value }); return next; })}
+                            className="text-[11px] rounded border border-sand bg-white px-1 py-0.5 text-bark outline-none focus:border-terracotta cursor-pointer"
+                          >
+                            <option value="">Account...</option>
+                            {accountList.map(a => <option key={a} value={a}>{a}</option>)}
+                          </select>
+                          <select
+                            value={removedItemOverrides.get(idx)?.client ?? ""}
+                            onChange={(e) => setRemovedItemOverrides(prev => { const next = new Map(prev); next.set(idx, { ...(prev.get(idx) ?? { account: "", client: "" }), client: e.target.value }); return next; })}
+                            className="text-[11px] rounded border border-sand bg-white px-1 py-0.5 text-bark outline-none focus:border-terracotta cursor-pointer"
+                          >
+                            <option value="">Client...</option>
+                            {clients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                          </select>
+                          <button
+                            onClick={() => {
+                              setLineItems((prev) => [...prev, li]);
+                              setRemovedLineItems((prev) => prev.filter((_, i) => i !== idx));
+                              setRemovedItemOverrides(prev => { const next = new Map(prev); next.delete(idx); return next; });
+                            }}
+                            className="text-[11px] font-semibold text-terracotta hover:underline cursor-pointer whitespace-nowrap"
+                          >
+                            ↩ Restore
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Invoice Amount */}
               <div className="mt-5 grid grid-cols-2 gap-6">
@@ -6864,6 +7061,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </button>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => { setSelectedInvoice(null); setEditingInvoice(false); setView("create"); }}
+              className="rounded-lg border border-terracotta px-4 py-2 text-[13px] font-semibold text-terracotta transition-all hover:bg-terracotta hover:text-white cursor-pointer"
+            >
+              + New Invoice
+            </button>
+            <button
               onClick={() => {
                 setEditingInvoice(!editingInvoice);
                 if (!editingInvoice) {
@@ -6881,6 +7084,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             >
               {editingInvoice ? "✕ Cancel Edit" : "✏️ Edit Invoice"}
             </button>
+            {(inv.status === "draft") && (
+              <button
+                onClick={() => handleMarkReadyToSend(inv)}
+                className="rounded-lg bg-amber px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-amber/80 cursor-pointer"
+              >
+                Mark Ready to Send
+              </button>
+            )}
             {inv.status !== "paid" && inv.status !== "cancelled" && (
               <button
                 onClick={() => setShowPaymentForm(true)}
@@ -7016,6 +7227,250 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </div>
         )}
 
+        {/* Edit Line Items (shown when editing) */}
+        {editingInvoice && (
+          <div className="mb-4 rounded-xl border border-sand bg-white p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h4 className="font-serif text-[14px] font-bold text-espresso">
+                Edit Time Entries ({editLineItemsState.length} entries · {editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0).toFixed(2)} hrs)
+              </h4>
+              {editUndoStack.length > 0 && (
+                <button
+                  onClick={() => {
+                    const prev = editUndoStack[editUndoStack.length - 1];
+                    setEditUndoStack((s) => s.slice(0, -1));
+                    setEditLineItemsState(prev);
+                  }}
+                  className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                >
+                  ↩ Undo {editUndoStack.length > 1 ? `(${editUndoStack.length})` : ""}
+                </button>
+              )}
+            </div>
+
+            {/* Edit Filter Bar */}
+            <div className="relative mb-2">
+              {editOpenFilterPanel && (
+                <div className="fixed inset-0 z-40" onClick={() => setEditOpenFilterPanel(null)} />
+              )}
+              <div className="grid grid-cols-4 gap-2 rounded-lg border border-sand bg-parchment/30 p-2">
+                {(
+                  [
+                    { key: "va", label: "VA", values: editFilterVAValues, setValues: setEditFilterVAValues, options: editFilterVAOptions, none: editFilterVANone, setNone: setEditFilterVANone },
+                    { key: "task", label: "Task", values: editFilterTaskValues, setValues: setEditFilterTaskValues, options: editFilterTaskOptions, none: editFilterTaskNone, setNone: setEditFilterTaskNone },
+                    { key: "deliv", label: "Deliverables", values: editFilterDelivValues, setValues: setEditFilterDelivValues, options: editFilterDelivOptions, none: editFilterDelivNone, setNone: setEditFilterDelivNone },
+                    { key: "memo", label: "Memo", values: editFilterMemoValues, setValues: setEditFilterMemoValues, options: editFilterMemoOptions, none: editFilterMemoNone, setNone: setEditFilterMemoNone },
+                  ] as { key: string; label: string; values: Set<string>; setValues: (v: Set<string>) => void; options: string[]; none: boolean; setNone: (v: boolean) => void }[]
+                ).map(({ key, label, values, setValues, options, none, setNone }) => {
+                  const isOpen = editOpenFilterPanel === key;
+                  const searched = editFilterSearch && isOpen ? options.filter(o => o.toLowerCase().includes(editFilterSearch.toLowerCase())) : options;
+                  const activeCount = none ? -1 : values.size;
+                  return (
+                    <div key={key} className="relative z-50">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setEditOpenFilterPanel(isOpen ? null : key); setEditFilterSearch(""); }}
+                        className={`flex w-full items-center justify-between gap-1 rounded border px-2 py-1.5 text-[11px] cursor-pointer transition-colors ${none || activeCount > 0 ? "border-terracotta bg-terracotta/10 font-semibold text-terracotta" : "border-sand bg-white text-bark hover:border-terracotta"}`}
+                      >
+                        <span>🔽 {label}{none ? " (none)" : activeCount > 0 ? ` (${activeCount})` : ""}</span>
+                      </button>
+                      {isOpen && (
+                        <div className="absolute left-0 z-50 mt-1 w-56 rounded-lg border border-sand bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+                          <div className="border-b border-sand p-2">
+                            <input autoFocus type="text" placeholder="Search..." value={editFilterSearch} onChange={(e) => setEditFilterSearch(e.target.value)}
+                              className="w-full rounded border border-sand px-2 py-1 text-[11px] outline-none focus:border-terracotta" />
+                          </div>
+                          <div className="max-h-48 overflow-y-auto p-1">
+                            <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-parchment/30">
+                              <input type="checkbox" checked={!none && values.size === 0} onChange={() => { setValues(new Set<string>()); setNone(false); }} className="accent-terracotta" />
+                              <span className="text-[11px] font-semibold text-espresso">(Select All)</span>
+                            </label>
+                            <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-parchment/30">
+                              <input type="checkbox" checked={none} onChange={() => { setNone(true); setValues(new Set<string>()); }} className="accent-terracotta" />
+                              <span className="text-[11px] font-semibold text-stone">(Uncheck All)</span>
+                            </label>
+                            {searched.map((opt) => (
+                              <label key={opt} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-parchment/30">
+                                <input type="checkbox" checked={!none && (values.size === 0 || values.has(opt))}
+                                  onChange={() => {
+                                    setNone(false);
+                                    if (none) { setValues(new Set<string>([opt])); }
+                                    else if (values.size === 0) { setValues(new Set<string>(options.filter(o => o !== opt))); }
+                                    else {
+                                      const next = new Set<string>(values);
+                                      if (next.has(opt)) { next.delete(opt); setValues(next.size === 0 ? new Set<string>() : next); }
+                                      else { next.add(opt); setValues(next.size === options.length ? new Set<string>() : next); }
+                                    }
+                                  }}
+                                  className="accent-terracotta" />
+                                <span className="text-[11px] text-bark truncate">{opt || "(blank)"}</span>
+                              </label>
+                            ))}
+                          </div>
+                          <div className="flex justify-end gap-3 border-t border-sand p-2">
+                            <button type="button" onClick={() => { setValues(new Set<string>()); setNone(false); setEditOpenFilterPanel(null); }} className="cursor-pointer text-[11px] text-bark hover:text-terracotta">Clear</button>
+                            <button type="button" onClick={() => setEditOpenFilterPanel(null)} className="cursor-pointer text-[11px] font-semibold text-terracotta">Done</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Editable Line Items Table */}
+            <div className="rounded-lg border border-sand overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                      <th className="px-3 py-2.5">Date</th>
+                      <th className="px-3 py-2.5">Time</th>
+                      <th className="px-3 py-2.5">VA</th>
+                      <th className="px-3 py-2.5">Deliverables</th>
+                      <th className="px-3 py-2.5">Task Description</th>
+                      <th className="px-3 py-2.5 text-right">Min</th>
+                      <th className="px-3 py-2.5">Memo</th>
+                      <th className="px-3 py-2.5 text-center">Remove</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-parchment">
+                    {filteredEditLineItems.map((li) => {
+                      const realIdx = editLineItemsState.indexOf(li);
+                      return (
+                        <tr key={li.id} className="hover:bg-parchment/20 transition-colors">
+                          <td className="px-3 py-2 text-bark text-[11px] whitespace-nowrap">
+                            {li.service_date ? new Date(li.service_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone }) : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-bark text-[11px] whitespace-nowrap">
+                            {li.start_time ? new Date(li.start_time).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: orgTimezone }) : "—"}
+                          </td>
+                          <td className="px-3 py-2 font-medium text-espresso text-[11px] whitespace-nowrap">{li.va_name || "—"}</td>
+                          <td className="px-3 py-2 max-w-[220px]">
+                            {editCustomCell?.idx === realIdx && editCustomCell?.field === "project" ? (
+                              <input autoFocus value={li.project || ""} onChange={(e) => setEditLineItemsState(prev => prev.map((x, i) => i === realIdx ? {...x, project: e.target.value} : x))}
+                                onBlur={() => setEditCustomCell(null)} placeholder="Custom..."
+                                className="w-full bg-transparent border-b border-terracotta text-[12px] text-bark outline-none" />
+                            ) : (
+                              <select title={li.project || ""} value={li.project || ""}
+                                onChange={(e) => {
+                                  if (e.target.value === "__custom__") { setEditCustomCell({ idx: realIdx, field: "project" }); }
+                                  else { setEditLineItemsState(prev => prev.map((x, i) => i === realIdx ? {...x, project: e.target.value} : x)); }
+                                }}
+                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors cursor-pointer">
+                                {getEditDelivOptions(li.description).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                {li.project && !getEditDelivOptions(li.description).includes(li.project) && <option value={li.project}>{li.project}</option>}
+                                <option value="__custom__">✏️ Custom...</option>
+                              </select>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 max-w-[220px]">
+                            {editCustomCell?.idx === realIdx && editCustomCell?.field === "desc" ? (
+                              <input autoFocus value={li.description} onChange={(e) => setEditLineItemsState(prev => prev.map((x, i) => i === realIdx ? {...x, description: e.target.value} : x))}
+                                onBlur={() => setEditCustomCell(null)} placeholder="Custom..."
+                                className="w-full bg-transparent border-b border-terracotta text-[12px] text-bark outline-none" />
+                            ) : (
+                              <select title={li.description} value={li.description}
+                                onChange={(e) => {
+                                  if (e.target.value === "__custom__") { setEditCustomCell({ idx: realIdx, field: "desc" }); }
+                                  else { setEditLineItemsState(prev => prev.map((x, i) => i === realIdx ? {...x, description: e.target.value} : x)); }
+                                }}
+                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors cursor-pointer">
+                                {editTaskDescOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                <option value="__custom__">✏️ Custom...</option>
+                              </select>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right text-bark whitespace-nowrap">{Math.round(Number(li.quantity) * 60)}</td>
+                          <td className="px-3 py-2 max-w-[180px]">
+                            <textarea value={li.client_memo || ""}
+                              onChange={(e) => setEditLineItemsState(prev => prev.map((x, i) => i === realIdx ? {...x, client_memo: e.target.value} : x))}
+                              onInput={(e) => { const t = e.currentTarget; t.style.height = "auto"; t.style.height = t.scrollHeight + "px"; }}
+                              placeholder="—"
+                              rows={1}
+                              className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors placeholder:text-stone resize-none overflow-hidden whitespace-pre-wrap break-words" />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <button
+                              onClick={() => {
+                                setEditUndoStack((prev) => [...prev.slice(-19), editLineItemsState]);
+                                setRemovedEditItems((prev) => [...prev, li]);
+                                setEditLineItemsState((prev) => prev.filter((_, i) => i !== realIdx));
+                              }}
+                              title="Move to holding area"
+                              className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-amber-soft hover:text-amber cursor-pointer"
+                            >
+                              &times;
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Removed Edit Items Holding Cell */}
+            {removedEditItems.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber/30 bg-amber-soft/20 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-amber">
+                    On Hold ({removedEditItems.length}) — will be removed from invoice on save. NOT deleted from time log.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setEditLineItemsState(prev => [...prev, ...removedEditItems]);
+                      setRemovedEditItems([]);
+                    }}
+                    className="text-[10px] text-bark hover:text-terracotta cursor-pointer transition-colors"
+                  >
+                    Restore all
+                  </button>
+                </div>
+                <div className="space-y-1">
+                  {removedEditItems.map((li, idx) => (
+                    <div key={li.id} className="flex items-start justify-between rounded bg-white/60 px-3 py-1.5 text-[11px] gap-2">
+                      <span className="text-bark break-words min-w-0 flex-1">
+                        {li.service_date ? new Date(li.service_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone }) + " · " : ""}{li.va_name} · {li.description} · {Math.round(Number(li.quantity) * 60)} min
+                      </span>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <select
+                          value={removedEditOverrides.get(idx)?.account ?? ""}
+                          onChange={(e) => setRemovedEditOverrides(prev => { const next = new Map(prev); next.set(idx, { ...(prev.get(idx) ?? { account: "", client: "" }), account: e.target.value }); return next; })}
+                          className="text-[11px] rounded border border-sand bg-white px-1 py-0.5 text-bark outline-none focus:border-terracotta cursor-pointer"
+                        >
+                          <option value="">Account...</option>
+                          {accountList.map(a => <option key={a} value={a}>{a}</option>)}
+                        </select>
+                        <select
+                          value={removedEditOverrides.get(idx)?.client ?? ""}
+                          onChange={(e) => setRemovedEditOverrides(prev => { const next = new Map(prev); next.set(idx, { ...(prev.get(idx) ?? { account: "", client: "" }), client: e.target.value }); return next; })}
+                          className="text-[11px] rounded border border-sand bg-white px-1 py-0.5 text-bark outline-none focus:border-terracotta cursor-pointer"
+                        >
+                          <option value="">Client...</option>
+                          {clients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                        <button
+                          onClick={() => {
+                            setEditLineItemsState((prev) => [...prev, li]);
+                            setRemovedEditItems((prev) => prev.filter((_, i) => i !== idx));
+                            setRemovedEditOverrides(prev => { const next = new Map(prev); next.delete(idx); return next; });
+                          }}
+                          className="text-[11px] font-semibold text-terracotta hover:underline cursor-pointer whitespace-nowrap"
+                        >
+                          ↩ Restore
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Invoice Preview */}
         <div className="rounded-xl border border-sand overflow-hidden print:border-none print:shadow-none" id="invoice-preview">
           {/* Yellow Header */}
@@ -7039,7 +7494,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   ? <div className="text-[15px] font-bold text-[#2d1a00]">{orgSettings.registered_business_name}</div>
                   : <div className="text-[15px] font-bold text-[#2d1a00]">{inv.from_name}</div>
                 }
-                {orgSettings?.dba && orgSettings.dba !== orgSettings?.registered_business_name && (
+                {orgSettings?.dba && (
                   <div className="text-[11px] text-[#5a4000] mt-0.5">DBA: {orgSettings.dba}</div>
                 )}
                 {orgSettings?.registered_business_name && inv.from_name !== orgSettings.registered_business_name && (
@@ -7177,7 +7632,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               );
             })()}
 
-            {/* Time Allocation Table */}
+            {/* Time Allocation Table — hidden in Ready to Send preview */}
+            {inv.status !== "ready_to_send" && (
             <div className="mb-6 rounded-lg border border-sand overflow-hidden">
               <div className="px-4 py-2.5 bg-parchment/30 border-b border-sand">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-bark">Detailed Time Allocation</p>
@@ -7203,6 +7659,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </tbody>
               </table>
             </div>
+            )}
 
             {/* Totals */}
             <div className="flex justify-end">
@@ -7388,7 +7845,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       {/* Filter + New buttons */}
       <div className="mb-4 flex items-center justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          {(["all", "draft", "sent", "partially_paid", "paid", "overdue", "cancelled", "trash"] as const).map((status) => (
+          {(["all", "draft", "ready_to_send", "sent", "partially_paid", "paid", "overdue", "cancelled", "trash"] as const).map((status) => (
             <button
               key={status}
               onClick={() => setStatusFilter(status)}

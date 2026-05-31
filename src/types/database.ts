@@ -220,7 +220,7 @@ export interface Invoice {
   id: number;
   invoice_number: string;
   client_id: number | null;
-  status: 'draft' | 'sent' | 'paid' | 'partially_paid' | 'overdue' | 'cancelled' | 'trash';
+  status: 'draft' | 'sent' | 'paid' | 'partially_paid' | 'overdue' | 'cancelled' | 'trash' | 'ready_to_send';
   from_name: string;
   from_address: string | null;
   from_email: string | null;
@@ -252,6 +252,9 @@ export interface Invoice {
   previous_balance: number;
   created_by: string | null;
   sent_at: string | null;
+  hours_not_billed: number | null;
+  hours_not_billed_label: string | null;
+  rate_amount: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -270,6 +273,7 @@ export interface InvoiceLineItem {
   unit_price: number;
   amount: number;
   service_date: string | null;
+  start_time: string | null;
   sort_order: number;
   created_at: string;
 }

@@ -269,7 +269,7 @@ function buildInvoiceEmail(
           <td style="vertical-align:top; text-align:right; padding-left:20px;">
             ${invoice.account_name ? `<div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">Account: ${invoice.account_name}</div>` : ""}
             ${orgRegisteredName ? `<div style="font-size:15px; font-weight:800; color:#2d1a00; line-height:1.3;">${orgRegisteredName}</div>` : `<div style="font-size:15px; font-weight:700; color:#2d1a00;">${invoice.from_name}</div>`}
-            ${orgDba && orgDba !== orgRegisteredName ? `<div style="font-size:11px; color:#5a4000; margin-top:1px;">DBA: ${orgDba}</div>` : ""}
+            ${orgDba ? `<div style="font-size:11px; color:#5a4000; margin-top:1px;">DBA: ${orgDba}</div>` : ""}
             ${!orgRegisteredName && invoice.from_name ? "" : orgRegisteredName !== invoice.from_name ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_name}</div>` : ""}
             ${invoice.from_phone ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_phone}</div>` : ""}
             ${invoice.from_email ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_email}</div>` : ""}
