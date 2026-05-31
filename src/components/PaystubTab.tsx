@@ -198,6 +198,8 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const [history, setHistory] = useState<PaystubSnapshot[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [resendSuccessId, setResendSuccessId] = useState<string | null>(null);
 
   // Only show active profiles with a pay rate
   const eligibleProfiles = profiles.filter((p) => p.is_active);
@@ -296,6 +298,26 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
       setSending(false);
     }
   }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, companyName]);
+
+  const handleResend = useCallback(async (snap: PaystubSnapshot) => {
+    setResendingId(snap.id);
+    setResendSuccessId(null);
+    try {
+      const res = await fetch("/api/paystub/resend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshot_id: snap.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to resend.");
+      setResendSuccessId(snap.id);
+      setTimeout(() => setResendSuccessId(null), 4000);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Resend failed.");
+    } finally {
+      setResendingId(null);
+    }
+  }, []);
 
   const fetchHistory = useCallback(async (userId: string) => {
     if (!userId) { setHistory([]); return; }
@@ -832,6 +854,29 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                                     </div>
                                   </div>
                                 </div>
+                              </div>
+
+                              {/* Action buttons */}
+                              <div className="mt-4 pt-4 border-t border-linen flex flex-wrap items-center gap-3">
+                                {resendSuccessId === snap.id ? (
+                                  <span className="text-xs text-sage-600 font-semibold text-green-700">✓ Resent to {snap.email_sent_to}</span>
+                                ) : (
+                                  <button
+                                    onClick={() => handleResend(snap)}
+                                    disabled={resendingId === snap.id}
+                                    className="px-3 py-1.5 rounded-lg border border-linen bg-white text-xs font-semibold text-bark hover:bg-parchment disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                  >
+                                    {resendingId === snap.id ? "Resending…" : "↩ Resend Email"}
+                                  </button>
+                                )}
+                                <a
+                                  href={`/api/paystub/print?id=${snap.id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-3 py-1.5 rounded-lg border border-linen bg-white text-xs font-semibold text-bark hover:bg-parchment transition-colors"
+                                >
+                                  ↓ Download PDF
+                                </a>
                               </div>
                             </td>
                           </tr>
