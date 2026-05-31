@@ -239,6 +239,32 @@ export async function POST(request: Request) {
     );
   }
 
+  // Step 3: Save paystub snapshot for history/reprinting
+  try {
+    await adminClient.from("paystub_snapshots").insert({
+      user_id,
+      full_name: vaProfile.full_name,
+      period_start: start_date,
+      period_end: end_date,
+      pay_period_label: periodLabel,
+      total_hours_ms: totalMs,
+      pay_rate: payRate,
+      gross_pay: grossPay,
+      amount_paid: paymentAmount,
+      payment_method: payment_method ?? null,
+      confirmation_number: confirmation_number ?? null,
+      payment_date: payment_date ?? null,
+      by_date: byDate,
+      email_sent_to: vaEmail,
+      company_name: company_name || "MinuteFlow",
+      personal_message: personal_message ?? null,
+      created_by: user.id,
+    });
+  } catch (snapErr) {
+    // Non-fatal — log but don't fail the response
+    console.error("paystub_snapshots insert error:", snapErr);
+  }
+
   return Response.json({
     success: true,
     sentTo: vaEmail,

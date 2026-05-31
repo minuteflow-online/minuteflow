@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import type { Profile } from "@/types/database";
 
 interface Props {
@@ -30,6 +30,27 @@ interface PreviewData {
   paymentAccounts?: Record<string, Record<string, string>>;
   previousPayments: PreviousPayment[];
   previousTotal: number;
+}
+
+interface PaystubSnapshot {
+  id: string;
+  user_id: string;
+  full_name: string;
+  period_start: string;
+  period_end: string;
+  pay_period_label: string;
+  sent_at: string;
+  total_hours_ms: number;
+  pay_rate: number;
+  gross_pay: number;
+  amount_paid: number;
+  payment_method: string | null;
+  confirmation_number: string | null;
+  payment_date: string | null;
+  by_date: Record<string, number>;
+  email_sent_to: string;
+  company_name: string;
+  personal_message: string | null;
 }
 
 /* ── Date helpers ─────────────────────────────────────────── */
@@ -173,6 +194,11 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const [confirmationNumber, setConfirmationNumber] = useState<string>("");
   const [paymentDate, setPaymentDate] = useState<string>(todayIso);
 
+  // Paystub history
+  const [history, setHistory] = useState<PaystubSnapshot[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   // Only show active profiles with a pay rate
   const eligibleProfiles = profiles.filter((p) => p.is_active);
 
@@ -255,6 +281,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to send.");
       setSent(true);
+      fetchHistory(selectedUserId);
       // Show warnings for partial failures
       if (data.paymentError && data.emailError) {
         setPaymentWarning(`Both payment recording and email failed. Please log this payment manually in the Financial page.`);
@@ -269,6 +296,28 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
       setSending(false);
     }
   }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, companyName]);
+
+  const fetchHistory = useCallback(async (userId: string) => {
+    if (!userId) { setHistory([]); return; }
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/paystub/history?user_id=${userId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data);
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  // Load history when VA selection changes
+  useEffect(() => {
+    fetchHistory(selectedUserId);
+    setExpandedId(null);
+  }, [selectedUserId, fetchHistory]);
 
   const PRESET_OPTIONS: { value: PeriodPreset; label: string }[] = [
     { value: "this_week", label: "This Week (Mon–Sun)" },
@@ -643,6 +692,159 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
           )}
         </div>
       </div>
+
+      {/* Paystub History */}
+      {selectedUserId && (
+        <div className="mt-8">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-bark">Paystub History</h3>
+              <p className="text-xs text-bark/50 mt-0.5">All sent paystubs for this VA — click any row to view the daily breakdown.</p>
+            </div>
+            {historyLoading && (
+              <span className="text-xs text-bark/40 animate-pulse">Loading…</span>
+            )}
+          </div>
+
+          {!historyLoading && history.length === 0 && (
+            <div className="border border-dashed border-linen rounded-xl py-8 text-center text-sm text-bark/30">
+              No paystubs sent yet for this VA.
+            </div>
+          )}
+
+          {history.length > 0 && (
+            <div className="border border-linen rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-parchment border-b border-linen text-xs text-bark/50 uppercase tracking-wide">
+                    <th className="text-left px-4 py-2.5 font-semibold">Pay Period</th>
+                    <th className="text-right px-4 py-2.5 font-semibold">Hours</th>
+                    <th className="text-right px-4 py-2.5 font-semibold">Gross Pay</th>
+                    <th className="text-right px-4 py-2.5 font-semibold">Amount Paid</th>
+                    <th className="text-right px-4 py-2.5 font-semibold hidden sm:table-cell">Method</th>
+                    <th className="text-right px-4 py-2.5 font-semibold hidden md:table-cell">Sent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((snap) => {
+                    const isExpanded = expandedId === snap.id;
+                    const totalHrs = snap.total_hours_ms / 3_600_000;
+                    return (
+                      <React.Fragment key={snap.id}>
+                        <tr
+                          onClick={() => setExpandedId(isExpanded ? null : snap.id)}
+                          className="border-b border-linen/70 hover:bg-parchment/50 cursor-pointer transition-colors"
+                        >
+                          <td className="px-4 py-3 text-bark font-medium">
+                            <div className="flex items-center gap-2">
+                              <span className={`transition-transform text-bark/30 text-xs ${isExpanded ? "rotate-90" : ""}`}>▶</span>
+                              {snap.pay_period_label}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right text-bark/70">{totalHrs.toFixed(2)} hrs</td>
+                          <td className="px-4 py-3 text-right text-bark/70">{formatCurrency(snap.gross_pay)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-terracotta">{formatCurrency(snap.amount_paid)}</td>
+                          <td className="px-4 py-3 text-right text-bark/50 hidden sm:table-cell capitalize">
+                            {snap.payment_method ? snap.payment_method.replace(/_/g, " ") : "—"}
+                          </td>
+                          <td className="px-4 py-3 text-right text-bark/40 text-xs hidden md:table-cell">
+                            {new Date(snap.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          </td>
+                        </tr>
+
+                        {isExpanded && (
+                          <tr className="border-b border-linen bg-parchment/30">
+                            <td colSpan={6} className="px-6 py-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                {/* Daily breakdown */}
+                                <div>
+                                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Daily Breakdown</div>
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="text-bark/40 border-b border-linen">
+                                        <th className="text-left pb-1 font-semibold">Date</th>
+                                        <th className="text-right pb-1 font-semibold">Hours</th>
+                                        <th className="text-right pb-1 font-semibold">Amount</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {Object.entries(snap.by_date)
+                                        .sort(([a], [b]) => a.localeCompare(b))
+                                        .map(([date, ms]) => (
+                                          <tr key={date} className="border-b border-linen/40">
+                                            <td className="py-1 text-bark/70">{formatDateLabel(date)}</td>
+                                            <td className="py-1 text-right text-bark/70">{(ms / 3_600_000).toFixed(2)} hrs</td>
+                                            <td className="py-1 text-right text-bark/70">{formatCurrency((ms / 3_600_000) * snap.pay_rate)}</td>
+                                          </tr>
+                                        ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+
+                                {/* Payment details */}
+                                <div className="space-y-2">
+                                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Payment Details</div>
+                                  <div className="space-y-1 text-xs text-bark/70">
+                                    <div className="flex justify-between">
+                                      <span className="text-bark/40">Rate</span>
+                                      <span>{formatCurrency(snap.pay_rate)}/hr</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-bark/40">Total Hours</span>
+                                      <span>{totalHrs.toFixed(2)} hrs</span>
+                                    </div>
+                                    <div className="flex justify-between font-semibold border-t border-linen pt-1 mt-1">
+                                      <span>Gross Pay</span>
+                                      <span>{formatCurrency(snap.gross_pay)}</span>
+                                    </div>
+                                    <div className="flex justify-between font-semibold text-terracotta border-t border-linen pt-1 mt-1">
+                                      <span>Amount Paid</span>
+                                      <span>{formatCurrency(snap.amount_paid)}</span>
+                                    </div>
+                                    {snap.payment_method && (
+                                      <div className="flex justify-between pt-1">
+                                        <span className="text-bark/40">Method</span>
+                                        <span className="capitalize">{snap.payment_method.replace(/_/g, " ")}</span>
+                                      </div>
+                                    )}
+                                    {snap.confirmation_number && (
+                                      <div className="flex justify-between">
+                                        <span className="text-bark/40">Confirmation #</span>
+                                        <span className="font-mono">{snap.confirmation_number}</span>
+                                      </div>
+                                    )}
+                                    {snap.payment_date && (
+                                      <div className="flex justify-between">
+                                        <span className="text-bark/40">Payment Date</span>
+                                        <span>{new Date(snap.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}</span>
+                                      </div>
+                                    )}
+                                    {snap.personal_message && (
+                                      <div className="pt-2 text-bark/50 italic">"{snap.personal_message}"</div>
+                                    )}
+                                    <div className="flex justify-between pt-1">
+                                      <span className="text-bark/40">Sent to</span>
+                                      <span>{snap.email_sent_to}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-bark/40">Sent at</span>
+                                      <span>{new Date(snap.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} {new Date(snap.sent_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
