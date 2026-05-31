@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { TimeLog } from "@/types/database";
 
@@ -15,6 +15,21 @@ const CORRECTABLE_FIELDS = [
   { key: "client_memo", label: "Client Memo" },
   { key: "internal_memo", label: "Internal Memo" },
 ];
+
+const CATEGORIES = [
+  "Task",
+  "Communication",
+  "Planning",
+  "Personal",
+  "Break",
+  "Collaboration",
+];
+
+interface ProjectTag {
+  id: number;
+  account: string | null;
+  project_name: string;
+}
 
 interface CorrectionRequestModalProps {
   log: TimeLog;
@@ -37,6 +52,44 @@ export default function CorrectionRequestModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // ── Cascading data for smart dropdowns
+  const [dbAccounts, setDbAccounts] = useState<string[]>([]);
+  const [allProjects, setAllProjects] = useState<ProjectTag[]>([]);
+  const [allClientNames, setAllClientNames] = useState<string[]>([]);
+
+  const fetchFormData = useCallback(async () => {
+    try {
+      const [accRes, optRes, clientRes] = await Promise.all([
+        fetch("/api/accounts"),
+        fetch("/api/task-form-options"),
+        fetch("/api/clients"),
+      ]);
+      if (accRes.ok) {
+        const data = await accRes.json();
+        const active = (data.accounts ?? [])
+          .filter((a: { active: boolean }) => a.active)
+          .map((a: { name: string }) => a.name);
+        setDbAccounts(active);
+      }
+      if (optRes.ok) {
+        const data = await optRes.json();
+        if (data.projects?.length > 0) setAllProjects(data.projects);
+      }
+      if (clientRes.ok) {
+        const data = await clientRes.json();
+        const names: string[] = (data.clients ?? [])
+          .filter((c: { active: boolean }) => c.active !== false)
+          .map((c: { name: string }) => c.name)
+          .sort();
+        setAllClientNames(names);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchFormData();
+  }, [fetchFormData]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -50,7 +103,6 @@ export default function CorrectionRequestModal({
       const next = new Set(prev);
       if (next.has(key)) {
         next.delete(key);
-        // Remove the field value too
         setFieldValues((fv) => {
           const copy = { ...fv };
           delete copy[key];
@@ -58,7 +110,6 @@ export default function CorrectionRequestModal({
         });
       } else {
         next.add(key);
-        // Pre-populate with current value
         const currentVal = (log as unknown as Record<string, unknown>)[key];
         setFieldValues((fv) => ({
           ...fv,
@@ -68,6 +119,18 @@ export default function CorrectionRequestModal({
       return next;
     });
   };
+
+  const setFieldVal = (key: string, val: string) => {
+    setFieldValues((fv) => ({ ...fv, [key]: val }));
+  };
+
+  // Derive the corrected account value (if that field is also selected)
+  const correctedAccount = selectedFields.has("account")
+    ? (fieldValues["account"] || "")
+    : (log.account || "");
+
+  // Projects filtered by account
+  const filteredProjects = allProjects.filter((p) => p.account === correctedAccount);
 
   const handleSubmit = async () => {
     if (selectedFields.size === 0) {
@@ -106,6 +169,118 @@ export default function CorrectionRequestModal({
 
     setSaving(false);
     onSubmitted();
+  };
+
+  // Render the appropriate input for each field when selected
+  const renderFieldInput = (fieldKey: string) => {
+    const val = fieldValues[fieldKey] || "";
+
+    if (fieldKey === "account") {
+      return (
+        <select
+          value={val}
+          onChange={(e) => setFieldVal(fieldKey, e.target.value)}
+          className="mt-1 w-full rounded border border-sand px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+        >
+          <option value="">Select account...</option>
+          {dbAccounts.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+      );
+    }
+
+    if (fieldKey === "client_name") {
+      return (
+        <select
+          value={val}
+          onChange={(e) => setFieldVal(fieldKey, e.target.value)}
+          className="mt-1 w-full rounded border border-sand px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+        >
+          <option value="">No client</option>
+          {allClientNames.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+          <option value="__other__">Other (type below)...</option>
+          {val && !allClientNames.includes(val) && val !== "__other__" && (
+            <option value={val}>{val}</option>
+          )}
+        </select>
+      );
+    }
+
+    if (fieldKey === "project") {
+      return (
+        <div className="space-y-1">
+          <select
+            value={filteredProjects.find((p) => p.project_name === val) ? val : (val ? "__other__" : "")}
+            onChange={(e) => {
+              if (e.target.value === "__other__") {
+                setFieldVal(fieldKey, "");
+              } else {
+                setFieldVal(fieldKey, e.target.value);
+              }
+            }}
+            className="mt-1 w-full rounded border border-sand px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+          >
+            <option value="">
+              {!correctedAccount ? "Select account first..." : "Select project..."}
+            </option>
+            {filteredProjects.map((p) => (
+              <option key={p.id} value={p.project_name}>{p.project_name}</option>
+            ))}
+            <option value="__other__">✏️ Custom name...</option>
+          </select>
+          {/* Show text input when "Custom name..." is selected or when value doesn't match any project */}
+          {val && !filteredProjects.find((p) => p.project_name === val) && (
+            <input
+              type="text"
+              value={val === "__other__" ? "" : val}
+              onChange={(e) => setFieldVal(fieldKey, e.target.value)}
+              placeholder="Type project name..."
+              className="w-full rounded border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
+            />
+          )}
+        </div>
+      );
+    }
+
+    if (fieldKey === "category") {
+      return (
+        <select
+          value={val}
+          onChange={(e) => setFieldVal(fieldKey, e.target.value)}
+          className="mt-1 w-full rounded border border-sand px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+        >
+          <option value="">Select category...</option>
+          {CATEGORIES.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+      );
+    }
+
+    if (fieldKey.includes("time")) {
+      return (
+        <input
+          type="datetime-local"
+          value={val}
+          onChange={(e) => setFieldVal(fieldKey, e.target.value)}
+          className="mt-1 w-full rounded border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
+        />
+      );
+    }
+
+    // Default: free-text input
+    return (
+      <input
+        type="text"
+        value={val}
+        onChange={(e) => setFieldVal(fieldKey, e.target.value)}
+        placeholder={`Correct to...`}
+        className="mt-1 w-full rounded border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
+      />
+    );
   };
 
   return (
@@ -172,24 +347,7 @@ export default function CorrectionRequestModal({
                     <span className="text-xs font-medium text-espresso">
                       {field.label}
                     </span>
-                    {selectedFields.has(field.key) && (
-                      <input
-                        type={
-                          field.key.includes("time")
-                            ? "datetime-local"
-                            : "text"
-                        }
-                        value={fieldValues[field.key] || ""}
-                        onChange={(e) =>
-                          setFieldValues((fv) => ({
-                            ...fv,
-                            [field.key]: e.target.value,
-                          }))
-                        }
-                        placeholder={`Correct ${field.label.toLowerCase()} to...`}
-                        className="mt-1 w-full rounded border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
-                      />
-                    )}
+                    {selectedFields.has(field.key) && renderFieldInput(field.key)}
                   </div>
                 </label>
               ))}

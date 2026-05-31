@@ -7,7 +7,6 @@ import type { TimeLog, Profile } from "@/types/database";
 /* ── Constants ─────────────────────────────────────────── */
 
 // Fallback only — DB fetch happens in the component
-
 const CATEGORIES = [
   "Task",
   "Communication",
@@ -30,6 +29,23 @@ const ACCOUNTS = [
   "Quad Life",
   "TONIWSB",
 ];
+
+/* ── Types ─────────────────────────────────────────────── */
+
+interface ProjectTag {
+  id: number;
+  account: string | null;
+  project_name: string;
+  sort_order: number;
+}
+
+interface ProjectTask {
+  id: number;
+  task_library_id: number;
+  task_name: string;
+  billing_type: string;
+  task_rate: number | null;
+}
 
 /* ── Props ─────────────────────────────────────────────── */
 
@@ -70,6 +86,7 @@ export default function EditTimeLogModal({
   const isVA = currentUserRole === "va";
   const isAdminOrManager = currentUserRole === "admin" || currentUserRole === "manager";
 
+  // ── Core form fields
   const [taskName, setTaskName] = useState(log?.task_name || "");
   const [category, setCategory] = useState(log?.category || "Task");
   const [account, setAccount] = useState(log?.account || "");
@@ -88,27 +105,98 @@ export default function EditTimeLogModal({
   const [selectedUserId, setSelectedUserId] = useState(log?.user_id || (isVA ? currentUserId : ""));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [dbAccounts, setDbAccounts] = useState<string[]>(ACCOUNTS);
 
-  // Fetch accounts from DB
-  const fetchAccounts = useCallback(async () => {
+  // ── Cascading dropdown data
+  const [dbAccounts, setDbAccounts] = useState<string[]>(ACCOUNTS);
+  const [allProjects, setAllProjects] = useState<ProjectTag[]>([]);
+  const [tasksByProject, setTasksByProject] = useState<Record<number, ProjectTask[]>>({});
+  const [clientMap, setClientMap] = useState<Record<string, string>>({});
+  const [allClientNames, setAllClientNames] = useState<string[]>([]);
+
+  // ── Dropdown mode: "dropdown" = pick from list, "custom" = free-text
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [projectMode, setProjectMode] = useState<"dropdown" | "custom">("dropdown");
+  const [taskMode, setTaskMode] = useState<"dropdown" | "custom">("custom");
+  const [clientMode, setClientMode] = useState<"dropdown" | "custom">("dropdown");
+
+  // ── Derived lists
+  const filteredProjects = allProjects.filter((p) => p.account === account);
+  const filteredTasks = selectedProjectId ? (tasksByProject[selectedProjectId] ?? []) : [];
+
+  // ── Fetch all cascading data on mount
+  const fetchFormData = useCallback(async () => {
     try {
-      const res = await fetch("/api/accounts");
-      if (res.ok) {
-        const data = await res.json();
+      const [accRes, optRes, clientRes] = await Promise.all([
+        fetch("/api/accounts"),
+        fetch("/api/task-form-options"),
+        fetch("/api/clients"),
+      ]);
+
+      if (accRes.ok) {
+        const data = await accRes.json();
         const active = (data.accounts ?? [])
           .filter((a: { active: boolean }) => a.active)
           .map((a: { name: string }) => a.name);
         if (active.length > 0) setDbAccounts(active);
       }
+
+      if (optRes.ok) {
+        const data = await optRes.json();
+        if (data.projects?.length > 0) setAllProjects(data.projects);
+        if (data.tasksByProject) setTasksByProject(data.tasksByProject);
+        if (data.clientMap) setClientMap(data.clientMap);
+      }
+
+      if (clientRes.ok) {
+        const data = await clientRes.json();
+        const names: string[] = (data.clients ?? [])
+          .filter((c: { active: boolean }) => c.active !== false)
+          .map((c: { name: string }) => c.name)
+          .sort();
+        if (names.length > 0) setAllClientNames(names);
+      }
     } catch {}
   }, []);
 
   useEffect(() => {
-    fetchAccounts();
-  }, [fetchAccounts]);
+    fetchFormData();
+  }, [fetchFormData]);
 
-  // Close on Escape
+  // ── After projects load: resolve initial project + task modes for edit mode
+  useEffect(() => {
+    if (!log || allProjects.length === 0) return;
+    if (log.project) {
+      const match = allProjects.find(
+        (p) => p.project_name === log.project && p.account === (log.account || "")
+      );
+      if (match) {
+        setSelectedProjectId(match.id);
+        setProjectMode("dropdown");
+        const tasks = tasksByProject[match.id] ?? [];
+        if (tasks.length > 0 && log.task_name) {
+          const taskMatch = tasks.find((t) => t.task_name === log.task_name);
+          setTaskMode(taskMatch ? "dropdown" : "custom");
+        } else {
+          setTaskMode("custom");
+        }
+      } else {
+        setProjectMode("custom");
+        setTaskMode("custom");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allProjects]);
+
+  // ── After clients load: resolve initial client mode for edit mode
+  useEffect(() => {
+    if (!log || allClientNames.length === 0) return;
+    if (log.client_name) {
+      setClientMode(allClientNames.includes(log.client_name) ? "dropdown" : "custom");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allClientNames]);
+
+  // ── Close on Escape
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -116,6 +204,65 @@ export default function EditTimeLogModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // ── Cascading change handlers
+  const handleAccountChange = (newAccount: string) => {
+    setAccount(newAccount);
+    // Auto-populate client from account→client map
+    if (newAccount && clientMap[newAccount]) {
+      setClientName(clientMap[newAccount]);
+      setClientMode("dropdown");
+    }
+    // Reset downstream fields
+    setProject("");
+    setSelectedProjectId(null);
+    setProjectMode("dropdown");
+    setTaskName("");
+    setTaskMode("custom");
+  };
+
+  const handleProjectChange = (val: string) => {
+    if (val === "__custom__") {
+      setProjectMode("custom");
+      setProject("");
+      setSelectedProjectId(null);
+      setTaskName("");
+      setTaskMode("custom");
+    } else if (!val) {
+      setProject("");
+      setSelectedProjectId(null);
+      setTaskName("");
+      setTaskMode("custom");
+    } else {
+      const id = parseInt(val);
+      const match = filteredProjects.find((p) => p.id === id);
+      if (match) {
+        setProject(match.project_name);
+        setSelectedProjectId(match.id);
+        setProjectMode("dropdown");
+        setTaskName("");
+        setTaskMode("dropdown");
+      }
+    }
+  };
+
+  const handleTaskChange = (val: string) => {
+    if (val === "__custom__") {
+      setTaskMode("custom");
+      setTaskName("");
+    } else {
+      setTaskName(val);
+    }
+  };
+
+  const handleClientChange = (val: string) => {
+    if (val === "__custom__") {
+      setClientMode("custom");
+      setClientName("");
+    } else {
+      setClientName(val);
+    }
+  };
 
   const handleSave = async () => {
     if (!taskName.trim()) {
@@ -191,9 +338,6 @@ export default function EditTimeLogModal({
         setSaving(false);
         return;
       }
-
-      // Audit record for manual creation
-      // We don't have the new log_id easily here, so skip audit for create
     } else {
       // Edit mode -- track changes in audit table
       const changes: { field: string; oldVal: string | null; newVal: string | null }[] = [];
@@ -263,7 +407,6 @@ export default function EditTimeLogModal({
       }
 
       // Auto-cascade: if end_time changed, update the next task's start_time to match
-      // Exception: never cascade into a "Clock In" entry — it should remain independent
       if (newEndIso && newEndIso !== log.end_time) {
         const { data: nextTask } = await supabase
           .from("time_logs")
@@ -278,7 +421,6 @@ export default function EditTimeLogModal({
         if (nextTask && nextTask.task_name !== "Clock In") {
           const newEndMs = new Date(newEndIso).getTime();
           const nextEndMs = nextTask.end_time ? new Date(nextTask.end_time).getTime() : null;
-          // Only cascade if it won't shrink the next task to zero/negative duration
           if (!nextEndMs || newEndMs < nextEndMs) {
             await supabase
               .from("time_logs")
@@ -306,7 +448,6 @@ export default function EditTimeLogModal({
         if (prevTask) {
           const newStartMs = new Date(newStartIso).getTime();
           const prevStartMs = new Date(prevTask.start_time).getTime();
-          // Only cascade if it won't shrink the previous task to zero/negative duration
           if (newStartMs > prevStartMs) {
             await supabase
               .from("time_logs")
@@ -354,7 +495,7 @@ export default function EditTimeLogModal({
             </div>
           )}
 
-          {/* User selector (create mode, admin/manager only — VAs auto-set to self) */}
+          {/* User selector (create mode, admin/manager only) */}
           {isCreate && isAdminOrManager && (
             <div>
               <label className="block text-[11px] font-semibold text-bark mb-1">
@@ -380,13 +521,42 @@ export default function EditTimeLogModal({
             <label className="block text-[11px] font-semibold text-bark mb-1">
               Task Name
             </label>
-            <input
-              type="text"
-              value={taskName}
-              onChange={(e) => setTaskName(e.target.value)}
-              className="w-full rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
-              placeholder="Task name..."
-            />
+            {/* Show dropdown if there are tasks for the selected project, otherwise free text */}
+            {filteredTasks.length > 0 && projectMode === "dropdown" && taskMode === "dropdown" ? (
+              <select
+                value={taskName}
+                onChange={(e) => handleTaskChange(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
+              >
+                <option value="">Select task...</option>
+                {filteredTasks.map((t) => (
+                  <option key={t.id} value={t.task_name}>
+                    {t.task_name}
+                  </option>
+                ))}
+                <option value="__custom__">✏️ Custom name...</option>
+              </select>
+            ) : (
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={taskName}
+                  onChange={(e) => setTaskName(e.target.value)}
+                  className="flex-1 rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
+                  placeholder="Task name..."
+                />
+                {filteredTasks.length > 0 && projectMode === "dropdown" && (
+                  <button
+                    type="button"
+                    onClick={() => { setTaskMode("dropdown"); setTaskName(""); }}
+                    className="px-2.5 rounded-lg border border-sand text-xs text-bark hover:border-terracotta hover:text-terracotta transition-colors"
+                    title="Pick from list"
+                  >
+                    ↩
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Category + Account row */}
@@ -413,7 +583,7 @@ export default function EditTimeLogModal({
               </label>
               <select
                 value={account}
-                onChange={(e) => setAccount(e.target.value)}
+                onChange={(e) => handleAccountChange(e.target.value)}
                 className="w-full rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
               >
                 <option value="">None</option>
@@ -428,29 +598,90 @@ export default function EditTimeLogModal({
 
           {/* Client + Project row */}
           <div className="grid grid-cols-2 gap-3">
+            {/* Client — dropdown linked to account, with custom option */}
             <div>
               <label className="block text-[11px] font-semibold text-bark mb-1">
                 Client
               </label>
-              <input
-                type="text"
-                value={clientName}
-                onChange={(e) => setClientName(e.target.value)}
-                className="w-full rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
-                placeholder="Client name..."
-              />
+              {clientMode === "dropdown" ? (
+                <select
+                  value={clientName}
+                  onChange={(e) => handleClientChange(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
+                >
+                  <option value="">No client</option>
+                  {allClientNames.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                  <option value="__custom__">✏️ Custom name...</option>
+                </select>
+              ) : (
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={clientName}
+                    onChange={(e) => setClientName(e.target.value)}
+                    className="flex-1 rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
+                    placeholder="Client name..."
+                  />
+                  {allClientNames.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => { setClientMode("dropdown"); setClientName(""); }}
+                      className="px-2.5 rounded-lg border border-sand text-xs text-bark hover:border-terracotta hover:text-terracotta transition-colors"
+                      title="Pick from list"
+                    >
+                      ↩
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
+
+            {/* Project — dropdown filtered by account, with custom option */}
             <div>
               <label className="block text-[11px] font-semibold text-bark mb-1">
                 Project
               </label>
-              <input
-                type="text"
-                value={project}
-                onChange={(e) => setProject(e.target.value)}
-                className="w-full rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
-                placeholder="Project..."
-              />
+              {projectMode === "dropdown" ? (
+                <select
+                  value={selectedProjectId?.toString() ?? ""}
+                  onChange={(e) => handleProjectChange(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
+                >
+                  <option value="">
+                    {!account ? "Select account first..." : "Select project..."}
+                  </option>
+                  {filteredProjects.map((p) => (
+                    <option key={p.id} value={p.id.toString()}>
+                      {p.project_name}
+                    </option>
+                  ))}
+                  <option value="__custom__">✏️ Custom name...</option>
+                </select>
+              ) : (
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={project}
+                    onChange={(e) => setProject(e.target.value)}
+                    className="flex-1 rounded-lg border border-sand px-3 py-2 text-sm text-espresso outline-none transition-colors focus:border-terracotta"
+                    placeholder="Project name..."
+                  />
+                  {filteredProjects.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => { setProjectMode("dropdown"); setProject(""); setSelectedProjectId(null); }}
+                      className="px-2.5 rounded-lg border border-sand text-xs text-bark hover:border-terracotta hover:text-terracotta transition-colors"
+                      title="Pick from list"
+                    >
+                      ↩
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
