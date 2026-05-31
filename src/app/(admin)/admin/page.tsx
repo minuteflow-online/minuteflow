@@ -5271,11 +5271,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [fromName, setFromName] = useState("");
   const [fromPhone, setFromPhone] = useState("");
 
-  // Step 3 filters
-  const [filterVA, setFilterVA] = useState("");
-  const [filterTask, setFilterTask] = useState("");
-  const [filterDeliverable, setFilterDeliverable] = useState("");
-  const [filterMemo, setFilterMemo] = useState("");
+  // Step 3 filters (Excel-style multi-select)
+  const [filterVAValues, setFilterVAValues] = useState<Set<string>>(new Set<string>());
+  const [filterTaskValues, setFilterTaskValues] = useState<Set<string>>(new Set<string>());
+  const [filterDelivValues, setFilterDelivValues] = useState<Set<string>>(new Set<string>());
+  const [filterMemoValues, setFilterMemoValues] = useState<Set<string>>(new Set<string>());
+  const [openFilterPanel, setOpenFilterPanel] = useState<string | null>(null);
+  const [filterPanelSearch, setFilterPanelSearch] = useState("");
+  // Inline cell custom-edit mode (combo dropdown → text input switch)
+  const [customEditCell, setCustomEditCell] = useState<{ idx: number; field: "desc" | "project" } | null>(null);
 
   // Manual invoice state
   const [manualDescription, setManualDescription] = useState("");
@@ -5398,16 +5402,28 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
   }, [lineItems, selectedClient]);
 
+  // Unique option lists for Step 3 filter panels
+  const filterVAOptions = useMemo(() => [...new Set(lineItems.map(li => li.va_name || "").filter(Boolean))].sort(), [lineItems]);
+  const filterTaskOptions = useMemo(() => [...new Set(lineItems.map(li => li.description).filter(Boolean))].sort(), [lineItems]);
+  const filterDelivOptions = useMemo(() => [...new Set(lineItems.map(li => li.project || "").filter(Boolean))].sort(), [lineItems]);
+  const filterMemoOptions = useMemo(() => [...new Set(lineItems.map(li => li.client_memo || "").filter(Boolean))].sort(), [lineItems]);
+
+  // Options for inline combo dropdowns
+  const taskDescOptions = useMemo(() => [...new Set(lineItems.map(li => li.description))].sort(), [lineItems]);
+  const getDelivOptions = useCallback((taskDesc: string) =>
+    [...new Set(lineItems.filter(li => li.description === taskDesc).map(li => li.project || "").filter(Boolean))].sort()
+  , [lineItems]);
+
   // Filtered line items for Step 3 display
   const filteredLineItems = useMemo(() => {
     return lineItems.filter((li) => {
-      const vaOk = !filterVA || (li.va_name || "").toLowerCase().includes(filterVA.toLowerCase());
-      const taskOk = !filterTask || li.description.toLowerCase().includes(filterTask.toLowerCase());
-      const delivOk = !filterDeliverable || (li.project || li.account_name || "").toLowerCase().includes(filterDeliverable.toLowerCase());
-      const memoOk = !filterMemo || (li.client_memo || "").toLowerCase().includes(filterMemo.toLowerCase());
+      const vaOk = filterVAValues.size === 0 || filterVAValues.has(li.va_name || "");
+      const taskOk = filterTaskValues.size === 0 || filterTaskValues.has(li.description);
+      const delivOk = filterDelivValues.size === 0 || filterDelivValues.has(li.project || "");
+      const memoOk = filterMemoValues.size === 0 || filterMemoValues.has(li.client_memo || "");
       return vaOk && taskOk && delivOk && memoOk;
     });
-  }, [lineItems, filterVA, filterTask, filterDeliverable, filterMemo]);
+  }, [lineItems, filterVAValues, filterTaskValues, filterDelivValues, filterMemoValues]);
 
   const subtotal = useMemo(() => {
     return lineItems.reduce((sum, li) => sum + li.amount, 0);
@@ -5610,10 +5626,13 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setPaymentLink("");
     setReminderEnabled(false);
     setInvoiceNotes("");
-    setFilterVA("");
-    setFilterTask("");
-    setFilterDeliverable("");
-    setFilterMemo("");
+    setFilterVAValues(new Set<string>());
+    setFilterTaskValues(new Set<string>());
+    setFilterDelivValues(new Set<string>());
+    setFilterMemoValues(new Set<string>());
+    setOpenFilterPanel(null);
+    setFilterPanelSearch("");
+    setCustomEditCell(null);
 
     await fetchInvoices();
 
@@ -6212,36 +6231,122 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </label>
               </div>
 
-              {/* Filter bar */}
-              <div className="mb-2 grid grid-cols-4 gap-2 rounded-lg border border-sand bg-parchment/30 p-2">
-                <input
-                  type="text"
-                  placeholder="🔍 Filter VA..."
-                  value={filterVA}
-                  onChange={(e) => setFilterVA(e.target.value)}
-                  className="rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white"
-                />
-                <input
-                  type="text"
-                  placeholder="🔍 Filter Task..."
-                  value={filterTask}
-                  onChange={(e) => setFilterTask(e.target.value)}
-                  className="rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white"
-                />
-                <input
-                  type="text"
-                  placeholder="🔍 Filter Deliverables..."
-                  value={filterDeliverable}
-                  onChange={(e) => setFilterDeliverable(e.target.value)}
-                  className="rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white"
-                />
-                <input
-                  type="text"
-                  placeholder="🔍 Filter Memo..."
-                  value={filterMemo}
-                  onChange={(e) => setFilterMemo(e.target.value)}
-                  className="rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white"
-                />
+              {/* Filter bar – Excel-style checkbox dropdowns */}
+              <div className="relative mb-2">
+                {openFilterPanel && (
+                  <div className="fixed inset-0 z-40" onClick={() => setOpenFilterPanel(null)} />
+                )}
+                <div className="grid grid-cols-4 gap-2 rounded-lg border border-sand bg-parchment/30 p-2">
+                  {(
+                    [
+                      { key: "va", label: "VA", values: filterVAValues, setValues: setFilterVAValues, options: filterVAOptions },
+                      { key: "task", label: "Task", values: filterTaskValues, setValues: setFilterTaskValues, options: filterTaskOptions },
+                      { key: "deliv", label: "Deliverables", values: filterDelivValues, setValues: setFilterDelivValues, options: filterDelivOptions },
+                      { key: "memo", label: "Memo", values: filterMemoValues, setValues: setFilterMemoValues, options: filterMemoOptions },
+                    ] as { key: string; label: string; values: Set<string>; setValues: (v: Set<string>) => void; options: string[] }[]
+                  ).map(({ key, label, values, setValues, options }) => {
+                    const isOpen = openFilterPanel === key;
+                    const searchedOpts = filterPanelSearch && isOpen
+                      ? options.filter(o => o.toLowerCase().includes(filterPanelSearch.toLowerCase()))
+                      : options;
+                    const activeCount = values.size;
+                    return (
+                      <div key={key} className="relative z-50">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenFilterPanel(isOpen ? null : key);
+                            setFilterPanelSearch("");
+                          }}
+                          className={`flex w-full items-center justify-between gap-1 rounded border px-2 py-1.5 text-[11px] cursor-pointer transition-colors ${
+                            activeCount > 0
+                              ? "border-terracotta bg-terracotta/10 font-semibold text-terracotta"
+                              : "border-sand bg-white text-bark hover:border-terracotta"
+                          }`}
+                        >
+                          <span>🔽 {label}{activeCount > 0 ? ` (${activeCount})` : ""}</span>
+                          <svg className="h-3 w-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="6 9 12 15 18 9" />
+                          </svg>
+                        </button>
+                        {isOpen && (
+                          <div
+                            className="absolute left-0 z-50 mt-1 w-56 rounded-lg border border-sand bg-white shadow-xl"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="border-b border-sand p-2">
+                              <input
+                                autoFocus
+                                type="text"
+                                placeholder="Search..."
+                                value={filterPanelSearch}
+                                onChange={(e) => setFilterPanelSearch(e.target.value)}
+                                className="w-full rounded border border-sand px-2 py-1 text-[11px] outline-none focus:border-terracotta"
+                              />
+                            </div>
+                            <div className="max-h-48 overflow-y-auto p-1">
+                              <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-parchment/30">
+                                <input
+                                  type="checkbox"
+                                  checked={values.size === 0}
+                                  onChange={() => setValues(new Set<string>())}
+                                  className="accent-terracotta"
+                                />
+                                <span className="text-[11px] font-semibold text-espresso">(Select All)</span>
+                              </label>
+                              {searchedOpts.map((opt) => (
+                                <label key={opt} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-parchment/30">
+                                  <input
+                                    type="checkbox"
+                                    checked={values.size === 0 || values.has(opt)}
+                                    onChange={() => {
+                                      if (values.size === 0) {
+                                        // All selected → uncheck this one item
+                                        const next = new Set<string>(options.filter(o => o !== opt));
+                                        setValues(next);
+                                      } else {
+                                        const next = new Set<string>(values);
+                                        if (next.has(opt)) {
+                                          next.delete(opt);
+                                          setValues(next.size === 0 ? new Set<string>() : next);
+                                        } else {
+                                          next.add(opt);
+                                          setValues(next.size === options.length ? new Set<string>() : next);
+                                        }
+                                      }
+                                    }}
+                                    className="accent-terracotta"
+                                  />
+                                  <span className="text-[11px] text-bark truncate">{opt || "(blank)"}</span>
+                                </label>
+                              ))}
+                              {searchedOpts.length === 0 && (
+                                <p className="px-2 py-2 text-[11px] text-stone">No matches</p>
+                              )}
+                            </div>
+                            <div className="flex justify-end gap-3 border-t border-sand p-2">
+                              <button
+                                type="button"
+                                onClick={() => { setValues(new Set<string>()); setOpenFilterPanel(null); }}
+                                className="cursor-pointer text-[11px] text-bark hover:text-terracotta"
+                              >
+                                Clear
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setOpenFilterPanel(null)}
+                                className="cursor-pointer text-[11px] font-semibold text-terracotta"
+                              >
+                                Done
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="rounded-lg border border-sand overflow-hidden">
@@ -6250,8 +6355,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     <thead>
                       <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
                         <th className="px-3 py-2.5">VA</th>
-                        <th className="px-3 py-2.5">Task Description</th>
                         <th className="px-3 py-2.5">Deliverables / Objectives</th>
+                        <th className="px-3 py-2.5">Task Description</th>
                         <th className="px-3 py-2.5 text-right">Minutes</th>
                         <th className="px-3 py-2.5">Memo</th>
                         <th className="px-3 py-2.5 text-center">Remove</th>
@@ -6263,20 +6368,71 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         return (
                           <tr key={realIdx} className="hover:bg-parchment/20 transition-colors">
                             <td className="px-3 py-2 font-medium text-espresso text-[11px] whitespace-nowrap">{li.va_name}</td>
-                            <td className="px-3 py-2 max-w-[200px]">
-                              <input
-                                value={li.description}
-                                onChange={(e) => updateLineItem(li.log_id, realIdx, { description: e.target.value })}
-                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors"
-                              />
-                            </td>
+                            {/* Deliverables / Objectives — first; options linked to this row's task description */}
                             <td className="px-3 py-2 max-w-[160px]">
-                              <input
-                                value={li.project || ""}
-                                onChange={(e) => updateLineItem(li.log_id, realIdx, { project: e.target.value })}
-                                placeholder="—"
-                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors placeholder:text-stone"
-                              />
+                              {customEditCell?.idx === realIdx && customEditCell?.field === "project" ? (
+                                <input
+                                  autoFocus
+                                  value={li.project || ""}
+                                  onChange={(e) => updateLineItem(li.log_id, realIdx, { project: e.target.value })}
+                                  onBlur={() => setCustomEditCell(null)}
+                                  placeholder="Enter custom..."
+                                  className="w-full bg-transparent border-b border-terracotta text-[12px] text-bark outline-none placeholder:text-stone"
+                                />
+                              ) : (
+                                <select
+                                  value={li.project || ""}
+                                  onChange={(e) => {
+                                    if (e.target.value === "__custom__") {
+                                      setCustomEditCell({ idx: realIdx, field: "project" });
+                                    } else {
+                                      updateLineItem(li.log_id, realIdx, { project: e.target.value });
+                                    }
+                                  }}
+                                  className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors cursor-pointer"
+                                >
+                                  {li.project && !getDelivOptions(li.description).includes(li.project) && (
+                                    <option value={li.project}>{li.project}</option>
+                                  )}
+                                  {getDelivOptions(li.description).length === 0 && !li.project && (
+                                    <option value="" disabled>—</option>
+                                  )}
+                                  {getDelivOptions(li.description).map((opt) => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ))}
+                                  <option value="__custom__">✏️ Custom label...</option>
+                                </select>
+                              )}
+                            </td>
+                            {/* Task Description — second; options are all unique descriptions in line items */}
+                            <td className="px-3 py-2 max-w-[200px]">
+                              {customEditCell?.idx === realIdx && customEditCell?.field === "desc" ? (
+                                <input
+                                  autoFocus
+                                  value={li.description}
+                                  onChange={(e) => updateLineItem(li.log_id, realIdx, { description: e.target.value })}
+                                  onBlur={() => setCustomEditCell(null)}
+                                  placeholder="Enter custom..."
+                                  className="w-full bg-transparent border-b border-terracotta text-[12px] text-bark outline-none placeholder:text-stone"
+                                />
+                              ) : (
+                                <select
+                                  value={li.description}
+                                  onChange={(e) => {
+                                    if (e.target.value === "__custom__") {
+                                      setCustomEditCell({ idx: realIdx, field: "desc" });
+                                    } else {
+                                      updateLineItem(li.log_id, realIdx, { description: e.target.value });
+                                    }
+                                  }}
+                                  className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors cursor-pointer"
+                                >
+                                  {taskDescOptions.map((opt) => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ))}
+                                  <option value="__custom__">✏️ Custom label...</option>
+                                </select>
+                              )}
                             </td>
                             <td className="px-3 py-2 text-right text-bark whitespace-nowrap">{Math.round(li.quantity * 60)}</td>
                             <td className="px-3 py-2 max-w-[180px]">
@@ -6284,7 +6440,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                                 value={li.client_memo || ""}
                                 onChange={(e) => updateLineItem(li.log_id, realIdx, { client_memo: e.target.value })}
                                 placeholder="—"
-                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark text-[11px] outline-none focus:border-terracotta hover:border-sand transition-colors placeholder:text-stone"
+                                className="w-full bg-transparent border-b border-transparent text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors placeholder:text-stone"
                               />
                             </td>
                             <td className="px-3 py-2 text-center">
