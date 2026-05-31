@@ -91,12 +91,8 @@ export async function POST(request: Request) {
   const byDate: Record<string, number> = {};
   let totalMs = 0;
 
-  // Exclude Clock In / Clocked Out — these are session markers, not payable time
-  const EXCLUDED_TASKS = ["Clock In", "Clocked Out"];
-
   for (const log of entries) {
     if (!log.duration_ms) continue;
-    if (EXCLUDED_TASKS.includes(log.task_name)) continue;
     const ms = Number(log.duration_ms);
     // Use session_date (local date VA was working), fall back to UTC date
     const dateKey = (log.session_date as string) || (log.start_time as string).split("T")[0];

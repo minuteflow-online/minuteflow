@@ -329,10 +329,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   /* ── Derived Data ────────────────────────────────────── */
 
   const filteredLogs = useMemo(() => {
-    // Always exclude Clock In / Clocked Out — session markers, not payable time
-    let result = logs.filter(
-      (l) => l.task_name !== "Clock In" && l.task_name !== "Clocked Out"
-    );
+    let result = logs;
     if (filterVa) result = result.filter((l) => l.user_id === filterVa);
     if (filterAccount) result = result.filter((l) => l.account === filterAccount);
     return result;
