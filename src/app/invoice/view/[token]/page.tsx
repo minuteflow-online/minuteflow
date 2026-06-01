@@ -32,6 +32,8 @@ interface Invoice {
   hours_not_billed: number | null;
   hours_not_billed_label: string | null;
   previous_balance: number | null;
+  invoice_type?: string | null;
+  custom_line_items?: string | null;
 }
 
 interface LineItem {
@@ -52,7 +54,7 @@ interface OrgSettings {
 
 type Tab = "summary" | "tasks" | "deliverables" | "time";
 
-const TABS: { id: Tab; label: string; icon?: string }[] = [
+const ALL_TABS: { id: Tab; label: string; icon?: string }[] = [
   { id: "summary", label: "Summary" },
   { id: "tasks", label: "Task Summary" },
   { id: "deliverables", label: "Deliverables" },
@@ -197,6 +199,11 @@ export default function PublicInvoicePage() {
   }
 
   /* ── Computed values ─────────────────────────────────── */
+
+  const isCustomInvoice = invoice.invoice_type === "custom";
+  const TABS = isCustomInvoice
+    ? ALL_TABS.filter((t) => t.id === "summary")
+    : ALL_TABS;
 
   const grossHours = lineItems.reduce((s, li) => s + Number(li.quantity), 0);
   const notBilledHours = Number(invoice.hours_not_billed || 0);
@@ -362,7 +369,8 @@ export default function PublicInvoicePage() {
             {/* Financial Breakdown */}
             <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
               <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52] mb-3">Invoice Financial Breakdown</div>
-              {/* Row 1: Hours */}
+              {/* Row 1: Hours — timelog only */}
+              {!isCustomInvoice && (
               <div className="grid grid-cols-3 gap-2 mb-2">
                 {invoice.rate_amount != null && (
                   <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
@@ -387,6 +395,7 @@ export default function PublicInvoicePage() {
                   <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{totalHours.toFixed(2)}</div>
                 </div>
               </div>
+              )}
               {/* Row 2: Money — smart display */}
               <div className={`grid gap-2 ${hasAdjustment || prevBalance > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
                 <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
@@ -420,6 +429,29 @@ export default function PublicInvoicePage() {
                 </div>
               )}
             </div>
+
+            {/* Custom Invoice: Line Items */}
+            {isCustomInvoice && invoice.custom_line_items && (
+              <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
+                <h3 className="mb-3 font-semibold text-espresso">Invoice Items</h3>
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="border-b border-sand text-[11px] font-semibold uppercase text-bark">
+                      <th className="pb-2 text-left">Description</th>
+                      <th className="pb-2 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(JSON.parse(invoice.custom_line_items as string) as Array<{description: string; amount: number}>).map((item, i) => (
+                      <tr key={i} className="border-b border-parchment">
+                        <td className="py-2 text-bark">{item.description}</td>
+                        <td className="py-2 text-right font-medium text-espresso">${item.amount.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Notes */}
             {invoice.notes && (

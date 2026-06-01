@@ -137,6 +137,8 @@ interface InvoiceRow {
   hours_not_billed: number | null;
   hours_not_billed_label: string | null;
   previous_balance: number | null;
+  invoice_type?: string | null;
+  custom_line_items?: string | null;
 }
 
 interface LineItemRow {
@@ -172,6 +174,7 @@ function buildInvoiceEmail(
   orgRegisteredName: string | null = null,
   orgDba: string | null = null
 ): string {
+  const isCustomInvoice = invoice.invoice_type === "custom";
   const grossHours = items.reduce((s, li) => s + Number(li.quantity), 0);
   const notBilledHours = Number(invoice.hours_not_billed || 0);
   const totalHours = grossHours - notBilledHours;
@@ -228,8 +231,8 @@ function buildInvoiceEmail(
     )
     .join("");
 
-  // Financial breakdown row 1: hours
-  const hoursRow1Cells = [
+  // Financial breakdown row 1: hours — timelog only
+  const hoursRow1Cells = isCustomInvoice ? "" : [
     invoice.rate_amount != null ? `
       <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word; width:25%;">
         <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Rate</div>
@@ -353,9 +356,7 @@ function buildInvoiceEmail(
     <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 4px;">
       <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52; margin-bottom:10px;">Invoice Financial Breakdown</div>
       <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden; margin-bottom:8px;">
-        <tr style="background:#faf6f0;">
-          ${hoursRow1Cells}
-        </tr>
+        ${!isCustomInvoice ? `<tr style="background:#faf6f0;">${hoursRow1Cells}</tr>` : ""}
         <tr style="background:#f5f0e8; border-top:1px solid #e8e0d4;">
           ${moneyRow2Cells}
         </tr>
@@ -363,6 +364,26 @@ function buildInvoiceEmail(
       </table>
     </div>
 
+    ${isCustomInvoice && invoice.custom_line_items ? (() => {
+      const customLineItems = JSON.parse(invoice.custom_line_items as string) as Array<{description: string; amount: number}>;
+      const itemRows = customLineItems.map(item => `
+        <tr style="border-bottom:1px solid #e8e0d4;">
+          <td style="padding:8px 12px; font-size:12px; color:#3d2b1f;">${item.description}</td>
+          <td style="padding:8px 12px; font-size:12px; font-weight:600; color:#3d2b1f; text-align:right;">$${item.amount.toFixed(2)}</td>
+        </tr>`).join("");
+      return `
+    <!-- ── INVOICE ITEMS ──────────────────────────────────── -->
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px;">
+      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52; margin-bottom:10px;">Invoice Items</div>
+      <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden;">
+        <tr style="background:#faf6f0;">
+          <th style="padding:8px 12px; text-align:left; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Description</th>
+          <th style="padding:8px 12px; text-align:right; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Amount</th>
+        </tr>
+        ${itemRows}
+      </table>
+    </div>`;
+    })() : `
     <!-- ── TASK SUMMARY + DELIVERABLES (side by side) ──── -->
     <table style="width:100%; border-collapse:collapse; background:#f5f0e8; border-left:1px solid #1a2535; border-right:1px solid #1a2535;">
       <tr>
@@ -380,7 +401,7 @@ function buildInvoiceEmail(
           </table>
         </td>
       </tr>
-    </table>
+    </table>`}
 
     ${invoice.notes ? `
     <!-- ── NOTES ────────────────────────────────────────── -->

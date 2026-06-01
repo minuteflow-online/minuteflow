@@ -257,6 +257,8 @@ export interface Invoice {
   rate_amount: number | null;
   payment_info: string | null;
   share_token: string | null;
+  invoice_type: "timelog" | "custom" | null;
+  custom_line_items: string | null;
   created_at: string;
   updated_at: string;
 }

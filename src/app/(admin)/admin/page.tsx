@@ -5372,6 +5372,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editReplyToEmail, setEditReplyToEmail] = useState("");
   const [editPreviousBalance, setEditPreviousBalance] = useState("");
 
+  // Custom invoice type state
+  const [invoiceType, setInvoiceType] = useState<"timelog" | "custom">("timelog");
+  const [customItems, setCustomItems] = useState<Array<{ id: string; description: string; amount: string }>>([{ id: "ci-1", description: "", amount: "" }]);
+
   const supabase = createClient();
 
   /* ── Fetch invoices + clients ─────────────────────────────── */
@@ -5633,7 +5637,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   /* ── Save invoice ─────────────────────────────────────────── */
 
   const handleSaveInvoice = async (sendNow: boolean) => {
-    if (lineItems.length === 0) return;
+    if (invoiceType === "timelog" && lineItems.length === 0) return;
+    if (invoiceType === "custom" && !customItems.some(i => i.description && parseFloat(i.amount) > 0)) return;
     setSaving(true);
 
     const invoiceNumber = generateInvoiceNumber();
@@ -5685,6 +5690,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
       previous_balance: previousBalance ? parseFloat(previousBalance) : null,
+      invoice_type: invoiceType,
+      custom_line_items: invoiceType === "custom" ? JSON.stringify(customItems.filter(i => i.description).map(i => ({ description: i.description, amount: parseFloat(i.amount) || 0 }))) : null,
       share_token: crypto.randomUUID(),
     };
 
@@ -5699,34 +5706,36 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       return;
     }
 
-    // Insert line items
-    const lineItemsData = lineItems.map((li, idx) => ({
-      invoice_id: newInvoice.id,
-      log_id: li.log_id,
-      description: li.description,
-      va_name: li.va_name,
-      account_name: li.account_name || null,
-      category: li.category || null,
-      project: li.project || null,
-      client_memo: li.client_memo || null,
-      quantity: li.quantity,
-      unit_price: 0,
-      amount: 0,
-      service_date: li.service_date || null,
-      start_time: li.start_time || null,
-      sort_order: idx,
-    }));
+    // Only insert time log line items for timelog invoices
+    if (invoiceType === "timelog") {
+      const lineItemsData = lineItems.map((li, idx) => ({
+        invoice_id: newInvoice.id,
+        log_id: li.log_id,
+        description: li.description,
+        va_name: li.va_name,
+        account_name: li.account_name || null,
+        category: li.category || null,
+        project: li.project || null,
+        client_memo: li.client_memo || null,
+        quantity: li.quantity,
+        unit_price: 0,
+        amount: 0,
+        service_date: li.service_date || null,
+        start_time: li.start_time || null,
+        sort_order: idx,
+      }));
 
-    await supabase.from("invoice_line_items").insert(lineItemsData);
+      await supabase.from("invoice_line_items").insert(lineItemsData);
 
-    // Apply On Hold overrides to time_logs (reassign account/client for removed items)
-    for (const [idx, override] of removedItemOverrides.entries()) {
-      const li = removedLineItems[idx];
-      if (li?.log_id && (override.account || override.client)) {
-        const updateFields: Record<string, string> = {};
-        if (override.account) updateFields.account = override.account;
-        if (override.client) updateFields.client_name = override.client;
-        await supabase.from("time_logs").update(updateFields).eq("id", li.log_id);
+      // Apply On Hold overrides to time_logs (reassign account/client for removed items)
+      for (const [idx, override] of removedItemOverrides.entries()) {
+        const li = removedLineItems[idx];
+        if (li?.log_id && (override.account || override.client)) {
+          const updateFields: Record<string, string> = {};
+          if (override.account) updateFields.account = override.account;
+          if (override.client) updateFields.client_name = override.client;
+          await supabase.from("time_logs").update(updateFields).eq("id", li.log_id);
+        }
       }
     }
 
@@ -5771,6 +5780,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setCustomEditCell(null);
     setRemovedLineItems([]);
     setRemovedItemOverrides(new Map());
+    setInvoiceType("timelog");
+    setCustomItems([{ id: "ci-1", description: "", amount: "" }]);
 
     await fetchInvoices();
 
@@ -6389,7 +6400,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         </div>
 
         <div className="rounded-xl border border-sand bg-white p-6">
-          <h3 className="mb-6 font-serif text-lg font-bold text-espresso">Generate New Invoice</h3>
+          <h3 className="mb-4 font-serif text-lg font-bold text-espresso">Generate New Invoice</h3>
+
+          {/* Invoice Type Toggle */}
+          <div className="mb-6 flex items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-bark mr-2">Type:</span>
+            <button onClick={() => setInvoiceType("timelog")} className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${invoiceType === "timelog" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}>Time Log Based</button>
+            <button onClick={() => setInvoiceType("custom")} className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${invoiceType === "custom" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}>Custom Invoice</button>
+          </div>
+
+          {/* Step 1: Filter By — timelog only */}
+          {invoiceType === "timelog" && (<>
 
           {/* Step 1: Filter By */}
           <div className="mb-6">
@@ -6479,9 +6500,243 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               </button>
             </div>
           </div>
+          </>)}
 
-          {/* Step 3: Review Time Logs */}
-          {lineItems.length > 0 && (
+          {/* Custom Invoice: Bill To selector */}
+          {invoiceType === "custom" && (
+            <div className="mb-6">
+              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">Bill To (Client)</label>
+              <select value={selectedClientId ?? ""} onChange={(e) => setSelectedClientId(e.target.value ? Number(e.target.value) : null)} className="w-full max-w-xs rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer">
+                <option value="">Choose a client...</option>
+                {clients.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+              </select>
+            </div>
+          )}
+
+          {/* Info Fields + Invoice Summary — always visible */}
+          <div className="mt-5 grid grid-cols-2 gap-6">
+            <div className="space-y-4">
+              {/* Type of Services */}
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Type of Services</label>
+                <input
+                  type="text"
+                  value={serviceType}
+                  onChange={(e) => setServiceType(e.target.value)}
+                  placeholder="e.g. Virtual Assistant Services"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
+              {/* Sender info */}
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Name</label>
+                <input
+                  type="text"
+                  value={fromName}
+                  onChange={(e) => setFromName(e.target.value)}
+                  placeholder="e.g. Toni Colina"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Phone</label>
+                <input
+                  type="text"
+                  value={fromPhone}
+                  onChange={(e) => setFromPhone(e.target.value)}
+                  placeholder="e.g. +1 (555) 000-0000"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Link</label>
+                <input
+                  type="url"
+                  value={paymentLink}
+                  onChange={(e) => setPaymentLink(e.target.value)}
+                  placeholder="https://..."
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+                {paymentLink && (
+                  <p className="mt-1 text-[11px] text-bark/60">Note: A 3% processing fee applies to online payments.</p>
+                )}
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Method Info</label>
+                <textarea
+                  value={paymentInfo}
+                  onChange={(e) => setPaymentInfo(e.target.value)}
+                  placeholder="e.g. Zelle: yourname@email.com&#10;PayPal: @yourhandle&#10;Bank Transfer: Account #1234"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone resize-none"
+                  rows={3}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Reply-To Email</label>
+                <input
+                  type="email"
+                  value={replyToEmail}
+                  onChange={(e) => setReplyToEmail(e.target.value)}
+                  placeholder="replies@youremail.com"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+                <p className="mt-1 text-[11px] text-bark/60">If different from your main email. Replies to this invoice will go here.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setReminderEnabled(!reminderEnabled)}
+                  className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer overflow-hidden ${reminderEnabled ? "bg-terracotta" : "bg-clay"}`}
+                >
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${reminderEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
+                </button>
+                <span className="text-[13px] text-bark">Daily reminder email (includes payment link)</span>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Notes</label>
+                <textarea
+                  value={invoiceNotes}
+                  onChange={(e) => setInvoiceNotes(e.target.value)}
+                  placeholder="Payment instructions, Zelle info, etc."
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone resize-none"
+                  rows={3}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-bark">Invoice Summary</label>
+              <div className="rounded-lg border border-sand bg-parchment/30 p-5 space-y-3">
+                {/* Rate + hours — timelog only */}
+                {invoiceType === "timelog" && (<>
+                {/* Rate */}
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-bark">Rate ($/hr)</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={rateAmount}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setRateAmount(v);
+                      const rate = parseFloat(v) || 0;
+                      if (rate > 0) {
+                        const gross = lineItems.reduce((s, li) => s + li.quantity, 0);
+                        const notBilled = parseFloat(hoursNotBilled) || 0;
+                        setInvoiceTotal((gross * rate).toFixed(2));
+                        setAdjustmentAmount((notBilled * rate).toFixed(2));
+                      }
+                    }}
+                    placeholder="e.g. 25.00"
+                    className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
+                  />
+                </div>
+                {/* Gross Hours */}
+                <div className="flex justify-between text-[12px]">
+                  <span className="text-bark">Gross Hours</span>
+                  <span className="font-medium text-espresso">{totalHours.toFixed(2)} hrs</span>
+                </div>
+                {/* Hours Not Billed */}
+                <div className="flex items-center justify-between gap-2 text-[12px]">
+                  <div className="flex items-center gap-2 flex-1">
+                    <span className="text-bark whitespace-nowrap">Hours Not Billed</span>
+                    <input
+                      type="text"
+                      value={hoursNotBilledLabel}
+                      onChange={(e) => setHoursNotBilledLabel(e.target.value)}
+                      placeholder="Label (e.g. Volunteer)"
+                      className="flex-1 rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white placeholder:text-stone"
+                    />
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={hoursNotBilled}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setHoursNotBilled(v);
+                      const rate = parseFloat(rateAmount) || 0;
+                      if (rate > 0) {
+                        const gross = lineItems.reduce((s, li) => s + li.quantity, 0);
+                        const notBilled = parseFloat(v) || 0;
+                        setInvoiceTotal((gross * rate).toFixed(2));
+                        setAdjustmentAmount((notBilled * rate).toFixed(2));
+                      }
+                    }}
+                    placeholder="0.00"
+                    className="w-24 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
+                  />
+                </div>
+                {/* Total Hours Billed */}
+                <div className="flex justify-between text-[12px]">
+                  <span className="text-bark">Total Hours Billed</span>
+                  <span className="font-medium text-espresso">
+                    {(totalHours - (parseFloat(hoursNotBilled) || 0)).toFixed(2)} hrs
+                  </span>
+                </div>
+                {/* Invoice Amount */}
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-bark">Invoice Amount ($)</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={invoiceTotal}
+                    onChange={(e) => setInvoiceTotal(e.target.value)}
+                    placeholder="0.00"
+                    className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] font-semibold text-espresso outline-none focus:border-terracotta bg-white"
+                  />
+                </div>
+                </>)}
+                {/* Custom type: Subtotal from line items */}
+                {invoiceType === "custom" && (
+                  <div className="flex justify-between text-[12px]">
+                    <span className="text-bark">Subtotal</span>
+                    <span className="font-medium text-espresso">{formatCurrency(customItems.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-bark">Savings ($)</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={adjustmentAmount}
+                    onChange={(e) => setAdjustmentAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
+                  />
+                </div>
+                <div className="flex justify-between border-t border-sand pt-2 text-[14px]">
+                  <span className="font-bold text-espresso">Final Invoice Amount</span>
+                  <span className="font-bold text-terracotta">{formatCurrency(finalTotal)}</span>
+                </div>
+                {/* Previous Balance */}
+                <div className="flex items-center justify-between text-[12px] mt-2">
+                  <span className="text-bark">Previous Balance ($)</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={previousBalance}
+                    onChange={(e) => setPreviousBalance(e.target.value)}
+                    placeholder="0.00"
+                    className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
+                  />
+                </div>
+                {parseFloat(previousBalance) > 0 && (
+                  <div className="flex justify-between border-t border-sand pt-2 text-[13px]">
+                    <span className="font-bold text-espresso">Current Balance Due</span>
+                    <span className="font-bold text-terracotta">{formatCurrency(finalTotal + (parseFloat(previousBalance) || 0))}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Step 3: Review Time Logs — timelog only */}
+          {invoiceType === "timelog" && lineItems.length > 0 && (
             <div className="mb-6">
               <div className="mb-1.5 flex items-center justify-between">
                 <label className="text-[11px] font-semibold uppercase tracking-wider text-bark">
@@ -6810,241 +7065,68 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </div>
               )}
 
-              {/* Invoice Amount */}
-              <div className="mt-5 grid grid-cols-2 gap-6">
-                <div className="space-y-4">
-                  {/* Type of Services */}
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Type of Services</label>
-                    <input
-                      type="text"
-                      value={serviceType}
-                      onChange={(e) => setServiceType(e.target.value)}
-                      placeholder="e.g. Virtual Assistant Services"
-                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
-                    />
-                  </div>
-                  {/* Sender info */}
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Name</label>
-                    <input
-                      type="text"
-                      value={fromName}
-                      onChange={(e) => setFromName(e.target.value)}
-                      placeholder="e.g. Toni Colina"
-                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Phone</label>
-                    <input
-                      type="text"
-                      value={fromPhone}
-                      onChange={(e) => setFromPhone(e.target.value)}
-                      placeholder="e.g. +1 (555) 000-0000"
-                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Link</label>
-                    <input
-                      type="url"
-                      value={paymentLink}
-                      onChange={(e) => setPaymentLink(e.target.value)}
-                      placeholder="https://..."
-                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
-                    />
-                    {paymentLink && (
-                      <p className="mt-1 text-[11px] text-bark/60">Note: A 3% processing fee applies to online payments.</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Method Info</label>
-                    <textarea
-                      value={paymentInfo}
-                      onChange={(e) => setPaymentInfo(e.target.value)}
-                      placeholder="e.g. Zelle: yourname@email.com&#10;PayPal: @yourhandle&#10;Bank Transfer: Account #1234"
-                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone resize-none"
-                      rows={3}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Reply-To Email</label>
-                    <input
-                      type="email"
-                      value={replyToEmail}
-                      onChange={(e) => setReplyToEmail(e.target.value)}
-                      placeholder="replies@youremail.com"
-                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
-                    />
-                    <p className="mt-1 text-[11px] text-bark/60">If different from your main email. Replies to this invoice will go here.</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => setReminderEnabled(!reminderEnabled)}
-                      className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer overflow-hidden ${reminderEnabled ? "bg-terracotta" : "bg-clay"}`}
-                    >
-                      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${reminderEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
-                    </button>
-                    <span className="text-[13px] text-bark">Daily reminder email (includes payment link)</span>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Notes</label>
-                    <textarea
-                      value={invoiceNotes}
-                      onChange={(e) => setInvoiceNotes(e.target.value)}
-                      placeholder="Payment instructions, Zelle info, etc."
-                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone resize-none"
-                      rows={3}
-                    />
-                  </div>
-                </div>
+            </div>
+          )}
 
-                <div>
-                  <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wider text-bark">Invoice Summary</label>
-                  <div className="rounded-lg border border-sand bg-parchment/30 p-5 space-y-3">
-                    {/* Rate */}
-                    <div className="flex items-center justify-between text-[12px]">
-                      <span className="text-bark">Rate ($/hr)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={rateAmount}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setRateAmount(v);
-                          const rate = parseFloat(v) || 0;
-                          if (rate > 0) {
-                            const gross = lineItems.reduce((s, li) => s + li.quantity, 0);
-                            const notBilled = parseFloat(hoursNotBilled) || 0;
-                            setInvoiceTotal((gross * rate).toFixed(2));
-                            setAdjustmentAmount((notBilled * rate).toFixed(2));
-                          }
-                        }}
-                        placeholder="e.g. 25.00"
-                        className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
-                      />
-                    </div>
-                    {/* Gross Hours */}
-                    <div className="flex justify-between text-[12px]">
-                      <span className="text-bark">Gross Hours</span>
-                      <span className="font-medium text-espresso">{totalHours.toFixed(2)} hrs</span>
-                    </div>
-                    {/* Hours Not Billed */}
-                    <div className="flex items-center justify-between gap-2 text-[12px]">
-                      <div className="flex items-center gap-2 flex-1">
-                        <span className="text-bark whitespace-nowrap">Hours Not Billed</span>
-                        <input
-                          type="text"
-                          value={hoursNotBilledLabel}
-                          onChange={(e) => setHoursNotBilledLabel(e.target.value)}
-                          placeholder="Label (e.g. Volunteer)"
-                          className="flex-1 rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white placeholder:text-stone"
-                        />
-                      </div>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={hoursNotBilled}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setHoursNotBilled(v);
-                          const rate = parseFloat(rateAmount) || 0;
-                          if (rate > 0) {
-                            const gross = lineItems.reduce((s, li) => s + li.quantity, 0);
-                            const notBilled = parseFloat(v) || 0;
-                            setInvoiceTotal((gross * rate).toFixed(2));
-                            setAdjustmentAmount((notBilled * rate).toFixed(2));
-                          }
-                        }}
-                        placeholder="0.00"
-                        className="w-24 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
-                      />
-                    </div>
-                    {/* Total Hours Billed */}
-                    <div className="flex justify-between text-[12px]">
-                      <span className="text-bark">Total Hours Billed</span>
-                      <span className="font-medium text-espresso">
-                        {(totalHours - (parseFloat(hoursNotBilled) || 0)).toFixed(2)} hrs
-                      </span>
-                    </div>
-                    {/* Invoice Amount */}
-                    <div className="flex items-center justify-between text-[12px]">
-                      <span className="text-bark">Invoice Amount ($)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={invoiceTotal}
-                        onChange={(e) => setInvoiceTotal(e.target.value)}
-                        placeholder="0.00"
-                        className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] font-semibold text-espresso outline-none focus:border-terracotta bg-white"
-                      />
-                    </div>
-                    <div className="flex items-center justify-between text-[12px]">
-                      <span className="text-bark">Savings ($)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={adjustmentAmount}
-                        onChange={(e) => setAdjustmentAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
-                      />
-                    </div>
-                    <div className="flex justify-between border-t border-sand pt-2 text-[14px]">
-                      <span className="font-bold text-espresso">Final Invoice Amount</span>
-                      <span className="font-bold text-terracotta">{formatCurrency(finalTotal)}</span>
-                    </div>
-                    {/* Previous Balance */}
-                    <div className="flex items-center justify-between text-[12px] mt-2">
-                      <span className="text-bark">Previous Balance ($)</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={previousBalance}
-                        onChange={(e) => setPreviousBalance(e.target.value)}
-                        placeholder="0.00"
-                        className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
-                      />
-                    </div>
-                    {parseFloat(previousBalance) > 0 && (
-                      <div className="flex justify-between border-t border-sand pt-2 text-[13px]">
-                        <span className="font-bold text-espresso">Current Balance Due</span>
-                        <span className="font-bold text-terracotta">{formatCurrency(finalTotal + (parseFloat(previousBalance) || 0))}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
+          {/* Custom: Manual Line Items */}
+          {invoiceType === "custom" && (
+            <div className="mb-6">
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-bark">Line Items</label>
+                <button type="button" onClick={() => setCustomItems(prev => [...prev, { id: `ci-${Date.now()}`, description: "", amount: "" }])} className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer">+ Add Item</button>
               </div>
-
-              {/* Actions */}
-              <div className="mt-6 flex justify-end gap-3">
-                <button
-                  onClick={() => handleSaveInvoice(false)}
-                  disabled={saving || !invoiceTotal || parseFloat(invoiceTotal) <= 0}
-                  className="rounded-lg border border-sand px-5 py-2.5 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta disabled:opacity-50 cursor-pointer"
-                >
-                  {saving ? "Saving..." : "Save & Preview"}
-                </button>
-                <button
-                  onClick={() => handleSaveInvoice(true)}
-                  disabled={saving || !invoiceTotal || parseFloat(invoiceTotal) <= 0 || !selectedClient?.email}
-                  title={!selectedClient?.email ? "Select a billing client with an email to send" : ""}
-                  className="rounded-lg bg-terracotta px-5 py-2.5 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {saving ? "Sending..." : "Send Invoice"}
-                </button>
+              <div className="rounded-lg border border-sand overflow-hidden">
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                      <th className="px-3 py-2.5">Description</th>
+                      <th className="px-3 py-2.5 text-right w-32">Amount ($)</th>
+                      <th className="px-3 py-2.5 w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-parchment">
+                    {customItems.map((item, idx) => (
+                      <tr key={item.id} className="hover:bg-parchment/20 transition-colors">
+                        <td className="px-3 py-2">
+                          <input type="text" value={item.description} onChange={(e) => setCustomItems(prev => prev.map((ci, i) => i === idx ? { ...ci, description: e.target.value } : ci))} placeholder="e.g. Social Media Management — May 2025" className="w-full bg-transparent text-[12px] text-espresso outline-none placeholder:text-stone border-b border-transparent hover:border-sand focus:border-terracotta transition-colors" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" step="0.01" min="0" value={item.amount} onChange={(e) => { const updated = customItems.map((ci, i) => i === idx ? { ...ci, amount: e.target.value } : ci); setCustomItems(updated); setInvoiceTotal(updated.reduce((s, ci) => s + (parseFloat(ci.amount) || 0), 0).toFixed(2)); }} placeholder="0.00" className="w-full bg-transparent text-right text-[12px] text-espresso outline-none placeholder:text-stone border-b border-transparent hover:border-sand focus:border-terracotta transition-colors" />
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {customItems.length > 1 && (
+                            <button type="button" onClick={() => { const updated = customItems.filter((_, i) => i !== idx); setCustomItems(updated); setInvoiceTotal(updated.reduce((s, ci) => s + (parseFloat(ci.amount) || 0), 0).toFixed(2)); }} className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-amber-soft hover:text-amber cursor-pointer">&times;</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
 
-          {/* Empty state after fetching with no results */}
-          {canFetch && dateFrom && dateTo && lineItems.length === 0 && !loadingLogs && (
+          {/* Actions — always visible */}
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              onClick={() => handleSaveInvoice(false)}
+              disabled={saving || !invoiceTotal || parseFloat(invoiceTotal) <= 0}
+              className="rounded-lg border border-sand px-5 py-2.5 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta disabled:opacity-50 cursor-pointer"
+            >
+              {saving ? "Saving..." : "Save & Preview"}
+            </button>
+            <button
+              onClick={() => handleSaveInvoice(true)}
+              disabled={saving || !invoiceTotal || parseFloat(invoiceTotal) <= 0 || !selectedClient?.email}
+              title={!selectedClient?.email ? "Select a billing client with an email to send" : ""}
+              className="rounded-lg bg-terracotta px-5 py-2.5 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {saving ? "Sending..." : "Send Invoice"}
+            </button>
+          </div>
+
+          {/* Empty state after fetching with no results — timelog only */}
+          {invoiceType === "timelog" && canFetch && dateFrom && dateTo && lineItems.length === 0 && !loadingLogs && (
             <div className="rounded-lg border border-dashed border-sand bg-parchment/30 px-6 py-10 text-center">
               <p className="text-[13px] text-bark">
                 No uninvoiced billable time logs found for the selected filter and date range.
