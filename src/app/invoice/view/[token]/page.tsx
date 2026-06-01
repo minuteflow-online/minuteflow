@@ -262,10 +262,10 @@ export default function PublicInvoicePage() {
 
         {/* ── Yellow Header — 3 columns ── */}
         <div className="rounded-t-xl bg-[#f5c842] px-6 py-6">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3">
 
             {/* Col 1: Client Info */}
-            <div className="flex flex-col">
+            <div className="flex flex-col pr-5">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-[#5a4000] mb-1">BILL TO:</div>
               {invoice.account_name && (
                 <div className="text-[18px] font-extrabold text-[#2d1a00] leading-tight mb-0.5">{invoice.account_name}</div>
@@ -288,7 +288,7 @@ export default function PublicInvoicePage() {
             </div>
 
             {/* Col 2: Invoice From */}
-            <div className="flex flex-col items-center text-center">
+            <div className="flex flex-col border-x border-[#c9a820] px-5">
               <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">INVOICE FROM:</div>
               <div className="text-[14px] font-bold text-[#2d1a00]">{invoice.from_name}</div>
               {orgRegisteredName && <div className="text-[11px] text-[#5a4000] mt-0.5">{orgRegisteredName}</div>}
@@ -319,7 +319,7 @@ export default function PublicInvoicePage() {
             </div>
 
             {/* Col 3: Payment Methods */}
-            <div className="flex flex-col items-end text-right">
+            <div className="flex flex-col items-end text-right pl-5">
               <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-2">HOW TO PAY:</div>
               {invoice.payment_link && (
                 <div className="mb-2">
@@ -366,68 +366,57 @@ export default function PublicInvoicePage() {
 
         {/* ── Tab: Summary ── */}
         <div className={`invoice-tab-section ${activeTab === "summary" ? "" : "hidden"}`}>
-            {/* Financial Breakdown */}
+            {/* Financial Breakdown — smart 1 or 2 row layout */}
             <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
               <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52] mb-3">Invoice Financial Breakdown</div>
-              {/* Row 1: Hours — timelog only */}
-              {!isCustomInvoice && (
-              <div className="grid grid-cols-3 gap-2 mb-2">
-                {invoice.rate_amount != null && (
-                  <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Rate</div>
-                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{formatCurrency(invoice.rate_amount, invoice.currency)}/hr</div>
+              {(() => {
+                // Build a flat list of all items to display
+                type BItem = { label: string; value: string; accent?: boolean };
+                const allItems: BItem[] = [
+                  ...(!isCustomInvoice ? [
+                    ...(invoice.rate_amount != null ? [{ label: "Rate", value: `${formatCurrency(invoice.rate_amount, invoice.currency)}/hr` }] : []),
+                    ...(notBilledHours > 0 ? [
+                      { label: "Gross Hours", value: grossHours.toFixed(2) },
+                      { label: invoice.hours_not_billed_label || "Not Billed", value: notBilledHours.toFixed(2) },
+                    ] : []),
+                    { label: "Hours Billed", value: totalHours.toFixed(2) },
+                  ] : []),
+                  { label: "Invoice Amount", value: formatCurrency(Number(invoice.subtotal), invoice.currency) },
+                  ...(hasAdjustment ? [
+                    { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
+                    { label: "Final Amount", value: formatCurrency(Number(invoice.total), invoice.currency), accent: true },
+                  ] : []),
+                  ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency) }] : []),
+                ];
+
+                const singleRow = allItems.length <= 4;
+                const row1 = singleRow ? allItems : allItems.slice(0, Math.ceil(allItems.length / 2));
+                const row2 = singleRow ? [] : allItems.slice(Math.ceil(allItems.length / 2));
+
+                const renderRow = (rowItems: BItem[], bg: string) => (
+                  <div className="flex gap-2 mb-2">
+                    {rowItems.map(({ label, value, accent }) => (
+                      <div key={label} className={`flex-1 rounded-lg border border-[#e8e0d4] ${bg} p-3 text-center`}>
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">{label}</div>
+                        <div className={`text-[14px] font-bold mt-1 ${accent ? "text-[#c0704e]" : "text-[#3d2b1f]"}`}>{value}</div>
+                      </div>
+                    ))}
                   </div>
-                )}
-                {notBilledHours > 0 && (
-                  <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Gross Hours</div>
-                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{grossHours.toFixed(2)}</div>
-                  </div>
-                )}
-                {notBilledHours > 0 && (
-                  <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">{invoice.hours_not_billed_label || "Not Billed"}</div>
-                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{notBilledHours.toFixed(2)}</div>
-                  </div>
-                )}
-                <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
-                  <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Hours Billed</div>
-                  <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{totalHours.toFixed(2)}</div>
-                </div>
-              </div>
-              )}
-              {/* Row 2: Money — smart display */}
-              <div className={`grid gap-2 ${hasAdjustment || prevBalance > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
-                <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
-                  <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Invoice Amount</div>
-                  <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{formatCurrency(Number(invoice.subtotal), invoice.currency)}</div>
-                </div>
-                {hasAdjustment && (
-                  <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Savings</div>
-                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">− {formatCurrency(adjustment)}</div>
-                  </div>
-                )}
-                {hasAdjustment && (
-                  <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Final Amount</div>
-                    <div className="text-[14px] font-bold text-[#c0704e] mt-1">{formatCurrency(Number(invoice.total), invoice.currency)}</div>
-                  </div>
-                )}
-                {prevBalance > 0 && (
-                  <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Previous Balance</div>
-                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{formatCurrency(prevBalance, invoice.currency)}</div>
-                  </div>
-                )}
-              </div>
-              {/* Current Balance row (only if prev balance) */}
-              {prevBalance > 0 && (
-                <div className="mt-2 rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] p-3 text-center">
-                  <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Current Balance Due</div>
-                  <div className="text-[18px] font-extrabold text-[#c0704e] mt-1">{formatCurrency(currentBalance, invoice.currency)}</div>
-                </div>
-              )}
+                );
+
+                return (
+                  <>
+                    {renderRow(row1, "bg-[#faf6f0]")}
+                    {row2.length > 0 && renderRow(row2, "bg-[#f5f0e8]")}
+                    {prevBalance > 0 && (
+                      <div className="mt-1 rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] p-3 text-center">
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Current Balance Due</div>
+                        <div className="text-[18px] font-extrabold text-[#c0704e] mt-1">{formatCurrency(currentBalance, invoice.currency)}</div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
             {/* Custom Invoice: Line Items */}

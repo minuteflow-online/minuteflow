@@ -231,50 +231,37 @@ function buildInvoiceEmail(
     )
     .join("");
 
-  // Financial breakdown row 1: hours — timelog only
-  const hoursRow1Cells = isCustomInvoice ? "" : [
-    invoice.rate_amount != null ? `
-      <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word; width:25%;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Rate</div>
-        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${formatCurrency(invoice.rate_amount!, invoice.currency)}/hr</div>
-      </td>` : "",
-    notBilledHours > 0 ? `
-      <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word; width:25%;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Gross Hours</div>
-        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${grossHours.toFixed(2)}</div>
-      </td>
-      <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word; width:25%;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${invoice.hours_not_billed_label || "Not Billed"}</div>
-        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${notBilledHours.toFixed(2)}</div>
-      </td>` : "",
-    `<td style="padding:10px 8px; text-align:center; ${notBilledHours > 0 || invoice.rate_amount != null ? "border-right:1px solid #e8e0d4;" : ""} word-break:break-word; width:25%;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Hours Billed</div>
-        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${totalHours.toFixed(2)}</div>
-      </td>`,
-  ].filter(Boolean).join("");
+  // Financial breakdown — smart 1 or 2 row layout
+  interface EmailBItem { label: string; value: string; accent?: boolean }
+  const allBreakdownItems: EmailBItem[] = [
+    ...(!isCustomInvoice ? [
+      ...(invoice.rate_amount != null ? [{ label: "Rate", value: `${formatCurrency(invoice.rate_amount!, invoice.currency)}/hr` }] : []),
+      ...(notBilledHours > 0 ? [
+        { label: "Gross Hours", value: grossHours.toFixed(2) },
+        { label: invoice.hours_not_billed_label || "Not Billed", value: notBilledHours.toFixed(2) },
+      ] : []),
+      { label: "Hours Billed", value: totalHours.toFixed(2) },
+    ] : []),
+    { label: "Invoice Amount", value: formatCurrency(invoiceAmount, invoice.currency) },
+    ...(hasAdjustment ? [
+      { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
+      { label: "Final Amount", value: formatCurrency(finalTotal, invoice.currency), accent: true },
+    ] : []),
+    ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency) }] : []),
+  ];
 
-  // Financial breakdown row 2: money — smart display
-  const moneyRow2Cells = [
-    `<td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word;">
-      <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Invoice Amount</div>
-      <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${formatCurrency(invoiceAmount, invoice.currency)}</div>
-    </td>`,
-    hasAdjustment ? `
-      <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Savings</div>
-        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">− ${formatCurrency(adjustment)}</div>
-      </td>` : "",
-    hasAdjustment ? `
-      <td style="padding:10px 8px; text-align:center; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Final Amount</div>
-        <div style="font-size:14px; font-weight:700; color:#c0704e; margin-top:3px;">${formatCurrency(finalTotal, invoice.currency)}</div>
-      </td>` : "",
-    prevBalance > 0 ? `
-      <td style="padding:10px 8px; text-align:center; border-left:1px solid #e8e0d4; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Previous Balance</div>
-        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${formatCurrency(prevBalance, invoice.currency)}</div>
-      </td>` : "",
-  ].filter(Boolean).join("");
+  const singleRow = allBreakdownItems.length <= 4;
+  const breakRow1 = singleRow ? allBreakdownItems : allBreakdownItems.slice(0, Math.ceil(allBreakdownItems.length / 2));
+  const breakRow2 = singleRow ? [] : allBreakdownItems.slice(Math.ceil(allBreakdownItems.length / 2));
+
+  const buildEmailBreakdownRow = (items: EmailBItem[], bg: string) =>
+    `<tr style="background:${bg};">${items.map((item, i) =>
+      `<td style="padding:10px 8px; text-align:center; ${i < items.length - 1 ? "border-right:1px solid #e8e0d4;" : ""} word-break:break-word;">
+        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${item.label}</div>
+        <div style="font-size:14px; font-weight:700; color:${item.accent ? "#c0704e" : "#3d2b1f"}; margin-top:3px;">${item.value}</div>
+      </td>`
+    ).join("")}</tr>`;
+
 
   // Current balance row (if prev balance exists)
   const currentBalanceRow = prevBalance > 0 ? `
@@ -323,7 +310,7 @@ function buildInvoiceEmail(
           </td>
 
           <!-- Col 2: Invoice From -->
-          <td style="vertical-align:top; text-align:center; width:32%; padding:0 12px;">
+          <td style="vertical-align:top; text-align:left; width:32%; padding:0 16px; border-left:1px solid #c9a820; border-right:1px solid #c9a820;">
             <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#5a4000; margin-bottom:3px;">INVOICE FROM:</div>
             <div style="font-size:14px; font-weight:700; color:#2d1a00;">${invoice.from_name}</div>
             ${orgRegisteredName ? `<div style="font-size:11px; color:#5a4000; margin-top:2px;">${orgRegisteredName}</div>` : ""}
@@ -356,10 +343,8 @@ function buildInvoiceEmail(
     <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 4px;">
       <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52; margin-bottom:10px;">Invoice Financial Breakdown</div>
       <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden; margin-bottom:8px;">
-        ${!isCustomInvoice ? `<tr style="background:#faf6f0;">${hoursRow1Cells}</tr>` : ""}
-        <tr style="background:#f5f0e8; border-top:1px solid #e8e0d4;">
-          ${moneyRow2Cells}
-        </tr>
+        ${buildEmailBreakdownRow(breakRow1, "#faf6f0")}
+        ${breakRow2.length > 0 ? `<tr style="background:#e8e0d4; height:1px;"><td colspan="10"></td></tr>${buildEmailBreakdownRow(breakRow2, "#f5f0e8")}` : ""}
         ${currentBalanceRow}
       </table>
     </div>

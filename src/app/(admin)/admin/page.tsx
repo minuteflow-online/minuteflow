@@ -7848,9 +7848,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         <div className="rounded-xl border border-sand overflow-hidden print:border-none print:shadow-none" id="invoice-preview">
           {/* Yellow Header — 3 columns */}
           <div className="bg-[#f5c842] px-6 py-6">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-3">
               {/* Col 1: Client Info */}
-              <div className="flex flex-col">
+              <div className="flex flex-col pr-5">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-[#5a4000] mb-1">BILL TO:</div>
                 {inv.account_name && (
                   <div className="text-[18px] font-extrabold text-[#2d1a00] leading-tight mb-0.5">{inv.account_name}</div>
@@ -7878,7 +7878,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </div>
               </div>
               {/* Col 2: Invoice From */}
-              <div className="flex flex-col items-center text-center">
+              <div className="flex flex-col border-x border-[#c9a820] px-5">
                 <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">INVOICE FROM:</div>
                 <div className="text-[14px] font-bold text-[#2d1a00]">{inv.from_name}</div>
                 {orgSettings?.registered_business_name && (
@@ -7908,7 +7908,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </div>
               </div>
               {/* Col 3: Payment Methods */}
-              <div className="flex flex-col items-end text-right">
+              <div className="flex flex-col items-end text-right pl-5">
                 <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-2">HOW TO PAY:</div>
                 {inv.payment_link && (
                   <div className="mb-2">
@@ -7930,78 +7930,63 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </div>
           <div className="bg-white p-8">
 
-            {/* Invoice Summary Box */}
+            {/* Invoice Summary Box — smart 1 or 2 row layout */}
             <div className="mb-6 rounded-lg border border-sand bg-parchment/30 p-5">
               {(() => {
                 const grossHours = selectedLineItems.reduce((s, li) => s + Number(li.quantity), 0);
                 const notBilled = Number(inv.hours_not_billed || 0);
                 const billedHours = grossHours - notBilled;
+                const hasAdj = Number(inv.adjustment_amount || 0) > 0;
+                const prevBal = Number(inv.previous_balance || 0);
+                const currentBal = Number(inv.total) + prevBal;
+
+                type BItem = { label: string; value: string; accent?: boolean };
+                const allItems: BItem[] = [
+                  ...(invoiceType !== "custom" ? [
+                    ...(inv.rate_amount != null ? [{ label: "Rate", value: `${formatCurrency(Number(inv.rate_amount))}/hr` }] : []),
+                    ...(notBilled > 0 ? [
+                      { label: "Gross Hours", value: grossHours.toFixed(2) },
+                      { label: inv.hours_not_billed_label || "Not Billed", value: `${notBilled.toFixed(2)} hrs` },
+                    ] : []),
+                    { label: "Hours Billed", value: billedHours.toFixed(2) },
+                  ] : []),
+                  { label: "Invoice Amount", value: formatCurrency(Number(inv.subtotal), inv.currency) },
+                  ...(hasAdj ? [
+                    { label: "Savings", value: `− ${formatCurrency(Number(inv.adjustment_amount))}` },
+                    { label: "Final Amount", value: formatCurrency(Number(inv.total), inv.currency), accent: true },
+                  ] : []),
+                  ...(prevBal > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBal, inv.currency) }] : []),
+                ];
+
+                const singleRow = allItems.length <= 4;
+                const row1 = singleRow ? allItems : allItems.slice(0, Math.ceil(allItems.length / 2));
+                const row2 = singleRow ? [] : allItems.slice(Math.ceil(allItems.length / 2));
+
+                const renderRow = (rowItems: BItem[]) => (
+                  <div className="flex gap-3 mb-3">
+                    {rowItems.map(({ label, value, accent }) => (
+                      <div key={label} className="flex-1 text-center">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">{label}</p>
+                        <p className={`mt-1 text-[18px] font-bold ${accent ? "text-terracotta" : "text-espresso"}`}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                );
+
                 return (
                   <>
-                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-4">
-                      {inv.rate_amount != null && (
-                        <div className="text-center">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Rate</p>
-                          <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(Number(inv.rate_amount))}/hr</p>
-                        </div>
-                      )}
-                      {notBilled > 0 && (
-                        <div className="text-center">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Gross Hours</p>
-                          <p className="mt-1 text-[18px] font-bold text-espresso">{grossHours.toFixed(2)}</p>
-                        </div>
-                      )}
-                      {notBilled > 0 && (
-                        <div className="text-center">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">{inv.hours_not_billed_label || "Not Billed"}</p>
-                          <p className="mt-1 text-[18px] font-bold text-espresso">{notBilled.toFixed(2)} hrs</p>
-                        </div>
-                      )}
-                      <div className="text-center">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Hours Billed</p>
-                        <p className="mt-1 text-[18px] font-bold text-espresso">{billedHours.toFixed(2)}</p>
+                    {renderRow(row1)}
+                    {row2.length > 0 && (
+                      <div className="border-t border-sand pt-3">
+                        {renderRow(row2)}
                       </div>
-                    </div>
-                    {(() => {
-                      const hasAdj = Number(inv.adjustment_amount || 0) > 0;
-                      const prevBal = Number(inv.previous_balance || 0);
-                      const currentBal = Number(inv.total) + prevBal;
-                      const colCount = (hasAdj ? 1 : 0) + (prevBal > 0 ? 1 : 0) + 2;
-                      return (
-                        <>
-                          <div className={`grid gap-4 border-t border-sand pt-4 grid-cols-${colCount > 3 ? 3 : colCount} sm:grid-cols-${colCount > 3 ? 4 : colCount}`}>
-                            <div className="text-center">
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Invoice Amount</p>
-                              <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(Number(inv.subtotal), inv.currency)}</p>
-                            </div>
-                            {hasAdj && (
-                              <div className="text-center">
-                                <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Savings</p>
-                                <p className="mt-1 text-[18px] font-bold text-espresso">{`− ${formatCurrency(Number(inv.adjustment_amount))}`}</p>
-                              </div>
-                            )}
-                            {hasAdj && (
-                              <div className="text-center">
-                                <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Final Amount</p>
-                                <p className="mt-1 text-[18px] font-bold text-terracotta">{formatCurrency(Number(inv.total), inv.currency)}</p>
-                              </div>
-                            )}
-                            {prevBal > 0 && (
-                              <div className="text-center">
-                                <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Previous Balance</p>
-                                <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(prevBal, inv.currency)}</p>
-                              </div>
-                            )}
-                          </div>
-                          {prevBal > 0 && (
-                            <div className="mt-3 rounded-lg border-2 border-terracotta bg-[#fff8f5] p-3 text-center">
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Current Balance Due</p>
-                              <p className="mt-1 text-[22px] font-extrabold text-terracotta">{formatCurrency(currentBal, inv.currency)}</p>
-                            </div>
-                          )}
-                        </>
-                      );
-                    })()}
+                    )}
+                    {prevBal > 0 && (
+                      <div className="mt-2 rounded-lg border-2 border-terracotta bg-[#fff8f5] p-3 text-center">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Current Balance Due</p>
+                        <p className="mt-1 text-[22px] font-extrabold text-terracotta">{formatCurrency(currentBal, inv.currency)}</p>
+                      </div>
+                    )}
                   </>
                 );
               })()}
