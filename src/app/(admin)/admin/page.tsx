@@ -5372,6 +5372,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editReplyToEmail, setEditReplyToEmail] = useState("");
   const [editPreviousBalance, setEditPreviousBalance] = useState("");
 
+  // Bill To info — generate form (pre-filled from client, editable)
+  const [billingEmail, setBillingEmail] = useState("");
+  const [billingPhone, setBillingPhone] = useState("");
+  const [billingAddress, setBillingAddress] = useState("");
+
+  // Bill To info — edit panel
+  const [editToName, setEditToName] = useState("");
+  const [editToEmail, setEditToEmail] = useState("");
+  const [editToPhone, setEditToPhone] = useState("");
+  const [editToAddress, setEditToAddress] = useState("");
+
   // Custom invoice type state
   const [invoiceType, setInvoiceType] = useState<"timelog" | "custom">("timelog");
   const [customItems, setCustomItems] = useState<Array<{ id: string; description: string; amount: string }>>([{ id: "ci-1", description: "", amount: "" }]);
@@ -5474,6 +5485,20 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       setRateAmount(String(accountRateMap[selectedAccount]));
     }
   }, [selectedAccount, accountRateMap, generateBy]);
+
+  // Pre-fill billing contact info when client is selected
+  useEffect(() => {
+    const client = clients.find((c) => c.id === selectedClientId);
+    if (client) {
+      setBillingEmail(client.email || "");
+      setBillingPhone(client.phone || "");
+      setBillingAddress([client.address, client.city, client.state, client.zip, client.country].filter(Boolean).join(", ") || "");
+    } else {
+      setBillingEmail("");
+      setBillingPhone("");
+      setBillingAddress("");
+    }
+  }, [selectedClientId, clients]);
 
   // Auto-calculate invoice total from client default_hourly_rate × total hours
   useEffect(() => {
@@ -5650,11 +5675,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     // Determine billing target (client or account)
     const billingClient = clients.find((c) => c.id === selectedClientId);
     const toName = billingClient?.name || selectedAccount || "Client";
-    const toEmail = billingClient?.email || null;
     const toContact = billingClient?.contact_name || null;
-    const toAddress = billingClient
-      ? [billingClient.address, billingClient.city, billingClient.state, billingClient.zip, billingClient.country].filter(Boolean).join(", ") || null
-      : null;
 
     const invoiceData = {
       invoice_number: invoiceNumber,
@@ -5668,9 +5689,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       from_logo_url: orgSettings?.logo_url || null,
       to_name: toName,
       to_contact: toContact,
-      to_email: toEmail,
-      to_phone: billingClient?.phone || null,
-      to_address: toAddress,
+      to_email: billingEmail || null,
+      to_phone: billingPhone || null,
+      to_address: billingAddress || null,
       service_type: serviceType || null,
       issue_date: issueDate,
       due_date: null,
@@ -5740,7 +5761,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
 
     // If sending now, fire email
-    if (sendNow && toEmail) {
+    if (sendNow && billingEmail) {
       try {
         await fetch("/api/invoices/send", {
           method: "POST",
@@ -6079,6 +6100,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
       previous_balance: editPreviousBalance ? parseFloat(editPreviousBalance) : null,
       service_type: serviceType || null,
+      to_name: editToName || selectedInvoice.to_name,
+      to_email: editToEmail || null,
+      to_phone: editToPhone || null,
+      to_address: editToAddress || null,
     };
     if (editDueDate) updateData.due_date = editDueDate;
 
@@ -6135,6 +6160,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
             hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
             service_type: serviceType || null,
+            to_name: editToName || prev.to_name,
+            to_email: editToEmail || null,
+            to_phone: editToPhone || null,
+            to_address: editToAddress || null,
           }
         : null
     );
@@ -6512,6 +6541,46 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 <option value="">Choose a client...</option>
                 {clients.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
               </select>
+            </div>
+          )}
+
+          {/* Bill To Contact Info — shown when a client is selected */}
+          {selectedClientId && (
+            <div className="mb-6 rounded-lg border border-sand bg-parchment/40 p-4">
+              <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-bark">Bill To Info</div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="mb-1 block text-[10px] font-medium text-bark/70">Client Email</label>
+                  <input
+                    type="email"
+                    value={billingEmail}
+                    onChange={(e) => setBillingEmail(e.target.value)}
+                    placeholder="client@email.com"
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-medium text-bark/70">Client Phone</label>
+                  <input
+                    type="text"
+                    value={billingPhone}
+                    onChange={(e) => setBillingPhone(e.target.value)}
+                    placeholder="+1 (555) 000-0000"
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-medium text-bark/70">Client Address</label>
+                  <input
+                    type="text"
+                    value={billingAddress}
+                    onChange={(e) => setBillingAddress(e.target.value)}
+                    placeholder="123 Main St, City, State"
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                  />
+                </div>
+              </div>
+              <p className="mt-2 text-[10px] text-bark/50">These appear on the BILL TO section of the invoice. To save permanently, update the client record in the Clients tab.</p>
             </div>
           )}
 
@@ -7334,6 +7403,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setHoursNotBilledLabel(inv.hours_not_billed_label || "Volunteer");
                   setEditPreviousBalance(inv.previous_balance != null ? String(inv.previous_balance) : "");
                   setServiceType(inv.service_type ?? "");
+                  setEditToName(inv.to_name ?? "");
+                  setEditToEmail(inv.to_email ?? "");
+                  setEditToPhone(inv.to_phone ?? "");
+                  setEditToAddress(inv.to_address ?? "");
                 }
               }}
               className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${editingInvoice ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}
@@ -7594,6 +7667,36 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   placeholder="Payment instructions, Zelle info, etc."
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone resize-none"
                   rows={3} />
+              </div>
+              {/* Bill To section */}
+              <div className="col-span-2 pt-2 border-t border-sand">
+                <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-bark">Bill To Info</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-[10px] font-medium text-bark/70">Client Name</label>
+                    <input type="text" value={editToName} onChange={(e) => setEditToName(e.target.value)}
+                      placeholder="Client name"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-medium text-bark/70">Client Email</label>
+                    <input type="email" value={editToEmail} onChange={(e) => setEditToEmail(e.target.value)}
+                      placeholder="client@email.com"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-medium text-bark/70">Client Phone</label>
+                    <input type="text" value={editToPhone} onChange={(e) => setEditToPhone(e.target.value)}
+                      placeholder="+1 (555) 000-0000"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10px] font-medium text-bark/70">Client Address</label>
+                    <input type="text" value={editToAddress} onChange={(e) => setEditToAddress(e.target.value)}
+                      placeholder="123 Main St, City, State"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                  </div>
+                </div>
               </div>
             </div>
             <div className="mt-4 flex justify-end gap-3">
