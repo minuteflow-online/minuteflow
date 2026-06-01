@@ -53,7 +53,6 @@ export default function ReportsPage() {
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [screenshots, setScreenshots] = useState<TaskScreenshot[]>([]);
-  const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
   const [dateRange, setDateRange] = useState<DateRange>("week");
   const [selectedVA, setSelectedVA] = useState<string>("all");
   const [customStart, setCustomStart] = useState<string>("");
@@ -66,6 +65,8 @@ export default function ReportsPage() {
   const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
   const [selectedAccount, setSelectedAccount] = useState<string>("all");
   const [selectedClient, setSelectedClient] = useState<string>("all");
+  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
+  const [tasksCollapsed, setTasksCollapsed] = useState(false);
 
   /* ── Fetch org timezone on mount ────────────────────────── */
 
@@ -153,22 +154,7 @@ export default function ReportsPage() {
 
       setLogs((logsRes.data ?? []) as TimeLog[]);
       setProfiles((profilesRes.data ?? []) as Profile[]);
-      const ssData = (screenshotsRes.data ?? []) as TaskScreenshot[];
-      setScreenshots(ssData);
-
-      // Generate signed URLs for screenshot thumbnails
-      if (ssData.length > 0) {
-        const urlBatch: Record<number, string> = {};
-        const toSign = ssData.slice(0, 12);
-        toSign.forEach((ss) => {
-          if (ss.drive_file_id) {
-            urlBatch[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
-          }
-        });
-        setSignedUrls(urlBatch);
-      } else {
-        setSignedUrls({});
-      }
+      setScreenshots((screenshotsRes.data ?? []) as TaskScreenshot[]);
     } catch (err) {
       console.error("Reports fetch error:", err);
       // Ensure we still show the page (with empty data) rather than stuck loading
@@ -259,7 +245,7 @@ export default function ReportsPage() {
 
     const billableMs = totalMs - personalMs;
 
-    // Build sorted category entries (alphabetical, Personal last)
+    // Build sorted category entries (alphabetical, Personal last, Wizard Time second-to-last)
     const categories = Object.entries(categoryMs)
       .filter(([, ms]) => ms > 0)
       .sort(([a], [b]) => {
@@ -268,6 +254,16 @@ export default function ReportsPage() {
         return a.localeCompare(b);
       })
       .map(([name, ms]) => ({ name, ms }));
+
+    // Insert Wizard Time before Personal (which sorts last)
+    if (wizardMs > 0) {
+      const personalIdx = categories.findIndex((c) => c.name.toLowerCase() === "personal");
+      if (personalIdx >= 0) {
+        categories.splice(personalIdx, 0, { name: "Wizard Time", ms: wizardMs });
+      } else {
+        categories.push({ name: "Wizard Time", ms: wizardMs });
+      }
+    }
 
     return {
       totalMs,
@@ -790,6 +786,7 @@ export default function ReportsPage() {
                     "sorting tasks": "bg-amber",
                     sorting: "bg-amber",
                     collaboration: "bg-terracotta",
+                    "wizard time": "bg-walnut",
                   };
                   const barColor = colorClass[cat.name.toLowerCase()] || "bg-bark";
                   const pct = reportSummary.totalMs > 0 ? (cat.ms / reportSummary.totalMs) * 100 : 0;
@@ -974,10 +971,18 @@ export default function ReportsPage() {
                     {/* Projects section */}
                     {projectSummary.length > 0 && (
                       <>
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-bark mb-2">
-                          By Project
-                        </div>
-                        {projectSummary.map((p) => (
+                        <button
+                          onClick={() => setProjectsCollapsed((v) => !v)}
+                          className="flex w-full items-center justify-between mb-2 group"
+                        >
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-bark group-hover:text-espresso transition-colors">
+                            By Project
+                          </span>
+                          <span className="text-[10px] text-bark group-hover:text-espresso transition-colors">
+                            {projectsCollapsed ? "▸" : "▾"}
+                          </span>
+                        </button>
+                        {!projectsCollapsed && projectSummary.map((p) => (
                           <div
                             key={p.name}
                             className="flex items-center gap-3 border-b border-parchment py-2.5 last:border-b-0"
@@ -999,10 +1004,18 @@ export default function ReportsPage() {
                     {/* Tasks section */}
                     {taskSummary.length > 0 && (
                       <>
-                        <div className={`text-[11px] font-semibold uppercase tracking-wide text-bark mb-2 ${projectSummary.length > 0 ? "mt-4" : ""}`}>
-                          By Task
-                        </div>
-                        {taskSummary.map((t) => (
+                        <button
+                          onClick={() => setTasksCollapsed((v) => !v)}
+                          className={`flex w-full items-center justify-between mb-2 group ${projectSummary.length > 0 ? "mt-4" : ""}`}
+                        >
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-bark group-hover:text-espresso transition-colors">
+                            By Task
+                          </span>
+                          <span className="text-[10px] text-bark group-hover:text-espresso transition-colors">
+                            {tasksCollapsed ? "▸" : "▾"}
+                          </span>
+                        </button>
+                        {!tasksCollapsed && taskSummary.map((t) => (
                           <div
                             key={t.name}
                             className="flex items-center gap-3 border-b border-parchment py-2.5 last:border-b-0"
@@ -1114,58 +1127,38 @@ export default function ReportsPage() {
             </div>
           )}
 
-          {/* Screenshot Gallery */}
-          <div className="rounded-xl border border-sand bg-white">
-            <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
-              <h3 className="text-sm font-bold text-espresso">
-                Recent Screenshots
-              </h3>
-              <span className="text-[11px] text-bark">
-                {filteredScreenshots.length} this period
-              </span>
-            </div>
-            <div className="grid grid-cols-6 gap-2 p-5">
-              {filteredScreenshots.length === 0 ? (
-                <div className="col-span-6 py-6 text-center text-[13px] text-bark">
-                  No screenshots in this period
+          {/* Screenshot Count */}
+          <div className="rounded-xl border border-sand bg-white px-5 py-4">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">Screenshots</div>
+            {filteredScreenshots.length === 0 ? (
+              <span className="text-[13px] text-bark">No screenshots in this period</span>
+            ) : (
+              <div className="flex flex-wrap gap-6">
+                <div>
+                  <div className="font-serif text-xl font-bold text-espresso">{filteredScreenshots.length}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Total Captured</div>
                 </div>
-              ) : (
-                filteredScreenshots.slice(0, 12).map((ss) => {
-                  const profile = profiles.find(
-                    (p) => p.id === ss.user_id
-                  );
-                  const initials = profile
-                    ? getInitials(profile.full_name)
-                    : "??";
-                  const time = new Date(ss.created_at).toLocaleTimeString(
-                    "en-US",
-                    { hour: "numeric", minute: "2-digit", hour12: true, timeZone: orgTimezone }
-                  );
-                  const url = signedUrls[ss.id];
-                  return (
-                    <div
-                      key={ss.id}
-                      className="relative aspect-[4/3] cursor-pointer overflow-hidden rounded-lg border border-sand bg-parchment transition-all hover:scale-[1.03] hover:border-terracotta"
-                    >
-                      {url ? (
-                        <img
-                          src={url}
-                          alt={`Screenshot by ${profile?.full_name || "Unknown"}`}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-[10px] text-stone">
-                          Loading...
-                        </div>
-                      )}
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5 text-[9px] font-semibold text-white">
-                        {initials} &middot; {time}
-                      </div>
+                {/* Per-VA breakdown if multiple VAs */}
+                {selectedVA === "all" && (() => {
+                  const byVA: Record<string, { name: string; count: number }> = {};
+                  filteredScreenshots.forEach((ss) => {
+                    if (!byVA[ss.user_id]) {
+                      const p = profiles.find((pr) => pr.id === ss.user_id);
+                      byVA[ss.user_id] = { name: p?.full_name || p?.username || "Unknown", count: 0 };
+                    }
+                    byVA[ss.user_id].count += 1;
+                  });
+                  const entries = Object.values(byVA).sort((a, b) => b.count - a.count);
+                  if (entries.length <= 1) return null;
+                  return entries.map((e) => (
+                    <div key={e.name}>
+                      <div className="font-serif text-xl font-bold text-walnut">{e.count}</div>
+                      <div className="text-[10px] text-bark mt-0.5">{e.name}</div>
                     </div>
-                  );
-                })
-              )}
-            </div>
+                  ));
+                })()}
+              </div>
+            )}
           </div>
         </>
       )}
