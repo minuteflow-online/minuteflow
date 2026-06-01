@@ -5260,6 +5260,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [selectedAccount, setSelectedAccount] = useState<string>("");
   const [accountList, setAccountList] = useState<string[]>([]);
   const [accountToClientMap, setAccountToClientMap] = useState<Record<string, number>>({});
+  const [accountRateMap, setAccountRateMap] = useState<Record<string, number | null>>({});
 
   // Manual total / adjustment
   const [invoiceTotal, setInvoiceTotal] = useState("");
@@ -5289,6 +5290,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [hoursNotBilled, setHoursNotBilled] = useState("");
   const [hoursNotBilledLabel, setHoursNotBilledLabel] = useState("Volunteer");
   const [rateAmount, setRateAmount] = useState("");
+  const [previousBalance, setPreviousBalance] = useState("");
 
   // Manual invoice state
   const [manualDescription, setManualDescription] = useState("");
@@ -5368,6 +5370,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   // Payment info + reply-to for edit flow
   const [editPaymentInfo, setEditPaymentInfo] = useState("");
   const [editReplyToEmail, setEditReplyToEmail] = useState("");
+  const [editPreviousBalance, setEditPreviousBalance] = useState("");
 
   const supabase = createClient();
 
@@ -5392,6 +5395,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         ? await sb.from("profiles").select("full_name").eq("id", user.id).single()
         : { data: null };
       setFromName(adminProfile?.full_name || orgRes.data.registered_business_name || orgRes.data.org_name || "");
+      // Auto-populate reply-to email from org billing email
+      if (orgRes.data.billing_email) {
+        setReplyToEmail(orgRes.data.billing_email);
+      }
     }
     const tagNames: string[] = (tagsRes.data ?? []).map((t: { project_name: string }) => t.project_name).filter(Boolean);
     setAllProjectTags(tagNames);
@@ -5404,12 +5411,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
     // Build account name → client_id map from mappings
     const acMap: Record<string, number> = {};
-    const allAccounts: { id: number; name: string }[] = accData.accounts ?? [];
+    const rateMap: Record<string, number | null> = {};
+    const allAccounts: { id: number; name: string; billing_rate?: number | null }[] = accData.accounts ?? [];
     for (const m of accData.mappings ?? []) {
       const acc = allAccounts.find((a) => a.id === m.account_id);
       if (acc && m.client_id) acMap[acc.name] = m.client_id;
     }
+    for (const acc of allAccounts) {
+      rateMap[acc.name] = acc.billing_rate ?? null;
+    }
     setAccountToClientMap(acMap);
+    setAccountRateMap(rateMap);
 
     setLoading(false);
   }, []);
@@ -5451,6 +5463,13 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       setSelectedClientId(accountToClientMap[selectedAccount]);
     }
   }, [selectedAccount, accountToClientMap, generateBy]);
+
+  // Auto-populate rate from account's billing_rate when account is selected
+  useEffect(() => {
+    if (generateBy === "account" && selectedAccount && accountRateMap[selectedAccount] != null) {
+      setRateAmount(String(accountRateMap[selectedAccount]));
+    }
+  }, [selectedAccount, accountRateMap, generateBy]);
 
   // Auto-calculate invoice total from client default_hourly_rate × total hours
   useEffect(() => {
@@ -5665,6 +5684,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       rate_amount: rateAmount ? parseFloat(rateAmount) : null,
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
+      previous_balance: previousBalance ? parseFloat(previousBalance) : null,
       share_token: crypto.randomUUID(),
     };
 
@@ -5741,6 +5761,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setHoursNotBilled("");
     setHoursNotBilledLabel("Volunteer");
     setRateAmount("");
+    setPreviousBalance("");
     setFilterVAValues(new Set<string>());
     setFilterTaskValues(new Set<string>());
     setFilterDelivValues(new Set<string>());
@@ -5935,6 +5956,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setRateAmount(invoice.rate_amount != null ? String(invoice.rate_amount) : "");
     setHoursNotBilled(invoice.hours_not_billed != null ? String(invoice.hours_not_billed) : "");
     setHoursNotBilledLabel(invoice.hours_not_billed_label || "Volunteer");
+    setEditPreviousBalance(invoice.previous_balance != null ? String(invoice.previous_balance) : "");
 
     const [lineItemsRes, paymentsRes] = await Promise.all([
       supabase
@@ -6044,6 +6066,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       rate_amount: rateAmount ? parseFloat(rateAmount) : null,
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
+      previous_balance: editPreviousBalance ? parseFloat(editPreviousBalance) : null,
     };
     if (editDueDate) updateData.due_date = editDueDate;
 
@@ -6234,6 +6257,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       rate_amount: rateAmount ? parseFloat(rateAmount) : null,
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
+      previous_balance: previousBalance ? parseFloat(previousBalance) : null,
       share_token: crypto.randomUUID(),
     };
 
@@ -6975,6 +6999,25 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       <span className="font-bold text-espresso">Final Invoice Amount</span>
                       <span className="font-bold text-terracotta">{formatCurrency(finalTotal)}</span>
                     </div>
+                    {/* Previous Balance */}
+                    <div className="flex items-center justify-between text-[12px] mt-2">
+                      <span className="text-bark">Previous Balance ($)</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={previousBalance}
+                        onChange={(e) => setPreviousBalance(e.target.value)}
+                        placeholder="0.00"
+                        className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
+                      />
+                    </div>
+                    {parseFloat(previousBalance) > 0 && (
+                      <div className="flex justify-between border-t border-sand pt-2 text-[13px]">
+                        <span className="font-bold text-espresso">Current Balance Due</span>
+                        <span className="font-bold text-terracotta">{formatCurrency(finalTotal + (parseFloat(previousBalance) || 0))}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -7205,12 +7248,23 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setRateAmount(inv.rate_amount != null ? String(inv.rate_amount) : "");
                   setHoursNotBilled(inv.hours_not_billed != null ? String(inv.hours_not_billed) : "");
                   setHoursNotBilledLabel(inv.hours_not_billed_label || "Volunteer");
+                  setEditPreviousBalance(inv.previous_balance != null ? String(inv.previous_balance) : "");
                 }
               }}
               className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${editingInvoice ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}
             >
               {editingInvoice ? "✕ Cancel Edit" : "✏️ Edit Invoice"}
             </button>
+            {inv.share_token && (
+              <a
+                href={`https://minuteflow.click/invoice/view/${inv.share_token}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-lg border border-sand px-4 py-2 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+              >
+                👁 Preview
+              </a>
+            )}
             {inv.status === "draft" && (
               <button
                 onClick={() => handleMarkReadyToSend(inv)}
@@ -7357,6 +7411,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   {formatCurrency((parseFloat(editSubtotal) || 0) - (parseFloat(editAdjustment) || 0))}
                 </div>
               </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Previous Balance ($)</label>
+                <input type="number" step="0.01" min="0" value={editPreviousBalance}
+                  onChange={(e) => setEditPreviousBalance(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+              </div>
+              {parseFloat(editPreviousBalance) > 0 && (
+                <div className="col-span-2">
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Current Balance Due</label>
+                  <div className="rounded-lg border border-terracotta bg-[#fff8f5] px-3 py-2 text-[16px] font-bold text-terracotta">
+                    {formatCurrency((parseFloat(editSubtotal) || 0) - (parseFloat(editAdjustment) || 0) + (parseFloat(editPreviousBalance) || 0))}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Due Date</label>
                 <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)}
@@ -7678,62 +7747,85 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
         {/* Invoice Preview */}
         <div className="rounded-xl border border-sand overflow-hidden print:border-none print:shadow-none" id="invoice-preview">
-          {/* Yellow Header */}
-          <div className="bg-[#f5c842] px-8 py-7">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="text-[11px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">
-                  INVOICE: {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: orgTimezone })}
-                </div>
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-[#5a4000] mb-0.5">FOR:</div>
+          {/* Yellow Header — 3 columns */}
+          <div className="bg-[#f5c842] px-6 py-6">
+            <div className="grid grid-cols-3 gap-4">
+              {/* Col 1: Client Info */}
+              <div className="flex flex-col">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#5a4000] mb-1">BILL TO:</div>
                 {inv.account_name && (
-                  <div className="text-[22px] font-extrabold text-[#2d1a00] leading-tight mb-0.5">{inv.account_name}</div>
+                  <div className="text-[18px] font-extrabold text-[#2d1a00] leading-tight mb-0.5">{inv.account_name}</div>
                 )}
-                <div className={`font-bold text-[#2d1a00] leading-tight mb-1 ${inv.account_name ? "text-[14px]" : "text-[22px] font-extrabold"}`}>{inv.to_name}</div>
-                {inv.to_email && <div className="text-[12px] text-[#5a4000]">{inv.to_email}</div>}
-                {inv.to_contact && <div className="text-[12px] text-[#5a4000]">{inv.to_contact}</div>}
-                <div className="mt-4">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-[#5a4000]">INVOICE AMOUNT</div>
-                  <div className="text-[28px] font-extrabold text-[#2d1a00]">{formatCurrency(Number(inv.total), inv.currency)}</div>
+                <div className={`font-extrabold text-[#2d1a00] leading-tight mb-1 ${inv.account_name ? "text-[13px]" : "text-[18px]"}`}>{inv.to_name}</div>
+                {inv.to_contact && <div className="text-[11px] text-[#5a4000]">{inv.to_contact}</div>}
+                {inv.to_email && <div className="text-[11px] text-[#5a4000]">{inv.to_email}</div>}
+                {inv.to_phone && <div className="text-[11px] text-[#5a4000]">{inv.to_phone}</div>}
+                {inv.to_address && <div className="text-[10px] text-[#5a4000] mt-0.5">{inv.to_address}</div>}
+                <div className="mt-3">
+                  {(() => {
+                    const prevBal = Number(inv.previous_balance || 0);
+                    const currentBal = Number(inv.total) + prevBal;
+                    return (
+                      <>
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
+                          {prevBal > 0 ? "Balance Due" : "Invoice Amount"}
+                        </div>
+                        <div className="text-[24px] font-extrabold text-[#2d1a00]">
+                          {formatCurrency(prevBal > 0 ? currentBal : Number(inv.total), inv.currency)}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
-              <div className="text-right">
-                <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">Invoice From:</div>
-                <div className="text-[15px] font-bold text-[#2d1a00]">{inv.from_name}</div>
+              {/* Col 2: Invoice From */}
+              <div className="flex flex-col items-center text-center">
+                <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">INVOICE FROM:</div>
+                <div className="text-[14px] font-bold text-[#2d1a00]">{inv.from_name}</div>
                 {orgSettings?.registered_business_name && (
-                  <div className="text-[12px] text-[#5a4000] mt-0.5">{orgSettings.registered_business_name}</div>
+                  <div className="text-[11px] text-[#5a4000] mt-0.5">{orgSettings.registered_business_name}</div>
                 )}
                 {orgSettings?.dba && (
-                  <div className="text-[11px] text-[#5a4000] mt-0.5">DBA: {orgSettings.dba}</div>
+                  <div className="text-[10px] text-[#5a4000] mt-0.5">DBA: {orgSettings.dba}</div>
                 )}
-                {inv.from_phone && (
-                  <div className="text-[12px] text-[#5a4000] mt-0.5">{inv.from_phone}</div>
-                )}
-                {inv.from_email && <div className="text-[12px] text-[#5a4000] mt-0.5">{inv.from_email}</div>}
+                {inv.from_phone && <div className="text-[11px] text-[#5a4000] mt-0.5">{inv.from_phone}</div>}
+                {inv.from_email && <div className="text-[11px] text-[#5a4000] mt-0.5">{inv.from_email}</div>}
+                <div className="mt-3">
+                  <div className="text-[11px] font-bold text-[#2d1a00]">#{inv.invoice_number}</div>
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-[#5a4000] mt-0.5">
+                    {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
+                  </div>
+                  {inv.service_type && <div className="text-[10px] italic text-[#5a4000] mt-0.5">{inv.service_type}</div>}
+                  {inv.due_date && (
+                    <div className="text-[10px] text-[#5a4000] mt-0.5">
+                      Due: {new Date(inv.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
+                    </div>
+                  )}
+                  <div className="mt-1">
+                    <span className={`inline-block rounded-full px-3 py-0.5 text-[10px] font-bold uppercase ${statusBadge(inv.status)}`}>
+                      {statusLabel(inv.status)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {/* Col 3: Payment Methods */}
+              <div className="flex flex-col items-end text-right">
+                <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-2">HOW TO PAY:</div>
                 {inv.payment_link && (
-                  <div className="mt-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-[#5a4000] mb-1">Pay Online</div>
+                  <div className="mb-2">
                     <a href={inv.payment_link} target="_blank" rel="noopener noreferrer"
                       className="inline-block bg-[#2d1a00] text-[#f5c842] text-[12px] font-bold px-4 py-1.5 rounded-md hover:opacity-90 transition-opacity">
-                      Click to Pay
+                      Pay Online
                     </a>
                     <div className="text-[10px] text-[#5a4000] mt-1">*3% processing fee applies</div>
                   </div>
                 )}
                 {inv.payment_info && (
-                  <div className="mt-2 text-[11px] text-[#5a4000] text-right whitespace-pre-line">{inv.payment_info}</div>
+                  <div className="text-[11px] text-[#5a4000] whitespace-pre-line">{inv.payment_info}</div>
                 )}
-                <div className="mt-4">
-                  <span className={`inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase ${statusBadge(inv.status)}`}>
-                    {statusLabel(inv.status)}
-                  </span>
-                </div>
-                <div className="mt-2 text-[11px] text-[#5a4000] space-y-0.5 text-right">
-                  <div><span className="font-semibold">#{inv.invoice_number}</span></div>
-                  {inv.due_date && (
-                    <div>Due: {new Date(inv.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}</div>
-                  )}
-                </div>
+                {!inv.payment_link && !inv.payment_info && (
+                  <div className="text-[11px] text-[#7a6040] italic">Contact us for payment options</div>
+                )}
               </div>
             </div>
           </div>
@@ -7771,24 +7863,46 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         <p className="mt-1 text-[18px] font-bold text-espresso">{billedHours.toFixed(2)}</p>
                       </div>
                     </div>
-                    <div className={`grid gap-4 border-t border-sand pt-4 ${Number(inv.adjustment_amount || 0) > 0 ? "grid-cols-2 sm:grid-cols-3" : "grid-cols-2"}`}>
-                      <div className="text-center">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Invoice Amount</p>
-                        <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(Number(inv.subtotal), inv.currency)}</p>
-                      </div>
-                      {Number(inv.adjustment_amount || 0) > 0 && (
-                        <div className="text-center">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Savings</p>
-                          <p className="mt-1 text-[18px] font-bold text-espresso">
-                            {`− ${formatCurrency(Number(inv.adjustment_amount))}`}
-                          </p>
-                        </div>
-                      )}
-                      <div className="text-center">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Final Amount</p>
-                        <p className="mt-1 text-[18px] font-bold text-terracotta">{formatCurrency(Number(inv.total), inv.currency)}</p>
-                      </div>
-                    </div>
+                    {(() => {
+                      const hasAdj = Number(inv.adjustment_amount || 0) > 0;
+                      const prevBal = Number(inv.previous_balance || 0);
+                      const currentBal = Number(inv.total) + prevBal;
+                      const colCount = (hasAdj ? 1 : 0) + (prevBal > 0 ? 1 : 0) + 2;
+                      return (
+                        <>
+                          <div className={`grid gap-4 border-t border-sand pt-4 grid-cols-${colCount > 3 ? 3 : colCount} sm:grid-cols-${colCount > 3 ? 4 : colCount}`}>
+                            <div className="text-center">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Invoice Amount</p>
+                              <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(Number(inv.subtotal), inv.currency)}</p>
+                            </div>
+                            {hasAdj && (
+                              <div className="text-center">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Savings</p>
+                                <p className="mt-1 text-[18px] font-bold text-espresso">{`− ${formatCurrency(Number(inv.adjustment_amount))}`}</p>
+                              </div>
+                            )}
+                            {hasAdj && (
+                              <div className="text-center">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Final Amount</p>
+                                <p className="mt-1 text-[18px] font-bold text-terracotta">{formatCurrency(Number(inv.total), inv.currency)}</p>
+                              </div>
+                            )}
+                            {prevBal > 0 && (
+                              <div className="text-center">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Previous Balance</p>
+                                <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(prevBal, inv.currency)}</p>
+                              </div>
+                            )}
+                          </div>
+                          {prevBal > 0 && (
+                            <div className="mt-3 rounded-lg border-2 border-terracotta bg-[#fff8f5] p-3 text-center">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Current Balance Due</p>
+                              <p className="mt-1 text-[22px] font-extrabold text-terracotta">{formatCurrency(currentBal, inv.currency)}</p>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </>
                 );
               })()}

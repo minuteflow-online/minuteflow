@@ -15,6 +15,7 @@ interface Invoice {
   to_contact: string | null;
   to_email: string | null;
   to_phone: string | null;
+  to_address: string | null;
   account_name: string | null;
   service_type: string | null;
   issue_date: string;
@@ -30,6 +31,7 @@ interface Invoice {
   rate_amount: number | null;
   hours_not_billed: number | null;
   hours_not_billed_label: string | null;
+  previous_balance: number | null;
 }
 
 interface LineItem {
@@ -135,7 +137,6 @@ export default function PublicInvoicePage() {
     timeTabStartRef.current = null;
     if (duration < 1) return;
     try {
-      // sendBeacon works even on page close
       navigator.sendBeacon(
         `/api/invoices/public/${token}/tab-view`,
         new Blob([JSON.stringify({ tab_name: "time_allocation", duration_seconds: duration })], {
@@ -151,7 +152,6 @@ export default function PublicInvoicePage() {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
         logTimeAllocationDuration();
-        // Reset start time so we don't double-count if they come back
         if (activeTabRef.current === "time") {
           timeTabStartRef.current = Date.now();
         }
@@ -165,11 +165,9 @@ export default function PublicInvoicePage() {
   }, [logTimeAllocationDuration]);
 
   const handleTabClick = (tab: Tab) => {
-    // Log time if leaving the time allocation tab
     if (activeTabRef.current === "time" && tab !== "time") {
       logTimeAllocationDuration();
     }
-    // Start timer if entering time allocation tab
     if (tab === "time" && activeTabRef.current !== "time") {
       timeTabStartRef.current = Date.now();
     }
@@ -204,9 +202,15 @@ export default function PublicInvoicePage() {
   const notBilledHours = Number(invoice.hours_not_billed || 0);
   const totalHours = grossHours - notBilledHours;
   const adjustment = Number(invoice.adjustment_amount || 0);
+  const prevBalance = Number(invoice.previous_balance || 0);
   const timezone = orgSettings?.timezone || "UTC";
   const orgRegisteredName = orgSettings?.registered_business_name || null;
   const orgDba = orgSettings?.dba || null;
+
+  // Smart display: only show Final Amount if there's an adjustment
+  const hasAdjustment = adjustment > 0;
+  // Current balance: invoice total + any previous unpaid balance
+  const currentBalance = Number(invoice.total) + prevBalance;
 
   const issueDateFmt = new Date(invoice.issue_date + "T12:00:00Z").toLocaleDateString("en-US", {
     month: "long",
@@ -231,6 +235,8 @@ export default function PublicInvoicePage() {
   });
   const projSummary = Object.entries(projMap).sort((a, b) => b[1] - a[1]);
 
+  const hasPaymentInfo = invoice.payment_link || invoice.payment_info;
+
   /* ── Render ──────────────────────────────────────────── */
 
   return (
@@ -247,57 +253,86 @@ export default function PublicInvoicePage() {
           </button>
         </div>
 
-        {/* ── Yellow Header ── */}
-        <div className="rounded-t-xl bg-[#f5c842] px-8 py-7">
-          <div className="flex justify-between gap-4">
-            {/* Left */}
-            <div className="flex-1">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">INVOICE: {issueDateFmt}</div>
-              {invoice.service_type && <div className="text-[11px] italic text-[#5a4000] mb-2">{invoice.service_type}</div>}
+        {/* ── Yellow Header — 3 columns ── */}
+        <div className="rounded-t-xl bg-[#f5c842] px-6 py-6">
+          <div className="grid grid-cols-3 gap-4">
+
+            {/* Col 1: Client Info */}
+            <div className="flex flex-col">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-[#5a4000] mb-1">BILL TO:</div>
-              {invoice.account_name && <div className="text-[22px] font-extrabold text-[#2d1a00] leading-tight mb-0.5">{invoice.account_name}</div>}
-              <div className={`font-extrabold text-[#2d1a00] leading-tight mb-1 ${invoice.account_name ? "text-[14px]" : "text-[22px]"}`}>{invoice.to_name}</div>
-              {invoice.to_email && <div className="text-[12px] text-[#5a4000]">{invoice.to_email}</div>}
-              {invoice.to_contact && <div className="text-[12px] text-[#5a4000]">{invoice.to_contact}</div>}
-              <div className="mt-4">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-[#5a4000]">INVOICE AMOUNT</div>
-                <div className="text-[28px] font-extrabold text-[#2d1a00]">{formatCurrency(Number(invoice.total), invoice.currency)}</div>
+              {invoice.account_name && (
+                <div className="text-[18px] font-extrabold text-[#2d1a00] leading-tight mb-0.5">{invoice.account_name}</div>
+              )}
+              <div className={`font-extrabold text-[#2d1a00] leading-tight mb-1 ${invoice.account_name ? "text-[13px]" : "text-[18px]"}`}>
+                {invoice.to_name}
+              </div>
+              {invoice.to_contact && <div className="text-[11px] text-[#5a4000]">{invoice.to_contact}</div>}
+              {invoice.to_email && <div className="text-[11px] text-[#5a4000]">{invoice.to_email}</div>}
+              {invoice.to_phone && <div className="text-[11px] text-[#5a4000]">{invoice.to_phone}</div>}
+              {invoice.to_address && <div className="text-[10px] text-[#5a4000] mt-0.5">{invoice.to_address}</div>}
+              <div className="mt-3">
+                <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
+                  {currentBalance > Number(invoice.total) ? "Balance Due" : "Invoice Amount"}
+                </div>
+                <div className="text-[22px] font-extrabold text-[#2d1a00]">
+                  {formatCurrency(currentBalance > Number(invoice.total) ? currentBalance : Number(invoice.total), invoice.currency)}
+                </div>
               </div>
             </div>
-            {/* Right */}
-            <div className="text-right shrink-0 max-w-[220px]">
+
+            {/* Col 2: Invoice From */}
+            <div className="flex flex-col items-center text-center">
               <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">INVOICE FROM:</div>
-              <div className="text-[15px] font-bold text-[#2d1a00]">{invoice.from_name}</div>
-              {orgRegisteredName && <div className="text-[12px] text-[#5a4000] mt-0.5">{orgRegisteredName}</div>}
-              {orgDba && <div className="text-[11px] text-[#5a4000] mt-0.5">DBA: {orgDba}</div>}
-              {invoice.from_phone && <div className="text-[12px] text-[#5a4000] mt-0.5">{invoice.from_phone}</div>}
-              {invoice.from_email && <div className="text-[12px] text-[#5a4000] mt-0.5">{invoice.from_email}</div>}
-              {invoice.payment_link && (
-                <div className="mt-3">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-[#5a4000] mb-1">Pay Online</div>
-                  <a href={invoice.payment_link} target="_blank" rel="noopener noreferrer"
-                    className="inline-block bg-[#2d1a00] text-[#f5c842] text-[12px] font-bold px-4 py-1.5 rounded hover:opacity-90 transition-opacity">
-                    Click to Pay
-                  </a>
-                  <div className="text-[10px] text-[#5a4000] mt-1">*3% processing fee applies</div>
-                </div>
-              )}
-              {invoice.payment_info && (
-                <div className="mt-2 text-[11px] text-[#5a4000] whitespace-pre-line">{invoice.payment_info}</div>
-              )}
+              <div className="text-[14px] font-bold text-[#2d1a00]">{invoice.from_name}</div>
+              {orgRegisteredName && <div className="text-[11px] text-[#5a4000] mt-0.5">{orgRegisteredName}</div>}
+              {orgDba && <div className="text-[10px] text-[#5a4000] mt-0.5">DBA: {orgDba}</div>}
+              {invoice.from_phone && <div className="text-[11px] text-[#5a4000] mt-0.5">{invoice.from_phone}</div>}
+              {invoice.from_email && <div className="text-[11px] text-[#5a4000] mt-0.5">{invoice.from_email}</div>}
               <div className="mt-3">
                 <div className="text-[11px] font-bold text-[#2d1a00]">#{invoice.invoice_number}</div>
+                <div className="text-[10px] font-bold uppercase tracking-wide text-[#5a4000] mt-0.5">
+                  {issueDateFmt}
+                </div>
+                {invoice.service_type && (
+                  <div className="text-[10px] italic text-[#5a4000] mt-0.5">{invoice.service_type}</div>
+                )}
                 {invoice.due_date && (
-                  <div className="text-[11px] text-[#5a4000] mt-0.5">
-                    Due: {new Date(invoice.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: timezone })}
+                  <div className="text-[10px] text-[#5a4000] mt-0.5">
+                    Due: {new Date(invoice.due_date + "T12:00:00Z").toLocaleDateString("en-US", {
+                      month: "short", day: "numeric", year: "numeric", timeZone: timezone,
+                    })}
                   </div>
                 )}
                 <div className="mt-1">
-                  <span className="text-[10px] font-bold uppercase" style={{ color: statusColor(invoice.status) }}>
+                  <span className="text-[9px] font-bold uppercase" style={{ color: statusColor(invoice.status) }}>
                     {statusLabel(invoice.status)}
                   </span>
                 </div>
               </div>
+            </div>
+
+            {/* Col 3: Payment Methods */}
+            <div className="flex flex-col items-end text-right">
+              <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-2">HOW TO PAY:</div>
+              {invoice.payment_link && (
+                <div className="mb-2">
+                  <a
+                    href={invoice.payment_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block bg-[#2d1a00] text-[#f5c842] text-[12px] font-bold px-4 py-1.5 rounded hover:opacity-90 transition-opacity"
+                  >
+                    Pay Online
+                  </a>
+                  <div className="text-[9px] text-[#5a4000] mt-1">*3% processing fee applies</div>
+                </div>
+              )}
+              {invoice.payment_info && (
+                <div className="text-[11px] text-[#5a4000] whitespace-pre-line">{invoice.payment_info}</div>
+              )}
+              {!hasPaymentInfo && (
+                <div className="text-[11px] text-[#7a6040] italic">Contact us for payment options</div>
+              )}
             </div>
           </div>
         </div>
@@ -353,23 +388,38 @@ export default function PublicInvoicePage() {
                   <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{totalHours.toFixed(2)}</div>
                 </div>
               </div>
-              {/* Row 2: Money */}
-              <div className="grid grid-cols-3 gap-2">
+              {/* Row 2: Money — smart display */}
+              <div className={`grid gap-2 ${hasAdjustment || prevBalance > 0 ? "grid-cols-3" : "grid-cols-2"}`}>
                 <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
                   <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Invoice Amount</div>
                   <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{formatCurrency(Number(invoice.subtotal), invoice.currency)}</div>
                 </div>
-                {adjustment > 0 && (
+                {hasAdjustment && (
                   <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Savings</div>
                     <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">− {formatCurrency(adjustment)}</div>
                   </div>
                 )}
-                <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
-                  <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Final Amount</div>
-                  <div className="text-[14px] font-bold text-[#c0704e] mt-1">{formatCurrency(Number(invoice.total), invoice.currency)}</div>
-                </div>
+                {hasAdjustment && (
+                  <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Final Amount</div>
+                    <div className="text-[14px] font-bold text-[#c0704e] mt-1">{formatCurrency(Number(invoice.total), invoice.currency)}</div>
+                  </div>
+                )}
+                {prevBalance > 0 && (
+                  <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Previous Balance</div>
+                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{formatCurrency(prevBalance, invoice.currency)}</div>
+                  </div>
+                )}
               </div>
+              {/* Current Balance row (only if prev balance) */}
+              {prevBalance > 0 && (
+                <div className="mt-2 rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] p-3 text-center">
+                  <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Current Balance Due</div>
+                  <div className="text-[18px] font-extrabold text-[#c0704e] mt-1">{formatCurrency(currentBalance, invoice.currency)}</div>
+                </div>
+              )}
             </div>
 
             {/* Notes */}

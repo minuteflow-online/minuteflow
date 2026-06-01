@@ -1,7 +1,12 @@
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
 export async function proxy(request: NextRequest) {
+  // Public routes — no auth required
+  if (request.nextUrl.pathname.startsWith("/invoice/")) {
+    return NextResponse.next();
+  }
   return await updateSession(request);
 }
 
