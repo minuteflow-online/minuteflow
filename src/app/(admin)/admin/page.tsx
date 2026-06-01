@@ -6078,6 +6078,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
       previous_balance: editPreviousBalance ? parseFloat(editPreviousBalance) : null,
+      service_type: serviceType || null,
     };
     if (editDueDate) updateData.due_date = editDueDate;
 
@@ -6133,6 +6134,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             rate_amount: rateAmount ? parseFloat(rateAmount) : null,
             hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
             hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
+            service_type: serviceType || null,
           }
         : null
     );
@@ -7331,6 +7333,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setHoursNotBilled(inv.hours_not_billed != null ? String(inv.hours_not_billed) : "");
                   setHoursNotBilledLabel(inv.hours_not_billed_label || "Volunteer");
                   setEditPreviousBalance(inv.previous_balance != null ? String(inv.previous_balance) : "");
+                  setServiceType(inv.service_type ?? "");
                 }
               }}
               className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${editingInvoice ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}
@@ -7578,6 +7581,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${editReminderEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
                 </button>
                 <span className="text-[13px] text-bark">Daily reminder email</span>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Type of Services</label>
+                <input type="text" value={serviceType} onChange={(e) => setServiceType(e.target.value)}
+                  placeholder="e.g. Virtual Assistant Services"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
               </div>
               <div className="col-span-2">
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Notes</label>
@@ -7872,6 +7881,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         <div className="text-[24px] font-extrabold text-[#2d1a00]">
                           {formatCurrency(prevBal > 0 ? currentBal : Number(inv.total), inv.currency)}
                         </div>
+                        {inv.service_type && (
+                          <div className="text-[12px] font-semibold text-[#5a4000] mt-1">{inv.service_type}</div>
+                        )}
                       </>
                     );
                   })()}
@@ -7894,7 +7906,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   <div className="text-[10px] font-bold uppercase tracking-wide text-[#5a4000] mt-0.5">
                     {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                   </div>
-                  {inv.service_type && <div className="text-[10px] italic text-[#5a4000] mt-0.5">{inv.service_type}</div>}
                   {inv.due_date && (
                     <div className="text-[10px] text-[#5a4000] mt-0.5">
                       Due: {new Date(inv.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}

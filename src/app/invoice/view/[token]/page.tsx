@@ -284,6 +284,9 @@ export default function PublicInvoicePage() {
                 <div className="text-[22px] font-extrabold text-[#2d1a00]">
                   {formatCurrency(currentBalance > Number(invoice.total) ? currentBalance : Number(invoice.total), invoice.currency)}
                 </div>
+                {invoice.service_type && (
+                  <div className="text-[12px] font-semibold text-[#5a4000] mt-1">{invoice.service_type}</div>
+                )}
               </div>
             </div>
 
@@ -300,9 +303,6 @@ export default function PublicInvoicePage() {
                 <div className="text-[10px] font-bold uppercase tracking-wide text-[#5a4000] mt-0.5">
                   {issueDateFmt}
                 </div>
-                {invoice.service_type && (
-                  <div className="text-[10px] italic text-[#5a4000] mt-0.5">{invoice.service_type}</div>
-                )}
                 {invoice.due_date && (
                   <div className="text-[10px] text-[#5a4000] mt-0.5">
                     Due: {new Date(invoice.due_date + "T12:00:00Z").toLocaleDateString("en-US", {
