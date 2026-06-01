@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { createClient as createServiceClient } from "@supabase/supabase-js";
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -49,6 +48,15 @@ interface OrgSettings {
   timezone: string | null;
 }
 
+type Tab = "summary" | "tasks" | "deliverables" | "time";
+
+const TABS: { id: Tab; label: string; icon?: string }[] = [
+  { id: "summary", label: "Summary" },
+  { id: "tasks", label: "Task Summary" },
+  { id: "deliverables", label: "Deliverables" },
+  { id: "time", label: "Time Allocation", icon: "⏱" },
+];
+
 /* ── Helpers ─────────────────────────────────────────────── */
 
 function formatCurrency(amount: number, currency = "USD") {
@@ -94,6 +102,10 @@ export default function PublicInvoicePage() {
   const [orgSettings, setOrgSettings] = useState<OrgSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>("summary");
+
+  const activeTabRef = useRef<Tab>("summary");
+  const timeTabStartRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -115,6 +127,58 @@ export default function PublicInvoicePage() {
       });
   }, [token]);
 
+  /* ── Tab time tracking ─────────────────────────────────── */
+
+  const logTimeAllocationDuration = useCallback(() => {
+    if (activeTabRef.current !== "time" || timeTabStartRef.current === null) return;
+    const duration = Math.round((Date.now() - timeTabStartRef.current) / 1000);
+    timeTabStartRef.current = null;
+    if (duration < 1) return;
+    try {
+      // sendBeacon works even on page close
+      navigator.sendBeacon(
+        `/api/invoices/public/${token}/tab-view`,
+        new Blob([JSON.stringify({ tab_name: "time_allocation", duration_seconds: duration })], {
+          type: "application/json",
+        })
+      );
+    } catch {
+      // silently fail — tracking is non-critical
+    }
+  }, [token]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        logTimeAllocationDuration();
+        // Reset start time so we don't double-count if they come back
+        if (activeTabRef.current === "time") {
+          timeTabStartRef.current = Date.now();
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      logTimeAllocationDuration();
+    };
+  }, [logTimeAllocationDuration]);
+
+  const handleTabClick = (tab: Tab) => {
+    // Log time if leaving the time allocation tab
+    if (activeTabRef.current === "time" && tab !== "time") {
+      logTimeAllocationDuration();
+    }
+    // Start timer if entering time allocation tab
+    if (tab === "time" && activeTabRef.current !== "time") {
+      timeTabStartRef.current = Date.now();
+    }
+    activeTabRef.current = tab;
+    setActiveTab(tab);
+  };
+
+  /* ── Loading / Error states ──────────────────────────── */
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f5f0e8]">
@@ -133,6 +197,8 @@ export default function PublicInvoicePage() {
       </div>
     );
   }
+
+  /* ── Computed values ─────────────────────────────────── */
 
   const grossHours = lineItems.reduce((s, li) => s + Number(li.quantity), 0);
   const notBilledHours = Number(invoice.hours_not_billed || 0);
@@ -165,6 +231,8 @@ export default function PublicInvoicePage() {
   });
   const projSummary = Object.entries(projMap).sort((a, b) => b[1] - a[1]);
 
+  /* ── Render ──────────────────────────────────────────── */
+
   return (
     <div className="min-h-screen bg-[#f5f0e8] py-8 px-4 font-sans">
       <div className="max-w-3xl mx-auto">
@@ -179,7 +247,7 @@ export default function PublicInvoicePage() {
           </button>
         </div>
 
-        {/* Yellow Header */}
+        {/* ── Yellow Header ── */}
         <div className="rounded-t-xl bg-[#f5c842] px-8 py-7">
           <div className="flex justify-between gap-4">
             {/* Left */}
@@ -234,113 +302,160 @@ export default function PublicInvoicePage() {
           </div>
         </div>
 
-        {/* Financial Breakdown */}
-        <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52] mb-3">Invoice Financial Breakdown</div>
-          {/* Row 1: Hours */}
-          <div className="grid grid-cols-3 gap-2 mb-2">
-            {invoice.rate_amount != null && (
-              <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Rate</div>
-                <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{formatCurrency(invoice.rate_amount, invoice.currency)}/hr</div>
-              </div>
-            )}
-            {notBilledHours > 0 && (
-              <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Gross Hours</div>
-                <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{grossHours.toFixed(2)}</div>
-              </div>
-            )}
-            {notBilledHours > 0 && (
-              <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">{invoice.hours_not_billed_label || "Not Billed"}</div>
-                <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{notBilledHours.toFixed(2)}</div>
-              </div>
-            )}
-            <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
-              <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Hours Billed</div>
-              <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{totalHours.toFixed(2)}</div>
-            </div>
-          </div>
-          {/* Row 2: Money */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
-              <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Invoice Amount</div>
-              <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{formatCurrency(Number(invoice.subtotal), invoice.currency)}</div>
-            </div>
-            {adjustment > 0 && (
-              <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Savings</div>
-                <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">− {formatCurrency(adjustment)}</div>
-              </div>
-            )}
-            <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
-              <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Final Amount</div>
-              <div className="text-[14px] font-bold text-[#c0704e] mt-1">{formatCurrency(Number(invoice.total), invoice.currency)}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Task Summary */}
-        <div className="bg-[#2d3a4a] border-x border-[#1a2535] px-8 py-5">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-[#f5c842] mb-3">Task Summary</div>
-          <div className="space-y-1">
-            {taskSummary.map(([task, hrs]) => (
-              <div key={task} className="flex justify-between gap-4">
-                <span className="text-[12px] text-[#e8e0d4]">{task}</span>
-                <span className="text-[12px] font-semibold text-white whitespace-nowrap">{fmtHours(hrs)}</span>
-              </div>
+        {/* ── Tab Navigation ── */}
+        <div className="bg-white border-x border-t border-[#e8e0d4] print:hidden">
+          <div className="flex">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => handleTabClick(tab.id)}
+                className={`flex-1 py-3 px-1 text-[11px] font-semibold border-b-2 transition-colors cursor-pointer ${
+                  activeTab === tab.id
+                    ? "border-[#2d3a4a] text-[#2d3a4a] bg-white"
+                    : "border-transparent text-[#9e9080] hover:text-[#6b5e52] bg-[#faf6f0]"
+                }`}
+              >
+                {tab.label}
+                {tab.icon && <span className="ml-1 text-[9px]">{tab.icon}</span>}
+              </button>
             ))}
           </div>
         </div>
 
-        {/* Deliverables */}
-        <div className="bg-[#1e2a38] border-x border-[#1a2535] px-8 py-5">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-[#f5c842] mb-3">Deliverables / Objectives</div>
-          <div className="space-y-1">
-            {projSummary.map(([proj, hrs]) => (
-              <div key={proj} className="flex justify-between gap-4">
-                <span className="text-[12px] text-[#e8e0d4]">{proj}</span>
-                <span className="text-[12px] font-semibold text-white whitespace-nowrap">{fmtHours(hrs)}</span>
+        {/* ── Tab: Summary ── */}
+        {activeTab === "summary" && (
+          <>
+            {/* Financial Breakdown */}
+            <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52] mb-3">Invoice Financial Breakdown</div>
+              {/* Row 1: Hours */}
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                {invoice.rate_amount != null && (
+                  <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Rate</div>
+                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{formatCurrency(invoice.rate_amount, invoice.currency)}/hr</div>
+                  </div>
+                )}
+                {notBilledHours > 0 && (
+                  <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Gross Hours</div>
+                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{grossHours.toFixed(2)}</div>
+                  </div>
+                )}
+                {notBilledHours > 0 && (
+                  <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">{invoice.hours_not_billed_label || "Not Billed"}</div>
+                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{notBilledHours.toFixed(2)}</div>
+                  </div>
+                )}
+                <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
+                  <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Hours Billed</div>
+                  <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{totalHours.toFixed(2)}</div>
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
+              {/* Row 2: Money */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
+                  <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Invoice Amount</div>
+                  <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">{formatCurrency(Number(invoice.subtotal), invoice.currency)}</div>
+                </div>
+                {adjustment > 0 && (
+                  <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Savings</div>
+                    <div className="text-[14px] font-bold text-[#3d2b1f] mt-1">− {formatCurrency(adjustment)}</div>
+                  </div>
+                )}
+                <div className="rounded-lg border border-[#e8e0d4] bg-[#f5f0e8] p-3 text-center">
+                  <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Final Amount</div>
+                  <div className="text-[14px] font-bold text-[#c0704e] mt-1">{formatCurrency(Number(invoice.total), invoice.currency)}</div>
+                </div>
+              </div>
+            </div>
 
-        {/* Notes */}
-        {invoice.notes && (
-          <div className="bg-white border-x border-[#e8e0d4] px-8 py-4">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-[#6b5e52] mb-2">Notes</div>
-            <div className="text-[13px] text-[#3d2b1f] whitespace-pre-line">{invoice.notes}</div>
+            {/* Notes */}
+            {invoice.notes && (
+              <div className="bg-white border-x border-[#e8e0d4] px-8 py-4">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-[#6b5e52] mb-2">Notes</div>
+                <div className="text-[13px] text-[#3d2b1f] whitespace-pre-line">{invoice.notes}</div>
+              </div>
+            )}
+
+            {/* Bottom border */}
+            <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl h-4" />
+          </>
+        )}
+
+        {/* ── Tab: Task Summary ── */}
+        {activeTab === "tasks" && (
+          <div className="bg-[#2d3a4a] border-x border-b border-[#1a2535] rounded-b-xl px-8 py-6">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-[#f5c842] mb-4">Task Summary</div>
+            <div className="space-y-2">
+              {taskSummary.map(([task, hrs]) => (
+                <div key={task} className="flex justify-between gap-4 border-b border-[#3d4f62] pb-2 last:border-0 last:pb-0">
+                  <span className="text-[13px] text-[#e8e0d4]">{task}</span>
+                  <span className="text-[13px] font-semibold text-white whitespace-nowrap">{fmtHours(hrs)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 pt-3 border-t border-[#3d4f62] flex justify-between">
+              <span className="text-[11px] font-semibold text-[#a8b8c8] uppercase tracking-wide">Total Billed</span>
+              <span className="text-[14px] font-bold text-[#f5c842]">{fmtHours(totalHours)}</span>
+            </div>
           </div>
         )}
 
-        {/* Detailed Time Allocation */}
-        <div className="bg-[#faf6f0] border-x border-[#e8e0d4] px-6 py-3 mt-4">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52]">Detailed Time Allocation</div>
-        </div>
-        <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl overflow-hidden">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="bg-[#faf6f0]">
-                <th className="px-3 py-2 text-right text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] border-b border-[#e8e0d4]">Mins</th>
-                <th className="px-3 py-2 text-left text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] border-b border-[#e8e0d4]">Task</th>
-                <th className="px-3 py-2 text-left text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] border-b border-[#e8e0d4]">Deliverable</th>
-                <th className="px-3 py-2 text-left text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] border-b border-[#e8e0d4]">Memo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lineItems.map((li, i) => (
-                <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-[#fafaf8]"}>
-                  <td className="px-3 py-1.5 text-right text-[11px] font-semibold text-[#3d2b1f] border-b border-[#e8e0d4]">{Math.round(Number(li.quantity) * 60)}</td>
-                  <td className="px-3 py-1.5 text-[11px] text-[#3d2b1f] border-b border-[#e8e0d4]">{li.description}</td>
-                  <td className="px-3 py-1.5 text-[11px] text-[#6b5e52] border-b border-[#e8e0d4]">{li.project || li.account_name || "—"}</td>
-                  <td className="px-3 py-1.5 text-[10px] text-[#6b5e52] border-b border-[#e8e0d4]">{li.client_memo || "—"}</td>
-                </tr>
+        {/* ── Tab: Deliverables ── */}
+        {activeTab === "deliverables" && (
+          <div className="bg-[#1e2a38] border-x border-b border-[#1a2535] rounded-b-xl px-8 py-6">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-[#f5c842] mb-4">Deliverables / Objectives</div>
+            <div className="space-y-2">
+              {projSummary.map(([proj, hrs]) => (
+                <div key={proj} className="flex justify-between gap-4 border-b border-[#2d3a4a] pb-2 last:border-0 last:pb-0">
+                  <span className="text-[13px] text-[#e8e0d4]">{proj}</span>
+                  <span className="text-[13px] font-semibold text-white whitespace-nowrap">{fmtHours(hrs)}</span>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </div>
+            <div className="mt-4 pt-3 border-t border-[#2d3a4a] flex justify-between">
+              <span className="text-[11px] font-semibold text-[#a8b8c8] uppercase tracking-wide">Total Billed</span>
+              <span className="text-[14px] font-bold text-[#f5c842]">{fmtHours(totalHours)}</span>
+            </div>
+          </div>
+        )}
+
+        {/* ── Tab: Time Allocation ── */}
+        {activeTab === "time" && (
+          <>
+            <div className="bg-[#faf6f0] border-x border-[#e8e0d4] px-6 py-3">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52]">Detailed Time Allocation</div>
+                <div className="text-[10px] text-[#9e9080]">{lineItems.length} entries · {fmtHours(grossHours)} gross</div>
+              </div>
+            </div>
+            <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl overflow-hidden">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-[#faf6f0]">
+                    <th className="px-3 py-2 text-right text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] border-b border-[#e8e0d4] whitespace-nowrap">Mins</th>
+                    <th className="px-3 py-2 text-left text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] border-b border-[#e8e0d4]">Task</th>
+                    <th className="px-3 py-2 text-left text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] border-b border-[#e8e0d4]">Deliverable</th>
+                    <th className="px-3 py-2 text-left text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] border-b border-[#e8e0d4]">Memo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineItems.map((li, i) => (
+                    <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-[#fafaf8]"}>
+                      <td className="px-3 py-1.5 text-right text-[11px] font-semibold text-[#3d2b1f] border-b border-[#e8e0d4]">{Math.round(Number(li.quantity) * 60)}</td>
+                      <td className="px-3 py-1.5 text-[11px] text-[#3d2b1f] border-b border-[#e8e0d4]">{li.description}</td>
+                      <td className="px-3 py-1.5 text-[11px] text-[#6b5e52] border-b border-[#e8e0d4]">{li.project || li.account_name || "—"}</td>
+                      <td className="px-3 py-1.5 text-[10px] text-[#6b5e52] border-b border-[#e8e0d4]">{li.client_memo || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
 
         {/* Footer */}
         <div className="py-6 text-center">

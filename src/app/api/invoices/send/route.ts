@@ -201,19 +201,6 @@ function buildInvoiceEmail(
   });
   const projSummary = Object.entries(projMap).sort((a, b) => b[1] - a[1]);
 
-  // Time allocation rows (smaller fonts)
-  const timeRows = items
-    .map(
-      (li) => `
-      <tr>
-        <td style="padding:5px 10px; border-bottom:1px solid #e8e0d4; text-align:right; font-size:11px; color:#3d2b1f; font-weight:600;">${Math.round(Number(li.quantity) * 60)}</td>
-        <td style="padding:5px 10px; border-bottom:1px solid #e8e0d4; font-size:11px; color:#3d2b1f;">${li.description}</td>
-        <td style="padding:5px 10px; border-bottom:1px solid #e8e0d4; font-size:11px; color:#6b5e52;">${li.project || li.account_name || "—"}</td>
-        <td style="padding:5px 10px; border-bottom:1px solid #e8e0d4; font-size:10px; color:#6b5e52;">${li.client_memo || "—"}</td>
-      </tr>`
-    )
-    .join("");
-
   // Task summary rows
   const taskRows = taskSummary
     .map(
@@ -348,21 +335,24 @@ function buildInvoiceEmail(
       </table>
     </div>
 
-    <!-- ── TASK SUMMARY ──────────────────────────────────── -->
-    <div style="background:#2d3a4a; border-left:1px solid #1a2535; border-right:1px solid #1a2535; padding:20px 32px;">
-      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Task Summary</div>
-      <table style="width:100%; border-collapse:collapse;">
-        ${taskRows}
-      </table>
-    </div>
-
-    <!-- ── DELIVERABLES / OBJECTIVES ────────────────────── -->
-    <div style="background:#1e2a38; border-left:1px solid #1a2535; border-right:1px solid #1a2535; padding:20px 32px;">
-      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Deliverables / Objectives</div>
-      <table style="width:100%; border-collapse:collapse;">
-        ${projRows}
-      </table>
-    </div>
+    <!-- ── TASK SUMMARY + DELIVERABLES (side by side) ──── -->
+    <table style="width:100%; border-collapse:collapse; background:#f5f0e8; border-left:1px solid #1a2535; border-right:1px solid #1a2535;">
+      <tr>
+        <td style="width:49%; vertical-align:top; background:#2d3a4a; padding:20px 16px;">
+          <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Task Summary</div>
+          <table style="width:100%; border-collapse:collapse;">
+            ${taskRows}
+          </table>
+        </td>
+        <td style="width:2%; background:#f5f0e8;"></td>
+        <td style="width:49%; vertical-align:top; background:#1e2a38; padding:20px 16px;">
+          <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Deliverables</div>
+          <table style="width:100%; border-collapse:collapse;">
+            ${projRows}
+          </table>
+        </td>
+      </tr>
+    </table>
 
     ${invoice.notes ? `
     <!-- ── NOTES ────────────────────────────────────────── -->
@@ -371,34 +361,15 @@ function buildInvoiceEmail(
       <div style="font-size:13px; color:#3d2b1f; white-space:pre-line;">${invoice.notes}</div>
     </div>` : ""}
 
-    <!-- ── DETAILED TIME ALLOCATION ──────────────────────── -->
-    <div style="background:#faf6f0; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:14px 24px 8px; margin-top:16px;">
-      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52;">Detailed Time Allocation</div>
-    </div>
-    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; border-bottom:1px solid #e8e0d4; border-radius:0 0 12px 12px; overflow:hidden;">
-      <table style="width:100%; border-collapse:collapse;">
-        <thead>
-          <tr style="background:#faf6f0;">
-            <th style="padding:8px 10px; text-align:right; font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4; white-space:nowrap;">Mins</th>
-            <th style="padding:8px 10px; font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Task</th>
-            <th style="padding:8px 10px; font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Deliverable</th>
-            <th style="padding:8px 10px; font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Memo</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${timeRows}
-        </tbody>
-      </table>
-    </div>
-
     ${pdfLink ? `
-    <!-- ── PDF DOWNLOAD ──────────────────────────────────── -->
-    <div style="padding:20px 0 4px; text-align:center;">
-      <a href="${pdfLink}" style="display:inline-block; background:#2d3a4a; color:#ffffff; font-size:13px; font-weight:700; padding:12px 28px; border-radius:8px; text-decoration:none;">
-        Download / View Invoice PDF
-      </a>
-      <div style="font-size:11px; color:#9e9080; margin-top:8px;">Opens a printable version in your browser</div>
-    </div>` : ""}
+    <!-- ── VIEW FULL DETAILS ──────────────────────────────────── -->
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; border-bottom:1px solid #e8e0d4; border-radius:0 0 12px 12px; padding:24px 32px; text-align:center;">
+      <div style="font-size:12px; color:#6b5e52; margin-bottom:12px;">Full time breakdown, detailed logs, and more</div>
+      <a href="${pdfLink}" style="display:inline-block; background:#2d3a4a; color:#ffffff; font-size:13px; font-weight:700; padding:12px 28px; border-radius:8px; text-decoration:none;">View Full Invoice Details →</a>
+      <div style="font-size:11px; color:#9e9080; margin-top:8px;">View & download your invoice with complete time allocation</div>
+    </div>` : `
+    <!-- ── BOTTOM BORDER ──────────────────────────────────── -->
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; border-bottom:1px solid #e8e0d4; border-radius:0 0 12px 12px; height:16px;"></div>`}
 
     <!-- ── FOOTER ────────────────────────────────────────── -->
     <div style="padding:16px 0; text-align:center;">
