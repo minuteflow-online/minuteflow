@@ -287,6 +287,10 @@ export default function PublicInvoicePage() {
                 {invoice.service_type && (
                   <div className="text-[12px] font-semibold text-[#5a4000] mt-1">{invoice.service_type}</div>
                 )}
+                <div className="mt-2">
+                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice For</div>
+                  <div className="text-[18px] font-extrabold text-[#2d1a00]">{issueDateFmt}</div>
+                </div>
               </div>
             </div>
 
@@ -300,9 +304,6 @@ export default function PublicInvoicePage() {
               {invoice.from_email && <div className="text-[11px] text-[#5a4000] mt-0.5">{invoice.from_email}</div>}
               <div className="mt-3">
                 <div className="text-[11px] font-bold text-[#2d1a00]">#{invoice.invoice_number}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wide text-[#5a4000] mt-0.5">
-                  {issueDateFmt}
-                </div>
                 {invoice.due_date && (
                   <div className="text-[10px] text-[#5a4000] mt-0.5">
                     Due: {new Date(invoice.due_date + "T12:00:00Z").toLocaleDateString("en-US", {

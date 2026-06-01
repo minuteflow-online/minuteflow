@@ -7378,7 +7378,24 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </button>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => { setSelectedInvoice(null); setEditingInvoice(false); setView("create"); }}
+              onClick={() => {
+                // Pre-populate generate form with this invoice's client/account
+                if (inv.client_id) {
+                  setGenerateBy("client");
+                  setSelectedClientId(inv.client_id);
+                  setSelectedAccount("");
+                } else if (inv.account_name) {
+                  setGenerateBy("account");
+                  setSelectedAccount(inv.account_name);
+                  setSelectedClientId(null);
+                }
+                setLineItems([]);
+                setInvoiceTotal("");
+                setAdjustmentAmount("0");
+                setSelectedInvoice(null);
+                setEditingInvoice(false);
+                setView("create");
+              }}
               className="rounded-lg border border-terracotta px-4 py-2 text-[13px] font-semibold text-terracotta transition-all hover:bg-terracotta hover:text-white cursor-pointer"
             >
               + New Invoice
@@ -7987,6 +8004,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         {inv.service_type && (
                           <div className="text-[12px] font-semibold text-[#5a4000] mt-1">{inv.service_type}</div>
                         )}
+                        <div className="mt-2">
+                          <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice For</div>
+                          <div className="text-[18px] font-extrabold text-[#2d1a00]">
+                            {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
+                          </div>
+                        </div>
                       </>
                     );
                   })()}
@@ -8006,9 +8029,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 {inv.from_email && <div className="text-[11px] text-[#5a4000] mt-0.5">{inv.from_email}</div>}
                 <div className="mt-3">
                   <div className="text-[11px] font-bold text-[#2d1a00]">#{inv.invoice_number}</div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-[#5a4000] mt-0.5">
-                    {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
-                  </div>
                   {inv.due_date && (
                     <div className="text-[10px] text-[#5a4000] mt-0.5">
                       Due: {new Date(inv.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}

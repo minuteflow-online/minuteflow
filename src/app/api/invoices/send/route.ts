@@ -306,6 +306,11 @@ function buildInvoiceEmail(
             <div style="margin-top:14px;">
               <div style="font-size:10px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px;">${headerAmountLabel}</div>
               <div style="font-size:24px; font-weight:800; color:#2d1a00;">${formatCurrency(headerAmount, invoice.currency)}</div>
+              ${invoice.service_type ? `<div style="font-size:12px; font-weight:600; color:#5a4000; margin-top:4px;">${invoice.service_type}</div>` : ""}
+              <div style="margin-top:8px;">
+                <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#5a4000; margin-bottom:2px;">INVOICE FOR</div>
+                <div style="font-size:18px; font-weight:800; color:#2d1a00;">${issueDateFmt}</div>
+              </div>
             </div>
           </td>
 
@@ -319,8 +324,6 @@ function buildInvoiceEmail(
             ${invoice.from_email ? `<div style="font-size:11px; color:#5a4000; margin-top:2px;">${invoice.from_email}</div>` : ""}
             <div style="margin-top:14px;">
               <div style="font-size:11px; font-weight:700; color:#2d1a00;">#${invoice.invoice_number}</div>
-              <div style="font-size:10px; font-weight:600; color:#5a4000; text-transform:uppercase; margin-top:2px;">${issueDateFmt}</div>
-              ${invoice.service_type ? `<div style="font-size:10px; color:#5a4000; margin-top:1px; font-style:italic;">${invoice.service_type}</div>` : ""}
               ${invoice.due_date ? `<div style="font-size:10px; color:#5a4000; margin-top:2px;">Due: ${new Date(invoice.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: timezone })}</div>` : ""}
             </div>
           </td>
