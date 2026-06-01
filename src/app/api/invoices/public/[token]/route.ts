@@ -40,6 +40,7 @@ export async function GET(
   const { data: orgSettings } = await serviceClient
     .from("organization_settings")
     .select("timezone, registered_business_name, dba")
+    .limit(1)
     .single();
 
   return Response.json({

@@ -56,6 +56,7 @@ export async function POST(request: Request) {
   const { data: orgSettings } = await serviceClient
     .from("organization_settings")
     .select("timezone, registered_business_name, dba")
+    .limit(1)
     .single();
   const orgTimezone = orgSettings?.timezone || "UTC";
   const orgRegisteredName = orgSettings?.registered_business_name || null;
