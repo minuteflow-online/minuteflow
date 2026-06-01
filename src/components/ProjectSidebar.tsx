@@ -22,35 +22,14 @@ export interface QuickActionMapping {
 interface ProjectSidebarProps {
   onSelectProject: (account: string, project: string) => void;
   onQuickAction: (mapping: QuickActionMapping) => void;
+  onAutoHoldAction: (mapping: QuickActionMapping) => void;
   isAdmin: boolean;
 }
-
-interface QuickActionConfig {
-  label: string;
-  action: string;
-  icon: string;
-  color: string;
-  category: string;
-  account: string;
-  projects: string[]; // 1 = auto-fill, 2+ = VA picks from dropdown
-  client_name?: string;
-}
-
-const QUICK_ACTIONS: QuickActionConfig[] = [
-  { label: "Team Assist", action: "team-assist", icon: "\ud83e\udd1d", color: "bg-terracotta-soft text-terracotta", category: "Collaboration", account: "Virtual Concierge", projects: ["Supervision"] },
-  { label: "Support Request", action: "support-request", icon: "\ud83c\udd98", color: "bg-clay-rose-soft text-clay-rose", category: "Collaboration", account: "Virtual Concierge", projects: ["Supervision"] },
-  { label: "Training", action: "training", icon: "\ud83d\udcda", color: "bg-clay-rose-soft text-clay-rose", category: "Collaboration", account: "Virtual Concierge", projects: ["1 on 1 Meeting", "Team Meeting"] },
-  { label: "Feedback", action: "feedback", icon: "\ud83d\udcac", color: "bg-parchment text-walnut", category: "Collaboration", account: "Virtual Concierge", projects: ["Personal Development", "Team Development"] },
-  { label: "Coaching/Review", action: "coaching-review", icon: "\ud83c\udfaf", color: "bg-sage-soft text-sage", category: "Collaboration", account: "Virtual Concierge", projects: ["Personal Development", "Team Development"] },
-  { label: "Weekly Meeting", action: "weekly-meeting", icon: "\ud83d\udcc5", color: "bg-slate-blue-soft text-slate-blue", category: "Collaboration", account: "Virtual Concierge", projects: ["1 on 1 Meeting", "Team Meeting"] },
-  { label: "Unsched Meeting", action: "unscheduled-meeting", icon: "\ud83d\udde3\ufe0f", color: "bg-amber-soft text-amber", category: "Collaboration", account: "Virtual Concierge", projects: ["1 on 1 Meeting", "Team Meeting"] },
-  { label: "Messaging", action: "messaging", icon: "\ud83d\udce8", color: "bg-slate-blue-soft text-slate-blue", category: "Communication", account: "Virtual Concierge", projects: ["Supervision"] },
-  { label: "Sorting Tasks", action: "sorting-tasks", icon: "\ud83d\udccb", color: "bg-amber-soft text-amber", category: "Planning", account: "Virtual Concierge", projects: ["Organizing"], client_name: "Toni Colina" },
-];
 
 export default function ProjectSidebar({
   onSelectProject,
   onQuickAction,
+  onAutoHoldAction,
   isAdmin,
 }: ProjectSidebarProps) {
   const [tags, setTags] = useState<ProjectTag[]>([]);
@@ -123,33 +102,40 @@ export default function ProjectSidebar({
       </div>
 
       <div className="max-h-[500px] overflow-y-auto">
-        {/* Quick Actions */}
+        {/* Quick Message Actions */}
         <div className="px-4 py-3 border-b border-parchment">
           <div className="text-[9px] font-bold text-bark uppercase tracking-wider mb-2">
-            Actions
+            Quick Actions
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {QUICK_ACTIONS.map((qa) => (
-              <button
-                key={qa.action}
-                onClick={() => {
-                  // Auto-fill task name, category, account
-                  // If single project → also auto-fill project
-                  // If multiple projects → leave project empty, VA picks from dropdown
-                  onQuickAction({
-                    category: qa.category,
-                    task_name: qa.label,
-                    account: qa.account,
-                    project: qa.projects.length === 1 ? qa.projects[0] : "",
-                    client_name: qa.client_name,
-                  });
-                }}
-                className={`${qa.color} rounded-lg py-2 px-1 text-center cursor-pointer transition-all hover:opacity-80`}
-              >
-                <div className="text-sm leading-none mb-0.5">{qa.icon}</div>
-                <div className="text-[9px] font-semibold leading-tight">{qa.label}</div>
-              </button>
-            ))}
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() =>
+                onAutoHoldAction({
+                  category: "Communication",
+                  task_name: "Message for Guidance/Instructions",
+                  account: "Virtual Concierge",
+                  project: "Supervision",
+                  client_name: "Toni Colina",
+                })
+              }
+              className="w-full py-3 px-4 rounded-xl bg-slate-blue text-white text-[12px] font-semibold cursor-pointer transition-all hover:bg-[#4a5568] text-left leading-tight"
+            >
+              💬 Message for Guidance/Instructions
+            </button>
+            <button
+              onClick={() =>
+                onAutoHoldAction({
+                  category: "Communication",
+                  task_name: "General Message",
+                  account: "Virtual Concierge",
+                  project: "Supervision",
+                  client_name: "Toni Colina",
+                })
+              }
+              className="w-full py-3 px-4 rounded-xl bg-terracotta-soft text-terracotta text-[12px] font-semibold cursor-pointer transition-all hover:bg-terracotta hover:text-white text-left leading-tight border border-terracotta/30"
+            >
+              📨 General Message
+            </button>
           </div>
         </div>
 

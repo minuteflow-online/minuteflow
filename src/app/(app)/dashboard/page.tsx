@@ -109,6 +109,16 @@ export default function DashboardPage() {
   const [closeOldInternalMemo, setCloseOldInternalMemo] = useState("");
   const [closeOldCapturing, setCloseOldCapturing] = useState(false);
 
+  // Rating state for close-old wizard
+  const [closeOldRating, setCloseOldRating] = useState<number | null>(null);
+  const [closeOldRatingNote, setCloseOldRatingNote] = useState("");
+  const [showCloseOldMemoGuide, setShowCloseOldMemoGuide] = useState(false);
+
+  // Rating state for clock-out modal
+  const [clockOutRating, setClockOutRating] = useState<number | null>(null);
+  const [clockOutRatingNote, setClockOutRatingNote] = useState("");
+  const [showClockOutMemoGuide, setShowClockOutMemoGuide] = useState(false);
+
   // Close-task-before-clockout modal state
   const [showClockOutModal, setShowClockOutModal] = useState(false);
   const [clockOutTaskStatus, setClockOutTaskStatus] = useState("");
@@ -1106,6 +1116,12 @@ export default function DashboardPage() {
         if (clockOutInternalMemo.trim()) {
           updatePayload.internal_memo = clockOutInternalMemo.trim();
         }
+        if (clockOutRating) {
+          updatePayload.task_rating = clockOutRating;
+        }
+        if (clockOutRatingNote.trim()) {
+          updatePayload.task_rating_note = clockOutRatingNote.trim();
+        }
 
         await supabase.from("time_logs").update(updatePayload).eq("id", logId);
 
@@ -1130,6 +1146,9 @@ export default function DashboardPage() {
       setShowClockOutInternalMemo(false);
       setClockingOut(false);
       setClockOutMood(null);
+      setClockOutRating(null);
+      setClockOutRatingNote("");
+      setShowClockOutMemoGuide(false);
 
       // Clear active task locally before clocking out
       setActiveTask(null);
@@ -1141,7 +1160,7 @@ export default function DashboardPage() {
       console.error("Error closing task before clock out:", err);
       setClockingOut(false);
     }
-  }, [activeTask, taskElapsed, userId, supabase, clockOutTaskStatus, clockOutClientMemo, clockOutInternalMemo, clockOutMood, performClockOut]);
+  }, [activeTask, taskElapsed, userId, supabase, clockOutTaskStatus, clockOutClientMemo, clockOutInternalMemo, clockOutMood, clockOutRating, clockOutRatingNote, performClockOut]);
 
   const cancelClockOutModal = useCallback(() => {
     setShowClockOutModal(false);
@@ -2182,6 +2201,13 @@ export default function DashboardPage() {
     if (closeOldStatus) {
       updatePayload.progress = closeOldStatus.toLowerCase().replace(' ', '_');
     }
+    // Save task rating if provided
+    if (closeOldRating) {
+      updatePayload.task_rating = closeOldRating;
+    }
+    if (closeOldRatingNote.trim()) {
+      updatePayload.task_rating_note = closeOldRatingNote.trim();
+    }
 
     await supabase.from("time_logs").update(updatePayload).eq("id", logId);
 
@@ -2216,6 +2242,9 @@ export default function DashboardPage() {
     setCloseOldMemoText("");
     setCloseOldClientMemo("");
     setCloseOldInternalMemo("");
+    setCloseOldRating(null);
+    setCloseOldRatingNote("");
+    setShowCloseOldMemoGuide(false);
     setLiveSessionData(null);
     setShowLivePrompt(false);
 
@@ -2233,7 +2262,7 @@ export default function DashboardPage() {
       setPendingFormData(null);
       await startTask(formData);
     }
-  }, [liveSessionData, userId, supabase, closeOldScreenshotBlob, closeOldMemoType, closeOldMemoText, closeOldClientMemo, closeOldInternalMemo, closeOldStatus, pendingFormData, startTask, breakPending, doStartBreak]);
+  }, [liveSessionData, userId, supabase, closeOldScreenshotBlob, closeOldMemoType, closeOldMemoText, closeOldClientMemo, closeOldInternalMemo, closeOldStatus, closeOldRating, closeOldRatingNote, pendingFormData, startTask, breakPending, doStartBreak]);
 
   const captureCloseOldScreenshot = useCallback(async () => {
     setCloseOldCapturing(true);
@@ -2396,6 +2425,44 @@ export default function DashboardPage() {
       );
     },
     []
+  );
+
+  const handleAutoHoldAndStartMessage = useCallback(
+    async (mapping: QuickActionMapping) => {
+      // If there's an active task, silently put it on hold (no wizard)
+      if (activeTask?.logId) {
+        const now = new Date().toISOString();
+        const logId = parseInt(activeTask.logId, 10);
+        const startMs = activeTask.start_time
+          ? new Date(activeTask.start_time).getTime()
+          : Date.now();
+        const durationMs = Math.max(0, Date.now() - startMs);
+        await supabase
+          .from("time_logs")
+          .update({ end_time: now, duration_ms: durationMs, progress: "on_hold" })
+          .eq("id", logId);
+        setTimeLogs((prev) =>
+          prev.map((log) =>
+            log.id === logId
+              ? { ...log, end_time: now, duration_ms: durationMs }
+              : log
+          )
+        );
+        setActiveTask(null);
+        setTaskElapsed(0);
+      }
+      // Start the message task
+      await startTask({
+        task_name: mapping.task_name,
+        category: mapping.category,
+        account: mapping.account,
+        project: mapping.project || "",
+        client_name: mapping.client_name || "",
+        client_memo: "",
+        internal_memo: "",
+      });
+    },
+    [activeTask, supabase, startTask]
   );
 
   const handleSidebarMemoSave = useCallback(async () => {
@@ -2751,6 +2818,7 @@ export default function DashboardPage() {
               <ProjectSidebar
                 onSelectProject={handleProjectSelect}
                 onQuickAction={handleQuickAction}
+                onAutoHoldAction={handleAutoHoldAndStartMessage}
                 isAdmin={role === "admin" || role === "manager"}
               />
             )}
@@ -2896,7 +2964,29 @@ export default function DashboardPage() {
 
               {/* Memos */}
               <div className="mb-3">
-                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">Client Memo <span className="text-stone font-normal">(at least one memo required)</span></p>
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-[11px] font-semibold text-walnut tracking-wide">Client Memo <span className="text-stone font-normal">(at least one memo required)</span></p>
+                  <button
+                    type="button"
+                    onClick={() => setShowCloseOldMemoGuide(!showCloseOldMemoGuide)}
+                    className="text-[10px] w-4 h-4 rounded-full bg-slate-blue-soft text-slate-blue font-bold leading-none flex items-center justify-center cursor-pointer hover:bg-slate-blue hover:text-white transition-all flex-shrink-0"
+                    title="Memo writing guide"
+                  >
+                    ?
+                  </button>
+                </div>
+                {showCloseOldMemoGuide && (
+                  <div className="mb-3 p-3 rounded-lg bg-parchment border border-sand text-[11px] text-walnut">
+                    <p className="font-semibold mb-1.5 text-espresso">Client Memo Guide</p>
+                    <div className="space-y-1">
+                      <p><span className="font-semibold">1. Who:</span> Name, title, or person involved (e.g., Ting Chiu, Gloria Flores)</p>
+                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Smart money camp Early bird flyer)</p>
+                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email, Drive)</p>
+                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Process, Continue Process, Revise flyer)</p>
+                      <p><span className="font-semibold">5. Status:</span> Done, Pause, In Progress</p>
+                    </div>
+                  </div>
+                )}
                 <textarea
                   value={closeOldClientMemo}
                   onChange={(e) => setCloseOldClientMemo(e.target.value)}
@@ -2916,6 +3006,45 @@ export default function DashboardPage() {
                   rows={3}
                   className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone resize-none"
                 />
+              </div>
+
+              {/* Task Rating (optional) */}
+              <div className="mb-3">
+                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
+                  Task Rating <span className="text-stone font-normal">(optional)</span>
+                </p>
+                <div className="flex gap-1.5 mb-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => setCloseOldRating(closeOldRating === star ? null : star)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-bold cursor-pointer transition-all ${
+                        closeOldRating !== null && star <= closeOldRating
+                          ? "bg-amber text-white border border-amber"
+                          : "border border-sand bg-white text-stone hover:border-amber"
+                      }`}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+                {closeOldRating !== null && (
+                  <div>
+                    <textarea
+                      value={closeOldRatingNote}
+                      onChange={(e) => setCloseOldRatingNote(e.target.value)}
+                      placeholder="Explain your rating (at least 5 words)..."
+                      rows={2}
+                      className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-amber focus:shadow-[0_0_0_3px_rgba(212,192,122,0.12)] placeholder:text-stone resize-none"
+                    />
+                    {closeOldRatingNote.trim().split(/\s+/).filter(Boolean).length > 0 &&
+                      closeOldRatingNote.trim().split(/\s+/).filter(Boolean).length < 5 && (
+                        <p className="text-[10px] text-terracotta mt-1">
+                          Please write at least 5 words to explain your rating.
+                        </p>
+                      )}
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3 mt-4">
@@ -2938,7 +3067,11 @@ export default function DashboardPage() {
                 </button>
                 <button
                   onClick={closeOldAndStartNew}
-                  disabled={!closeOldStatus || (!closeOldClientMemo.trim() && !closeOldInternalMemo.trim())}
+                  disabled={
+                    !closeOldStatus ||
+                    (!closeOldClientMemo.trim() && !closeOldInternalMemo.trim()) ||
+                    (closeOldRating !== null && closeOldRatingNote.trim().split(/\s+/).filter(Boolean).length < 5)
+                  }
                   className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {breakPending ? "Close & Break" : "Close & Start New Task"}
@@ -3055,9 +3188,31 @@ export default function DashboardPage() {
 
               {/* Memos — both independently fillable */}
               <div className="mb-3">
-                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
-                  Add Comments <span className="text-stone font-normal">(at least one required)</span>
-                </p>
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-[11px] font-semibold text-walnut tracking-wide">
+                    Add Comments <span className="text-stone font-normal">(at least one required)</span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowClockOutMemoGuide(!showClockOutMemoGuide)}
+                    className="text-[10px] w-4 h-4 rounded-full bg-slate-blue-soft text-slate-blue font-bold leading-none flex items-center justify-center cursor-pointer hover:bg-slate-blue hover:text-white transition-all flex-shrink-0"
+                    title="Memo writing guide"
+                  >
+                    ?
+                  </button>
+                </div>
+                {showClockOutMemoGuide && (
+                  <div className="mb-3 p-3 rounded-lg bg-parchment border border-sand text-[11px] text-walnut">
+                    <p className="font-semibold mb-1.5 text-espresso">Client Memo Guide</p>
+                    <div className="space-y-1">
+                      <p><span className="font-semibold">1. Who:</span> Name, title, or person involved (e.g., Ting Chiu, Gloria Flores)</p>
+                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Smart money camp Early bird flyer)</p>
+                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email, Drive)</p>
+                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Process, Continue Process, Revise flyer)</p>
+                      <p><span className="font-semibold">5. Status:</span> Done, Pause, In Progress</p>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mb-3">
                   <button
@@ -3143,6 +3298,45 @@ export default function DashboardPage() {
                 </div>
               </div>
 
+              {/* Task Rating (optional) */}
+              <div className="mb-3">
+                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
+                  Task Rating <span className="text-stone font-normal">(optional)</span>
+                </p>
+                <div className="flex gap-1.5 mb-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => setClockOutRating(clockOutRating === star ? null : star)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-bold cursor-pointer transition-all ${
+                        clockOutRating !== null && star <= clockOutRating
+                          ? "bg-amber text-white border border-amber"
+                          : "border border-sand bg-white text-stone hover:border-amber"
+                      }`}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+                {clockOutRating !== null && (
+                  <div>
+                    <textarea
+                      value={clockOutRatingNote}
+                      onChange={(e) => setClockOutRatingNote(e.target.value)}
+                      placeholder="Explain your rating (at least 5 words)..."
+                      rows={2}
+                      className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-amber focus:shadow-[0_0_0_3px_rgba(212,192,122,0.12)] placeholder:text-stone resize-none"
+                    />
+                    {clockOutRatingNote.trim().split(/\s+/).filter(Boolean).length > 0 &&
+                      clockOutRatingNote.trim().split(/\s+/).filter(Boolean).length < 5 && (
+                        <p className="text-[10px] text-terracotta mt-1">
+                          Please write at least 5 words to explain your rating.
+                        </p>
+                      )}
+                  </div>
+                )}
+              </div>
+
               {/* Submit */}
               <div className="flex gap-3 mt-4">
                 <button
@@ -3153,7 +3347,12 @@ export default function DashboardPage() {
                 </button>
                 <button
                   onClick={handleCloseTaskAndClockOut}
-                  disabled={!clockOutTaskStatus || (!clockOutClientMemo.trim() && !clockOutInternalMemo.trim()) || clockingOut}
+                  disabled={
+                    !clockOutTaskStatus ||
+                    (!clockOutClientMemo.trim() && !clockOutInternalMemo.trim()) ||
+                    clockingOut ||
+                    (clockOutRating !== null && clockOutRatingNote.trim().split(/\s+/).filter(Boolean).length < 5)
+                  }
                   className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {clockingOut ? "Closing & clocking out..." : "Close Task & Clock Out"}
