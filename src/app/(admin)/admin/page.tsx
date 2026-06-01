@@ -7920,18 +7920,18 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               </div>
               {/* Col 3: Payment Methods */}
               <div className="flex flex-col items-end text-right pl-5">
-                <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-2">HOW TO PAY:</div>
+                <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-2">HOW TO PAY</div>
+                {inv.payment_info && (
+                  <div className="text-[11px] text-[#5a4000] whitespace-pre-line mb-2">{inv.payment_info}</div>
+                )}
                 {inv.payment_link && (
-                  <div className="mb-2">
+                  <div className="mt-1">
                     <a href={inv.payment_link} target="_blank" rel="noopener noreferrer"
                       className="inline-block bg-[#2d1a00] text-[#f5c842] text-[12px] font-bold px-4 py-1.5 rounded-md hover:opacity-90 transition-opacity">
                       Pay Online
                     </a>
                     <div className="text-[10px] text-[#5a4000] mt-1">*3% processing fee applies</div>
                   </div>
-                )}
-                {inv.payment_info && (
-                  <div className="text-[11px] text-[#5a4000] whitespace-pre-line">{inv.payment_info}</div>
                 )}
                 {!inv.payment_link && !inv.payment_info && (
                   <div className="text-[11px] text-[#7a6040] italic">Contact us for payment options</div>
