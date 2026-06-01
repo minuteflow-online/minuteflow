@@ -874,8 +874,7 @@ export default function DashboardPage() {
         .eq("user_id", userId)
         .is("end_time", null)
         .neq("category", "Break")
-        .neq("category", "Clock Out")
-        .neq("category", "Planning");
+        .neq("category", "Clock Out");
 
       if (orphanedLogs && orphanedLogs.length > 0) {
         for (const orphan of orphanedLogs) {
@@ -1829,8 +1828,7 @@ export default function DashboardPage() {
           .eq("user_id", userId)
           .is("end_time", null)
           .neq("category", "Break")
-          .neq("category", "Clock Out")
-          .neq("category", "Planning");
+          .neq("category", "Clock Out");
 
         if (openLogs && openLogs.length > 0) {
           for (const openLog of openLogs) {

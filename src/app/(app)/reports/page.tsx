@@ -47,6 +47,26 @@ type TaskSummaryItem = {
   count: number;
 };
 
+type CategoryTrend = {
+  name: string;
+  currentMs: number;
+  currentPct: number;
+  prevMs: number;
+  prevPct: number;
+  deltaPct: number;
+};
+
+type VAProgress = {
+  userId: string;
+  profile: Profile | undefined;
+  currentTotalMs: number;
+  prevTotalMs: number;
+  productivityScore: number;
+  prevProductivityScore: number;
+  categories: CategoryTrend[];
+  screenshotCount: number;
+};
+
 /* ── Page Component ───────────────────────────────────────── */
 
 export default function ReportsPage() {
@@ -67,6 +87,8 @@ export default function ReportsPage() {
   const [selectedClient, setSelectedClient] = useState<string>("all");
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const [tasksCollapsed, setTasksCollapsed] = useState(false);
+  const [reportTab, setReportTab] = useState<"overview" | "progress">("overview");
+  const [compLogs, setCompLogs] = useState<TimeLog[]>([]);
 
   /* ── Fetch org timezone on mount ────────────────────────── */
 
@@ -110,6 +132,20 @@ export default function ReportsPage() {
       return { startISO: s, endISO: e, start: new Date(s), end: new Date(e), periodLabel: label };
     }
   }, [dateRange, appliedStart, appliedEnd, orgTimezone]);
+
+  /* ── Comparison period (previous equivalent range) ──────── */
+
+  const { compStartISO, compEndISO, compLabel } = useMemo(() => {
+    if (!startISO || !endISO) return { compStartISO: "", compEndISO: "", compLabel: "" };
+    const durMs = new Date(endISO).getTime() - new Date(startISO).getTime();
+    const compEnd = new Date(new Date(startISO).getTime() - 1);
+    const compStart = new Date(compEnd.getTime() - durMs);
+    let label = "previous period";
+    if (dateRange === "today") label = "yesterday";
+    else if (dateRange === "week") label = "last week";
+    else if (dateRange === "month") label = "last month";
+    return { compStartISO: compStart.toISOString(), compEndISO: compEnd.toISOString(), compLabel: label };
+  }, [startISO, endISO, dateRange]);
 
   /* ── Fetch data — uses ISO strings so deps are stable primitives ── */
 
@@ -163,6 +199,23 @@ export default function ReportsPage() {
     }
   }, []);
 
+  /* ── Fetch comparison data (previous period) ────────────── */
+
+  const fetchCompData = useCallback(async (qStart: string, qEnd: string) => {
+    if (!qStart || !qEnd) return;
+    try {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("time_logs")
+        .select("*")
+        .gte("session_date", qStart.slice(0, 10))
+        .lte("session_date", qEnd.slice(0, 10));
+      setCompLogs((data ?? []) as TimeLog[]);
+    } catch (err) {
+      console.error("Comparison fetch error:", err);
+    }
+  }, []);
+
   /* ── Auto-fetch when startISO/endISO change (for non-custom ranges) ── */
 
   useEffect(() => {
@@ -173,6 +226,10 @@ export default function ReportsPage() {
       setLoading(false);
     }
   }, [startISO, endISO, fetchData, dateRange, appliedStart]);
+
+  useEffect(() => {
+    if (compStartISO && compEndISO) fetchCompData(compStartISO, compEndISO);
+  }, [compStartISO, compEndISO, fetchCompData]);
 
   /* ── Filter by selected VA / Account / Client ───────────── */
 
@@ -204,6 +261,15 @@ export default function ReportsPage() {
         : screenshots.filter((s) => s.user_id === selectedVA),
     [screenshots, selectedVA]
   );
+
+  /* ── Filtered comparison logs ────────────────────────────── */
+
+  const compFilteredLogs = useMemo(() => {
+    let result = selectedVA === "all" ? compLogs : compLogs.filter((l) => l.user_id === selectedVA);
+    if (selectedAccount !== "all") result = result.filter((l) => l.account === selectedAccount);
+    if (selectedClient !== "all") result = result.filter((l) => l.client_name === selectedClient);
+    return result;
+  }, [compLogs, selectedVA, selectedAccount, selectedClient]);
 
   /* ── Computed stats (matches Activity Log summary + type/status) ── */
 
@@ -278,6 +344,65 @@ export default function ReportsPage() {
       onHoldCount,
     };
   }, [filteredLogs]);
+
+  /* ── Progress Report per VA ──────────────────────────────── */
+
+  const progressReports = useMemo((): VAProgress[] => {
+    const normCat = (raw: string) =>
+      raw === "Sorting Tasks" || raw === "Sorting" ? "Planning"
+      : raw === "Message" ? "Communication"
+      : raw === "Meeting" ? "Collaboration"
+      : raw;
+
+    const computeCats = (logs: TimeLog[]) => {
+      const totalMs = logs.reduce((s, l) => s + (l.duration_ms || 0), 0);
+      const wizardMs = logs.reduce((s, l) => s + (l.form_fill_ms || 0), 0);
+      const catMap: Record<string, number> = {};
+      logs.forEach((l) => {
+        const cat = normCat(l.category || "Task");
+        catMap[cat] = (catMap[cat] || 0) + (l.duration_ms || 0);
+      });
+      if (wizardMs > 0) catMap["Wizard Time"] = (catMap["Wizard Time"] || 0) + wizardMs;
+      return { totalMs, catMap };
+    };
+
+    const userIds = new Set<string>([
+      ...filteredLogs.map((l) => l.user_id),
+      ...compFilteredLogs.map((l) => l.user_id),
+    ]);
+
+    return Array.from(userIds).map((uid) => {
+      const currLogs = filteredLogs.filter((l) => l.user_id === uid);
+      const prevLogs = compFilteredLogs.filter((l) => l.user_id === uid);
+      const curr = computeCats(currLogs);
+      const prev = computeCats(prevLogs);
+
+      const allCats = new Set([...Object.keys(curr.catMap), ...Object.keys(prev.catMap)]);
+      const categories: CategoryTrend[] = Array.from(allCats).map((name) => {
+        const currentMs = curr.catMap[name] || 0;
+        const prevMs = prev.catMap[name] || 0;
+        const currentPct = curr.totalMs > 0 ? (currentMs / curr.totalMs) * 100 : 0;
+        const prevPct = prev.totalMs > 0 ? (prevMs / prev.totalMs) * 100 : 0;
+        return { name, currentMs, currentPct, prevMs, prevPct, deltaPct: currentPct - prevPct };
+      }).sort((a, b) => b.currentMs - a.currentMs);
+
+      const nonProdMs = (curr.catMap["Personal"] || 0) + (curr.catMap["Break"] || 0);
+      const productivityScore = curr.totalMs > 0 ? ((curr.totalMs - nonProdMs) / curr.totalMs) * 100 : 0;
+      const prevNonProd = (prev.catMap["Personal"] || 0) + (prev.catMap["Break"] || 0);
+      const prevProductivityScore = prev.totalMs > 0 ? ((prev.totalMs - prevNonProd) / prev.totalMs) * 100 : 0;
+
+      return {
+        userId: uid,
+        profile: profiles.find((p) => p.id === uid),
+        currentTotalMs: curr.totalMs,
+        prevTotalMs: prev.totalMs,
+        productivityScore,
+        prevProductivityScore,
+        categories,
+        screenshotCount: filteredScreenshots.filter((s) => s.user_id === uid).length,
+      };
+    }).sort((a, b) => b.currentTotalMs - a.currentTotalMs);
+  }, [filteredLogs, compFilteredLogs, profiles, filteredScreenshots]);
 
   // Keep these for the daily chart and financial summary
   const totalHoursMs = reportSummary.totalMs;
@@ -604,6 +729,29 @@ export default function ReportsPage() {
           <p className="mt-0.5 text-[13px] text-bark">{periodLabel}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Tab: Overview vs Progress */}
+          <div className="flex rounded-lg border border-sand overflow-hidden mr-1">
+            <button
+              onClick={() => setReportTab("overview")}
+              className={`px-4 py-2 text-[13px] font-semibold transition-all ${
+                reportTab === "overview"
+                  ? "bg-espresso text-white"
+                  : "bg-parchment text-walnut hover:bg-sand"
+              }`}
+            >
+              Overview
+            </button>
+            <button
+              onClick={() => setReportTab("progress")}
+              className={`px-4 py-2 text-[13px] font-semibold transition-all border-l border-sand ${
+                reportTab === "progress"
+                  ? "bg-espresso text-white"
+                  : "bg-parchment text-walnut hover:bg-sand"
+              }`}
+            >
+              Progress
+            </button>
+          </div>
           {/* VA Filter (admin/manager only) */}
           {(role === "admin" || role === "manager") && (
             <select
@@ -746,6 +894,206 @@ export default function ReportsPage() {
               className="h-28 w-40 animate-pulse rounded-xl border border-sand bg-white"
             />
           ))}
+        </div>
+      ) : reportTab === "progress" ? (
+        /* ── Progress Report Tab ────────────────────────────────── */
+        <div className="space-y-4">
+          {progressReports.length === 0 ? (
+            <div className="rounded-xl border border-sand bg-white px-5 py-10 text-center">
+              <p className="text-[13px] text-bark">No data for this period.</p>
+            </div>
+          ) : (
+            progressReports.map((va) => {
+              const name = va.profile?.full_name || va.profile?.username || "Unknown";
+              const initials = getInitials(name);
+              const avatarColor = getAvatarColor(name);
+              const scoreChange = va.productivityScore - va.prevProductivityScore;
+              const hoursChange =
+                va.prevTotalMs > 0
+                  ? ((va.currentTotalMs - va.prevTotalMs) / va.prevTotalMs) * 100
+                  : null;
+
+              // Auto-generate insights
+              const insights: string[] = [];
+              if (va.currentTotalMs > 0 && va.prevTotalMs > 0 && hoursChange !== null && Math.abs(hoursChange) >= 5) {
+                insights.push(
+                  hoursChange > 0
+                    ? `Total hours up ${hoursChange.toFixed(0)}% vs ${compLabel}`
+                    : `Total hours down ${Math.abs(hoursChange).toFixed(0)}% vs ${compLabel}`
+                );
+              }
+              const actionableCats = va.categories.filter(
+                (c) => c.name !== "Break" && c.name !== "Wizard Time"
+              );
+              const topUp = actionableCats
+                .filter((c) => c.deltaPct > 3)
+                .sort((a, b) => b.deltaPct - a.deltaPct)[0];
+              const topDown = actionableCats
+                .filter((c) => c.deltaPct < -3)
+                .sort((a, b) => a.deltaPct - b.deltaPct)[0];
+              if (topUp)
+                insights.push(`${topUp.name} up ${topUp.deltaPct.toFixed(1)}pp vs ${compLabel}`);
+              if (topDown)
+                insights.push(
+                  `${topDown.name} down ${Math.abs(topDown.deltaPct).toFixed(1)}pp vs ${compLabel}`
+                );
+
+              return (
+                <div key={va.userId} className="rounded-xl border border-sand bg-white">
+                  {/* Card Header */}
+                  <div className="flex flex-wrap items-center gap-4 border-b border-parchment px-5 py-4">
+                    <div
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-white"
+                      style={{ backgroundColor: avatarColor }}
+                    >
+                      {initials}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[14px] font-bold text-espresso">{name}</div>
+                      {va.profile?.position && (
+                        <div className="text-[11px] text-bark">{va.profile.position}</div>
+                      )}
+                    </div>
+                    {/* Productivity Score */}
+                    <div className="text-right">
+                      <div
+                        className={`font-serif text-2xl font-bold ${
+                          va.productivityScore >= 80
+                            ? "text-sage"
+                            : va.productivityScore >= 60
+                            ? "text-amber"
+                            : "text-terracotta"
+                        }`}
+                      >
+                        {va.productivityScore.toFixed(0)}%
+                      </div>
+                      <div className="flex items-center justify-end gap-1 text-[10px] text-bark">
+                        <span>Productivity</span>
+                        {Math.abs(scoreChange) >= 1 && (
+                          <span
+                            className={`font-semibold ${
+                              scoreChange > 0 ? "text-sage" : "text-terracotta"
+                            }`}
+                          >
+                            {scoreChange > 0 ? "↑" : "↓"}
+                            {Math.abs(scoreChange).toFixed(0)}pp
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {/* Total Hours */}
+                    <div className="text-right border-l border-parchment pl-4">
+                      <div className="font-serif text-base font-bold text-espresso">
+                        {formatDuration(va.currentTotalMs)}
+                      </div>
+                      <div className="text-[10px] text-bark">
+                        vs {formatDuration(va.prevTotalMs)}
+                        {hoursChange !== null && Math.abs(hoursChange) >= 1 && (
+                          <span
+                            className={`ml-1 font-semibold ${
+                              hoursChange > 0 ? "text-sage" : "text-terracotta"
+                            }`}
+                          >
+                            {hoursChange > 0 ? "+" : ""}
+                            {hoursChange.toFixed(0)}%
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Category Trends */}
+                  <div className="px-5 py-4">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">
+                      Time by Category — vs {compLabel}
+                    </div>
+                    <div className="space-y-3">
+                      {va.categories
+                        .filter((c) => c.currentMs > 0 || c.prevMs > 0)
+                        .map((cat) => (
+                          <div key={cat.name} className="flex items-center gap-3">
+                            <div className="w-[110px] shrink-0 text-[12px] font-semibold text-espresso truncate">
+                              {cat.name}
+                            </div>
+                            <div className="flex-1 space-y-1">
+                              {/* Current period bar */}
+                              <div className="flex items-center gap-2">
+                                <div className="w-[30px] shrink-0 text-right text-[10px] text-espresso font-semibold">
+                                  {cat.currentPct.toFixed(0)}%
+                                </div>
+                                <div className="flex-1 h-2 rounded bg-parchment overflow-hidden">
+                                  <div
+                                    className="h-full rounded bg-terracotta"
+                                    style={{ width: `${Math.max(cat.currentPct, cat.currentMs > 0 ? 2 : 0)}%` }}
+                                  />
+                                </div>
+                                <div className="w-[55px] shrink-0 text-right text-[10px] text-espresso">
+                                  {formatDuration(cat.currentMs)}
+                                </div>
+                              </div>
+                              {/* Previous period bar */}
+                              {cat.prevMs > 0 && (
+                                <div className="flex items-center gap-2 opacity-50">
+                                  <div className="w-[30px] shrink-0 text-right text-[10px] text-bark">
+                                    {cat.prevPct.toFixed(0)}%
+                                  </div>
+                                  <div className="flex-1 h-1.5 rounded bg-parchment overflow-hidden">
+                                    <div
+                                      className="h-full rounded bg-bark"
+                                      style={{ width: `${Math.max(cat.prevPct, 2)}%` }}
+                                    />
+                                  </div>
+                                  <div className="w-[55px] shrink-0 text-right text-[10px] text-bark">
+                                    {formatDuration(cat.prevMs)}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            {/* Delta badge */}
+                            <div
+                              className={`w-[44px] shrink-0 text-right text-[11px] font-bold ${
+                                cat.deltaPct > 2
+                                  ? "text-sage"
+                                  : cat.deltaPct < -2
+                                  ? "text-terracotta"
+                                  : "text-bark"
+                              }`}
+                            >
+                              {Math.abs(cat.deltaPct) < 0.5
+                                ? "—"
+                                : `${cat.deltaPct > 0 ? "+" : ""}${cat.deltaPct.toFixed(1)}pp`}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+
+                    {/* Insights */}
+                    {insights.length > 0 && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {insights.map((insight, i) => (
+                          <div
+                            key={i}
+                            className="rounded-full bg-parchment px-3 py-1 text-[11px] font-semibold text-espresso border border-sand"
+                          >
+                            {insight.toLowerCase().includes("up") ? "📈 " : "📉 "}
+                            {insight}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Screenshots */}
+                    {va.screenshotCount > 0 && (
+                      <div className="mt-3 text-[11px] text-bark">
+                        📷 {va.screenshotCount} screenshot{va.screenshotCount !== 1 ? "s" : ""} captured
+                        this period
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       ) : (
         <>
