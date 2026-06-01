@@ -260,12 +260,12 @@ export default function PublicInvoicePage() {
           </button>
         </div>
 
-        {/* ── Yellow Header — 3 columns ── */}
+        {/* ── Yellow Header — 3 columns (stacked on mobile) ── */}
         <div className="rounded-t-xl bg-[#f5c842] px-6 py-6">
-          <div className="grid grid-cols-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-0">
 
             {/* Col 1: Client Info */}
-            <div className="flex flex-col pr-5">
+            <div className="flex flex-col sm:pr-5 pb-4 sm:pb-0 border-b sm:border-b-0 border-[#c9a820]">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-[#5a4000] mb-1">BILL TO:</div>
               {invoice.account_name && (
                 <div className="text-[18px] font-extrabold text-[#2d1a00] leading-tight mb-0.5">{invoice.account_name}</div>
@@ -295,11 +295,11 @@ export default function PublicInvoicePage() {
             </div>
 
             {/* Col 2: Invoice From */}
-            <div className="flex flex-col border-x border-[#c9a820] px-5">
+            <div className="flex flex-col border-x-0 sm:border-x border-[#c9a820] sm:px-5 py-4 sm:py-0 border-b sm:border-b-0">
               <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">INVOICE FROM:</div>
               <div className="text-[14px] font-bold text-[#2d1a00]">{invoice.from_name}</div>
-              {orgRegisteredName && <div className="text-[11px] text-[#5a4000] mt-0.5">{orgRegisteredName}</div>}
-              {orgDba && <div className="text-[10px] text-[#5a4000] mt-0.5">DBA: {orgDba}</div>}
+              {orgRegisteredName && <div className="text-[12px] font-semibold text-[#2d1a00] mt-1">{orgRegisteredName}</div>}
+              {orgDba && <div className="text-[11px] text-[#5a4000] mt-0.5">DBA: {orgDba}</div>}
               {invoice.from_phone && <div className="text-[11px] text-[#5a4000] mt-0.5">{invoice.from_phone}</div>}
               {invoice.from_email && <div className="text-[11px] text-[#5a4000] mt-0.5">{invoice.from_email}</div>}
               <div className="mt-3">
@@ -320,7 +320,7 @@ export default function PublicInvoicePage() {
             </div>
 
             {/* Col 3: Payment Methods */}
-            <div className="flex flex-col items-end text-right pl-5">
+            <div className="flex flex-col items-start sm:items-end text-left sm:text-right sm:pl-5 pt-4 sm:pt-0">
               <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-2">HOW TO PAY</div>
               {invoice.payment_info && (
                 <div className="text-[11px] text-[#5a4000] whitespace-pre-line mb-2">{invoice.payment_info}</div>

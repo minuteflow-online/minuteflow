@@ -286,6 +286,26 @@ function buildInvoiceEmail(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    @media only screen and (max-width: 600px) {
+      .invoice-header-col {
+        display: block !important;
+        width: 100% !important;
+        padding: 14px 0 !important;
+        border-left: none !important;
+        border-right: none !important;
+        border-top: 1px solid #c9a820 !important;
+        box-sizing: border-box !important;
+      }
+      .invoice-header-col-first {
+        border-top: none !important;
+        padding-top: 0 !important;
+      }
+      .invoice-header-col-right {
+        text-align: left !important;
+      }
+    }
+  </style>
 </head>
 <body style="margin:0; padding:0; background-color:#f5f0e8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <div style="max-width:680px; margin:0 auto; padding:24px 16px;">
@@ -295,7 +315,7 @@ function buildInvoiceEmail(
       <table style="width:100%; border-collapse:collapse;">
         <tr>
           <!-- Col 1: Client Info -->
-          <td style="vertical-align:top; width:34%;">
+          <td class="invoice-header-col invoice-header-col-first" style="vertical-align:top; width:34%;">
             <div style="font-size:10px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">BILL TO:</div>
             ${invoice.account_name ? `<div style="font-size:18px; font-weight:800; color:#2d1a00; line-height:1.2; margin-bottom:2px;">${invoice.account_name}</div>` : ""}
             <div style="font-weight:800; color:#2d1a00; line-height:1.2; margin-bottom:3px; font-size:${invoice.account_name ? "13px" : "18px"};">${invoice.to_name}</div>
@@ -315,11 +335,11 @@ function buildInvoiceEmail(
           </td>
 
           <!-- Col 2: Invoice From -->
-          <td style="vertical-align:top; text-align:left; width:32%; padding:0 16px; border-left:1px solid #c9a820; border-right:1px solid #c9a820;">
+          <td class="invoice-header-col" style="vertical-align:top; text-align:left; width:32%; padding:0 16px; border-left:1px solid #c9a820; border-right:1px solid #c9a820;">
             <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#5a4000; margin-bottom:3px;">INVOICE FROM:</div>
             <div style="font-size:14px; font-weight:700; color:#2d1a00;">${invoice.from_name}</div>
-            ${orgRegisteredName ? `<div style="font-size:11px; color:#5a4000; margin-top:2px;">${orgRegisteredName}</div>` : ""}
-            ${orgDba ? `<div style="font-size:10px; color:#5a4000; margin-top:1px;">DBA: ${orgDba}</div>` : ""}
+            ${orgRegisteredName ? `<div style="font-size:12px; font-weight:600; color:#2d1a00; margin-top:3px;">${orgRegisteredName}</div>` : ""}
+            ${orgDba ? `<div style="font-size:11px; color:#5a4000; margin-top:1px;">DBA: ${orgDba}</div>` : ""}
             ${invoice.from_phone ? `<div style="font-size:11px; color:#5a4000; margin-top:2px;">${invoice.from_phone}</div>` : ""}
             ${invoice.from_email ? `<div style="font-size:11px; color:#5a4000; margin-top:2px;">${invoice.from_email}</div>` : ""}
             <div style="margin-top:14px;">
@@ -329,7 +349,7 @@ function buildInvoiceEmail(
           </td>
 
           <!-- Col 3: Payment Methods -->
-          <td style="vertical-align:top; text-align:right; width:34%; padding-left:12px;">
+          <td class="invoice-header-col invoice-header-col-right" style="vertical-align:top; text-align:right; width:34%; padding-left:12px;">
             <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#5a4000; margin-bottom:6px;">HOW TO PAY</div>
             ${invoice.payment_info ? `<div style="font-size:11px; color:#5a4000; white-space:pre-line; text-align:right; margin-bottom:8px;">${invoice.payment_info}</div>` : ""}
             ${invoice.payment_link ? `
