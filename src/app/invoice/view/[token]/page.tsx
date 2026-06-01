@@ -358,8 +358,7 @@ export default function PublicInvoicePage() {
         </div>
 
         {/* ── Tab: Summary ── */}
-        {activeTab === "summary" && (
-          <>
+        <div className={`invoice-tab-section ${activeTab === "summary" ? "" : "hidden"}`}>
             {/* Financial Breakdown */}
             <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
               <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52] mb-3">Invoice Financial Breakdown</div>
@@ -432,11 +431,10 @@ export default function PublicInvoicePage() {
 
             {/* Bottom border */}
             <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl h-4" />
-          </>
-        )}
+        </div>
 
         {/* ── Tab: Task Summary ── */}
-        {activeTab === "tasks" && (
+        <div className={`invoice-tab-section ${activeTab === "tasks" ? "" : "hidden"}`}>
           <div className="bg-[#2d3a4a] border-x border-b border-[#1a2535] rounded-b-xl px-8 py-6">
             <div className="text-[10px] font-bold uppercase tracking-widest text-[#f5c842] mb-4">Task Summary</div>
             <div className="space-y-2">
@@ -452,10 +450,10 @@ export default function PublicInvoicePage() {
               <span className="text-[14px] font-bold text-[#f5c842]">{fmtHours(totalHours)}</span>
             </div>
           </div>
-        )}
+        </div>
 
         {/* ── Tab: Deliverables ── */}
-        {activeTab === "deliverables" && (
+        <div className={`invoice-tab-section ${activeTab === "deliverables" ? "" : "hidden"}`}>
           <div className="bg-[#1e2a38] border-x border-b border-[#1a2535] rounded-b-xl px-8 py-6">
             <div className="text-[10px] font-bold uppercase tracking-widest text-[#f5c842] mb-4">Deliverables / Objectives</div>
             <div className="space-y-2">
@@ -471,11 +469,10 @@ export default function PublicInvoicePage() {
               <span className="text-[14px] font-bold text-[#f5c842]">{fmtHours(totalHours)}</span>
             </div>
           </div>
-        )}
+        </div>
 
         {/* ── Tab: Time Allocation ── */}
-        {activeTab === "time" && (
-          <>
+        <div className={`invoice-tab-section ${activeTab === "time" ? "" : "hidden"}`}>
             <div className="bg-[#faf6f0] border-x border-[#e8e0d4] px-6 py-3">
               <div className="flex items-center justify-between">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52]">Detailed Time Allocation</div>
@@ -504,8 +501,7 @@ export default function PublicInvoicePage() {
                 </tbody>
               </table>
             </div>
-          </>
-        )}
+        </div>
 
         {/* Footer */}
         <div className="py-6 text-center">
@@ -519,6 +515,7 @@ export default function PublicInvoicePage() {
         @media print {
           body { background: white !important; }
           .print\\:hidden { display: none !important; }
+          .invoice-tab-section { display: block !important; }
         }
       `}</style>
     </div>

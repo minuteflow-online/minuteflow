@@ -7265,6 +7265,23 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 👁 Preview
               </a>
             )}
+            {inv.share_token && inv.issue_date && inv.invoice_number && (() => {
+              const MONTH_NAMES = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+              const d = new Date(inv.issue_date + "T12:00:00Z");
+              const monthSlug = MONTH_NAMES[d.getUTCMonth()] + d.getUTCFullYear();
+              const clientSlug = (inv.account_name || inv.to_name || "client").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+              const numSlug = inv.invoice_number.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+              const customUrl = `https://minuteflow.click/invoice/view/${monthSlug}/${clientSlug}/${numSlug}`;
+              return (
+                <button
+                  onClick={() => { navigator.clipboard.writeText(customUrl); }}
+                  title={customUrl}
+                  className="rounded-lg border border-sand px-4 py-2 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                >
+                  🔗 Copy Link
+                </button>
+              );
+            })()}
             {inv.status === "draft" && (
               <button
                 onClick={() => handleMarkReadyToSend(inv)}
