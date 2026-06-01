@@ -5361,6 +5361,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [removedItemOverrides, setRemovedItemOverrides] = useState<Map<number, { account: string; client: string }>>(new Map());
   const [removedEditOverrides, setRemovedEditOverrides] = useState<Map<number, { account: string; client: string }>>(new Map());
 
+  // Payment info + reply-to for create flow
+  const [paymentInfo, setPaymentInfo] = useState("");
+  const [replyToEmail, setReplyToEmail] = useState("");
+
+  // Payment info + reply-to for edit flow
+  const [editPaymentInfo, setEditPaymentInfo] = useState("");
+  const [editReplyToEmail, setEditReplyToEmail] = useState("");
+
   const supabase = createClient();
 
   /* ── Fetch invoices + clients ─────────────────────────────── */
@@ -5632,7 +5640,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       from_name: fromName || orgSettings?.registered_business_name || orgSettings?.org_name || "Toni Colina",
       from_phone: fromPhone || null,
       from_address: orgSettings?.address || null,
-      from_email: orgSettings?.billing_email || null,
+      from_email: replyToEmail || orgSettings?.billing_email || null,
       from_logo_url: orgSettings?.logo_url || null,
       to_name: toName,
       to_contact: toContact,
@@ -5650,12 +5658,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       currency: billingClient?.currency || "USD",
       notes: invoiceNotes || null,
       payment_link: paymentLink || null,
+      payment_info: paymentInfo || null,
       reminder_enabled: reminderEnabled,
       payment_terms: null,
       sent_at: sendNow ? new Date().toISOString() : null,
       rate_amount: rateAmount ? parseFloat(rateAmount) : null,
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
+      share_token: crypto.randomUUID(),
     };
 
     const { data: newInvoice, error } = await supabase
@@ -5688,6 +5698,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }));
 
     await supabase.from("invoice_line_items").insert(lineItemsData);
+
+    // Apply On Hold overrides to time_logs (reassign account/client for removed items)
+    for (const [idx, override] of removedItemOverrides.entries()) {
+      const li = removedLineItems[idx];
+      if (li?.log_id && (override.account || override.client)) {
+        const updateFields: Record<string, string> = {};
+        if (override.account) updateFields.account = override.account;
+        if (override.client) updateFields.client_name = override.client;
+        await supabase.from("time_logs").update(updateFields).eq("id", li.log_id);
+      }
+    }
 
     // If sending now, fire email
     if (sendNow && toEmail) {
@@ -5728,6 +5749,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setFilterPanelSearch("");
     setCustomEditCell(null);
     setRemovedLineItems([]);
+    setRemovedItemOverrides(new Map());
 
     await fetchInvoices();
 
@@ -5754,7 +5776,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       status: "sent" as const,
       from_name: orgSettings?.org_name || "MinuteFlow",
       from_address: orgSettings?.address || null,
-      from_email: orgSettings?.billing_email || null,
+      from_email: replyToEmail || orgSettings?.billing_email || null,
       from_logo_url: orgSettings?.logo_url || null,
       to_name: selectedClient.name,
       to_contact: selectedClient.contact_name,
@@ -5770,8 +5792,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       amount_paid: 0,
       currency: selectedClient.currency || "USD",
       notes: invoiceNotes || null,
+      payment_info: paymentInfo || null,
       payment_terms: selectedClient.payment_terms || "net_30",
       is_manual: true,
+      share_token: crypto.randomUUID(),
     };
 
     const { data: newInvoice, error } = await supabase
@@ -5898,11 +5922,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setEditSubtotal(String(invoice.subtotal ?? ""));
     setEditAdjustment(String(invoice.adjustment_amount ?? "0"));
     setEditPaymentLink(invoice.payment_link ?? "");
+    setEditPaymentInfo(invoice.payment_info ?? "");
     setEditFromName(invoice.from_name ?? "");
     setEditFromPhone(invoice.from_phone ?? "");
+    setEditReplyToEmail(invoice.from_email ?? "");
     setEditNotes(invoice.notes ?? "");
     setEditDueDate(invoice.due_date ?? "");
     setEditReminderEnabled(invoice.reminder_enabled ?? false);
+    setEditAccountName(invoice.account_name ?? "");
     const clientEmail = invoice.to_email || clients.find((c) => c.id === invoice.client_id)?.email || "";
     setSendToEmail(clientEmail);
     setRateAmount(invoice.rate_amount != null ? String(invoice.rate_amount) : "");
@@ -5983,6 +6010,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     fetchInvoices();
   };
 
+  const handleRevertToDraft = async (invoice: Invoice) => {
+    await supabase
+      .from("invoices")
+      .update({ status: "draft" as Invoice["status"] })
+      .eq("id", invoice.id);
+    setSelectedInvoice((prev) => prev ? { ...prev, status: "draft" as Invoice["status"] } : null);
+    fetchInvoices();
+  };
+
   /* ── Update invoice fields ────────────────────────────────── */
 
   const handleUpdateInvoice = async () => {
@@ -5998,7 +6034,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       adjustment_amount: adjustment,
       total,
       payment_link: editPaymentLink || null,
+      payment_info: editPaymentInfo || null,
       from_name: editFromName || selectedInvoice.from_name,
+      from_email: editReplyToEmail || selectedInvoice.from_email || null,
       from_phone: editFromPhone || null,
       notes: editNotes || null,
       reminder_enabled: editReminderEnabled,
@@ -6024,6 +6062,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     for (const li of removedEditItems) {
       await supabase.from("invoice_line_items").delete().eq("id", li.id);
     }
+    // Apply On Hold overrides to time_logs (reassign account/client for removed items)
+    for (const [idx, override] of removedEditOverrides.entries()) {
+      const li = removedEditItems[idx];
+      if (li?.log_id && (override.account || override.client)) {
+        const updateFields: Record<string, string> = {};
+        if (override.account) updateFields.account = override.account;
+        if (override.client) updateFields.client_name = override.client;
+        await supabase.from("time_logs").update(updateFields).eq("id", li.log_id);
+      }
+    }
     // Refresh selectedLineItems
     const { data: refreshedItems } = await supabase
       .from("invoice_line_items")
@@ -6034,6 +6082,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setSelectedLineItems(refreshed);
     setEditLineItemsState(refreshed);
     setRemovedEditItems([]);
+    setRemovedEditOverrides(new Map());
 
     setSelectedInvoice((prev) =>
       prev
@@ -6091,6 +6140,23 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     fetchInvoices();
   };
 
+  /* ── Mark as unpaid (reverse paid status) ────────────────── */
+
+  const handleMarkUnpaid = async (invoice: Invoice) => {
+    await supabase
+      .from("invoices")
+      .update({
+        status: "sent" as const,
+        paid_date: null,
+        amount_paid: 0,
+      })
+      .eq("id", invoice.id);
+    setSelectedInvoice((prev) =>
+      prev ? { ...prev, status: "sent" as const, paid_date: null, amount_paid: 0 } : null
+    );
+    fetchInvoices();
+  };
+
   /* ── Trash invoice (soft delete) ─────────────────────────── */
 
   const handleTrashInvoice = async (invoice: Invoice) => {
@@ -6141,7 +6207,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       from_name: fromName || orgSettings?.registered_business_name || orgSettings?.org_name || "MinuteFlow",
       from_phone: fromPhone || null,
       from_address: orgSettings?.address || null,
-      from_email: orgSettings?.billing_email || null,
+      from_email: replyToEmail || orgSettings?.billing_email || null,
       from_logo_url: orgSettings?.logo_url || null,
       to_name: toName,
       to_contact: billingClient?.contact_name || null,
@@ -6161,12 +6227,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       currency: billingClient?.currency || "USD",
       notes: invoiceNotes || null,
       payment_link: paymentLink || null,
+      payment_info: paymentInfo || null,
       reminder_enabled: reminderEnabled,
       payment_terms: null,
       sent_at: null,
       rate_amount: rateAmount ? parseFloat(rateAmount) : null,
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
+      share_token: crypto.randomUUID(),
     };
 
     const { data: newInvoice, error } = await supabase
@@ -6687,7 +6755,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <select
                             value={removedItemOverrides.get(idx)?.account ?? ""}
-                            onChange={(e) => setRemovedItemOverrides(prev => { const next = new Map(prev); next.set(idx, { ...(prev.get(idx) ?? { account: "", client: "" }), account: e.target.value }); return next; })}
+                            onChange={(e) => { const acc = e.target.value; const clientId = accountToClientMap[acc]; const clientName = clientId ? (clients.find(c => c.id === clientId)?.name ?? "") : ""; setRemovedItemOverrides(prev => { const next = new Map(prev); next.set(idx, { account: acc, client: clientName }); return next; }); }}
                             className="text-[11px] rounded border border-sand bg-white px-1 py-0.5 text-bark outline-none focus:border-terracotta cursor-pointer"
                           >
                             <option value="">Account...</option>
@@ -6762,11 +6830,35 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       placeholder="https://..."
                       className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
                     />
+                    {paymentLink && (
+                      <p className="mt-1 text-[11px] text-bark/60">Note: A 3% processing fee applies to online payments.</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Method Info</label>
+                    <textarea
+                      value={paymentInfo}
+                      onChange={(e) => setPaymentInfo(e.target.value)}
+                      placeholder="e.g. Zelle: yourname@email.com&#10;PayPal: @yourhandle&#10;Bank Transfer: Account #1234"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone resize-none"
+                      rows={3}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Reply-To Email</label>
+                    <input
+                      type="email"
+                      value={replyToEmail}
+                      onChange={(e) => setReplyToEmail(e.target.value)}
+                      placeholder="replies@youremail.com"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                    />
+                    <p className="mt-1 text-[11px] text-bark/60">If different from your main email. Replies to this invoice will go here.</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <button
                       onClick={() => setReminderEnabled(!reminderEnabled)}
-                      className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer ${reminderEnabled ? "bg-terracotta" : "bg-sand"}`}
+                      className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer overflow-hidden ${reminderEnabled ? "bg-terracotta" : "bg-clay"}`}
                     >
                       <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${reminderEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
                     </button>
@@ -7102,24 +7194,37 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setEditSubtotal(String(inv.subtotal ?? ""));
                   setEditAdjustment(String(inv.adjustment_amount ?? "0"));
                   setEditPaymentLink(inv.payment_link ?? "");
+                  setEditPaymentInfo(inv.payment_info ?? "");
                   setEditFromName(inv.from_name ?? "");
                   setEditFromPhone(inv.from_phone ?? "");
+                  setEditReplyToEmail(inv.from_email ?? "");
                   setEditNotes(inv.notes ?? "");
                   setEditDueDate(inv.due_date ?? "");
                   setEditReminderEnabled(inv.reminder_enabled ?? false);
                   setEditAccountName(inv.account_name ?? "");
+                  setRateAmount(inv.rate_amount != null ? String(inv.rate_amount) : "");
+                  setHoursNotBilled(inv.hours_not_billed != null ? String(inv.hours_not_billed) : "");
+                  setHoursNotBilledLabel(inv.hours_not_billed_label || "Volunteer");
                 }
               }}
               className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${editingInvoice ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}
             >
               {editingInvoice ? "✕ Cancel Edit" : "✏️ Edit Invoice"}
             </button>
-            {(inv.status === "draft") && (
+            {inv.status === "draft" && (
               <button
                 onClick={() => handleMarkReadyToSend(inv)}
                 className="rounded-lg bg-amber px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-amber/80 cursor-pointer"
               >
                 Mark Ready to Send
+              </button>
+            )}
+            {inv.status === "ready_to_send" && (
+              <button
+                onClick={() => handleRevertToDraft(inv)}
+                className="rounded-lg border border-amber px-4 py-2 text-[13px] font-semibold text-amber transition-all hover:bg-amber hover:text-white cursor-pointer"
+              >
+                Revert to Draft
               </button>
             )}
             {inv.status !== "paid" && inv.status !== "cancelled" && (
@@ -7136,6 +7241,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 className="rounded-lg bg-sage px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-sage/80 cursor-pointer"
               >
                 Mark as Fully Paid
+              </button>
+            )}
+            {inv.status === "paid" && (
+              <button
+                onClick={() => handleMarkUnpaid(inv)}
+                className="rounded-lg border border-clay px-4 py-2 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+              >
+                Mark as Unpaid
               </button>
             )}
             <button
@@ -7159,7 +7272,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         )}
 
         {/* Send Email Panel */}
-        {(inv.status === "draft" || inv.status === "sent") && (
+        {(inv.status === "draft" || inv.status === "sent" || inv.status === "ready_to_send") && (
           <div className="mb-4 rounded-xl border border-sand bg-white p-4">
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-bark">Send Invoice Email</p>
             <div className="flex items-center gap-3">
@@ -7189,6 +7302,45 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           <div className="mb-4 rounded-xl border border-terracotta/30 bg-white p-5">
             <h4 className="mb-4 font-serif text-[15px] font-bold text-espresso">Edit Invoice</h4>
             <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Hourly Rate ($)</label>
+                <input type="number" step="0.01" min="0" value={rateAmount}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setRateAmount(v);
+                    const rate = parseFloat(v) || 0;
+                    if (rate > 0) {
+                      const gross = editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0);
+                      const notBilled = parseFloat(hoursNotBilled) || 0;
+                      setEditSubtotal((gross * rate).toFixed(2));
+                      setEditAdjustment((notBilled * rate).toFixed(2));
+                    }
+                  }}
+                  placeholder="e.g. 25.00"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Hours Not Billed</label>
+                <div className="flex gap-2">
+                  <input type="text" value={hoursNotBilledLabel} onChange={(e) => setHoursNotBilledLabel(e.target.value)}
+                    placeholder="Label (e.g. Volunteer)"
+                    className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                  <input type="number" step="0.01" min="0" value={hoursNotBilled}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setHoursNotBilled(v);
+                      const rate = parseFloat(rateAmount) || 0;
+                      if (rate > 0) {
+                        const gross = editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0);
+                        const notBilled = parseFloat(v) || 0;
+                        setEditSubtotal((gross * rate).toFixed(2));
+                        setEditAdjustment((notBilled * rate).toFixed(2));
+                      }
+                    }}
+                    placeholder="0.00"
+                    className="w-24 rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                </div>
+              </div>
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Invoice Amount ($)</label>
                 <input type="number" step="0.01" min="0" value={editSubtotal} onChange={(e) => setEditSubtotal(e.target.value)}
@@ -7232,11 +7384,28 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 <input type="url" value={editPaymentLink} onChange={(e) => setEditPaymentLink(e.target.value)}
                   placeholder="https://..."
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                {editPaymentLink && (
+                  <p className="mt-1 text-[11px] text-bark/60">Note: A 3% processing fee applies to online payments.</p>
+                )}
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Method Info</label>
+                <textarea value={editPaymentInfo} onChange={(e) => setEditPaymentInfo(e.target.value)}
+                  placeholder="e.g. Zelle: yourname@email.com&#10;PayPal: @yourhandle&#10;Bank Transfer: Account #1234"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone resize-none"
+                  rows={3} />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Reply-To Email</label>
+                <input type="email" value={editReplyToEmail} onChange={(e) => setEditReplyToEmail(e.target.value)}
+                  placeholder="replies@youremail.com"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                <p className="mt-1 text-[11px] text-bark/60">Replies to this invoice will go here.</p>
               </div>
               <div className="flex items-center gap-3 pt-5">
                 <button
                   onClick={() => setEditReminderEnabled(!editReminderEnabled)}
-                  className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer ${editReminderEnabled ? "bg-terracotta" : "bg-sand"}`}
+                  className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer overflow-hidden ${editReminderEnabled ? "bg-terracotta" : "bg-clay"}`}
                 >
                   <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${editReminderEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
                 </button>
@@ -7474,7 +7643,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       <div className="flex items-center gap-1 flex-shrink-0">
                         <select
                           value={removedEditOverrides.get(idx)?.account ?? ""}
-                          onChange={(e) => setRemovedEditOverrides(prev => { const next = new Map(prev); next.set(idx, { ...(prev.get(idx) ?? { account: "", client: "" }), account: e.target.value }); return next; })}
+                          onChange={(e) => { const acc = e.target.value; const clientId = accountToClientMap[acc]; const clientName = clientId ? (clients.find(c => c.id === clientId)?.name ?? "") : ""; setRemovedEditOverrides(prev => { const next = new Map(prev); next.set(idx, { account: acc, client: clientName }); return next; }); }}
                           className="text-[11px] rounded border border-sand bg-white px-1 py-0.5 text-bark outline-none focus:border-terracotta cursor-pointer"
                         >
                           <option value="">Account...</option>
@@ -7529,15 +7698,13 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </div>
               </div>
               <div className="text-right">
-                {orgSettings?.registered_business_name
-                  ? <div className="text-[15px] font-bold text-[#2d1a00]">{orgSettings.registered_business_name}</div>
-                  : <div className="text-[15px] font-bold text-[#2d1a00]">{inv.from_name}</div>
-                }
+                <div className="text-[9px] font-bold uppercase tracking-widest text-[#5a4000] mb-1">Invoice From:</div>
+                <div className="text-[15px] font-bold text-[#2d1a00]">{inv.from_name}</div>
+                {orgSettings?.registered_business_name && (
+                  <div className="text-[12px] text-[#5a4000] mt-0.5">{orgSettings.registered_business_name}</div>
+                )}
                 {orgSettings?.dba && (
                   <div className="text-[11px] text-[#5a4000] mt-0.5">DBA: {orgSettings.dba}</div>
-                )}
-                {orgSettings?.registered_business_name && inv.from_name !== orgSettings.registered_business_name && (
-                  <div className="text-[12px] text-[#5a4000] mt-0.5">{inv.from_name}</div>
                 )}
                 {inv.from_phone && (
                   <div className="text-[12px] text-[#5a4000] mt-0.5">{inv.from_phone}</div>
@@ -7550,7 +7717,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       className="inline-block bg-[#2d1a00] text-[#f5c842] text-[12px] font-bold px-4 py-1.5 rounded-md hover:opacity-90 transition-opacity">
                       Click to Pay
                     </a>
+                    <div className="text-[10px] text-[#5a4000] mt-1">*3% processing fee applies</div>
                   </div>
+                )}
+                {inv.payment_info && (
+                  <div className="mt-2 text-[11px] text-[#5a4000] text-right whitespace-pre-line">{inv.payment_info}</div>
                 )}
                 <div className="mt-4">
                   <span className={`inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase ${statusBadge(inv.status)}`}>
@@ -7583,10 +7754,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                           <p className="mt-1 text-[18px] font-bold text-espresso">{formatCurrency(Number(inv.rate_amount))}/hr</p>
                         </div>
                       )}
-                      <div className="text-center">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Gross Hours</p>
-                        <p className="mt-1 text-[18px] font-bold text-espresso">{grossHours.toFixed(2)}</p>
-                      </div>
+                      {notBilled > 0 && (
+                        <div className="text-center">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Gross Hours</p>
+                          <p className="mt-1 text-[18px] font-bold text-espresso">{grossHours.toFixed(2)}</p>
+                        </div>
+                      )}
                       {notBilled > 0 && (
                         <div className="text-center">
                           <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">{inv.hours_not_billed_label || "Not Billed"}</p>
@@ -7673,8 +7846,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               );
             })()}
 
-            {/* Time Allocation Table — hidden in Ready to Send preview */}
-            {inv.status !== "ready_to_send" && (
+            {/* Time Allocation Table */}
             <div className="mb-6 rounded-lg border border-sand overflow-hidden">
               <div className="px-4 py-2.5 bg-parchment/30 border-b border-sand">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-bark">Detailed Time Allocation</p>
@@ -7700,7 +7872,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </tbody>
               </table>
             </div>
-            )}
 
             {/* Totals */}
             <div className="flex justify-end">

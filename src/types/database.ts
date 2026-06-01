@@ -255,6 +255,8 @@ export interface Invoice {
   hours_not_billed: number | null;
   hours_not_billed_label: string | null;
   rate_amount: number | null;
+  payment_info: string | null;
+  share_token: string | null;
   created_at: string;
   updated_at: string;
 }

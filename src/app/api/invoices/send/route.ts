@@ -127,6 +127,8 @@ interface InvoiceRow {
   currency: string;
   notes: string | null;
   payment_link: string | null;
+  payment_info: string | null;
+  share_token: string | null;
   reminder_enabled: boolean | null;
   account_name: string | null;
   service_type: string | null;
@@ -199,15 +201,15 @@ function buildInvoiceEmail(
   });
   const projSummary = Object.entries(projMap).sort((a, b) => b[1] - a[1]);
 
-  // Time allocation rows
+  // Time allocation rows (smaller fonts)
   const timeRows = items
     .map(
       (li) => `
       <tr>
-        <td style="padding:8px 12px; border-bottom:1px solid #e8e0d4; text-align:right; font-size:13px; color:#3d2b1f; font-weight:600;">${Math.round(Number(li.quantity) * 60)}</td>
-        <td style="padding:8px 12px; border-bottom:1px solid #e8e0d4; font-size:13px; color:#3d2b1f;">${li.description}</td>
-        <td style="padding:8px 12px; border-bottom:1px solid #e8e0d4; font-size:13px; color:#6b5e52;">${li.project || li.account_name || "—"}</td>
-        <td style="padding:8px 12px; border-bottom:1px solid #e8e0d4; font-size:12px; color:#6b5e52;">${li.client_memo || "—"}</td>
+        <td style="padding:5px 10px; border-bottom:1px solid #e8e0d4; text-align:right; font-size:11px; color:#3d2b1f; font-weight:600;">${Math.round(Number(li.quantity) * 60)}</td>
+        <td style="padding:5px 10px; border-bottom:1px solid #e8e0d4; font-size:11px; color:#3d2b1f;">${li.description}</td>
+        <td style="padding:5px 10px; border-bottom:1px solid #e8e0d4; font-size:11px; color:#6b5e52;">${li.project || li.account_name || "—"}</td>
+        <td style="padding:5px 10px; border-bottom:1px solid #e8e0d4; font-size:10px; color:#6b5e52;">${li.client_memo || "—"}</td>
       </tr>`
     )
     .join("");
@@ -217,8 +219,8 @@ function buildInvoiceEmail(
     .map(
       ([task, hrs]) => `
       <tr>
-        <td style="padding:5px 0; font-size:13px; color:#e8e0d4;">${task}</td>
-        <td style="padding:5px 0; font-size:13px; color:#ffffff; text-align:right; font-weight:600; white-space:nowrap;">${fmtHours(hrs)}</td>
+        <td style="padding:4px 0; font-size:12px; color:#e8e0d4;">${task}</td>
+        <td style="padding:4px 0; font-size:12px; color:#ffffff; text-align:right; font-weight:600; white-space:nowrap;">${fmtHours(hrs)}</td>
       </tr>`
     )
     .join("");
@@ -228,11 +230,56 @@ function buildInvoiceEmail(
     .map(
       ([proj, hrs]) => `
       <tr>
-        <td style="padding:5px 0; font-size:13px; color:#e8e0d4;">${proj}</td>
-        <td style="padding:5px 0; font-size:13px; color:#ffffff; text-align:right; font-weight:600; white-space:nowrap;">${fmtHours(hrs)}</td>
+        <td style="padding:4px 0; font-size:12px; color:#e8e0d4;">${proj}</td>
+        <td style="padding:4px 0; font-size:12px; color:#ffffff; text-align:right; font-weight:600; white-space:nowrap;">${fmtHours(hrs)}</td>
       </tr>`
     )
     .join("");
+
+  // Financial breakdown row 1: hours
+  // Only show Gross Hours if there are unbilled hours (same logic as app)
+  const hoursRow1Cells = [
+    invoice.rate_amount != null ? `
+      <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word; width:25%;">
+        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Rate</div>
+        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${formatCurrency(invoice.rate_amount!, invoice.currency)}/hr</div>
+      </td>` : "",
+    notBilledHours > 0 ? `
+      <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word; width:25%;">
+        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Gross Hours</div>
+        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${grossHours.toFixed(2)}</div>
+      </td>
+      <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word; width:25%;">
+        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${invoice.hours_not_billed_label || "Not Billed"}</div>
+        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${notBilledHours.toFixed(2)}</div>
+      </td>` : "",
+    `<td style="padding:10px 8px; text-align:center; ${notBilledHours > 0 || invoice.rate_amount != null ? "border-right:1px solid #e8e0d4;" : ""} word-break:break-word; width:25%;">
+        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Hours Billed</div>
+        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${totalHours.toFixed(2)}</div>
+      </td>`,
+  ].filter(Boolean).join("");
+
+  // Financial breakdown row 2: money
+  const moneyRow2Cells = [
+    `<td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word; width:33%;">
+      <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Invoice Amount</div>
+      <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${formatCurrency(invoiceAmount, invoice.currency)}</div>
+    </td>`,
+    adjustment > 0 ? `
+      <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word; width:33%;">
+        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Savings</div>
+        <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">− ${formatCurrency(adjustment)}</div>
+      </td>` : "",
+    `<td style="padding:10px 8px; text-align:center; word-break:break-word; width:33%;">
+      <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Final Amount</div>
+      <div style="font-size:14px; font-weight:700; color:#c0704e; margin-top:3px;">${formatCurrency(finalTotal, invoice.currency)}</div>
+    </td>`,
+  ].filter(Boolean).join("");
+
+  // PDF view link
+  const pdfLink = invoice.share_token
+    ? `https://minuteflow.click/invoice/view/${invoice.share_token}`
+    : null;
 
   return `<!DOCTYPE html>
 <html>
@@ -243,9 +290,7 @@ function buildInvoiceEmail(
 <body style="margin:0; padding:0; background-color:#f5f0e8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <div style="max-width:680px; margin:0 auto; padding:24px 16px;">
 
-    <!-- ── PAGE 1 ─────────────────────────────────────── -->
-
-    <!-- Yellow header card -->
+    <!-- ── YELLOW HEADER ─────────────────────────────────── -->
     <div style="background:#f5c842; border-radius:12px 12px 0 0; padding:28px 32px;">
       <table style="width:100%; border-collapse:collapse;">
         <tr>
@@ -254,9 +299,10 @@ function buildInvoiceEmail(
             <div style="font-size:12px; font-weight:700; color:#5a4000; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;">
               INVOICE: ${issueDateFmt}
             </div>
-            ${invoice.service_type ? `<div style="font-size:11px; color:#5a4000; margin-bottom:6px; font-style:italic;">${invoice.service_type}</div>` : "<div style=\"margin-bottom:6px;\"></div>"}
+            ${invoice.service_type ? `<div style="font-size:11px; color:#5a4000; margin-bottom:6px; font-style:italic;">${invoice.service_type}</div>` : `<div style="margin-bottom:6px;"></div>`}
             <div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">BILL TO:</div>
-            <div style="font-size:22px; font-weight:800; color:#2d1a00; line-height:1.2; margin-bottom:4px;">${invoice.to_name}</div>
+            ${invoice.account_name ? `<div style="font-size:22px; font-weight:800; color:#2d1a00; line-height:1.2; margin-bottom:2px;">${invoice.account_name}</div>` : ""}
+            <div style="font-weight:800; color:#2d1a00; line-height:1.2; margin-bottom:4px; font-size:${invoice.account_name ? "14px" : "22px"};">${invoice.to_name}</div>
             ${invoice.to_contact ? `<div style="font-size:12px; color:#5a4000;">${invoice.to_contact}</div>` : ""}
             ${invoice.to_email ? `<div style="font-size:12px; color:#5a4000;">${invoice.to_email}</div>` : ""}
             ${invoice.to_phone ? `<div style="font-size:12px; color:#5a4000;">${invoice.to_phone}</div>` : ""}
@@ -265,114 +311,78 @@ function buildInvoiceEmail(
               <div style="font-size:28px; font-weight:800; color:#2d1a00;">${formatCurrency(finalTotal, invoice.currency)}</div>
             </div>
           </td>
-          <!-- Right: sender info -->
+          <!-- Right: sender info (matching app layout) -->
           <td style="vertical-align:top; text-align:right; padding-left:20px;">
-            ${invoice.account_name ? `<div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">Account: ${invoice.account_name}</div>` : ""}
-            ${orgRegisteredName ? `<div style="font-size:15px; font-weight:800; color:#2d1a00; line-height:1.3;">${orgRegisteredName}</div>` : `<div style="font-size:15px; font-weight:700; color:#2d1a00;">${invoice.from_name}</div>`}
+            <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#5a4000; margin-bottom:3px;">INVOICE FROM:</div>
+            <div style="font-size:15px; font-weight:700; color:#2d1a00;">${invoice.from_name}</div>
+            ${orgRegisteredName ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${orgRegisteredName}</div>` : ""}
             ${orgDba ? `<div style="font-size:11px; color:#5a4000; margin-top:1px;">DBA: ${orgDba}</div>` : ""}
-            ${!orgRegisteredName && invoice.from_name ? "" : orgRegisteredName !== invoice.from_name ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_name}</div>` : ""}
             ${invoice.from_phone ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_phone}</div>` : ""}
             ${invoice.from_email ? `<div style="font-size:12px; color:#5a4000; margin-top:2px;">${invoice.from_email}</div>` : ""}
             ${invoice.payment_link ? `
             <div style="margin-top:12px;">
               <div style="font-size:11px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Pay Online</div>
               <a href="${invoice.payment_link}" style="display:inline-block; background:#2d1a00; color:#f5c842; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Click to Pay</a>
+              <div style="font-size:10px; color:#5a4000; margin-top:4px;">*3% processing fee applies</div>
             </div>` : ""}
+            ${invoice.payment_info ? `<div style="margin-top:8px; font-size:11px; color:#5a4000; white-space:pre-line; text-align:right;">${invoice.payment_info}</div>` : ""}
+            <div style="margin-top:12px;">
+              <div style="font-size:11px; font-weight:700; color:#2d1a00;">#${invoice.invoice_number}</div>
+              ${invoice.due_date ? `<div style="font-size:11px; color:#5a4000; margin-top:2px;">Due: ${new Date(invoice.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: timezone })}</div>` : ""}
+            </div>
           </td>
         </tr>
       </table>
     </div>
 
-    <!-- Tab navigation bar (Invoice Summary active) -->
-    <div style="background:#f5f0e8; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:12px 24px 0;">
-      <span style="display:inline-block; background:#f5c842; color:#2d1a00; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1px; padding:6px 16px; border-radius:6px 6px 0 0; margin-right:2px;">Invoice Summary</span><span style="display:inline-block; background:#ddd5c8; color:#6b5e52; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; padding:6px 16px; border-radius:6px 6px 0 0;">Detailed Time Allocation</span>
-    </div>
-
-    <!-- Invoice Summary box -->
-    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 20px;">
-      <!-- Summary stats row -->
-      <table style="width:100%; border-collapse:collapse; table-layout:fixed; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden;">
+    <!-- ── FINANCIAL BREAKDOWN (2 rows) ─────────────────── -->
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 4px;">
+      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52; margin-bottom:10px;">Invoice Financial Breakdown</div>
+      <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden; margin-bottom:12px;">
         <tr style="background:#faf6f0;">
-          ${invoice.rate_amount != null ? `
-          <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word;">
-            <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Rate</div>
-            <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${formatCurrency(invoice.rate_amount!, invoice.currency)}/hr</div>
-          </td>` : ""}
-          <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word;">
-            <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Gross Hours</div>
-            <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${grossHours.toFixed(2)}</div>
-          </td>
-          ${notBilledHours > 0 ? `
-          <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word;">
-            <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${invoice.hours_not_billed_label || "Not Billed"}</div>
-            <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${notBilledHours.toFixed(2)}</div>
-          </td>` : ""}
-          <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word;">
-            <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Hours Billed</div>
-            <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${totalHours.toFixed(2)}</div>
-          </td>
-          <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word;">
-            <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Invoice Amount</div>
-            <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">${formatCurrency(invoiceAmount, invoice.currency)}</div>
-          </td>
-          ${adjustment > 0 ? `
-          <td style="padding:10px 8px; text-align:center; border-right:1px solid #e8e0d4; word-break:break-word;">
-            <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Savings</div>
-            <div style="font-size:14px; font-weight:700; color:#3d2b1f; margin-top:3px;">− ${formatCurrency(adjustment)}</div>
-          </td>` : ""}
-          <td style="padding:10px 8px; text-align:center; word-break:break-word;">
-            <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Final Amount</div>
-            <div style="font-size:14px; font-weight:700; color:#c0704e; margin-top:3px;">${formatCurrency(finalTotal, invoice.currency)}</div>
-          </td>
+          ${hoursRow1Cells}
+        </tr>
+        <tr style="background:#f5f0e8; border-top:1px solid #e8e0d4;">
+          ${moneyRow2Cells}
         </tr>
       </table>
     </div>
 
-    <!-- Task + Project Summary (navy) -->
-    <div style="background:#2d3a4a; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:20px 32px;">
+    <!-- ── TASK SUMMARY ──────────────────────────────────── -->
+    <div style="background:#2d3a4a; border-left:1px solid #1a2535; border-right:1px solid #1a2535; padding:20px 32px;">
+      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Task Summary</div>
       <table style="width:100%; border-collapse:collapse;">
-        <tr>
-          <!-- Task Summary -->
-          <td style="vertical-align:top; width:50%; padding-right:16px; border-right:1px solid #4a5568;">
-            <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Top Task Summary</div>
-            <table style="width:100%; border-collapse:collapse;">
-              ${taskRows}
-            </table>
-          </td>
-          <!-- Project Summary -->
-          <td style="vertical-align:top; padding-left:16px;">
-            <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Top Deliverables / Objectives</div>
-            <table style="width:100%; border-collapse:collapse;">
-              ${projRows}
-            </table>
-          </td>
-        </tr>
+        ${taskRows}
+      </table>
+    </div>
+
+    <!-- ── DELIVERABLES / OBJECTIVES ────────────────────── -->
+    <div style="background:#1e2a38; border-left:1px solid #1a2535; border-right:1px solid #1a2535; padding:20px 32px;">
+      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Deliverables / Objectives</div>
+      <table style="width:100%; border-collapse:collapse;">
+        ${projRows}
       </table>
     </div>
 
     ${invoice.notes ? `
-    <!-- Notes -->
+    <!-- ── NOTES ────────────────────────────────────────── -->
     <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 32px;">
       <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; margin-bottom:6px;">Notes</div>
       <div style="font-size:13px; color:#3d2b1f; white-space:pre-line;">${invoice.notes}</div>
     </div>` : ""}
 
-    <!-- ── SECTION 2: DETAILED TIME ALLOCATION ───────────── -->
-
-    <!-- Tab navigation bar (Detailed Time Allocation active) -->
-    <div style="background:#f5f0e8; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; margin-top:16px; padding:12px 24px 0;">
-      <span style="display:inline-block; background:#ddd5c8; color:#6b5e52; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; padding:6px 16px; border-radius:6px 6px 0 0; margin-right:2px;">Invoice Summary</span><span style="display:inline-block; background:#2d1a00; color:#f5c842; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:1px; padding:6px 16px; border-radius:6px 6px 0 0;">Detailed Time Allocation</span>
+    <!-- ── DETAILED TIME ALLOCATION ──────────────────────── -->
+    <div style="background:#faf6f0; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:14px 24px 8px; margin-top:16px;">
+      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52;">Detailed Time Allocation</div>
     </div>
-
-    <!-- Time Allocation table -->
     <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; border-bottom:1px solid #e8e0d4; border-radius:0 0 12px 12px; overflow:hidden;">
       <table style="width:100%; border-collapse:collapse;">
         <thead>
           <tr style="background:#faf6f0;">
-            <th style="padding:10px 12px; text-align:right; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4; white-space:nowrap;">Time in Minutes</th>
-            <th style="padding:10px 12px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Task Description</th>
-            <th style="padding:10px 12px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Deliverables / Objectives</th>
-            <th style="padding:10px 12px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Memo</th>
+            <th style="padding:8px 10px; text-align:right; font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4; white-space:nowrap;">Mins</th>
+            <th style="padding:8px 10px; font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Task</th>
+            <th style="padding:8px 10px; font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Deliverable</th>
+            <th style="padding:8px 10px; font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Memo</th>
           </tr>
         </thead>
         <tbody>
@@ -381,7 +391,16 @@ function buildInvoiceEmail(
       </table>
     </div>
 
-    <!-- Footer -->
+    ${pdfLink ? `
+    <!-- ── PDF DOWNLOAD ──────────────────────────────────── -->
+    <div style="padding:20px 0 4px; text-align:center;">
+      <a href="${pdfLink}" style="display:inline-block; background:#2d3a4a; color:#ffffff; font-size:13px; font-weight:700; padding:12px 28px; border-radius:8px; text-decoration:none;">
+        Download / View Invoice PDF
+      </a>
+      <div style="font-size:11px; color:#9e9080; margin-top:8px;">Opens a printable version in your browser</div>
+    </div>` : ""}
+
+    <!-- ── FOOTER ────────────────────────────────────────── -->
     <div style="padding:16px 0; text-align:center;">
       <div style="font-size:11px; color:#9e9080;">Sent by ${invoice.from_name} · MinuteFlow</div>
     </div>
