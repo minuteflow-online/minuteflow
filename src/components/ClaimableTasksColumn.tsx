@@ -14,6 +14,7 @@ interface ClaimableTask {
   quantity: number;
   claimed_slots: number;
   remaining_slots: number;
+  already_claimed_by_me: boolean;
   task_library: { id: number; task_name: string; billing_type: string; default_rate: number | null } | null;
   project_tags: { id: number; account: string; project_name: string } | null;
 }
@@ -126,6 +127,7 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
             const remaining = t.remaining_slots;
             const isMultiSlot = t.quantity > 1;
             const selectedQty = claimQty[t.id] ?? 1;
+            const alreadyClaimed = t.already_claimed_by_me;
 
             return (
               <div
@@ -202,37 +204,49 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
                       </div>
                     )}
 
-                    <button
-                      onClick={() => handleClaim(t.id, remaining)}
-                      disabled={isClaiming}
-                      className="w-full px-3 py-2 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
-                    >
-                      {isClaiming
-                        ? "Claiming..."
-                        : isMultiSlot && selectedQty > 1
-                        ? `Claim ${selectedQty} Slots`
-                        : "Claim This Task"}
-                    </button>
+                    {alreadyClaimed ? (
+                      <div className="w-full px-3 py-2 rounded-lg bg-stone/10 text-stone text-[11px] font-semibold text-center">
+                        ✓ Already claimed by you
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleClaim(t.id, remaining)}
+                        disabled={isClaiming}
+                        className="w-full px-3 py-2 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
+                      >
+                        {isClaiming
+                          ? "Claiming..."
+                          : isMultiSlot && selectedQty > 1
+                          ? `Claim ${selectedQty} Slots`
+                          : "Claim This Task"}
+                      </button>
+                    )}
                   </div>
                 )}
 
                 {/* Collapsed: expand to pick qty if multi-slot, else claim directly */}
                 {!isExpanded && (
                   <div className="px-2.5 pb-2 bg-parchment/20">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (isMultiSlot) {
-                          setExpandedId(t.id);
-                        } else {
-                          handleClaim(t.id, remaining);
-                        }
-                      }}
-                      disabled={isClaiming}
-                      className="w-full px-3 py-1.5 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
-                    >
-                      {isClaiming ? "Claiming..." : isMultiSlot ? "See Details to Claim" : "Claim This Task"}
-                    </button>
+                    {alreadyClaimed ? (
+                      <div className="w-full px-3 py-1.5 rounded-lg bg-stone/10 text-stone text-[11px] font-semibold text-center">
+                        ✓ Already claimed by you
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isMultiSlot) {
+                            setExpandedId(t.id);
+                          } else {
+                            handleClaim(t.id, remaining);
+                          }
+                        }}
+                        disabled={isClaiming}
+                        className="w-full px-3 py-1.5 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
+                      >
+                        {isClaiming ? "Claiming..." : isMultiSlot ? "See Details to Claim" : "Claim This Task"}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

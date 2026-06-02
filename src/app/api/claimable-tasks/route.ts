@@ -74,7 +74,7 @@ export async function GET() {
         already_claimed_by_me: claimed.byMe,
       };
     })
-    .filter((p: any) => p.remaining_slots > 0 && !p.already_claimed_by_me);
+    .filter((p: any) => p.remaining_slots > 0);
 
   return Response.json({ claimable });
 }

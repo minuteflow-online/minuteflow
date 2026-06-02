@@ -76,7 +76,7 @@ function linkify(text: string) {
 
 /* ── Main Component ────────────────────────────────────── */
 
-export default function VaAssignmentsColumn({ userId }: { userId: string }) {
+export default function VaAssignmentsColumn({ userId, onGaveBack }: { userId: string; onGaveBack?: () => void }) {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -186,6 +186,7 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
         return;
       }
       fetchAssignments();
+      onGaveBack?.();
     } catch {
       alert("Failed to unclaim — network error. Please try again.");
     } finally {
