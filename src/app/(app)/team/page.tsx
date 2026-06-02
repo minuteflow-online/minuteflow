@@ -89,12 +89,6 @@ export default function TeamPage() {
   // Mood data: { [userId]: { [session_date_YYYY-MM-DD]: mood } }
   const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
 
-  // Invite VA modal
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteSending, setInviteSending] = useState(false);
-  const [inviteResult, setInviteResult] = useState<{ success?: boolean; message?: string; error?: string } | null>(null);
-
   // Check role on mount and redirect VAs
   useEffect(() => {
     async function checkRole() {
@@ -390,29 +384,6 @@ export default function TeamPage() {
     setSelectedMembers(new Set());
   }, []);
 
-  const handleInvite = useCallback(async () => {
-    if (!inviteEmail.trim()) return;
-    setInviteSending(true);
-    setInviteResult(null);
-    try {
-      const res = await fetch("/api/invitations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: inviteEmail.trim() }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setInviteResult({ success: true, message: data.message || `Invite sent to ${inviteEmail}` });
-        setInviteEmail("");
-      } else {
-        setInviteResult({ error: data.error || "Failed to send invite." });
-      }
-    } catch {
-      setInviteResult({ error: "Unable to connect. Please try again." });
-    }
-    setInviteSending(false);
-  }, [inviteEmail]);
-
   const activeCount = members.filter((m) => m.status === "working").length;
   const totalTasks = members.reduce((sum, m) => sum + m.todayTaskCount, 0);
   const totalHoursMs = members.reduce((sum, m) => sum + m.todayHoursMs, 0);
@@ -475,84 +446,7 @@ export default function TeamPage() {
             )}
           </p>
         </div>
-        {isAdmin && (
-          <button
-            onClick={() => { setInviteOpen(true); setInviteResult(null); setInviteEmail(""); }}
-            className="shrink-0 rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-terracotta/90 cursor-pointer"
-          >
-            + Invite VA
-          </button>
-        )}
       </div>
-
-      {/* Invite VA Modal */}
-      {inviteOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-xl border border-sand bg-white p-6 shadow-xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="font-serif text-lg font-bold text-espresso">Invite VA</h2>
-              <button
-                onClick={() => setInviteOpen(false)}
-                className="rounded-lg px-2 py-1 text-[13px] text-bark hover:text-espresso cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {inviteResult?.success ? (
-              <div className="text-center py-4">
-                <div className="text-4xl mb-3">✅</div>
-                <p className="text-sm font-semibold text-sage">{inviteResult.message}</p>
-                <p className="mt-2 text-[12px] text-bark">The invite link expires in 72 hours.</p>
-                <button
-                  onClick={() => { setInviteResult(null); setInviteEmail(""); }}
-                  className="mt-4 w-full rounded-lg bg-parchment border border-sand px-4 py-2 text-[13px] font-semibold text-walnut hover:bg-sand cursor-pointer"
-                >
-                  Invite Another
-                </button>
-              </div>
-            ) : (
-              <>
-                <p className="mb-4 text-[13px] text-bark">
-                  Enter the VA&apos;s email address. They&apos;ll receive a link to create their account. The link expires in 72 hours.
-                </p>
-
-                {inviteResult?.error && (
-                  <div className="mb-3 rounded-md bg-terracotta-soft px-3 py-2 text-sm text-terracotta">
-                    {inviteResult.error}
-                  </div>
-                )}
-
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && !inviteSending && handleInvite()}
-                  placeholder="va@example.com"
-                  className="mb-4 w-full rounded-lg border border-sand bg-cream/50 px-3 py-2.5 text-sm text-ink placeholder:text-stone focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta"
-                  autoFocus
-                />
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setInviteOpen(false)}
-                    className="flex-1 rounded-lg border border-sand bg-parchment px-4 py-2 text-[13px] font-semibold text-walnut hover:bg-sand cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleInvite}
-                    disabled={inviteSending || !inviteEmail.trim()}
-                    className="flex-1 rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white hover:bg-terracotta/90 disabled:opacity-50 cursor-pointer transition-colors"
-                  >
-                    {inviteSending ? "Sending…" : "Send Invite"}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Date Range Controls */}
       <div className="mb-6 flex flex-wrap items-center gap-2">
