@@ -113,11 +113,16 @@ export default function DashboardPage() {
   const [closeOldRating, setCloseOldRating] = useState<number | null>(null);
   const [closeOldRatingNote, setCloseOldRatingNote] = useState("");
   const [showCloseOldMemoGuide, setShowCloseOldMemoGuide] = useState(false);
+  const [showCloseOldRatingGuide, setShowCloseOldRatingGuide] = useState(false);
 
   // Rating state for clock-out modal
   const [clockOutRating, setClockOutRating] = useState<number | null>(null);
   const [clockOutRatingNote, setClockOutRatingNote] = useState("");
   const [showClockOutMemoGuide, setShowClockOutMemoGuide] = useState(false);
+  const [showClockOutRatingGuide, setShowClockOutRatingGuide] = useState(false);
+
+  // Held task (auto-held when a quick-message action is used)
+  const [heldTask, setHeldTask] = useState<ActiveTask | null>(null);
 
   // Close-task-before-clockout modal state
   const [showClockOutModal, setShowClockOutModal] = useState(false);
@@ -871,7 +876,7 @@ export default function DashboardPage() {
     setSessionActionPending(false);
   }, [userId, profile, supabase, sessionActionPending, notifyVA]);
 
-  const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null) => {
+  const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null, dayRating?: number | null, dayRatingNote?: string) => {
     if (!userId) return;
     const now = new Date().toISOString();
 
@@ -926,6 +931,12 @@ export default function DashboardPage() {
     };
     if (mood) {
       upsertPayload.mood = mood;
+    }
+    if (dayRating) {
+      upsertPayload.day_rating = dayRating;
+    }
+    if (dayRatingNote?.trim()) {
+      upsertPayload.day_rating_note = dayRatingNote.trim();
     }
 
     const { error } = await supabase.from("sessions").upsert(
@@ -1116,13 +1127,6 @@ export default function DashboardPage() {
         if (clockOutInternalMemo.trim()) {
           updatePayload.internal_memo = clockOutInternalMemo.trim();
         }
-        if (clockOutRating) {
-          updatePayload.task_rating = clockOutRating;
-        }
-        if (clockOutRatingNote.trim()) {
-          updatePayload.task_rating_note = clockOutRatingNote.trim();
-        }
-
         await supabase.from("time_logs").update(updatePayload).eq("id", logId);
 
         setTimeLogs((prev) =>
@@ -1134,8 +1138,10 @@ export default function DashboardPage() {
         );
       }
 
-      // Capture mood before resetting
+      // Capture mood and day rating before resetting
       const savedMood = clockOutMood;
+      const savedDayRating = clockOutRating;
+      const savedDayRatingNote = clockOutRatingNote;
 
       // Reset modal state
       setShowClockOutModal(false);
@@ -1149,13 +1155,15 @@ export default function DashboardPage() {
       setClockOutRating(null);
       setClockOutRatingNote("");
       setShowClockOutMemoGuide(false);
+      setShowClockOutRatingGuide(false);
+      setHeldTask(null);
 
       // Clear active task locally before clocking out
       setActiveTask(null);
       setTaskElapsed(0);
 
-      // Now clock out with mood
-      await performClockOut(savedMood);
+      // Now clock out with mood and day rating
+      await performClockOut(savedMood, savedDayRating, savedDayRatingNote);
     } catch (err) {
       console.error("Error closing task before clock out:", err);
       setClockingOut(false);
@@ -1171,6 +1179,9 @@ export default function DashboardPage() {
     setShowClockOutInternalMemo(false);
     setClockingOut(false);
     setClockOutMood(null);
+    setClockOutRating(null);
+    setClockOutRatingNote("");
+    setShowClockOutRatingGuide(false);
   }, []);
 
   // Track if we're triggering the wizard for a break (vs switching tasks)
@@ -2448,6 +2459,7 @@ export default function DashboardPage() {
               : log
           )
         );
+        setHeldTask(activeTask);
         setActiveTask(null);
         setTaskElapsed(0);
       }
@@ -2464,6 +2476,37 @@ export default function DashboardPage() {
     },
     [activeTask, supabase, startTask]
   );
+
+  const resumeHeldTask = useCallback(async () => {
+    if (!heldTask) return;
+    // End the current message task immediately (no wizard)
+    if (activeTask?.logId) {
+      const now = new Date().toISOString();
+      const logId = parseInt(activeTask.logId, 10);
+      const startMs = activeTask.start_time ? new Date(activeTask.start_time).getTime() : Date.now();
+      const durationMs = Math.max(0, Date.now() - startMs);
+      await supabase.from("time_logs").update({ end_time: now, duration_ms: durationMs }).eq("id", logId);
+      setTimeLogs((prev) =>
+        prev.map((log) =>
+          log.id === logId ? { ...log, end_time: now, duration_ms: durationMs } : log
+        )
+      );
+    }
+    setActiveTask(null);
+    setTaskElapsed(0);
+    const taskToResume = heldTask;
+    setHeldTask(null);
+    // Start a fresh log for the resumed task
+    await startTask({
+      task_name: taskToResume.task_name,
+      category: taskToResume.category,
+      account: taskToResume.account || "",
+      project: taskToResume.project || "",
+      client_name: taskToResume.client_name || "",
+      client_memo: "",
+      internal_memo: "",
+    });
+  }, [heldTask, activeTask, supabase, startTask]);
 
   const handleSidebarMemoSave = useCallback(async () => {
     if (!activeTask?.logId) return;
@@ -2744,6 +2787,22 @@ export default function DashboardPage() {
         />
       )}
 
+      {/* Held Task Resume Banner */}
+      {heldTask && sessionState === "clocked-in" && (
+        <div className="flex items-center gap-3 px-4 py-2.5 mb-4 bg-amber/10 border border-amber/30 rounded-xl text-[12px] text-espresso">
+          <span className="text-amber text-base">⏸</span>
+          <span className="text-stone">On hold:</span>
+          <span className="font-semibold flex-1 truncate">{heldTask.task_name}</span>
+          <button
+            onClick={resumeHeldTask}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold cursor-pointer hover:bg-sage/80 transition-all shrink-0"
+          >
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21" /></svg>
+            Resume
+          </button>
+        </div>
+      )}
+
       {/* Layout: Team (left) + Task Form (center) + Daily Planner + Projects/Assignments (right) */}
       {(() => {
         // ─── VA Visibility Rules ───────────────────────────────────
@@ -3010,9 +3069,27 @@ export default function DashboardPage() {
 
               {/* Task Rating (optional) */}
               <div className="mb-3">
-                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
-                  Task Rating <span className="text-stone font-normal">(optional)</span>
-                </p>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <p className="text-[11px] font-semibold text-walnut tracking-wide">
+                    Task Rating <span className="text-stone font-normal">(optional)</span>
+                  </p>
+                  <button
+                    onClick={() => setShowCloseOldRatingGuide(!showCloseOldRatingGuide)}
+                    className="w-4 h-4 rounded-full border border-bark text-bark text-[9px] font-bold leading-none flex items-center justify-center hover:bg-parchment cursor-pointer shrink-0"
+                    title="What feedback are we looking for?"
+                  >?</button>
+                </div>
+                {showCloseOldRatingGuide && (
+                  <div className="mb-2 bg-parchment border border-sand rounded-lg p-3 text-[11px] text-bark">
+                    <p className="font-semibold text-espresso mb-1.5">What feedback helps us improve:</p>
+                    <ul className="space-y-1">
+                      <li>• What&apos;s working well with this task</li>
+                      <li>• What&apos;s not working or where the challenge is</li>
+                      <li>• How it can be fixed or improved</li>
+                      <li>• Area: <span className="text-walnut font-medium">instruction, communication, technical,</span> or <span className="text-walnut font-medium">resources</span></li>
+                    </ul>
+                  </div>
+                )}
                 <div className="flex gap-1.5 mb-2">
                   {[1, 2, 3, 4, 5].map((star) => (
                     <button
@@ -3298,11 +3375,29 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Task Rating (optional) */}
+              {/* Day Rating (optional) */}
               <div className="mb-3">
-                <p className="text-[11px] font-semibold text-walnut mb-2 tracking-wide">
-                  Task Rating <span className="text-stone font-normal">(optional)</span>
-                </p>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <p className="text-[11px] font-semibold text-walnut tracking-wide">
+                    Day Rating <span className="text-stone font-normal">(optional)</span>
+                  </p>
+                  <button
+                    onClick={() => setShowClockOutRatingGuide(!showClockOutRatingGuide)}
+                    className="w-4 h-4 rounded-full border border-bark text-bark text-[9px] font-bold leading-none flex items-center justify-center hover:bg-parchment cursor-pointer shrink-0"
+                    title="What feedback are we looking for?"
+                  >?</button>
+                </div>
+                {showClockOutRatingGuide && (
+                  <div className="mb-2 bg-parchment border border-sand rounded-lg p-3 text-[11px] text-bark">
+                    <p className="font-semibold text-espresso mb-1.5">How was your overall day?</p>
+                    <ul className="space-y-1">
+                      <li>• What went well today</li>
+                      <li>• What was challenging or frustrating</li>
+                      <li>• What would have made today better</li>
+                      <li>• Area: <span className="text-walnut font-medium">instruction, communication, technical,</span> or <span className="text-walnut font-medium">resources</span></li>
+                    </ul>
+                  </div>
+                )}
                 <div className="flex gap-1.5 mb-2">
                   {[1, 2, 3, 4, 5].map((star) => (
                     <button
@@ -3323,7 +3418,7 @@ export default function DashboardPage() {
                     <textarea
                       value={clockOutRatingNote}
                       onChange={(e) => setClockOutRatingNote(e.target.value)}
-                      placeholder="Explain your rating (at least 5 words)..."
+                      placeholder="Explain your day rating (at least 5 words)..."
                       rows={2}
                       className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-amber focus:shadow-[0_0_0_3px_rgba(212,192,122,0.12)] placeholder:text-stone resize-none"
                     />
