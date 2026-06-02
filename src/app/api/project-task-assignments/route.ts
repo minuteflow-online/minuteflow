@@ -24,7 +24,7 @@ export async function GET(request: Request) {
 
   const { data, error } = await supabase
     .from("project_task_assignments")
-    .select("id, task_library_id, project_tag_id, sort_order, billing_type, task_rate, task_library(id, task_name, is_active, billing_type, default_rate)")
+    .select("id, task_library_id, custom_task_name, project_tag_id, sort_order, billing_type, task_rate, task_library(id, task_name, is_active, billing_type, default_rate)")
     .eq("project_tag_id", parseInt(projectTagId))
     .order("sort_order");
 
@@ -55,11 +55,40 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { project_tag_id, task_library_ids } = body;
+  const { project_tag_id, task_library_ids, custom_task_name, billing_type: custom_billing, task_rate: custom_rate } = body;
+
+  // Custom task (no task library) — single insert
+  if (project_tag_id && custom_task_name) {
+    const { data: existing } = await supabase
+      .from("project_task_assignments")
+      .select("sort_order")
+      .eq("project_tag_id", project_tag_id)
+      .order("sort_order", { ascending: false })
+      .limit(1);
+    const nextOrder = (existing?.[0]?.sort_order ?? -1) + 1;
+
+    const { data, error } = await supabase
+      .from("project_task_assignments")
+      .insert({
+        task_library_id: null,
+        custom_task_name: custom_task_name.trim(),
+        project_tag_id,
+        sort_order: nextOrder,
+        assigned_by: user.id,
+        billing_type: custom_billing ?? "fixed",
+        task_rate: custom_rate ?? null,
+      })
+      .select("id, task_library_id, custom_task_name, project_tag_id, sort_order, billing_type, task_rate");
+
+    if (error) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    return Response.json({ assignments: data }, { status: 201 });
+  }
 
   if (!project_tag_id || !Array.isArray(task_library_ids) || task_library_ids.length === 0) {
     return Response.json(
-      { error: "project_tag_id and task_library_ids[] are required" },
+      { error: "project_tag_id with either custom_task_name or task_library_ids[] is required" },
       { status: 400 }
     );
   }
@@ -146,15 +175,17 @@ export async function PATCH(request: Request) {
     return Response.json({ success: true, updated: ids.length });
   }
 
-  // Update billing_type, task_rate, instructions, show_in_assignment, and/or quantity on a single assignment
-  const { id, billing_type, task_rate, instructions, show_in_assignment, quantity } = body;
-  if (id && (billing_type !== undefined || task_rate !== undefined || instructions !== undefined || show_in_assignment !== undefined || quantity !== undefined)) {
+  // Update billing_type, task_rate, instructions, show_in_assignment, quantity, project_tag_id, custom_task_name on a single assignment
+  const { id, billing_type, task_rate, instructions, show_in_assignment, quantity, project_tag_id: new_project_tag_id, custom_task_name } = body;
+  if (id && (billing_type !== undefined || task_rate !== undefined || instructions !== undefined || show_in_assignment !== undefined || quantity !== undefined || new_project_tag_id !== undefined || custom_task_name !== undefined)) {
     const updates: Record<string, unknown> = {};
     if (billing_type !== undefined) updates.billing_type = billing_type;
     if (task_rate !== undefined) updates.task_rate = task_rate;
     if (instructions !== undefined) updates.instructions = instructions;
     if (show_in_assignment !== undefined) updates.show_in_assignment = show_in_assignment;
     if (quantity !== undefined) updates.quantity = quantity === null ? null : Math.max(1, Math.floor(Number(quantity) || 1));
+    if (new_project_tag_id !== undefined) updates.project_tag_id = new_project_tag_id;
+    if (custom_task_name !== undefined) updates.custom_task_name = custom_task_name || null;
 
     const { error } = await supabase
       .from("project_task_assignments")

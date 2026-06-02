@@ -19,7 +19,7 @@ export async function GET() {
   const { data: allPTAs, error: ptaError } = await supabase
     .from("project_task_assignments")
     .select(
-      "id, task_library_id, project_tag_id, billing_type, task_rate, instructions, quantity, task_library(id, task_name, is_active, billing_type, default_rate), project_tags(id, account, project_name, is_active)"
+      "id, task_library_id, custom_task_name, project_tag_id, billing_type, task_rate, instructions, quantity, task_library(id, task_name, is_active, billing_type, default_rate), project_tags(id, account, project_name, is_active)"
     )
     .order("id");
 

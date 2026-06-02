@@ -6,7 +6,8 @@ import { useState, useEffect, useCallback } from "react";
 
 interface ClaimableTask {
   id: number;
-  task_library_id: number;
+  task_library_id: number | null;
+  custom_task_name?: string | null;
   project_tag_id: number;
   billing_type: string | null;
   task_rate: number | null;
@@ -105,7 +106,7 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
       ) : (
         <div className="space-y-1.5">
           {tasks.map((t) => {
-            const taskName = t.task_library?.task_name ?? "Unknown Task";
+            const taskName = t.custom_task_name ?? t.task_library?.task_name ?? "Unknown Task";
             const account = t.project_tags?.account ?? "";
             const project = t.project_tags?.project_name ?? "";
             const rate = t.task_rate ?? t.task_library?.default_rate ?? null;
