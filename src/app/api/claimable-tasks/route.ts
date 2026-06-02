@@ -46,35 +46,17 @@ export async function GET() {
     .in("project_task_assignment_id", ptaIds)
     .eq("assignment_type", "include");
 
-  // Build a map: PTA ID → { total_claimed, already_claimed_by_me }
-  const claimedMap = new Map<number, { total: number; byMe: boolean }>();
+  // Build a set of PTA IDs already claimed by this VA
+  const claimedByMe = new Set<number>();
   for (const v of (existingVTAs ?? [])) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const qty = (v as any).quantity_claimed ?? 1;
-    const ptaId = v.project_task_assignment_id;
-    const existing = claimedMap.get(ptaId) ?? { total: 0, byMe: false };
-    claimedMap.set(ptaId, {
-      total: existing.total + qty,
-      byMe: existing.byMe || v.va_id === user.id,
-    });
+    if (v.va_id === user.id) {
+      claimedByMe.add(v.project_task_assignment_id);
+    }
   }
 
-  // Build claimable list: tasks with remaining slots that this VA hasn't already claimed
+  // Build claimable list: tasks NOT already claimed by this VA
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const claimable = fixedPTAs
-    .map((p: any) => {
-      const claimed = claimedMap.get(p.id) ?? { total: 0, byMe: false };
-      const totalQty = p.quantity ?? 1;
-      const remaining = totalQty - claimed.total;
-      return {
-        ...p,
-        quantity: totalQty,
-        claimed_slots: claimed.total,
-        remaining_slots: remaining,
-        already_claimed_by_me: claimed.byMe,
-      };
-    })
-    .filter((p: any) => p.remaining_slots > 0);
+  const claimable = fixedPTAs.filter((p: any) => !claimedByMe.has(p.id));
 
   return Response.json({ claimable });
 }

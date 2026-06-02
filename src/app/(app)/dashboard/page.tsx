@@ -73,7 +73,6 @@ export default function DashboardPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>("idle");
   const [claimRefreshKey, setClaimRefreshKey] = useState(0);
-  const [claimableRefreshKey, setClaimableRefreshKey] = useState(0);
   const [sessionElapsed, setSessionElapsed] = useState(0);
   const [breakElapsed, setBreakElapsed] = useState(0);
   const [breakStartTime, setBreakStartTime] = useState<string | null>(null);
@@ -2847,7 +2846,7 @@ export default function DashboardPage() {
             )}
             {/* VA Assignments — visible BEFORE clock-in, based on position rules */}
             {isVa && userId && sessionState === "idle" && canSeeAssignments && (
-              <VaAssignmentsColumn userId={userId} key={`va-assign-${claimRefreshKey}`} onGaveBack={() => setClaimableRefreshKey((k) => k + 1)} />
+              <VaAssignmentsColumn userId={userId} key={`va-assign-${claimRefreshKey}`} />
             )}
             {/* Locked panel for VAs who can't see assignments */}
             {isVa && userId && sessionState === "idle" && !canSeeAssignments && (
@@ -2862,7 +2861,7 @@ export default function DashboardPage() {
             )}
             {/* Available Tasks to Claim — only if admin toggled on for this VA */}
             {isVa && sessionState === "idle" && canSeeAvailable && (
-              <ClaimableTasksColumn key={`claimable-${claimableRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
+              <ClaimableTasksColumn onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
             )}
             {/* Locked panel for VAs who can't see available tasks */}
             {isVa && sessionState === "idle" && !canSeeAvailable && (
