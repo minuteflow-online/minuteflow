@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 /* ── Types ─────────────────────────────────────────────── */
 
 type BillingType = "hourly" | "fixed";
-type AssignmentStatus = "not_started" | "in_progress" | "submitted" | "reviewing" | "revision_needed" | "approved" | "completed" | "unassigned";
+type AssignmentStatus = "not_started" | "in_progress" | "submitted" | "reviewing" | "revision_needed" | "approved" | "completed" | "paid" | "unassigned";
 type MessageType = "instruction" | "submission" | "revision" | "approval" | "comment";
 
 interface Submission {
@@ -30,7 +30,8 @@ interface VaTaskAssignmentRow {
   profiles: { id: string; full_name: string; username: string; position: string | null } | null;
   project_task_assignments: {
     id: number;
-    task_library_id: number;
+    task_library_id: number | null;
+    custom_task_name?: string | null;
     project_tag_id: number;
     billing_type: BillingType | null;
     task_rate: number | null;
@@ -72,6 +73,7 @@ const STATUS_LABELS: Record<AssignmentStatus, string> = {
   revision_needed: "Revision Needed",
   approved: "Approved",
   completed: "Completed",
+  paid: "Paid",
 };
 
 const STATUS_COLORS: Record<AssignmentStatus, string> = {
@@ -83,6 +85,7 @@ const STATUS_COLORS: Record<AssignmentStatus, string> = {
   revision_needed: "bg-amber-100 text-amber-700",
   approved: "bg-emerald-100 text-emerald-700",
   completed: "bg-green-100 text-green-800",
+  paid: "bg-purple-100 text-purple-700",
 };
 
 /* ── Main Component ────────────────────────────────────── */
@@ -128,6 +131,21 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
   /* ── Reassign VA state (for assigned rows) ── */
   const [reassigningVa, setReassigningVa] = useState<Record<number, string>>({});
   const [savingReassign, setSavingReassign] = useState<number | null>(null);
+
+  /* ── Edit account/project (project_tag_id on PTA) ── */
+  const [editingProject, setEditingProject] = useState<Record<number, string>>({});
+  const [savingProject, setSavingProject] = useState<number | null>(null);
+
+  /* ── Edit status (on va_task_assignment) ── */
+  const [editingStatus, setEditingStatus] = useState<Record<number, AssignmentStatus>>({});
+  const [savingStatus, setSavingStatus] = useState<number | null>(null);
+
+  /* ── Remove task ── */
+  const [removingId, setRemovingId] = useState<number | null>(null);
+
+  /* ── Custom task form toggle ── */
+  const [addTaskMode, setAddTaskMode] = useState<"library" | "custom">("library");
+  const [addCustomTaskName, setAddCustomTaskName] = useState<string>("");
 
   /* ── Fetch assignments (fixed + project-based only) ── */
   const fetchAssignments = useCallback(async () => {
@@ -194,52 +212,83 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
     }
   }, []);
 
+  // Pre-load projects so inline "edit account/project" dropdown is ready
+  useEffect(() => {
+    fetchAddOptions();
+  }, [fetchAddOptions]);
+
   /* ── Handle Add Task ── */
   const handleAddTask = async () => {
-    if (!addTaskId || !addProjectId) {
+    const isCustom = addTaskMode === "custom";
+    if (isCustom && (!addCustomTaskName.trim() || !addProjectId)) {
+      alert("Please enter a task name and select a project.");
+      return;
+    }
+    if (!isCustom && (!addTaskId || !addProjectId)) {
       alert("Please select a task and a project.");
       return;
     }
     setAddingTask(true);
     try {
-      // Step 1: Ensure the task is assigned to the project (project_task_assignment)
-      // First check if it already exists
-      const ptaCheckRes = await fetch(`/api/project-task-assignments?project_tag_id=${addProjectId}`);
-      const ptaCheckData = await ptaCheckRes.json();
-      const existingPTAs = ptaCheckData.assignments ?? [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let pta = existingPTAs.find((p: any) => p.task_library_id === parseInt(addTaskId));
+      let pta: { id: number } | undefined;
 
-      if (!pta) {
-        // Create the project-task assignment
+      if (isCustom) {
+        // Create a custom-named PTA
         const ptaRes = await fetch("/api/project-task-assignments", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             project_tag_id: parseInt(addProjectId),
-            task_library_ids: [parseInt(addTaskId)],
+            custom_task_name: addCustomTaskName.trim(),
+            billing_type: addBillingType,
+            task_rate: addRate ? parseFloat(addRate) : null,
           }),
         });
         const ptaData = await ptaRes.json();
         pta = ptaData.assignments?.[0];
+      } else {
+        // Step 1: Ensure the task is assigned to the project (project_task_assignment)
+        const ptaCheckRes = await fetch(`/api/project-task-assignments?project_tag_id=${addProjectId}`);
+        const ptaCheckData = await ptaCheckRes.json();
+        const existingPTAs = ptaCheckData.assignments ?? [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pta = existingPTAs.find((p: any) => p.task_library_id === parseInt(addTaskId));
+
+        if (!pta) {
+          const ptaRes = await fetch("/api/project-task-assignments", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              project_tag_id: parseInt(addProjectId),
+              task_library_ids: [parseInt(addTaskId)],
+            }),
+          });
+          const ptaData = await ptaRes.json();
+          pta = ptaData.assignments?.[0];
+        }
+
+        if (!pta) {
+          alert("Failed to create task-project link.");
+          return;
+        }
+
+        // Update PTA billing type, rate, and instructions
+        await fetch("/api/project-task-assignments", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: pta.id,
+            billing_type: addBillingType,
+            task_rate: addRate ? parseFloat(addRate) : null,
+            instructions: addInstructions.trim() || null,
+          }),
+        });
       }
 
       if (!pta) {
-        alert("Failed to create task-project link.");
+        alert("Failed to create task entry.");
         return;
       }
-
-      // Update PTA billing type, rate, and instructions
-      await fetch("/api/project-task-assignments", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: pta.id,
-          billing_type: addBillingType,
-          task_rate: addRate ? parseFloat(addRate) : null,
-          instructions: addInstructions.trim() || null,
-        }),
-      });
 
       // Step 2: If a VA is selected, create the VA assignment
       if (addVaId) {
@@ -268,7 +317,6 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
           });
         }
       }
-      // If no VA selected, task stays as a claimable PTA (up for grabs) with instructions on PTA
 
       // Reset form
       setShowAddForm(false);
@@ -278,6 +326,8 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
       setAddRate("");
       setAddVaId("");
       setAddInstructions("");
+      setAddCustomTaskName("");
+      setAddTaskMode("library");
       fetchAssignments();
     } catch (err) {
       console.error("Failed to add task:", err);
@@ -502,6 +552,74 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
     }
   };
 
+  /* ── Save account/project (project_tag_id on PTA) ── */
+  const handleSaveProject = async (a: VaTaskAssignmentRow) => {
+    const newPtaId = editingProject[a.id];
+    const ptaId = a.project_task_assignments?.id;
+    if (!newPtaId || !ptaId) return;
+    setSavingProject(a.id);
+    try {
+      await fetch("/api/project-task-assignments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: ptaId, project_tag_id: parseInt(newPtaId) }),
+      });
+      setEditingProject((prev) => { const c = { ...prev }; delete c[a.id]; return c; });
+      fetchAssignments();
+    } catch {
+      console.error("Failed to update project");
+    } finally {
+      setSavingProject(null);
+    }
+  };
+
+  /* ── Save status change ── */
+  const handleSaveStatus = async (a: VaTaskAssignmentRow) => {
+    const newStatus = editingStatus[a.id];
+    if (!newStatus || a._isUnassigned) return;
+    setSavingStatus(a.id);
+    try {
+      await fetch("/api/va-task-assignments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: a.id, status: newStatus }),
+      });
+      setEditingStatus((prev) => { const c = { ...prev }; delete c[a.id]; return c; });
+      fetchAssignments();
+    } catch {
+      console.error("Failed to update status");
+    } finally {
+      setSavingStatus(null);
+    }
+  };
+
+  /* ── Remove task from fixed section ── */
+  const handleRemoveTask = async (a: VaTaskAssignmentRow) => {
+    const vaName = a.profiles?.full_name ?? "this VA";
+    const msg = a._isUnassigned
+      ? "Remove this task from the fixed section? It will no longer appear as available to claim."
+      : `Remove this task from ${vaName}'s assignment? This will delete the VA assignment and the task entry.`;
+    if (!confirm(msg)) return;
+
+    setRemovingId(a.id);
+    const ptaId = a.project_task_assignments?.id;
+    try {
+      // Delete VA assignment first (if assigned)
+      if (!a._isUnassigned) {
+        await fetch(`/api/va-task-assignments?id=${a.id}`, { method: "DELETE" });
+      }
+      // Delete the PTA
+      if (ptaId) {
+        await fetch(`/api/project-task-assignments?id=${ptaId}`, { method: "DELETE" });
+      }
+      fetchAssignments();
+    } catch {
+      console.error("Failed to remove task");
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
   /* ── Bulk toggle show_in_assignment ── */
   const handleBulkToggle = async (show: boolean) => {
     // Collect the PTA IDs for all selected rows
@@ -584,8 +702,8 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
-              if (!showAddForm) fetchAddOptions();
               setShowAddForm(!showAddForm);
+              if (showAddForm) { setAddTaskMode("library"); setAddCustomTaskName(""); }
             }}
             className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-[#5a7a5e] cursor-pointer transition-colors"
           >
@@ -637,20 +755,48 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
             <p className="text-stone text-[11px]">Loading options...</p>
           ) : (
             <>
+              {/* Task mode toggle */}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAddTaskMode("library")}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${addTaskMode === "library" ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"}`}
+                >
+                  Pick from Library
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddTaskMode("custom")}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${addTaskMode === "custom" ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"}`}
+                >
+                  Custom Title
+                </button>
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 {/* Task */}
                 <div>
                   <label className="text-[10px] text-stone font-semibold block mb-0.5">Task</label>
-                  <select
-                    value={addTaskId}
-                    onChange={(e) => setAddTaskId(e.target.value)}
-                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
-                  >
-                    <option value="">Select task...</option>
-                    {taskLibrary.map((t) => (
-                      <option key={t.id} value={t.id}>{t.task_name}</option>
-                    ))}
-                  </select>
+                  {addTaskMode === "custom" ? (
+                    <input
+                      type="text"
+                      value={addCustomTaskName}
+                      onChange={(e) => setAddCustomTaskName(e.target.value)}
+                      placeholder="Enter custom task name..."
+                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                    />
+                  ) : (
+                    <select
+                      value={addTaskId}
+                      onChange={(e) => setAddTaskId(e.target.value)}
+                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                    >
+                      <option value="">Select task...</option>
+                      {taskLibrary.map((t) => (
+                        <option key={t.id} value={t.id}>{t.task_name}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 {/* Project */}
                 <div>
@@ -732,7 +878,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
               {/* Submit */}
               <button
                 onClick={handleAddTask}
-                disabled={addingTask || !addTaskId || !addProjectId}
+                disabled={addingTask || !addProjectId || (addTaskMode === "library" ? !addTaskId : !addCustomTaskName.trim())}
                 className="px-4 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
               >
                 {addingTask ? "Adding..." : "Add to Task List"}
@@ -801,7 +947,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
           {/* Rows */}
           {filtered.map((a) => {
             const pta = a.project_task_assignments;
-            const taskName = pta?.task_library?.task_name ?? "Unknown Task";
+            const taskName = pta?.custom_task_name ?? pta?.task_library?.task_name ?? "Unknown Task";
             const account = pta?.project_tags?.account ?? "—";
             const project = pta?.project_tags?.project_name ?? "—";
             const vaName = a._isUnassigned ? "— Unassigned —" : (a.profiles?.full_name ?? "Unknown");
@@ -952,6 +1098,99 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                 {/* Expanded Detail */}
                 {isExpanded && (
                   <div className="px-4 py-3 bg-parchment/10 border-t border-sand space-y-3">
+
+                    {/* ── Edit Account/Project + Status + Remove ── */}
+                    <div className="flex flex-wrap items-end gap-3 pb-2 border-b border-sand/60">
+                      {/* Account / Project */}
+                      <div className="flex-1 min-w-[180px]">
+                        <label className="text-[10px] font-bold text-stone uppercase tracking-wide block mb-0.5">Account / Project</label>
+                        {editingProject[a.id] !== undefined ? (
+                          <span className="flex items-center gap-1">
+                            <select
+                              value={editingProject[a.id]}
+                              onChange={(e) => setEditingProject((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                              className="flex-1 rounded border border-sand px-1.5 py-1 text-[11px] text-espresso bg-white outline-none"
+                            >
+                              <option value="">Select project...</option>
+                              {projects.map((p) => (
+                                <option key={p.id} value={p.id}>{p.account} / {p.project_name}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => handleSaveProject(a)}
+                              disabled={savingProject === a.id || !editingProject[a.id]}
+                              className="px-2 py-1 rounded bg-sage text-white text-[10px] font-bold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer"
+                            >{savingProject === a.id ? "..." : "✓"}</button>
+                            <button
+                              onClick={() => setEditingProject((prev) => { const c = { ...prev }; delete c[a.id]; return c; })}
+                              className="px-1.5 py-1 rounded text-[10px] text-stone hover:text-espresso cursor-pointer"
+                            >✕</button>
+                          </span>
+                        ) : (
+                          <span
+                            className="flex items-center gap-1 group cursor-pointer"
+                            onClick={() => {
+                              fetchAddOptions();
+                              setEditingProject((prev) => ({ ...prev, [a.id]: String(pta?.project_tag_id ?? "") }));
+                            }}
+                            title="Click to edit account/project"
+                          >
+                            <span className="text-xs text-espresso">{account} / {project}</span>
+                            <span className="opacity-0 group-hover:opacity-60 text-[9px] text-stone transition-opacity">✏️</span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Status (assigned only) */}
+                      {!a._isUnassigned && (
+                        <div className="flex-1 min-w-[140px]">
+                          <label className="text-[10px] font-bold text-stone uppercase tracking-wide block mb-0.5">Status</label>
+                          {editingStatus[a.id] !== undefined ? (
+                            <span className="flex items-center gap-1">
+                              <select
+                                value={editingStatus[a.id]}
+                                onChange={(e) => setEditingStatus((prev) => ({ ...prev, [a.id]: e.target.value as AssignmentStatus }))}
+                                className="flex-1 rounded border border-sand px-1.5 py-1 text-[11px] text-espresso bg-white outline-none"
+                              >
+                                {(Object.keys(STATUS_LABELS) as AssignmentStatus[]).filter(s => s !== "unassigned" as unknown).map(s => (
+                                  <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={() => handleSaveStatus(a)}
+                                disabled={savingStatus === a.id}
+                                className="px-2 py-1 rounded bg-sage text-white text-[10px] font-bold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer"
+                              >{savingStatus === a.id ? "..." : "✓"}</button>
+                              <button
+                                onClick={() => setEditingStatus((prev) => { const c = { ...prev }; delete c[a.id]; return c; })}
+                                className="px-1.5 py-1 rounded text-[10px] text-stone hover:text-espresso cursor-pointer"
+                              >✕</button>
+                            </span>
+                          ) : (
+                            <span
+                              className="flex items-center gap-1 group cursor-pointer"
+                              onClick={() => setEditingStatus((prev) => ({ ...prev, [a.id]: a.status as AssignmentStatus }))}
+                              title="Click to change status"
+                            >
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${STATUS_COLORS[a.status as AssignmentStatus]}`}>
+                                {STATUS_LABELS[a.status as AssignmentStatus]}
+                              </span>
+                              <span className="opacity-0 group-hover:opacity-60 text-[9px] text-stone transition-opacity">✏️</span>
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Remove button */}
+                      <button
+                        onClick={() => handleRemoveTask(a)}
+                        disabled={removingId === a.id}
+                        className="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 border border-red-200 text-[10px] font-semibold hover:bg-red-100 disabled:opacity-50 cursor-pointer transition-colors shrink-0"
+                      >
+                        {removingId === a.id ? "Removing..." : "🗑 Remove Task"}
+                      </button>
+                    </div>
+
                     {/* Instructions / Link */}
                     <div>
                       <label className="text-[10px] font-bold text-stone uppercase tracking-wide block mb-1">

@@ -126,6 +126,29 @@ export async function POST(request: Request) {
   }));
   const previousTotal = previousPayments.reduce((sum, p) => sum + p.amount, 0);
 
+  // Fetch fixed-rate assignments that are approved or completed (not yet paid)
+  const { data: fixedAssignmentsRaw } = await adminClient
+    .from("va_task_assignments")
+    .select("id, rate, quantity_claimed, status, project_task_assignments(task_library(task_name), project_tags(account, project_name))")
+    .eq("va_id", user_id)
+    .eq("billing_type", "fixed")
+    .in("status", ["approved", "completed"]);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fixedAssignments = (fixedAssignmentsRaw ?? []).map((a: any) => ({
+    id: a.id as number,
+    task_name: a.project_task_assignments?.task_library?.task_name ?? "Fixed Task",
+    account: a.project_task_assignments?.project_tags?.account ?? "",
+    project: a.project_task_assignments?.project_tags?.project_name ?? "",
+    rate: Number(a.rate) || 0,
+    quantity: Number(a.quantity_claimed) || 1,
+    amount: (Number(a.rate) || 0) * (Number(a.quantity_claimed) || 1),
+    status: a.status as string,
+  }));
+
+  const fixedTotal = fixedAssignments.reduce((sum, a) => sum + a.amount, 0);
+  const totalGrossPay = grossPay + fixedTotal;
+
   // Preview mode — return numbers only (include payment_accounts so UI can show account details)
   if (preview) {
     return Response.json({
@@ -137,6 +160,9 @@ export async function POST(request: Request) {
       payRate,
       grossPay,
       byDate,
+      fixedAssignments,
+      fixedTotal,
+      totalGrossPay,
       paymentAccounts: (vaProfile.payment_accounts ?? {}) as Record<string, Record<string, string>>,
       previousPayments,
       previousTotal,
@@ -148,8 +174,8 @@ export async function POST(request: Request) {
   // even if the email fails for any reason.
 
   // Step 1: Record payment to va_payments
-  // Use custom_amount if provided (Toni overrode the calculated amount), otherwise use grossPay
-  const paymentAmount = custom_amount != null ? Number(custom_amount) : grossPay;
+  // Use custom_amount if provided (Toni overrode the calculated amount), otherwise use totalGrossPay
+  const paymentAmount = custom_amount != null ? Number(custom_amount) : totalGrossPay;
 
   let paymentRecorded = false;
   let paymentError: string | null = null;
@@ -174,6 +200,15 @@ export async function POST(request: Request) {
     }
   }
 
+  // Step 1b: Mark included fixed assignments as paid
+  if (fixedAssignments.length > 0) {
+    const fixedIds = fixedAssignments.map((a) => a.id);
+    await adminClient
+      .from("va_task_assignments")
+      .update({ status: "paid" })
+      .in("id", fixedIds);
+  }
+
   // Step 2: Send paystub email
   const resendKey = process.env.RESEND_API_KEY;
   let emailSent = false;
@@ -186,7 +221,7 @@ export async function POST(request: Request) {
     const paymentAccounts = (vaProfile.payment_accounts ?? {}) as Record<string, Record<string, string>>;
     const accountDetails = payment_method ? (paymentAccounts[payment_method] ?? null) : null;
 
-    const remainingBalance = grossPay - previousTotal - paymentAmount;
+    const remainingBalance = totalGrossPay - previousTotal - paymentAmount;
 
     const html = buildPaystubEmail({
       vaName: vaProfile.full_name,
@@ -196,6 +231,9 @@ export async function POST(request: Request) {
       totalHours,
       payRate,
       grossPay,
+      fixedAssignments,
+      fixedTotal,
+      totalGrossPay,
       amountPaid: paymentAmount,
       remainingBalance: remainingBalance > 0.005 ? remainingBalance : 0,
       previousPayments,
@@ -321,6 +359,17 @@ interface PreviousPayment {
   confirmation_number: string | null;
 }
 
+interface FixedAssignment {
+  id: number;
+  task_name: string;
+  account: string;
+  project: string;
+  rate: number;
+  quantity: number;
+  amount: number;
+  status: string;
+}
+
 interface PaystubData {
   vaName: string;
   vaEmail: string;
@@ -329,6 +378,9 @@ interface PaystubData {
   totalHours: number;
   payRate: number;
   grossPay: number;
+  fixedAssignments: FixedAssignment[];
+  fixedTotal: number;
+  totalGrossPay: number;
   amountPaid: number;
   remainingBalance: number;
   previousPayments: PreviousPayment[];
@@ -349,7 +401,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName } = data;
 
   const rowsHtml = Object.entries(byDate)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -367,6 +419,13 @@ function buildPaystubEmail(data: PaystubData): string {
     <tr>
       <td colspan="3" style="padding: 20px 12px; text-align: center; color: #9e9080; font-size: 13px;">No time logged for this period.</td>
     </tr>`;
+
+  const fixedRowsHtml = fixedAssignments.map((a) => `
+    <tr>
+      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${a.task_name}${a.account ? ` <span style="color:#9e9080; font-size:11px;">· ${a.account}</span>` : ""}</td>
+      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${a.quantity > 1 ? `${a.quantity}× ${formatCurrency(a.rate)}` : formatCurrency(a.rate)}</td>
+      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency(a.amount)}</td>
+    </tr>`).join("");
 
   return `<!DOCTYPE html>
 <html>
@@ -416,6 +475,24 @@ function buildPaystubEmail(data: PaystubData): string {
         </table>
       </div>
 
+      ${fixedAssignments.length > 0 ? `
+      <!-- Fixed Assignments -->
+      <div style="padding: 24px 32px 0;">
+        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 12px;">Fixed Assignments</div>
+        <table style="width: 100%; border-collapse: collapse; border: 1px solid #e8e0d4; border-radius: 8px; overflow: hidden;">
+          <thead>
+            <tr style="background: #faf6f0;">
+              <th style="padding: 9px 12px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Task</th>
+              <th style="padding: 9px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Rate</th>
+              <th style="padding: 9px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${fixedRowsHtml}
+          </tbody>
+        </table>
+      </div>` : ""}
+
       <!-- Totals -->
       <div style="padding: 20px 32px 28px;">
         <table style="width: 240px; margin-left: auto; border-collapse: collapse;">
@@ -428,8 +505,16 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}</td>
           </tr>
           <tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Hourly Pay</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(grossPay)}</td>
+          </tr>
+          ${fixedTotal > 0 ? `<tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Fixed Assignments</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">+ ${formatCurrency(fixedTotal)}</td>
+          </tr>` : ""}
+          <tr>
             <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Gross Pay</td>
-            <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(grossPay)}</td>
+            <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(totalGrossPay)}</td>
           </tr>
           ${previousTotal > 0 ? `<tr>
             <td style="padding: 6px 0; font-size: 12px; color: #9e9080;">Previous Payments</td>

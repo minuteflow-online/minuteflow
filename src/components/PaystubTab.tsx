@@ -19,6 +19,17 @@ interface PreviousPayment {
   confirmation_number: string | null;
 }
 
+interface FixedAssignment {
+  id: number;
+  task_name: string;
+  account: string;
+  project: string;
+  rate: number;
+  quantity: number;
+  amount: number;
+  status: string;
+}
+
 interface PreviewData {
   vaName: string;
   vaEmail: string;
@@ -27,6 +38,9 @@ interface PreviewData {
   payRate: number;
   grossPay: number;
   byDate: Record<string, number>;
+  fixedAssignments: FixedAssignment[];
+  fixedTotal: number;
+  totalGrossPay: number;
   paymentAccounts?: Record<string, Record<string, string>>;
   previousPayments: PreviousPayment[];
   previousTotal: number;
@@ -243,8 +257,8 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to calculate.");
       setPreview(data);
-      // Default amount = gross pay minus any previous payments (net balance)
-      const net = data.grossPay - (data.previousTotal || 0);
+      // Default amount = total gross pay (hourly + fixed) minus any previous payments
+      const net = (data.totalGrossPay || data.grossPay) - (data.previousTotal || 0);
       setCustomAmount(net.toFixed(2));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
@@ -543,19 +557,59 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                 )}
               </div>
 
+              {/* Fixed Assignments */}
+              {preview.fixedAssignments && preview.fixedAssignments.length > 0 && (
+                <div className="px-5 py-3 border-t border-linen">
+                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Fixed Assignments</div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-bark/40 border-b border-linen">
+                        <th className="text-left pb-1.5 font-semibold">Task</th>
+                        <th className="text-right pb-1.5 font-semibold">Rate</th>
+                        <th className="text-right pb-1.5 font-semibold">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.fixedAssignments.map((a) => (
+                        <tr key={a.id} className="border-b border-linen/50">
+                          <td className="py-1.5 text-bark/70">
+                            {a.task_name}
+                            {a.account && <span className="text-bark/40 ml-1">· {a.account}</span>}
+                          </td>
+                          <td className="py-1.5 text-right text-bark/70">
+                            {a.quantity > 1 ? `${a.quantity}× ${formatCurrency(a.rate)}` : formatCurrency(a.rate)}
+                          </td>
+                          <td className="py-1.5 text-right text-bark/70">{formatCurrency(a.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               {/* Totals */}
               <div className="px-5 py-4 border-t border-linen bg-parchment">
                 <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                   <span>Total Hours</span>
                   <span>{preview.totalHours.toFixed(2)} hrs</span>
                 </div>
-                <div className="flex justify-between items-center text-xs text-bark/60 mb-2">
+                <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                   <span>Rate</span>
                   <span>{formatCurrency(preview.payRate)}/hr</span>
                 </div>
-                <div className="flex justify-between items-center font-semibold text-bark border-t border-linen pt-2">
+                <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
+                  <span>Hourly Pay</span>
+                  <span>{formatCurrency(preview.grossPay)}</span>
+                </div>
+                {preview.fixedTotal > 0 && (
+                  <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
+                    <span>Fixed Assignments</span>
+                    <span>+ {formatCurrency(preview.fixedTotal)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center font-semibold text-bark border-t border-linen pt-2 mt-1">
                   <span className="text-sm">Gross Pay</span>
-                  <span className="text-sm">{formatCurrency(preview.grossPay)}</span>
+                  <span className="text-sm">{formatCurrency(preview.totalGrossPay ?? preview.grossPay)}</span>
                 </div>
                 {preview.previousTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/50 mt-1">
@@ -605,9 +659,9 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                     className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-terracotta bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                   />
                 </div>
-                {customAmount !== "" && parseFloat(customAmount) !== preview.grossPay - preview.previousTotal && (
+                {customAmount !== "" && parseFloat(customAmount) !== (preview.totalGrossPay ?? preview.grossPay) - preview.previousTotal && (
                   <p className="text-xs text-bark/40 mt-1">
-                    Default: {formatCurrency(preview.grossPay - preview.previousTotal)} · You entered: {formatCurrency(parseFloat(customAmount) || 0)}
+                    Default: {formatCurrency((preview.totalGrossPay ?? preview.grossPay) - preview.previousTotal)} · You entered: {formatCurrency(parseFloat(customAmount) || 0)}
                   </p>
                 )}
               </div>

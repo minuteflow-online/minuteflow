@@ -11,7 +11,8 @@ type AssignmentStatus =
   | "reviewing"
   | "revision_needed"
   | "approved"
-  | "completed";
+  | "completed"
+  | "paid";
 
 interface Assignment {
   id: number;
@@ -25,6 +26,7 @@ interface Assignment {
   project_task_assignments: {
     id: number;
     show_in_assignment?: boolean;
+    custom_task_name?: string | null;
     task_library: { id: number; task_name: string } | null;
     project_tags: { id: number; account: string; project_name: string } | null;
   } | null;
@@ -40,6 +42,7 @@ const STATUS_LABELS: Record<AssignmentStatus, string> = {
   revision_needed: "Revision Needed",
   approved: "Approved",
   completed: "Completed",
+  paid: "Paid",
 };
 
 const STATUS_COLORS: Record<AssignmentStatus, string> = {
@@ -50,6 +53,7 @@ const STATUS_COLORS: Record<AssignmentStatus, string> = {
   revision_needed: "bg-amber-100 text-amber-700",
   approved: "bg-emerald-100 text-emerald-700",
   completed: "bg-green-100 text-green-800",
+  paid: "bg-purple-100 text-purple-700",
 };
 
 /* ── Linkify helper ────────────────────────────────────── */
@@ -102,10 +106,25 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
     }
   }, []);
 
+  /* ── Archive assignment ── */
+  const handleArchive = useCallback(async (assignmentId: number) => {
+    try {
+      await fetch("/api/va-task-assignments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: assignmentId, archived_by_va: true }),
+      });
+      // Remove from local state immediately
+      setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
+    } catch {
+      // silent
+    }
+  }, []);
+
   /* ── Fetch assignments ── */
   const fetchAssignments = useCallback(async () => {
     try {
-      const res = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
+      const res = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include&exclude_archived=true`);
       const data = await res.json();
       const allAssignments = data.assignments ?? [];
       // Filter: show_in_assignment toggle is the sole gatekeeper for My Assignment visibility
@@ -228,7 +247,7 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
       ) : (
         <div className="space-y-1.5">
           {assignments.map((a) => {
-            const taskName = a.project_task_assignments?.task_library?.task_name ?? "Unknown Task";
+            const taskName = a.project_task_assignments?.custom_task_name ?? a.project_task_assignments?.task_library?.task_name ?? "Unknown Task";
             const account = a.project_task_assignments?.project_tags?.account ?? "";
             const project = a.project_task_assignments?.project_tags?.project_name ?? "";
             const isExpanded = expandedId === a.id;
@@ -296,6 +315,27 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
                       </div>
                     )}
 
+                    {a.status === "paid" && (
+                      <div className="bg-purple-50 border-l-3 border-l-purple-400 rounded-r-lg px-2.5 py-2">
+                        <div className="text-[11px] font-semibold text-purple-700">💜 Paid — payment has been processed</div>
+                      </div>
+                    )}
+
+                    {/* Archive button — for completed, approved, or paid */}
+                    {(a.status === "completed" || a.status === "approved" || a.status === "paid") && (
+                      <button
+                        onClick={() => handleArchive(a.id)}
+                        className="w-full px-3 py-1.5 rounded-lg bg-stone/10 text-stone text-[11px] font-semibold hover:bg-stone/20 cursor-pointer transition-colors flex items-center justify-center gap-1"
+                      >
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="21 8 21 21 3 21 3 8" />
+                          <rect x="1" y="3" width="22" height="5" />
+                          <line x1="10" y1="12" x2="14" y2="12" />
+                        </svg>
+                        Archive — remove from my view
+                      </button>
+                    )}
+
                     {a.status === "reviewing" && (
                       <div className="bg-violet-50 border-l-3 border-l-violet-400 rounded-r-lg px-2.5 py-2">
                         <div className="text-[11px] font-semibold text-violet-700">
@@ -333,6 +373,27 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
                       <div className="text-stone text-[11px] italic">
                         No instructions yet. Check back later.
                       </div>
+                    )}
+
+                    {/* Start Logging button — pre-fills Log a Task form */}
+                    {(a.status === "not_started" || a.status === "in_progress" || a.status === "revision_needed") && (
+                      <button
+                        onClick={() => {
+                          const taskName = a.project_task_assignments?.custom_task_name ?? a.project_task_assignments?.task_library?.task_name ?? "";
+                          const acct = a.project_task_assignments?.project_tags?.account ?? "";
+                          const proj = a.project_task_assignments?.project_tags?.project_name ?? "";
+                          window.dispatchEvent(
+                            new CustomEvent("minuteflow-prefill", {
+                              detail: { task_name: taskName, account: acct, project: proj },
+                            })
+                          );
+                          // Scroll to top so VA can see the pre-filled form
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="w-full px-3 py-1.5 rounded-lg bg-sky-600 text-white text-[11px] font-semibold hover:bg-sky-700 cursor-pointer transition-colors"
+                      >
+                        📋 Start Logging This Task
+                      </button>
                     )}
 
                     {/* Submission form — visible when not yet submitted, approved, or completed */}
