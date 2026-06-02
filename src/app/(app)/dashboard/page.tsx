@@ -2983,7 +2983,7 @@ export default function DashboardPage() {
                       <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Smart money camp Early bird flyer)</p>
                       <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email, Drive)</p>
                       <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Process, Continue Process, Revise flyer)</p>
-                      <p><span className="font-semibold">5. Status:</span> Done, Pause, In Progress</p>
+                      <p><span className="font-semibold">5. Status:</span> Done, Pause</p>
                     </div>
                   </div>
                 )}
@@ -3209,7 +3209,7 @@ export default function DashboardPage() {
                       <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Smart money camp Early bird flyer)</p>
                       <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email, Drive)</p>
                       <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Process, Continue Process, Revise flyer)</p>
-                      <p><span className="font-semibold">5. Status:</span> Done, Pause, In Progress</p>
+                      <p><span className="font-semibold">5. Status:</span> Done, Pause</p>
                     </div>
                   </div>
                 )}
