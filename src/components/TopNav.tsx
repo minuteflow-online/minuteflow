@@ -112,13 +112,13 @@ export default function TopNav({ user }: TopNavProps) {
 
   // Filter nav items based on role
   // VAs see: Dashboard, Time Log, Reports, Portal (no Team)
-  // Admins see: Dashboard, Time Log, Team, Reports (no Portal)
+  // Admins see: Dashboard, Time Log, Team, Reports, Portal
   const navItems = allNavItems.filter((item) => {
     if (user.role === "va") {
       return item.href !== "/team";
     }
-    // admin / manager: hide Portal
-    return item.href !== "/portal";
+    // admin / manager: see all links including Portal
+    return true;
   });
 
   const handleChangePassword = useCallback(async () => {
