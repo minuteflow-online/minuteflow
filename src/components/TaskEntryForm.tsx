@@ -662,11 +662,12 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                 {showMemoGuide && (
                   <div className="mb-3 p-3 rounded-lg bg-parchment border border-sand text-[11px] text-walnut">
                     <p className="font-semibold mb-1.5 text-espresso">Client Memo Guide</p>
+                    <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
                     <div className="space-y-1">
-                      <p><span className="font-semibold">1. Who:</span> Name, title, or person involved (e.g., Ting Chiu, Gloria Flores)</p>
-                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Smart money camp Early bird flyer)</p>
-                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email, Drive)</p>
-                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Process, Continue Process, Revise flyer)</p>
+                      <p><span className="font-semibold">1. Who:</span> Who</p>
+                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
                       <p><span className="font-semibold">5. Status:</span> Done, Pause</p>
                     </div>
                   </div>
@@ -859,11 +860,12 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                 {showMemoGuide && (
                   <div className="mb-3 p-3 rounded-lg bg-parchment border border-sand text-[11px] text-walnut">
                     <p className="font-semibold mb-1.5 text-espresso">Client Memo Guide</p>
+                    <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
                     <div className="space-y-1">
-                      <p><span className="font-semibold">1. Who:</span> Name, title, or person involved (e.g., Ting Chiu, Gloria Flores)</p>
-                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Smart money camp Early bird flyer)</p>
-                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email, Drive)</p>
-                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Process, Continue Process, Revise flyer)</p>
+                      <p><span className="font-semibold">1. Who:</span> Who</p>
+                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
                       <p><span className="font-semibold">5. Status:</span> Done, Pause</p>
                     </div>
                   </div>

@@ -1831,13 +1831,15 @@ export default function DashboardPage() {
         clearCaptureTimers();
       }
 
-      // If closing an old task via wizard, save the memos to the OLD task (not the new one)
+      // If closing an old task via wizard, save the memos + rating to the OLD task (not the new one)
       if (formData.task_status && activeTask?.logId) {
         const oldLogId = parseInt(activeTask.logId, 10);
         const oldTaskUpdate: Record<string, unknown> = {};
         if (formData.client_memo) oldTaskUpdate.client_memo = formData.client_memo;
         if (formData.internal_memo) oldTaskUpdate.internal_memo = formData.internal_memo;
         if (formData.task_status) oldTaskUpdate.progress = formData.task_status.toLowerCase().replace(' ', '_');
+        if (formData.task_rating != null) oldTaskUpdate.task_rating = formData.task_rating;
+        if (formData.task_rating_note) oldTaskUpdate.task_rating_note = formData.task_rating_note;
         if (Object.keys(oldTaskUpdate).length > 0) {
           await supabase.from("time_logs").update(oldTaskUpdate).eq("id", oldLogId);
           setTimeLogs((prev) =>
@@ -2455,7 +2457,7 @@ export default function DashboardPage() {
         setTimeLogs((prev) =>
           prev.map((log) =>
             log.id === logId
-              ? { ...log, end_time: now, duration_ms: durationMs }
+              ? { ...log, end_time: now, duration_ms: durationMs, progress: "on_hold" }
               : log
           )
         );
@@ -3037,11 +3039,12 @@ export default function DashboardPage() {
                 {showCloseOldMemoGuide && (
                   <div className="mb-3 p-3 rounded-lg bg-parchment border border-sand text-[11px] text-walnut">
                     <p className="font-semibold mb-1.5 text-espresso">Client Memo Guide</p>
+                    <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
                     <div className="space-y-1">
-                      <p><span className="font-semibold">1. Who:</span> Name, title, or person involved (e.g., Ting Chiu, Gloria Flores)</p>
-                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Smart money camp Early bird flyer)</p>
-                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email, Drive)</p>
-                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Process, Continue Process, Revise flyer)</p>
+                      <p><span className="font-semibold">1. Who:</span> Who</p>
+                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
                       <p><span className="font-semibold">5. Status:</span> Done, Pause</p>
                     </div>
                   </div>
@@ -3281,11 +3284,12 @@ export default function DashboardPage() {
                 {showClockOutMemoGuide && (
                   <div className="mb-3 p-3 rounded-lg bg-parchment border border-sand text-[11px] text-walnut">
                     <p className="font-semibold mb-1.5 text-espresso">Client Memo Guide</p>
+                    <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
                     <div className="space-y-1">
-                      <p><span className="font-semibold">1. Who:</span> Name, title, or person involved (e.g., Ting Chiu, Gloria Flores)</p>
-                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Smart money camp Early bird flyer)</p>
-                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email, Drive)</p>
-                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Process, Continue Process, Revise flyer)</p>
+                      <p><span className="font-semibold">1. Who:</span> Who</p>
+                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
                       <p><span className="font-semibold">5. Status:</span> Done, Pause</p>
                     </div>
                   </div>
