@@ -84,9 +84,10 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
         alert(err.error || "Failed to claim task");
         return;
       }
-      // Remove from list immediately
-      setTasks((prev) => prev.filter((t) => t.id !== ptaId));
+      // Re-fetch so remaining count updates (task stays if slots remain)
       setClaimQty((prev) => { const c = { ...prev }; delete c[ptaId]; return c; });
+      setExpandedId(null);
+      fetchClaimable();
       // Notify parent to refresh assignments
       onClaimed?.();
     } catch {
@@ -215,15 +216,22 @@ export default function ClaimableTasksColumn({ onClaimed }: { onClaimed?: () => 
                   </div>
                 )}
 
-                {/* Collapsed: show claim button directly */}
+                {/* Collapsed: expand to pick qty if multi-slot, else claim directly */}
                 {!isExpanded && (
                   <div className="px-2.5 pb-2 bg-parchment/20">
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleClaim(t.id, remaining); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isMultiSlot) {
+                          setExpandedId(t.id);
+                        } else {
+                          handleClaim(t.id, remaining);
+                        }
+                      }}
                       disabled={isClaiming}
                       className="w-full px-3 py-1.5 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
                     >
-                      {isClaiming ? "Claiming..." : "Claim This Task"}
+                      {isClaiming ? "Claiming..." : isMultiSlot ? "See Details to Claim" : "Claim This Task"}
                     </button>
                   </div>
                 )}

@@ -52,6 +52,8 @@ export interface TaskFormData {
   billing_type?: BillingType;
   task_rate?: number | null;
   _isFixedTaskLog?: boolean;
+  task_rating?: number | null;
+  task_rating_note?: string;
 }
 
 interface ProjectTag {
@@ -208,6 +210,12 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const [showClientMemo, setShowClientMemo] = useState(false);
   const [showInternalMemo, setShowInternalMemo] = useState(false);
 
+  // ─── Task rating + memo guide state ───
+  const [wizardRating, setWizardRating] = useState<number | null>(null);
+  const [wizardRatingNote, setWizardRatingNote] = useState("");
+  const [showMemoGuide, setShowMemoGuide] = useState(false);
+  const [showRatingGuide, setShowRatingGuide] = useState(false);
+
   // ─── Validation ───
   const [showValidation, setShowValidation] = useState(false);
 
@@ -268,7 +276,7 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
   const handleCloseOldAndStart = () => {
     if (!taskStatus) return;
     if (!clientMemoText.trim() && !internalMemoText.trim()) return;
-    submitTask(taskStatus, clientMemoText.trim(), internalMemoText.trim());
+    submitTask(taskStatus, clientMemoText.trim(), internalMemoText.trim(), wizardRating, wizardRatingNote.trim() || undefined);
   };
 
   // Submit fixed task (memos + status go to the NEW task, not the old)
@@ -293,6 +301,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       task_rate: selectedTaskRate,
       // Signal this is a fixed task log (dashboard uses this)
       _isFixedTaskLog: true,
+      task_rating: wizardRating ?? undefined,
+      task_rating_note: wizardRatingNote.trim() || undefined,
     });
 
     // Reset everything
@@ -312,12 +322,16 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     setShowClientMemo(false);
     setShowInternalMemo(false);
     setShowValidation(false);
+    setWizardRating(null);
+    setWizardRatingNote("");
+    setShowMemoGuide(false);
+    setShowRatingGuide(false);
     formStartTimeRef.current = null;
     setFormFillElapsed(0);
   };
 
   // Final submit
-  const submitTask = (status: string, closeClientMemo: string, closeInternalMemo: string) => {
+  const submitTask = (status: string, closeClientMemo: string, closeInternalMemo: string, rating?: number | null, ratingNote?: string) => {
     const formFillMs = formStartTimeRef.current
       ? Date.now() - formStartTimeRef.current
       : 0;
@@ -344,6 +358,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       new_task_client_memo: status ? (clientMemo.trim() || undefined) : undefined,
       billing_type: selectedBillingType,
       task_rate: selectedTaskRate,
+      task_rating: rating ?? undefined,
+      task_rating_note: ratingNote || undefined,
     });
 
     // Reset everything
@@ -374,6 +390,10 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     setInternalMemoText("");
     setShowClientMemo(false);
     setShowInternalMemo(false);
+    setWizardRating(null);
+    setWizardRatingNote("");
+    setShowMemoGuide(false);
+    setShowRatingGuide(false);
   };
 
   const categoryChipColor = (cat: string, isActive: boolean): string => {
@@ -687,6 +707,59 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                 </div>
               </div>
 
+              {/* Task Rating (optional) */}
+              <div className="mb-3 mt-3">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <p className="text-[11px] font-semibold text-walnut tracking-wide">
+                    Task Rating <span className="text-stone font-normal">(optional)</span>
+                  </p>
+                  <button
+                    onClick={() => setShowRatingGuide(!showRatingGuide)}
+                    className="w-4 h-4 rounded-full border border-bark text-bark text-[9px] font-bold leading-none flex items-center justify-center hover:bg-parchment cursor-pointer shrink-0"
+                    title="What feedback are we looking for?"
+                  >?</button>
+                </div>
+                {showRatingGuide && (
+                  <div className="mb-2 bg-parchment border border-sand rounded-lg p-3 text-[11px] text-bark">
+                    <p className="font-semibold text-espresso mb-1.5">What feedback helps us improve:</p>
+                    <ul className="space-y-1">
+                      <li>• What&apos;s working well with this task</li>
+                      <li>• What&apos;s not working or where the challenge is</li>
+                      <li>• How it can be fixed or improved</li>
+                      <li>• Area: <span className="text-walnut font-medium">instruction, communication, technical,</span> or <span className="text-walnut font-medium">resources</span></li>
+                    </ul>
+                  </div>
+                )}
+                <div className="flex gap-1.5 mb-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => setWizardRating(wizardRating === star ? null : star)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-bold cursor-pointer transition-all ${
+                        wizardRating !== null && star <= wizardRating
+                          ? "bg-amber text-white border border-amber"
+                          : "border border-sand bg-white text-stone hover:border-amber"
+                      }`}
+                    >★</button>
+                  ))}
+                </div>
+                {wizardRating !== null && (
+                  <div>
+                    <textarea
+                      value={wizardRatingNote}
+                      onChange={(e) => setWizardRatingNote(e.target.value)}
+                      placeholder="Explain your rating (at least 5 words)..."
+                      rows={2}
+                      className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-amber focus:shadow-[0_0_0_3px_rgba(212,192,122,0.12)] placeholder:text-stone resize-none"
+                    />
+                    {wizardRatingNote.trim().split(/\s+/).filter(Boolean).length > 0 &&
+                      wizardRatingNote.trim().split(/\s+/).filter(Boolean).length < 5 && (
+                        <p className="text-[10px] text-terracotta mt-1">Please write at least 5 words.</p>
+                      )}
+                  </div>
+                )}
+              </div>
+
               {/* Submit */}
               <div className="flex gap-3 mt-4">
                 <button
@@ -697,7 +770,11 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                 </button>
                 <button
                   onClick={handleCloseOldAndStart}
-                  disabled={!taskStatus || (!clientMemoText.trim() && !internalMemoText.trim())}
+                  disabled={
+                    !taskStatus ||
+                    (!clientMemoText.trim() && !internalMemoText.trim()) ||
+                    (wizardRating !== null && wizardRatingNote.trim().split(/\s+/).filter(Boolean).length < 5)
+                  }
                   className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Close &amp; Start New Task
@@ -807,6 +884,59 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                 </div>
               </div>
 
+              {/* Task Rating (optional) */}
+              <div className="mb-3 mt-3">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <p className="text-[11px] font-semibold text-walnut tracking-wide">
+                    Task Rating <span className="text-stone font-normal">(optional)</span>
+                  </p>
+                  <button
+                    onClick={() => setShowRatingGuide(!showRatingGuide)}
+                    className="w-4 h-4 rounded-full border border-bark text-bark text-[9px] font-bold leading-none flex items-center justify-center hover:bg-parchment cursor-pointer shrink-0"
+                    title="What feedback are we looking for?"
+                  >?</button>
+                </div>
+                {showRatingGuide && (
+                  <div className="mb-2 bg-parchment border border-sand rounded-lg p-3 text-[11px] text-bark">
+                    <p className="font-semibold text-espresso mb-1.5">What feedback helps us improve:</p>
+                    <ul className="space-y-1">
+                      <li>• What&apos;s working well with this task</li>
+                      <li>• What&apos;s not working or where the challenge is</li>
+                      <li>• How it can be fixed or improved</li>
+                      <li>• Area: <span className="text-walnut font-medium">instruction, communication, technical,</span> or <span className="text-walnut font-medium">resources</span></li>
+                    </ul>
+                  </div>
+                )}
+                <div className="flex gap-1.5 mb-2">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      onClick={() => setWizardRating(wizardRating === star ? null : star)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-bold cursor-pointer transition-all ${
+                        wizardRating !== null && star <= wizardRating
+                          ? "bg-amber text-white border border-amber"
+                          : "border border-sand bg-white text-stone hover:border-amber"
+                      }`}
+                    >★</button>
+                  ))}
+                </div>
+                {wizardRating !== null && (
+                  <div>
+                    <textarea
+                      value={wizardRatingNote}
+                      onChange={(e) => setWizardRatingNote(e.target.value)}
+                      placeholder="Explain your rating (at least 5 words)..."
+                      rows={2}
+                      className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-amber focus:shadow-[0_0_0_3px_rgba(212,192,122,0.12)] placeholder:text-stone resize-none"
+                    />
+                    {wizardRatingNote.trim().split(/\s+/).filter(Boolean).length > 0 &&
+                      wizardRatingNote.trim().split(/\s+/).filter(Boolean).length < 5 && (
+                        <p className="text-[10px] text-terracotta mt-1">Please write at least 5 words.</p>
+                      )}
+                  </div>
+                )}
+              </div>
+
               {/* Submit */}
               <div className="flex gap-3 mt-4">
                 <button
@@ -817,7 +947,10 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                 </button>
                 <button
                   onClick={handleLogFixedTask}
-                  disabled={!taskStatus}
+                  disabled={
+                    !taskStatus ||
+                    (wizardRating !== null && wizardRatingNote.trim().split(/\s+/).filter(Boolean).length < 5)
+                  }
                   className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Log Task

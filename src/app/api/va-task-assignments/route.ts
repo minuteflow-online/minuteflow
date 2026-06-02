@@ -290,9 +290,8 @@ export async function DELETE(request: Request) {
     .select("role")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+
+  const isAdmin = profile?.role === "admin";
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
@@ -300,6 +299,18 @@ export async function DELETE(request: Request) {
   const ptaId = searchParams.get("project_task_assignment_id");
 
   if (id) {
+    // Admins can delete any assignment.
+    // VAs can only delete their own not_started assignments (unclaim).
+    if (!isAdmin) {
+      const { data: assignment } = await supabase
+        .from("va_task_assignments")
+        .select("va_id, status")
+        .eq("id", parseInt(id))
+        .single();
+      if (!assignment || assignment.va_id !== user.id || assignment.status !== "not_started") {
+        return Response.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
     const { error } = await supabase
       .from("va_task_assignments")
       .delete()
@@ -311,6 +322,9 @@ export async function DELETE(request: Request) {
   }
 
   if (vaId && ptaId) {
+    if (!isAdmin) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
     const { error } = await supabase
       .from("va_task_assignments")
       .delete()

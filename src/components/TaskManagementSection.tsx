@@ -103,6 +103,8 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
   /* ── Inline editing state ── */
   const [editingRate, setEditingRate] = useState<Record<number, string>>({});
   const [savingRate, setSavingRate] = useState<number | null>(null);
+  const [editingQty, setEditingQty] = useState<Record<number, string>>({});
+  const [savingQty, setSavingQty] = useState<number | null>(null);
   const [assigningVa, setAssigningVa] = useState<Record<number, string>>({});
   const [savingAssign, setSavingAssign] = useState<number | null>(null);
   const [togglingAssignment, setTogglingAssignment] = useState<number | null>(null);
@@ -449,6 +451,33 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
       console.error("Failed to update rate");
     } finally {
       setSavingRate(null);
+    }
+  };
+
+  /* ── Save editable QTY ── */
+  const handleSaveQty = async (a: VaTaskAssignmentRow) => {
+    const qtyStr = editingQty[a.id];
+    if (qtyStr === undefined) return;
+    const newQty = Math.max(1, parseInt(qtyStr) || 1);
+    const ptaId = a.project_task_assignments?.id;
+    if (!ptaId) return;
+    setSavingQty(a.id);
+    try {
+      await fetch("/api/project-task-assignments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: ptaId, quantity: newQty }),
+      });
+      setEditingQty((prev) => {
+        const copy = { ...prev };
+        delete copy[a.id];
+        return copy;
+      });
+      fetchAssignments();
+    } catch {
+      console.error("Failed to update quantity");
+    } finally {
+      setSavingQty(null);
     }
   };
 
@@ -907,13 +936,48 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                       </span>
                     )}
                   </span>
-                  {/* Qty column: total / claimed */}
+                  {/* Qty column: click total to edit */}
                   <span className="text-stone text-[10px]" onClick={(e) => e.stopPropagation()}>
                     {(() => {
                       const totalQty = pta?.quantity ?? 1;
                       const claimed = a._isUnassigned ? 0 : (a.quantity_claimed ?? 1);
-                      if (totalQty === 1 && claimed === 1 && !a._isUnassigned) return <span className="text-stone/50">—</span>;
-                      return <span className={claimed > 0 ? "text-espresso font-medium" : "text-stone/50"}>{claimed}/{totalQty}</span>;
+                      const ptaId = a.project_task_assignments?.id;
+                      if (editingQty[a.id] !== undefined && ptaId) {
+                        return (
+                          <span className="flex items-center gap-0.5">
+                            <input
+                              type="number"
+                              min={1}
+                              value={editingQty[a.id]}
+                              onChange={(e) => setEditingQty((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                              className="w-10 rounded border border-sand px-1 py-0.5 text-[10px] outline-none"
+                              autoFocus
+                              onKeyDown={(e) => { if (e.key === "Enter") handleSaveQty(a); if (e.key === "Escape") setEditingQty((prev) => { const c = {...prev}; delete c[a.id]; return c; }); }}
+                            />
+                            <button
+                              onClick={() => handleSaveQty(a)}
+                              disabled={savingQty === a.id}
+                              className="px-1 py-0.5 rounded bg-sage text-white text-[9px] font-bold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer"
+                            >{savingQty === a.id ? "..." : "✓"}</button>
+                          </span>
+                        );
+                      }
+                      if (totalQty === 1 && claimed === 1 && !a._isUnassigned) {
+                        return (
+                          <span
+                            className="text-stone/50 cursor-pointer hover:text-sage"
+                            title="Click to set quantity"
+                            onClick={() => ptaId && setEditingQty((prev) => ({ ...prev, [a.id]: String(totalQty) }))}
+                          >—</span>
+                        );
+                      }
+                      return (
+                        <span
+                          className="text-espresso font-medium cursor-pointer hover:text-sage underline decoration-dashed underline-offset-2"
+                          title="Click to edit total quantity"
+                          onClick={() => ptaId && setEditingQty((prev) => ({ ...prev, [a.id]: String(totalQty) }))}
+                        >{claimed}/{totalQty}</span>
+                      );
                     })()}
                   </span>
                   <span className="text-stone capitalize">{a.billing_type}</span>

@@ -81,6 +81,7 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState<number | null>(null);
+  const [unclaiming, setUnclaiming] = useState<number | null>(null);
   const [submissionLinks, setSubmissionLinks] = useState<Record<number, string>>({});
   const [submissionComments, setSubmissionComments] = useState<Record<number, string>>({});
   const [revisionMessages, setRevisionMessages] = useState<Record<number, string>>({});
@@ -172,6 +173,25 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
       setSubmitting(null);
     }
   };
+
+  /* ── Unclaim a not_started assignment ── */
+  const handleUnclaim = useCallback(async (assignmentId: number) => {
+    if (!confirm("Give this assignment back? It will go back to the available pool.")) return;
+    setUnclaiming(assignmentId);
+    try {
+      const res = await fetch(`/api/va-task-assignments?id=${assignmentId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || "Failed to unclaim assignment");
+        return;
+      }
+      fetchAssignments();
+    } catch {
+      alert("Failed to unclaim — network error. Please try again.");
+    } finally {
+      setUnclaiming(null);
+    }
+  }, [fetchAssignments]);
 
   /* ── Auto-set in_progress when VA opens a not_started task ── */
   const markInProgress = useCallback(async (assignmentId: number) => {
@@ -338,6 +358,17 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
                       <div className="text-stone text-[11px] italic">
                         No instructions yet. Check back later.
                       </div>
+                    )}
+
+                    {/* Give Back — only for not_started */}
+                    {a.status === "not_started" && (
+                      <button
+                        onClick={() => handleUnclaim(a.id)}
+                        disabled={unclaiming === a.id}
+                        className="w-full px-3 py-1.5 rounded-lg border border-stone/30 text-stone text-[11px] font-semibold hover:border-terracotta hover:text-terracotta disabled:opacity-50 cursor-pointer transition-colors"
+                      >
+                        {unclaiming === a.id ? "Releasing..." : "Give Back"}
+                      </button>
                     )}
 
                     {/* Submission form — visible when not yet submitted, approved, or completed */}
