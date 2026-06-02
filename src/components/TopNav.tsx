@@ -16,6 +16,7 @@ const allNavItems: NavItem[] = [
   { label: "Time Log", href: "/timelog" },
   { label: "Team", href: "/team" },
   { label: "Reports", href: "/reports" },
+  { label: "Portal", href: "/portal" },
 ];
 
 import { getTimezoneAbbr } from "@/lib/utils";
@@ -110,12 +111,14 @@ export default function TopNav({ user }: TopNavProps) {
   const [logoutMood, setLogoutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
 
   // Filter nav items based on role
-  // VAs see Dashboard, Time Log, Reports (same as admin minus Team)
+  // VAs see: Dashboard, Time Log, Reports, Portal (no Team)
+  // Admins see: Dashboard, Time Log, Team, Reports (no Portal)
   const navItems = allNavItems.filter((item) => {
     if (user.role === "va") {
       return item.href !== "/team";
     }
-    return true;
+    // admin / manager: hide Portal
+    return item.href !== "/portal";
   });
 
   const handleChangePassword = useCallback(async () => {

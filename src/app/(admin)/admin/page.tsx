@@ -33,6 +33,7 @@ import ProjectsTasksTab from "@/components/ProjectsTasksTab";
 import FinancialSummaryTab from "@/components/FinancialSummaryTab";
 import CaptureAlertsTab from "@/components/CaptureAlertsTab";
 import PaystubTab from "@/components/PaystubTab";
+import VaResourcesAdminTab from "@/components/VaResourcesAdminTab";
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -88,7 +89,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts";
+type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -220,6 +221,17 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
         <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
         <line x1="12" y1="9" x2="12" y2="13" />
         <line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+    ),
+  },
+  {
+    id: "va_resources",
+    label: "VA Resources",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M12 2L2 7l10 5 10-5-10-5z" />
+        <path d="M2 17l10 5 10-5" />
+        <path d="M2 12l10 5 10-5" />
       </svg>
     ),
   },
@@ -1033,6 +1045,7 @@ export default function AdminPage() {
                 {activeTab === "sorting" && "Review sorting task entries and assign billing"}
                 {activeTab === "password" && "Update your admin password"}
                 {activeTab === "alerts" && "Track screen capture drops and VA responses"}
+                {activeTab === "va_resources" && "Manage onboarding, SOPs, coaching, and job postings for VAs"}
               </p>
             </div>
             {activeTab === "overview" && (
@@ -1158,6 +1171,10 @@ export default function AdminPage() {
                 orgTimezone={orgTimezone}
               />
             </div>
+          )}
+
+          {activeTab === "va_resources" && (
+            <VaResourcesAdminTab />
           )}
 
           {activeTab === "password" && (
@@ -1656,6 +1673,35 @@ function TeamManagementTab({
   const [deletingUser, setDeletingUser] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
+  // Invite VA state
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteResult, setInviteResult] = useState<{ success?: boolean; message?: string; error?: string } | null>(null);
+
+  const handleInvite = useCallback(async () => {
+    if (!inviteEmail.trim()) return;
+    setInviteSending(true);
+    setInviteResult(null);
+    try {
+      const res = await fetch("/api/invitations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setInviteResult({ success: true, message: data.message || `Invite sent to ${inviteEmail}` });
+        setInviteEmail("");
+      } else {
+        setInviteResult({ error: data.error || "Failed to send invite." });
+      }
+    } catch {
+      setInviteResult({ error: "Unable to connect. Please try again." });
+    }
+    setInviteSending(false);
+  }, [inviteEmail]);
+
   // VA category assignments (read-only summary)
   const [vaCatAssignments, setVaCatAssignments] = useState<Array<{ va_id: string; task_categories: { category_name: string } | null }>>([]);
   useEffect(() => {
@@ -1927,16 +1973,93 @@ function TeamManagementTab({
 
   return (
     <>
-      {/* Header with Add button */}
+      {/* Header with Add + Invite buttons */}
       <div className="mb-4 flex items-center justify-between">
         <span className="text-[13px] text-bark">{profiles.length} team members</span>
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
-        >
-          {showAddForm ? "Cancel" : "+ Add VA"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setInviteOpen(true); setInviteResult(null); setInviteEmail(""); }}
+            className="rounded-lg border border-terracotta px-4 py-2 text-[13px] font-semibold text-terracotta transition-all hover:bg-terracotta/10"
+          >
+            + Invite VA
+          </button>
+          <button
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
+          >
+            {showAddForm ? "Cancel" : "+ Add VA"}
+          </button>
+        </div>
       </div>
+
+      {/* Invite VA Modal */}
+      {inviteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-xl border border-sand bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="font-serif text-lg font-bold text-espresso">Invite VA</h2>
+              <button
+                onClick={() => setInviteOpen(false)}
+                className="rounded-lg px-2 py-1 text-[13px] text-bark hover:text-espresso cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {inviteResult?.success ? (
+              <div className="text-center py-4">
+                <div className="text-4xl mb-3">✅</div>
+                <p className="text-sm font-semibold text-sage">{inviteResult.message}</p>
+                <p className="mt-2 text-[12px] text-bark">The invite link expires in 72 hours.</p>
+                <button
+                  onClick={() => { setInviteResult(null); setInviteEmail(""); }}
+                  className="mt-4 w-full rounded-lg bg-parchment border border-sand px-4 py-2 text-[13px] font-semibold text-walnut hover:bg-sand cursor-pointer"
+                >
+                  Invite Another
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="mb-4 text-[13px] text-bark">
+                  Enter the VA&apos;s email address. They&apos;ll receive a link to create their account. The link expires in 72 hours.
+                </p>
+
+                {inviteResult?.error && (
+                  <div className="mb-3 rounded-md bg-terracotta-soft px-3 py-2 text-sm text-terracotta">
+                    {inviteResult.error}
+                  </div>
+                )}
+
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !inviteSending && handleInvite()}
+                  placeholder="va@example.com"
+                  className="mb-4 w-full rounded-lg border border-sand bg-cream/50 px-3 py-2.5 text-sm text-ink placeholder:text-stone focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta"
+                  autoFocus
+                />
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setInviteOpen(false)}
+                    className="flex-1 rounded-lg border border-sand bg-parchment px-4 py-2 text-[13px] font-semibold text-walnut hover:bg-sand cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleInvite}
+                    disabled={inviteSending || !inviteEmail.trim()}
+                    className="flex-1 rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white hover:bg-terracotta/90 disabled:opacity-50 cursor-pointer transition-colors"
+                  >
+                    {inviteSending ? "Sending…" : "Send Invite"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Add VA Form */}
       {showAddForm && (
