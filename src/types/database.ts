@@ -267,6 +267,7 @@ export interface InvoiceLineItem {
   id: number;
   invoice_id: number;
   log_id: number | null;
+  expense_id: number | null;
   description: string;
   va_name: string | null;
   account_name: string | null;

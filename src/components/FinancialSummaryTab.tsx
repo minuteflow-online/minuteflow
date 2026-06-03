@@ -368,6 +368,18 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     return map;
   }, [mappings]);
 
+  // Account name → linked client name (for expense form auto-tie)
+  const accountNameToClientName = useMemo(() => {
+    const map: Record<string, string> = {};
+    mappings.forEach((m) => {
+      const acc = accounts.find((a) => a.id === m.account_id);
+      if (acc && m.clients) {
+        map[acc.name] = m.clients.name;
+      }
+    });
+    return map;
+  }, [mappings, accounts]);
+
   // VA payments grouped by va_id
   const vaPaymentsByUser = useMemo(() => {
     const map: Record<string, VaPaymentRow[]> = {};
@@ -1463,7 +1475,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                         Amount {expenseSortField === "amount" ? (expenseSortAsc ? "↑" : "↓") : ""}
                       </th>
                       <th className="px-3 py-3 text-center">Reimbursable</th>
-                      <th className="px-3 py-3 text-center">Reimbursed</th>
+                      <th className="px-3 py-3 text-center">Settled</th>
                       <th className="px-3 py-3 w-8"></th>
                     </tr>
                   </thead>
@@ -1518,7 +1530,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                         {fmtMoney(expenseData.reimbursableTotal)} reimbursable
                       </td>
                       <td className="px-3 py-3 text-center text-[10px] text-bark/60">
-                        {fmtMoney(expenseData.reimbursedTotal)} collected
+                        {fmtMoney(expenseData.reimbursedTotal)} settled
                       </td>
                       <td className="px-3 py-3" />
                     </tr>
@@ -1640,6 +1652,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       {showExpenseModal && (
         <ExpenseModal
           accounts={activeAccountNames}
+          accountToClientName={accountNameToClientName}
           defaultDate={new Date().toISOString().slice(0, 10)}
           onClose={() => setShowExpenseModal(false)}
           onSave={saveExpense}
@@ -1939,11 +1952,13 @@ function ClientPaymentModal({
 
 function ExpenseModal({
   accounts,
+  accountToClientName,
   defaultDate,
   onClose,
   onSave,
 }: {
   accounts: string[];
+  accountToClientName: Record<string, string>;
   defaultDate: string;
   onClose: () => void;
   onSave: (form: {
@@ -2014,6 +2029,11 @@ function ExpenseModal({
                 <option value="">General (no client)</option>
                 {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
+              {account && accountToClientName[account] && (
+                <p className="mt-1 text-[11px] text-sage">
+                  Linked client: <span className="font-semibold">{accountToClientName[account]}</span>
+                </p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">

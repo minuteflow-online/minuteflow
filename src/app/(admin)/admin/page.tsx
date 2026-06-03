@@ -5472,6 +5472,18 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   // All project_tags from DB (for Deliverables dropdown)
   const [allProjectTags, setAllProjectTags] = useState<string[]>([]);
 
+  // Reimbursable expense items to add to this invoice
+  const [expenseItems, setExpenseItems] = useState<Array<{
+    expense_id: number;
+    description: string;
+    amount: number;
+    account: string | null;
+    expense_date: string;
+  }>>([]);
+
+  // Tracks settled status for expense line items in detail view
+  const [expenseSettledMap, setExpenseSettledMap] = useState<Record<number, boolean>>({});
+
   // "Uncheck All" sentinel booleans for Step 3 filters
   const [filterVANone, setFilterVANone] = useState(false);
   const [filterTaskNone, setFilterTaskNone] = useState(false);
@@ -5779,6 +5791,41 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     });
 
     setLineItems(items);
+
+    // Fetch reimbursable unsettled expenses for this account/client
+    let expQuery = supabase
+      .from("financial_expenses")
+      .select("id, description, amount, account, expense_date")
+      .eq("is_reimbursable", true)
+      .eq("reimbursed", false);
+
+    if (generateBy === "account") {
+      expQuery = expQuery.eq("account", selectedAccount);
+    } else {
+      // Find all accounts linked to this client
+      const linkedAccounts = Object.keys(accountToClientMap).filter(
+        (acc) => accountToClientMap[acc] === selectedClientId
+      );
+      if (linkedAccounts.length > 0) {
+        expQuery = expQuery.in("account", linkedAccounts);
+      } else {
+        setExpenseItems([]);
+        setLoadingLogs(false);
+        return;
+      }
+    }
+
+    const { data: expData } = await expQuery;
+    setExpenseItems(
+      (expData ?? []).map((e: { id: number; description: string; amount: number; account: string | null; expense_date: string }) => ({
+        expense_id: e.id,
+        description: e.description,
+        amount: Number(e.amount),
+        account: e.account,
+        expense_date: e.expense_date,
+      }))
+    );
+
     setLoadingLogs(false);
   };
 
@@ -5791,7 +5838,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
     const invoiceNumber = generateInvoiceNumber();
     const issueDate = new Date().toISOString().split("T")[0];
-    const manualTotal = parseFloat(invoiceTotal) || 0;
+    const timeTotal = parseFloat(invoiceTotal) || 0;
+    const expenseTotal = expenseItems.reduce((s, e) => s + e.amount, 0);
+    const manualTotal = timeTotal + expenseTotal;
     const adjustment = parseFloat(adjustmentAmount) || 0;
     const finalTotal = manualTotal - adjustment;
 
@@ -5883,6 +5932,33 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       }
     }
 
+    // Insert expense line items and mark expenses as settled
+    if (expenseItems.length > 0) {
+      const sortOffset = lineItems.length;
+      const expenseLineItemsData = expenseItems.map((exp, idx) => ({
+        invoice_id: newInvoice.id,
+        log_id: null,
+        expense_id: exp.expense_id,
+        description: exp.description,
+        va_name: null,
+        account_name: exp.account || null,
+        category: "expense",
+        project: null,
+        client_memo: null,
+        quantity: 1,
+        unit_price: exp.amount,
+        amount: exp.amount,
+        service_date: exp.expense_date || null,
+        start_time: null,
+        sort_order: sortOffset + idx,
+      }));
+      await supabase.from("invoice_line_items").insert(expenseLineItemsData);
+
+      // Mark these expenses as settled in financial_expenses
+      const expenseIds = expenseItems.map((e) => e.expense_id);
+      await supabase.from("financial_expenses").update({ reimbursed: true }).in("id", expenseIds);
+    }
+
     // If sending now, fire email
     if (sendNow && billingEmail) {
       try {
@@ -5926,6 +6002,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setRemovedItemOverrides(new Map());
     setInvoiceType("timelog");
     setCustomItems([{ id: "ci-1", description: "", amount: "" }]);
+    setExpenseItems([]);
 
     await fetchInvoices();
 
@@ -6129,6 +6206,20 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     const items = (lineItemsRes.data ?? []) as InvoiceLineItem[];
     setSelectedLineItems(items);
     setEditLineItemsState(items);
+
+    // Fetch settled status for any expense line items
+    const expIds = items.filter((li) => li.expense_id).map((li) => li.expense_id as number);
+    if (expIds.length > 0) {
+      const { data: expData } = await supabase
+        .from("financial_expenses")
+        .select("id, reimbursed")
+        .in("id", expIds);
+      setExpenseSettledMap(
+        Object.fromEntries((expData ?? []).map((e: { id: number; reimbursed: boolean }) => [e.id, e.reimbursed]))
+      );
+    } else {
+      setExpenseSettledMap({});
+    }
     setRemovedEditItems([]);
     setEditUndoStack([]);
     setEditFilterVAValues(new Set<string>());
@@ -7205,6 +7296,47 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </div>
               </div>
 
+            {/* Reimbursable Expenses — Auto-added */}
+            {expenseItems.length > 0 && (
+              <div className="mt-4 rounded-lg border border-amber-200 overflow-hidden">
+                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">
+                    Reimbursable Expenses — Auto-added ({expenseItems.length})
+                  </p>
+                </div>
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-amber-100 bg-amber-50/50 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                      <th className="px-4 py-2.5">Date</th>
+                      <th className="px-3 py-2.5">Description</th>
+                      <th className="px-3 py-2.5">Account</th>
+                      <th className="px-3 py-2.5 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-100">
+                    {expenseItems.map((exp) => (
+                      <tr key={exp.expense_id} className="hover:bg-amber-50/50 transition-colors">
+                        <td className="px-4 py-2.5 text-bark text-[11px]">{exp.expense_date}</td>
+                        <td className="px-3 py-2.5 text-espresso font-medium">{exp.description}</td>
+                        <td className="px-3 py-2.5 text-bark">{exp.account || "—"}</td>
+                        <td className="px-3 py-2.5 text-right font-medium text-espresso">${exp.amount.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-amber-200 bg-amber-50">
+                      <td colSpan={3} className="px-4 py-2 text-[11px] font-semibold text-amber-700 text-right">
+                        Expense Total
+                      </td>
+                      <td className="px-3 py-2 text-right font-bold text-amber-700 text-[11px]">
+                        ${expenseItems.reduce((s, e) => s + e.amount, 0).toFixed(2)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+
               {/* Removed Items Holding Cell */}
               {removedLineItems.length > 0 && (
                 <div className="mt-3 rounded-lg border border-amber/30 bg-amber-soft/20 p-3">
@@ -8190,7 +8322,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             {/* Invoice Summary Box — smart 1 or 2 row layout */}
             <div className="mb-6 rounded-lg border border-sand bg-parchment/30 p-5">
               {(() => {
-                const grossHours = selectedLineItems.reduce((s, li) => s + Number(li.quantity), 0);
+                const grossHours = selectedLineItems.filter((li) => !li.expense_id).reduce((s, li) => s + Number(li.quantity), 0);
                 const notBilled = Number(inv.hours_not_billed || 0);
                 const billedHours = grossHours - notBilled;
                 const hasAdj = Number(inv.adjustment_amount || 0) > 0;
@@ -8316,7 +8448,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-parchment">
-                  {selectedLineItems.map((li) => (
+                  {selectedLineItems.filter((li) => !li.expense_id).map((li) => (
                     <tr key={li.id} className="hover:bg-parchment/20 transition-colors">
                       <td className="px-4 py-3 text-right font-medium text-espresso">{Math.round(Number(li.quantity) * 60)}</td>
                       <td className="px-3 py-3 text-bark">{li.description}</td>
@@ -8327,6 +8459,59 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </tbody>
               </table>
             </div>
+
+            {/* Reimbursable Expenses Section */}
+            {selectedLineItems.some((li) => li.expense_id) && (
+              <div className="mb-6 rounded-lg border border-amber-200 overflow-hidden">
+                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Reimbursable Expenses</p>
+                </div>
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-amber-100 bg-amber-50/50 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-3 py-3">Description</th>
+                      <th className="px-3 py-3">Account</th>
+                      <th className="px-3 py-3 text-right">Amount</th>
+                      <th className="px-4 py-3 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-50">
+                    {selectedLineItems.filter((li) => li.expense_id).map((li) => {
+                      const isSettled = expenseSettledMap[li.expense_id as number] ?? false;
+                      return (
+                        <tr key={li.id} className="hover:bg-amber-50/50 transition-colors">
+                          <td className="px-4 py-3 text-bark text-[11px]">{li.service_date || "—"}</td>
+                          <td className="px-3 py-3 text-espresso font-medium">{li.description}</td>
+                          <td className="px-3 py-3 text-bark">{li.account_name || "—"}</td>
+                          <td className="px-3 py-3 text-right font-medium text-espresso">${Number(li.amount).toFixed(2)}</td>
+                          <td className="px-4 py-3 text-center">
+                            {isSettled ? (
+                              <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-sage-soft text-sage">
+                                Settled
+                              </span>
+                            ) : (
+                              <button
+                                onClick={async () => {
+                                  await supabase
+                                    .from("financial_expenses")
+                                    .update({ reimbursed: true })
+                                    .eq("id", li.expense_id as number);
+                                  setExpenseSettledMap((prev) => ({ ...prev, [li.expense_id as number]: true }));
+                                }}
+                                className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-parchment text-bark hover:bg-amber-100 hover:text-amber-700 cursor-pointer transition-colors"
+                              >
+                                Mark Settled
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Totals */}
             <div className="flex justify-end">
