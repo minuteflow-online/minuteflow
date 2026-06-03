@@ -310,6 +310,13 @@ export default function TeamPage() {
             fetchTeamData();
           }
         )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "profiles" },
+          () => {
+            fetchTeamData();
+          }
+        )
         .subscribe();
 
       return () => {
