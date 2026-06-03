@@ -90,6 +90,9 @@ interface ExpenseRow {
   is_reimbursable: boolean;
   reimbursed: boolean;
   notes: string | null;
+  settled_date: string | null;
+  date_recorded: string | null;
+  date_billed: string | null;
 }
 
 /* ── Constants ──────────────────────────────────────────── */
@@ -212,6 +215,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   // Expand/collapse state
   const [expandedVas, setExpandedVas] = useState<Set<string>>(new Set());
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
+  const [expandedExpenses, setExpandedExpenses] = useState<Set<number>>(new Set());
 
   // Modal state
   const [showVaPaymentModal, setShowVaPaymentModal] = useState<string | null>(null); // va user_id
@@ -228,6 +232,15 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       const next = new Set(prev);
       if (next.has(userId)) next.delete(userId);
       else next.add(userId);
+      return next;
+    });
+  };
+
+  const toggleExpense = (id: number) => {
+    setExpandedExpenses((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -276,7 +289,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .order("payment_date", { ascending: false }),
       supabase
         .from("financial_expenses")
-        .select("id, account, description, amount, expense_date, category, is_reimbursable, reimbursed, notes")
+        .select("id, account, description, amount, expense_date, category, is_reimbursable, reimbursed, notes, settled_date, date_recorded, date_billed")
         .gte("expense_date", startDate)
         .lte("expense_date", endDate)
         .order("expense_date", { ascending: false }),
@@ -758,6 +771,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const saveExpense = async (form: {
     description: string; amount: string; expense_date: string;
     category: string; account: string; is_reimbursable: boolean; notes: string;
+    settled_date: string; date_recorded: string; date_billed: string;
   }) => {
     const { error } = await supabase.from("financial_expenses").insert({
       account: form.account || null,
@@ -766,7 +780,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       expense_date: form.expense_date,
       category: form.category,
       is_reimbursable: form.is_reimbursable,
+      reimbursed: false,
       notes: form.notes || null,
+      settled_date: form.settled_date || null,
+      date_recorded: form.date_recorded || null,
+      date_billed: form.date_billed || null,
     });
     if (error) { alert("Error saving expense: " + error.message); return; }
     setShowExpenseModal(false);
@@ -964,6 +982,77 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
               </div>
             </div>
           </div>
+
+          {/* ── Reimbursable Expenses Summary ──── */}
+          <Section title="Reimbursable Expenses — Summary">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
+              <SummaryCard
+                label="Total Reimbursable"
+                value={fmtMoney(expenseData.reimbursableTotal)}
+                sub={expenses.filter(e => e.is_reimbursable).length + " items"}
+                color="text-amber-600"
+              />
+              <SummaryCard
+                label="Settled"
+                value={fmtMoney(expenseData.reimbursedTotal)}
+                sub={expenses.filter(e => e.reimbursed).length + " items"}
+                color="text-sage"
+              />
+              <SummaryCard
+                label="Pending Settlement"
+                value={fmtMoney(expenseData.reimbursableTotal - expenseData.reimbursedTotal)}
+                sub={expenses.filter(e => e.is_reimbursable && !e.reimbursed).length + " items"}
+                color={(expenseData.reimbursableTotal - expenseData.reimbursedTotal) > 0 ? "text-amber-600" : "text-sage"}
+              />
+              <SummaryCard
+                label="Business Expenses"
+                value={fmtMoney(expenseData.businessTotal)}
+                sub={expenses.filter(e => !e.is_reimbursable).length + " items"}
+                color="text-slate-600"
+              />
+            </div>
+            {expenses.filter(e => e.is_reimbursable).length === 0 ? (
+              <EmptyState text="No reimbursable expenses for this period." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-3 py-3">Description</th>
+                      <th className="px-3 py-3">Account</th>
+                      <th className="px-3 py-3 text-right">Amount</th>
+                      <th className="px-3 py-3 text-center">Settled</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-parchment">
+                    {expenses.filter(e => e.is_reimbursable).map((exp) => (
+                      <tr key={exp.id} className="hover:bg-parchment/20 transition-colors">
+                        <td className="px-4 py-3 text-bark text-[11px]">{exp.expense_date}</td>
+                        <td className="px-3 py-3 text-espresso font-medium">{exp.description}</td>
+                        <td className="px-3 py-3 text-bark">{exp.account || "—"}</td>
+                        <td className="px-3 py-3 text-right font-semibold text-amber-600">{fmtMoney(Number(exp.amount))}</td>
+                        <td className="px-3 py-3 text-center">
+                          {exp.reimbursed ? (
+                            <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Settled</span>
+                          ) : (
+                            <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Pending</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-espresso/20 bg-parchment/20 font-semibold text-espresso">
+                      <td className="px-4 py-3" colSpan={3}>Total Reimbursable</td>
+                      <td className="px-3 py-3 text-right text-amber-600">{fmtMoney(expenseData.reimbursableTotal)}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </Section>
 
           {/* ── Revenue (Client Collectibles) — Expandable ──── */}
           <Section
@@ -1463,6 +1552,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                 <table className="w-full text-left text-[12px]">
                   <thead>
                     <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                      <th className="px-2 py-3 w-6"></th>
                       <th className="px-4 py-3 cursor-pointer hover:text-terracotta" onClick={() => { if (expenseSortField === "date") setExpenseSortAsc(!expenseSortAsc); else { setExpenseSortField("date"); setExpenseSortAsc(false); } }}>
                         Date {expenseSortField === "date" ? (expenseSortAsc ? "↑" : "↓") : ""}
                       </th>
@@ -1480,51 +1570,95 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-parchment">
-                    {expenseData.rows.map((exp) => (
-                      <tr key={exp.id} className="hover:bg-parchment/20 transition-colors">
-                        <td className="px-4 py-3 text-espresso">{fmtDateFull(exp.expense_date, timezone)}</td>
-                        <td className="px-3 py-3 font-medium text-espresso max-w-[200px] truncate">{exp.description}</td>
-                        <td className="px-3 py-3 text-bark">{exp.account || "General"}</td>
-                        <td className="px-3 py-3 text-bark capitalize">{exp.category}</td>
-                        <td className="px-3 py-3 text-right font-semibold text-amber-600">{fmtMoney(Number(exp.amount))}</td>
-                        <td className="px-3 py-3 text-center">
-                          {exp.is_reimbursable ? (
-                            <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Yes</span>
-                          ) : (
-                            <span className="text-bark/40 text-[10px]">No</span>
+                    {expenseData.rows.map((exp) => {
+                      const isExpanded = expandedExpenses.has(exp.id);
+                      return (
+                        <>
+                          <tr key={exp.id} className="hover:bg-parchment/20 transition-colors">
+                            <td className="px-2 py-3">
+                              <button
+                                onClick={() => toggleExpense(exp.id)}
+                                className="text-bark/50 hover:text-terracotta transition-colors cursor-pointer"
+                                title={isExpanded ? "Collapse" : "Expand details"}
+                              >
+                                <span className={`inline-block transition-transform text-[10px] ${isExpanded ? "rotate-90" : ""}`}>▶</span>
+                              </button>
+                            </td>
+                            <td className="px-4 py-3 text-espresso">{fmtDateFull(exp.expense_date, timezone)}</td>
+                            <td className="px-3 py-3 font-medium text-espresso max-w-[200px] truncate">{exp.description}</td>
+                            <td className="px-3 py-3 text-bark">{exp.account || "General"}</td>
+                            <td className="px-3 py-3 text-bark capitalize">{exp.category}</td>
+                            <td className="px-3 py-3 text-right font-semibold text-amber-600">{fmtMoney(Number(exp.amount))}</td>
+                            <td className="px-3 py-3 text-center">
+                              {exp.is_reimbursable ? (
+                                <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Yes</span>
+                              ) : (
+                                <span className="text-bark/40 text-[10px]">No</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-3 text-center">
+                              {exp.is_reimbursable ? (
+                                <button
+                                  onClick={() => toggleReimbursed(exp.id, exp.reimbursed)}
+                                  className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold cursor-pointer ${
+                                    exp.reimbursed
+                                      ? "bg-sage-soft text-sage"
+                                      : "bg-parchment text-bark hover:bg-amber-100 hover:text-amber-700"
+                                  }`}
+                                >
+                                  {exp.reimbursed ? "Yes" : "No"}
+                                </button>
+                              ) : (
+                                <span className="text-bark/40 text-[10px]">—</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-3">
+                              <button
+                                onClick={() => deleteExpense(exp.id)}
+                                className="text-red-400 hover:text-red-600 text-[10px] cursor-pointer"
+                                title="Delete"
+                              >
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr key={`${exp.id}-detail`} className="bg-parchment/30">
+                              <td colSpan={9} className="px-8 pb-4 pt-2">
+                                <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-[11px] sm:grid-cols-4">
+                                  <div>
+                                    <p className="font-semibold uppercase tracking-wider text-bark/60 text-[9px] mb-0.5">Purchase Date</p>
+                                    <p className="text-espresso">{exp.expense_date ? fmtDateFull(exp.expense_date, timezone) : "—"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="font-semibold uppercase tracking-wider text-bark/60 text-[9px] mb-0.5">Date Recorded</p>
+                                    <p className="text-espresso">{exp.date_recorded ? fmtDateFull(exp.date_recorded, timezone) : "—"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="font-semibold uppercase tracking-wider text-bark/60 text-[9px] mb-0.5">Date Billed to Client</p>
+                                    <p className="text-espresso">{exp.date_billed ? fmtDateFull(exp.date_billed, timezone) : "—"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="font-semibold uppercase tracking-wider text-bark/60 text-[9px] mb-0.5">Settled Date</p>
+                                    <p className="text-espresso">{exp.settled_date ? fmtDateFull(exp.settled_date, timezone) : "—"}</p>
+                                  </div>
+                                  {exp.notes && (
+                                    <div className="col-span-2 sm:col-span-4 mt-1">
+                                      <p className="font-semibold uppercase tracking-wider text-bark/60 text-[9px] mb-0.5">Notes</p>
+                                      <p className="text-espresso">{exp.notes}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
                           )}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          {exp.is_reimbursable ? (
-                            <button
-                              onClick={() => toggleReimbursed(exp.id, exp.reimbursed)}
-                              className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold cursor-pointer ${
-                                exp.reimbursed
-                                  ? "bg-sage-soft text-sage"
-                                  : "bg-parchment text-bark hover:bg-amber-100 hover:text-amber-700"
-                              }`}
-                            >
-                              {exp.reimbursed ? "Yes" : "No"}
-                            </button>
-                          ) : (
-                            <span className="text-bark/40 text-[10px]">—</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-3">
-                          <button
-                            onClick={() => deleteExpense(exp.id)}
-                            className="text-red-400 hover:text-red-600 text-[10px] cursor-pointer"
-                            title="Delete"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                        </>
+                      );
+                    })}
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-espresso/20 bg-parchment/20 font-semibold text-espresso">
-                      <td className="px-4 py-3" colSpan={4}>Total Expenses</td>
+                      <td className="px-4 py-3" colSpan={5}>Total Expenses</td>
                       <td className="px-3 py-3 text-right text-amber-600">{fmtMoney(expenseData.totalExpenses)}</td>
                       <td className="px-3 py-3 text-center text-[10px] text-bark/60">
                         {fmtMoney(expenseData.reimbursableTotal)} reimbursable
@@ -1964,11 +2098,15 @@ function ExpenseModal({
   onSave: (form: {
     description: string; amount: string; expense_date: string;
     category: string; account: string; is_reimbursable: boolean; notes: string;
+    settled_date: string; date_recorded: string; date_billed: string;
   }) => void;
 }) {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [expenseDate, setExpenseDate] = useState(defaultDate);
+  const [settledDate, setSettledDate] = useState("");
+  const [dateRecorded, setDateRecorded] = useState(defaultDate);
+  const [dateBilled, setDateBilled] = useState("");
   const [category, setCategory] = useState("other");
   const [customCategory, setCustomCategory] = useState("");
   const [account, setAccount] = useState("");
@@ -1982,7 +2120,7 @@ function ExpenseModal({
     const finalCategory = category === "custom" ? (customCategory.trim().toLowerCase() || "other") : category;
     if (category === "custom" && !customCategory.trim()) { alert("Please enter a custom category name."); return; }
     setSaving(true);
-    await onSave({ description, amount, expense_date: expenseDate, category: finalCategory, account, is_reimbursable: isReimbursable, notes });
+    await onSave({ description, amount, expense_date: expenseDate, category: finalCategory, account, is_reimbursable: isReimbursable, notes, settled_date: settledDate, date_recorded: dateRecorded, date_billed: dateBilled });
     setSaving(false);
   };
 
@@ -2003,8 +2141,27 @@ function ExpenseModal({
                 className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" placeholder="0.00" />
             </div>
             <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Date</label>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Purchase Date</label>
               <input type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Date Recorded</label>
+              <input type="date" value={dateRecorded} onChange={(e) => setDateRecorded(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Date Billed to Client</label>
+              <input type="date" value={dateBilled} onChange={(e) => setDateBilled(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Settled Date</label>
+              <input type="date" value={settledDate} onChange={(e) => setSettledDate(e.target.value)}
                 className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
             </div>
           </div>
