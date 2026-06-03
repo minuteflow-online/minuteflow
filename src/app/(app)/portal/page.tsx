@@ -8,6 +8,9 @@ import type { Profile, PaymentAccountDetails } from "@/types/database";
 
 type PortalTab = "profile" | "onboarding" | "sops" | "coaching" | "jobs" | "requests";
 
+type RequestType = "time_off" | "schedule_change" | "pay_question" | "general";
+type RequestStatus = "pending" | "approved" | "denied" | "noted";
+
 interface VaResource {
   id: string;
   type: string;
@@ -18,46 +21,24 @@ interface VaResource {
   created_at: string;
 }
 
-interface TimeCorrectionRequest {
-  id: number;
-  log_id: number;
-  requested_by: string;
-  reason: string;
-  requested_changes: Record<string, string>;
-  status: string;
-  created_at: string;
-  requester_name?: string;
-  task_name?: string;
-}
-
-interface BreakCorrectionRequest {
+interface VaRequest {
   id: number;
   user_id: string;
-  session_date: string;
-  total_break_ms: number;
-  allowed_break_ms: number;
-  excess_break_ms: number;
-  break_log_ids: number[];
-  status: string;
+  type: RequestType;
+  subject: string;
+  message: string;
+  start_date: string | null;
+  end_date: string | null;
+  status: RequestStatus;
+  admin_notes: string | null;
+  reviewed_at: string | null;
   created_at: string;
   requester_name?: string;
-}
-
-// ─── Helpers ─────────────────────────────────────────────────
-
-function fmtMs(ms: number): string {
-  const totalSec = Math.floor(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
 }
 
 // ─── Sidebar Tab Config ──────────────────────────────────────
 
-const BASE_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
+const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
   {
     id: "profile",
     label: "My Profile",
@@ -115,18 +96,37 @@ const BASE_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
       </svg>
     ),
   },
+  {
+    id: "requests",
+    label: "Requests",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+      </svg>
+    ),
+  },
 ];
 
-const ADMIN_REQUESTS_TAB: { id: PortalTab; label: string; icon: React.ReactNode } = {
-  id: "requests",
-  label: "Requests",
-  icon: (
-    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M9 11l3 3L22 4" />
-      <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-    </svg>
-  ),
+// ─── Helpers ──────────────────────────────────────────────────
+
+const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
+  time_off: "Time Off",
+  schedule_change: "Schedule Change",
+  pay_question: "Pay Question",
+  general: "General Request",
 };
+
+const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string }> = {
+  pending:  { bg: "bg-amber-soft",       text: "text-amber",      label: "Pending"  },
+  approved: { bg: "bg-sage-soft",        text: "text-sage",       label: "Approved" },
+  denied:   { bg: "bg-terracotta-soft",  text: "text-terracotta", label: "Denied"   },
+  noted:    { bg: "bg-parchment",        text: "text-walnut",     label: "Noted"    },
+};
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 
 // ─── Resource Card ───────────────────────────────────────────
 
@@ -205,7 +205,6 @@ function ProfileTab({ profile, onSaved }: { profile: Profile; onSaved: (p: Profi
   const [department, setDepartment] = useState(profile.department || "");
   const [position, setPosition] = useState(profile.position || "");
 
-  // Payment accounts
   const pa = profile.payment_accounts || {};
   const [gcashNumber, setGcashNumber] = useState(pa.gcash?.number || "");
   const [gcashName, setGcashName] = useState(pa.gcash?.name || "");
@@ -459,378 +458,408 @@ function ResourcesTab({
   );
 }
 
-// ─── Admin Requests Tab ──────────────────────────────────────
+// ─── Requests Tab ────────────────────────────────────────────
 
-function AdminRequestsTab({ currentUserId }: { currentUserId: string }) {
+function RequestsTab({
+  currentUserId,
+  isAdmin,
+}: {
+  currentUserId: string;
+  isAdmin: boolean;
+}) {
   const supabase = createClient();
-  const [timeRequests, setTimeRequests] = useState<TimeCorrectionRequest[]>([]);
-  const [breakRequests, setBreakRequests] = useState<BreakCorrectionRequest[]>([]);
+
+  // ── Form state ──
+  const [showForm, setShowForm] = useState(false);
+  const [reqType, setReqType] = useState<RequestType>("time_off");
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMsg, setSubmitMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  // ── List state ──
+  const [requests, setRequests] = useState<VaRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
+  const [adminNotes, setAdminNotes] = useState<Record<number, string>>({});
   const [processing, setProcessing] = useState<Record<string, boolean>>({});
 
   const fetchRequests = useCallback(async () => {
-    const [timRes, brkRes, profilesRes] = await Promise.all([
-      supabase
-        .from("time_correction_requests")
-        .select("*")
-        .eq("status", "pending")
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("break_correction_requests")
-        .select("*")
-        .eq("status", "pending")
-        .order("created_at", { ascending: false }),
-      supabase.from("profiles").select("id, full_name"),
-    ]);
+    setLoading(true);
 
-    const profileMap: Record<string, string> = {};
-    (profilesRes.data || []).forEach((p: { id: string; full_name: string }) => {
-      profileMap[p.id] = p.full_name;
-    });
+    let query = supabase
+      .from("va_requests")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-    // Enrich time requests with requester name + task name
-    const enrichedTime: TimeCorrectionRequest[] = await Promise.all(
-      (timRes.data || []).map(async (req: TimeCorrectionRequest) => {
-        const { data: log } = await supabase
-          .from("time_logs")
-          .select("task_name")
-          .eq("id", req.log_id)
-          .maybeSingle();
-        return {
-          ...req,
-          requester_name: profileMap[req.requested_by] || "Unknown",
-          task_name: log?.task_name || "Unknown Task",
-        };
-      })
-    );
+    // VAs only see their own; admins see all
+    if (!isAdmin) {
+      query = query.eq("user_id", currentUserId);
+    }
 
-    const enrichedBreak: BreakCorrectionRequest[] = (brkRes.data || []).map(
-      (req: BreakCorrectionRequest) => ({
-        ...req,
-        requester_name: profileMap[req.user_id] || "Unknown",
-      })
-    );
+    const { data } = await query;
 
-    setTimeRequests(enrichedTime);
-    setBreakRequests(enrichedBreak);
+    if (isAdmin && data) {
+      // Enrich with requester names
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, full_name");
+      const profileMap: Record<string, string> = {};
+      (profiles || []).forEach((p: { id: string; full_name: string }) => {
+        profileMap[p.id] = p.full_name;
+      });
+      setRequests(
+        (data as VaRequest[]).map((r) => ({
+          ...r,
+          requester_name: profileMap[r.user_id] || "Unknown",
+        }))
+      );
+    } else {
+      setRequests((data as VaRequest[]) || []);
+    }
+
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, isAdmin, currentUserId]);
 
   useEffect(() => {
     fetchRequests();
   }, [fetchRequests]);
 
-  const handleApproveTime = useCallback(
-    async (req: TimeCorrectionRequest) => {
-      setProcessing((p) => ({ ...p, [`t-${req.id}`]: true }));
-      const changes = req.requested_changes;
-      const updatePayload: Record<string, unknown> = {};
+  // ── Submit new request ──
+  const handleSubmit = useCallback(async () => {
+    if (!subject.trim() || !message.trim()) return;
+    setSubmitting(true);
+    setSubmitMsg(null);
 
-      const { data: currentLog } = await supabase
-        .from("time_logs")
-        .select("*")
-        .eq("id", req.log_id)
-        .single();
+    const payload: Record<string, unknown> = {
+      user_id: currentUserId,
+      type: reqType,
+      subject: subject.trim(),
+      message: message.trim(),
+    };
+    if (reqType === "time_off") {
+      if (startDate) payload.start_date = startDate;
+      if (endDate) payload.end_date = endDate;
+    }
 
-      if (currentLog) {
-        const toUtcIso = (val: string) => (val ? new Date(val).toISOString() : null);
-        Object.entries(changes).forEach(([field, newValue]) => {
-          const isTimeField = field === "start_time" || field === "end_time";
-          updatePayload[field] = isTimeField && newValue ? toUtcIso(newValue) : (newValue || null);
-        });
+    const { error } = await supabase.from("va_requests").insert(payload);
+    setSubmitting(false);
 
-        if (changes.start_time || changes.end_time) {
-          const startTime = changes.start_time
-            ? new Date(changes.start_time).toISOString()
-            : currentLog.start_time;
-          const endTime = changes.end_time
-            ? new Date(changes.end_time).toISOString()
-            : currentLog.end_time;
-          if (startTime && endTime && new Date(endTime).getTime() > new Date(startTime).getTime()) {
-            updatePayload.duration_ms = new Date(endTime).getTime() - new Date(startTime).getTime();
-          }
-        }
+    if (error) {
+      setSubmitMsg({ type: "err", text: error.message });
+      return;
+    }
 
-        await supabase.from("time_logs").update(updatePayload).eq("id", req.log_id);
-      }
+    // Reset form
+    setSubject("");
+    setMessage("");
+    setStartDate("");
+    setEndDate("");
+    setShowForm(false);
+    setSubmitMsg({ type: "ok", text: "Request submitted!" });
+    setTimeout(() => setSubmitMsg(null), 3000);
+    fetchRequests();
+  }, [supabase, currentUserId, reqType, subject, message, startDate, endDate, fetchRequests]);
+
+  // ── Admin review ──
+  const handleReview = useCallback(
+    async (req: VaRequest, status: RequestStatus) => {
+      const key = `${req.id}-${status}`;
+      setProcessing((p) => ({ ...p, [key]: true }));
 
       await supabase
-        .from("time_correction_requests")
+        .from("va_requests")
         .update({
-          status: "approved",
+          status,
+          admin_notes: adminNotes[req.id] || null,
           reviewed_by: currentUserId,
-          review_notes: reviewNotes[req.id] || null,
           reviewed_at: new Date().toISOString(),
         })
         .eq("id", req.id);
 
       await fetchRequests();
-      setProcessing((p) => ({ ...p, [`t-${req.id}`]: false }));
+      setProcessing((p) => ({ ...p, [key]: false }));
     },
-    [supabase, currentUserId, reviewNotes, fetchRequests]
+    [supabase, currentUserId, adminNotes, fetchRequests]
   );
 
-  const handleDenyTime = useCallback(
-    async (req: TimeCorrectionRequest) => {
-      setProcessing((p) => ({ ...p, [`t-${req.id}`]: true }));
-      await supabase
-        .from("time_correction_requests")
-        .update({
-          status: "denied",
-          reviewed_by: currentUserId,
-          review_notes: reviewNotes[req.id] || null,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", req.id);
-      await fetchRequests();
-      setProcessing((p) => ({ ...p, [`t-${req.id}`]: false }));
-    },
-    [supabase, currentUserId, reviewNotes, fetchRequests]
-  );
-
-  const handleApproveBreak = useCallback(
-    async (req: BreakCorrectionRequest) => {
-      setProcessing((p) => ({ ...p, [`b-${req.id}`]: true }));
-      // Accept as-is: non-billable breaks stay non-billable (already set at clock-out)
-      await supabase
-        .from("break_correction_requests")
-        .update({
-          status: "approved",
-          reviewed_by: currentUserId,
-          review_notes: reviewNotes[req.id] || null,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", req.id);
-      await fetchRequests();
-      setProcessing((p) => ({ ...p, [`b-${req.id}`]: false }));
-    },
-    [supabase, currentUserId, reviewNotes, fetchRequests]
-  );
-
-  const handleDenyBreak = useCallback(
-    async (req: BreakCorrectionRequest) => {
-      setProcessing((p) => ({ ...p, [`b-${req.id}`]: true }));
-      // Deny: flip ALL break logs to non-billable
-      await supabase
-        .from("time_logs")
-        .update({ billable: false })
-        .in("id", req.break_log_ids);
-      await supabase
-        .from("break_correction_requests")
-        .update({
-          status: "denied",
-          reviewed_by: currentUserId,
-          review_notes: reviewNotes[req.id] || null,
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq("id", req.id);
-      await fetchRequests();
-      setProcessing((p) => ({ ...p, [`b-${req.id}`]: false }));
-    },
-    [supabase, currentUserId, reviewNotes, fetchRequests]
-  );
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-10 text-sm text-stone">
-        <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
-        Loading requests...
-      </div>
-    );
-  }
-
-  const hasNone = timeRequests.length === 0 && breakRequests.length === 0;
-
-  if (hasNone) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <div className="mb-3 h-12 w-12 rounded-full bg-sage-soft flex items-center justify-center">
-          <svg className="h-5 w-5 text-sage" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M9 11l3 3L22 4" />
-            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-          </svg>
-        </div>
-        <p className="text-sm font-medium text-espresso">All caught up!</p>
-        <p className="mt-1 text-xs text-stone">No pending requests from the team.</p>
-      </div>
-    );
-  }
+  const pendingRequests = requests.filter((r) => r.status === "pending");
+  const pastRequests = requests.filter((r) => r.status !== "pending");
 
   return (
     <div className="max-w-3xl space-y-8">
-      {/* Time Correction Requests */}
-      {timeRequests.length > 0 && (
+
+      {/* ── Submit Form (VAs + Admins can submit) ── */}
+      {!showForm ? (
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setShowForm(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            New Request
+          </button>
+          {submitMsg && (
+            <p className={`text-xs font-medium ${submitMsg.type === "ok" ? "text-sage" : "text-red-500"}`}>
+              {submitMsg.text}
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-sand bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-espresso">New Request</h3>
+            <button
+              onClick={() => setShowForm(false)}
+              className="text-stone hover:text-espresso cursor-pointer"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Type */}
+          <div className="mb-4">
+            <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">Request Type</label>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {(["time_off", "schedule_change", "pay_question", "general"] as RequestType[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setReqType(t)}
+                  className={`py-2 px-3 rounded-lg text-[12px] font-medium border transition-all cursor-pointer ${
+                    reqType === t
+                      ? "bg-terracotta text-white border-terracotta"
+                      : "bg-white text-walnut border-sand hover:border-terracotta"
+                  }`}
+                >
+                  {REQUEST_TYPE_LABELS[t]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Date range (Time Off only) */}
+          {reqType === "time_off" && (
+            <div className="mb-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">From</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">To</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Subject */}
+          <div className="mb-3">
+            <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Subject</label>
+            <input
+              type="text"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="Brief summary of your request"
+              className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta placeholder:text-stone"
+            />
+          </div>
+
+          {/* Message */}
+          <div className="mb-4">
+            <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Details</label>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              rows={4}
+              placeholder="Explain your request in detail..."
+              className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta placeholder:text-stone resize-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !subject.trim() || !message.trim()}
+              className="rounded-lg bg-terracotta px-5 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting ? "Submitting..." : "Submit Request"}
+            </button>
+            <button
+              onClick={() => setShowForm(false)}
+              className="text-xs text-stone hover:text-espresso cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Loading ── */}
+      {loading && (
+        <div className="flex items-center gap-2 py-6 text-sm text-stone">
+          <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
+          Loading requests...
+        </div>
+      )}
+
+      {/* ── Pending requests (admin review OR VA view) ── */}
+      {!loading && pendingRequests.length > 0 && (
         <section>
           <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-sm font-bold text-espresso">Time Correction Requests</h2>
-            <span className="rounded-full bg-terracotta-soft px-2 py-0.5 text-[11px] font-semibold text-terracotta">
-              {timeRequests.length}
+            <h2 className="text-sm font-bold text-espresso">
+              {isAdmin ? "Pending Requests" : "Your Pending Requests"}
+            </h2>
+            <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[11px] font-semibold text-amber">
+              {pendingRequests.length}
             </span>
           </div>
+
           <div className="space-y-4">
-            {timeRequests.map((req) => {
-              const key = `t-${req.id}`;
-              const busy = processing[key];
-              return (
-                <div key={req.id} className="rounded-xl border border-sand bg-white p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div>
+            {pendingRequests.map((req) => (
+              <div key={req.id} className="rounded-xl border border-sand bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <div>
+                    {isAdmin && (
                       <p className="text-sm font-semibold text-espresso">{req.requester_name}</p>
-                      <p className="text-xs text-bark mt-0.5">Task: {req.task_name}</p>
-                      <p className="text-xs text-stone mt-0.5">
-                        {new Date(req.created_at).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        })}
-                      </p>
+                    )}
+                    <p className={`text-sm font-semibold text-espresso ${isAdmin ? "mt-0.5" : ""}`}>
+                      {req.subject}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="inline-flex items-center rounded-full bg-parchment px-2 py-0.5 text-[11px] font-medium text-walnut">
+                        {REQUEST_TYPE_LABELS[req.type]}
+                      </span>
+                      {req.start_date && (
+                        <span className="text-[11px] text-stone">
+                          {fmtDate(req.start_date)}
+                          {req.end_date && req.end_date !== req.start_date
+                            ? ` – ${fmtDate(req.end_date)}`
+                            : ""}
+                        </span>
+                      )}
                     </div>
-                    <span className="rounded-full bg-amber-soft px-2.5 py-1 text-[11px] font-semibold text-amber">
-                      Pending
-                    </span>
                   </div>
-
-                  {req.reason && (
-                    <div className="mb-3 p-3 rounded-lg bg-parchment border border-sand text-xs text-bark">
-                      <span className="font-semibold text-walnut">Reason: </span>{req.reason}
-                    </div>
-                  )}
-
-                  {Object.keys(req.requested_changes).length > 0 && (
-                    <div className="mb-3">
-                      <p className="text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Requested Changes</p>
-                      <div className="space-y-1">
-                        {Object.entries(req.requested_changes).map(([field, val]) => (
-                          <div key={field} className="flex gap-2 text-xs">
-                            <span className="text-stone capitalize w-24 shrink-0">{field.replace(/_/g, " ")}</span>
-                            <span className="text-ink font-medium">{val || "—"}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mb-3">
-                    <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                      Review Notes <span className="font-normal text-stone">(optional)</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={reviewNotes[req.id] || ""}
-                      onChange={(e) =>
-                        setReviewNotes((n) => ({ ...n, [req.id]: e.target.value }))
-                      }
-                      placeholder="Add a note for the VA..."
-                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleApproveTime(req)}
-                      disabled={busy}
-                      className="flex-1 py-2 rounded-lg bg-sage text-white text-xs font-semibold cursor-pointer transition-all hover:bg-[#4a8a6a] disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? "Processing..." : "Approve"}
-                    </button>
-                    <button
-                      onClick={() => handleDenyTime(req)}
-                      disabled={busy}
-                      className="flex-1 py-2 rounded-lg bg-white border border-sand text-xs font-semibold text-bark cursor-pointer transition-all hover:border-terracotta hover:text-terracotta disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Deny
-                    </button>
-                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold shrink-0 ${STATUS_STYLES[req.status].bg} ${STATUS_STYLES[req.status].text}`}>
+                    {STATUS_STYLES[req.status].label}
+                  </span>
                 </div>
-              );
-            })}
+
+                <p className="text-xs text-bark leading-relaxed mb-3">{req.message}</p>
+                <p className="text-[11px] text-stone mb-3">{fmtDate(req.created_at)}</p>
+
+                {/* Admin actions */}
+                {isAdmin && (
+                  <>
+                    <div className="mb-3">
+                      <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
+                        Notes <span className="font-normal text-stone">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={adminNotes[req.id] || ""}
+                        onChange={(e) =>
+                          setAdminNotes((n) => ({ ...n, [req.id]: e.target.value }))
+                        }
+                        placeholder="Add a note for the VA..."
+                        className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleReview(req, "approved")}
+                        disabled={!!processing[`${req.id}-approved`]}
+                        className="flex-1 py-2 rounded-lg bg-sage text-white text-xs font-semibold cursor-pointer transition-all hover:bg-[#4a8a6a] disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {processing[`${req.id}-approved`] ? "..." : "Approve"}
+                      </button>
+                      <button
+                        onClick={() => handleReview(req, "noted")}
+                        disabled={!!processing[`${req.id}-noted`]}
+                        className="flex-1 py-2 rounded-lg bg-parchment border border-sand text-xs font-semibold text-walnut cursor-pointer transition-all hover:border-terracotta hover:text-terracotta disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {processing[`${req.id}-noted`] ? "..." : "Note"}
+                      </button>
+                      <button
+                        onClick={() => handleReview(req, "denied")}
+                        disabled={!!processing[`${req.id}-denied`]}
+                        className="flex-1 py-2 rounded-lg bg-white border border-sand text-xs font-semibold text-bark cursor-pointer transition-all hover:border-terracotta hover:text-terracotta disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {processing[`${req.id}-denied`] ? "..." : "Deny"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
           </div>
         </section>
       )}
 
-      {/* Break Correction Requests */}
-      {breakRequests.length > 0 && (
+      {/* ── Past / Resolved requests ── */}
+      {!loading && pastRequests.length > 0 && (
         <section>
-          <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-sm font-bold text-espresso">Break Correction Requests</h2>
-            <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[11px] font-semibold text-amber">
-              {breakRequests.length}
-            </span>
-          </div>
-          <div className="space-y-4">
-            {breakRequests.map((req) => {
-              const key = `b-${req.id}`;
-              const busy = processing[key];
-              return (
-                <div key={req.id} className="rounded-xl border border-sand bg-white p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div>
-                      <p className="text-sm font-semibold text-espresso">{req.requester_name}</p>
-                      <p className="text-xs text-bark mt-0.5">
-                        {new Date(req.session_date).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        })}
-                      </p>
+          <h2 className="text-sm font-bold text-espresso mb-4">Past Requests</h2>
+          <div className="space-y-3">
+            {pastRequests.map((req) => (
+              <div key={req.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    {isAdmin && (
+                      <p className="text-xs font-semibold text-espresso">{req.requester_name}</p>
+                    )}
+                    <p className="text-sm font-medium text-espresso truncate">{req.subject}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="inline-flex items-center rounded-full bg-parchment px-2 py-0.5 text-[11px] font-medium text-walnut">
+                        {REQUEST_TYPE_LABELS[req.type]}
+                      </span>
+                      <span className="text-[11px] text-stone">{fmtDate(req.created_at)}</span>
                     </div>
-                    <span className="rounded-full bg-amber-soft px-2.5 py-1 text-[11px] font-semibold text-amber">
-                      Pending
-                    </span>
+                    {req.admin_notes && (
+                      <p className="mt-2 text-xs text-bark italic">"{req.admin_notes}"</p>
+                    )}
                   </div>
-
-                  <div className="mb-3 grid grid-cols-3 gap-3">
-                    <div className="rounded-lg bg-parchment p-3 text-center">
-                      <p className="text-[10px] text-stone mb-1">Total Break</p>
-                      <p className="text-sm font-bold text-espresso">{fmtMs(req.total_break_ms)}</p>
-                    </div>
-                    <div className="rounded-lg bg-parchment p-3 text-center">
-                      <p className="text-[10px] text-stone mb-1">Allowed</p>
-                      <p className="text-sm font-bold text-espresso">{fmtMs(req.allowed_break_ms)}</p>
-                    </div>
-                    <div className="rounded-lg bg-terracotta-soft p-3 text-center">
-                      <p className="text-[10px] text-terracotta mb-1">Excess</p>
-                      <p className="text-sm font-bold text-terracotta">{fmtMs(req.excess_break_ms)}</p>
-                    </div>
-                  </div>
-
-                  <div className="mb-3">
-                    <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                      Review Notes <span className="font-normal text-stone">(optional)</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={reviewNotes[req.id] || ""}
-                      onChange={(e) =>
-                        setReviewNotes((n) => ({ ...n, [req.id]: e.target.value }))
-                      }
-                      placeholder="Add a note for the VA..."
-                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleApproveBreak(req)}
-                      disabled={busy}
-                      className="flex-1 py-2 rounded-lg bg-sage text-white text-xs font-semibold cursor-pointer transition-all hover:bg-[#4a8a6a] disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {busy ? "Processing..." : "Approve"}
-                    </button>
-                    <button
-                      onClick={() => handleDenyBreak(req)}
-                      disabled={busy}
-                      className="flex-1 py-2 rounded-lg bg-white border border-sand text-xs font-semibold text-bark cursor-pointer transition-all hover:border-terracotta hover:text-terracotta disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Deny
-                    </button>
-                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold shrink-0 ${STATUS_STYLES[req.status].bg} ${STATUS_STYLES[req.status].text}`}>
+                    {STATUS_STYLES[req.status].label}
+                  </span>
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         </section>
+      )}
+
+      {/* ── Empty state ── */}
+      {!loading && requests.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="mb-3 h-12 w-12 rounded-full bg-parchment flex items-center justify-center">
+            <svg className="h-5 w-5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+            </svg>
+          </div>
+          <p className="text-sm font-medium text-espresso">
+            {isAdmin ? "No requests yet" : "You haven't submitted any requests yet"}
+          </p>
+          <p className="mt-1 text-xs text-stone">
+            {isAdmin ? "Team requests will appear here." : "Click \"New Request\" above to get started."}
+          </p>
+        </div>
       )}
     </div>
   );
@@ -863,16 +892,13 @@ export default function VaPortalPage() {
 
   const isAdmin = profile?.role === "admin";
 
-  // Build tabs — admins get Requests tab appended
-  const portalTabs = isAdmin ? [...BASE_TABS, ADMIN_REQUESTS_TAB] : BASE_TABS;
-
   const tabLabel: Record<PortalTab, string> = {
     profile: "My Profile",
     onboarding: "Start Here",
     sops: "SOPs",
     coaching: "Coaching",
     jobs: "Job Postings",
-    requests: "Team Requests",
+    requests: "Requests",
   };
 
   const tabSubtitle: Record<PortalTab, string> = {
@@ -881,7 +907,9 @@ export default function VaPortalPage() {
     sops: "Standard operating procedures for your role",
     coaching: "Resources to help you succeed",
     jobs: "Open positions and opportunities",
-    requests: "Review and approve pending requests from the team",
+    requests: isAdmin
+      ? "Review and respond to team requests"
+      : "Submit and track your requests",
   };
 
   if (loading) {
@@ -906,7 +934,7 @@ export default function VaPortalPage() {
           </div>
 
           <nav className="space-y-0.5 px-2">
-            {portalTabs.map((tab) => {
+            {PORTAL_TABS.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
                 <button
@@ -951,8 +979,8 @@ export default function VaPortalPage() {
         {activeTab === "jobs" && (
           <ResourcesTab type="job_posting" label="Job Postings" emptyLabel="job postings" />
         )}
-        {activeTab === "requests" && isAdmin && currentUserId && (
-          <AdminRequestsTab currentUserId={currentUserId} />
+        {activeTab === "requests" && currentUserId && (
+          <RequestsTab currentUserId={currentUserId} isAdmin={isAdmin} />
         )}
       </main>
     </div>
