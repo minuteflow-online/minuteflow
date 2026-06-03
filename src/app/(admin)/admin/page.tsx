@@ -34,6 +34,11 @@ import FinancialSummaryTab from "@/components/FinancialSummaryTab";
 import CaptureAlertsTab from "@/components/CaptureAlertsTab";
 import PaystubTab from "@/components/PaystubTab";
 import VaResourcesAdminTab from "@/components/VaResourcesAdminTab";
+import VaFeedbackAdminTab from "@/components/VaFeedbackAdminTab";
+import VaTrainingsAdminTab from "@/components/VaTrainingsAdminTab";
+import VaMemosAdminTab from "@/components/VaMemosAdminTab";
+import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
+import VaTokensAdminTab from "@/components/VaTokensAdminTab";
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -89,7 +94,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources";
+type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_trainings" | "va_memos" | "va_reviews" | "va_tokens";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -232,6 +237,56 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
         <path d="M12 2L2 7l10 5 10-5-10-5z" />
         <path d="M2 17l10 5 10-5" />
         <path d="M2 12l10 5 10-5" />
+      </svg>
+    ),
+  },
+  {
+    id: "va_feedback",
+    label: "VA Feedback",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+      </svg>
+    ),
+  },
+  {
+    id: "va_trainings",
+    label: "Trainings",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z" />
+        <path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z" />
+      </svg>
+    ),
+  },
+  {
+    id: "va_memos",
+    label: "Memos",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+      </svg>
+    ),
+  },
+  {
+    id: "va_reviews",
+    label: "Reviews",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+      </svg>
+    ),
+  },
+  {
+    id: "va_tokens",
+    label: "Tokens & Ratings",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 6v6l4 2" />
       </svg>
     ),
   },
@@ -1046,6 +1101,11 @@ export default function AdminPage() {
                 {activeTab === "password" && "Update your admin password"}
                 {activeTab === "alerts" && "Track screen capture drops and VA responses"}
                 {activeTab === "va_resources" && "Manage onboarding, SOPs, coaching, and job postings for VAs"}
+                {activeTab === "va_feedback" && "Review feedback submitted by your team"}
+                {activeTab === "va_trainings" && "Create and manage training materials for VAs"}
+                {activeTab === "va_memos" && "Send memos and announcements to your team"}
+                {activeTab === "va_reviews" && "Create and publish performance reviews"}
+                {activeTab === "va_tokens" && "Award tokens and track daily ratings"}
               </p>
             </div>
             {activeTab === "overview" && (
@@ -1175,6 +1235,21 @@ export default function AdminPage() {
 
           {activeTab === "va_resources" && (
             <VaResourcesAdminTab />
+          )}
+          {activeTab === "va_feedback" && (
+            <VaFeedbackAdminTab />
+          )}
+          {activeTab === "va_trainings" && (
+            <VaTrainingsAdminTab />
+          )}
+          {activeTab === "va_memos" && (
+            <VaMemosAdminTab />
+          )}
+          {activeTab === "va_reviews" && (
+            <VaReviewsAdminTab />
+          )}
+          {activeTab === "va_tokens" && (
+            <VaTokensAdminTab />
           )}
 
           {activeTab === "password" && (
