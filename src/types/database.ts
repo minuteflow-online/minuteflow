@@ -249,7 +249,7 @@ export interface Invoice {
   service_type: string | null;
   to_phone: string | null;
   is_manual: boolean;
-  previous_balance: number;
+  previous_balance: number | null;
   created_by: string | null;
   sent_at: string | null;
   hours_not_billed: number | null;
@@ -259,6 +259,8 @@ export interface Invoice {
   share_token: string | null;
   invoice_type: "timelog" | "custom" | null;
   custom_line_items: string | null;
+  period_start: string | null;
+  period_end: string | null;
   created_at: string;
   updated_at: string;
 }

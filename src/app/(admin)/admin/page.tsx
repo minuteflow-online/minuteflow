@@ -6378,6 +6378,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             rate_amount: rateAmount ? parseFloat(rateAmount) : null,
             hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
             hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
+            previous_balance: editPreviousBalance ? parseFloat(editPreviousBalance) : null,
             service_type: serviceType || null,
             to_name: editToName || prev.to_name,
             to_email: editToEmail || null,
