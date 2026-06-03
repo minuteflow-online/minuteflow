@@ -140,6 +140,8 @@ interface InvoiceRow {
   previous_balance: number | null;
   invoice_type?: string | null;
   custom_line_items?: string | null;
+  period_start: string | null;
+  period_end: string | null;
 }
 
 interface LineItemRow {
@@ -149,6 +151,9 @@ interface LineItemRow {
   project: string | null;
   account_name: string | null;
   client_memo: string | null;
+  expense_id: number | null;
+  amount: number;
+  service_date: string | null;
 }
 
 /* ── Helpers ──────────────────────────────────────────────── */
@@ -176,7 +181,12 @@ function buildInvoiceEmail(
   orgDba: string | null = null
 ): string {
   const isCustomInvoice = invoice.invoice_type === "custom";
-  const grossHours = items.reduce((s, li) => s + Number(li.quantity), 0);
+
+  // Separate hour-based line items from expense line items
+  const hourItems = items.filter((li) => !li.expense_id);
+  const expenseItems = items.filter((li) => !!li.expense_id);
+
+  const grossHours = hourItems.reduce((s, li) => s + Number(li.quantity), 0);
   const notBilledHours = Number(invoice.hours_not_billed || 0);
   const totalHours = grossHours - notBilledHours;
   const adjustment = Number(invoice.adjustment_amount || 0);
@@ -185,26 +195,30 @@ function buildInvoiceEmail(
   const prevBalance = Number(invoice.previous_balance || 0);
   const currentBalance = finalTotal + prevBalance;
   const hasAdjustment = adjustment > 0;
+  const expenseTotal = expenseItems.reduce((s, li) => s + Number(li.amount), 0);
 
-  // Issue date formatted
+  // Date display — show period range if available, otherwise issue date
   const issueDateFmt = new Date(invoice.issue_date + "T12:00:00Z").toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
     year: "numeric",
     timeZone: timezone,
   });
+  const dateDisplay = invoice.period_start && invoice.period_end
+    ? `${new Date(invoice.period_start + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(invoice.period_end + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+    : issueDateFmt;
 
-  // Task summary: group by description
+  // Task summary: group by description (exclude expense items)
   const taskMap: Record<string, number> = {};
-  items.forEach((li) => {
+  hourItems.forEach((li) => {
     const k = li.description || "Other";
     taskMap[k] = (taskMap[k] || 0) + Number(li.quantity);
   });
   const taskSummary = Object.entries(taskMap).sort((a, b) => b[1] - a[1]);
 
-  // Project summary: group by project
+  // Project summary: group by project (exclude expense items)
   const projMap: Record<string, number> = {};
-  items.forEach((li) => {
+  hourItems.forEach((li) => {
     const k = li.project || li.account_name || "Unassigned";
     projMap[k] = (projMap[k] || 0) + Number(li.quantity);
   });
@@ -243,7 +257,8 @@ function buildInvoiceEmail(
       ] : []),
       { label: "Hours Billed", value: totalHours.toFixed(2) },
     ] : []),
-    { label: "Invoice Amount", value: formatCurrency(invoiceAmount, invoice.currency) },
+    { label: prevBalance > 0 ? "Current Invoice Amount" : "Invoice Amount", value: formatCurrency(invoiceAmount, invoice.currency) },
+    ...(expenseTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(expenseTotal, invoice.currency) }] : []),
     ...(hasAdjustment ? [
       { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
       { label: "Final Amount", value: formatCurrency(finalTotal, invoice.currency), accent: true },
@@ -329,8 +344,8 @@ function buildInvoiceEmail(
               <div style="font-size:24px; font-weight:800; color:#2d1a00;">${formatCurrency(headerAmount, invoice.currency)}</div>
               ${invoice.service_type ? `<div style="font-size:12px; font-weight:600; color:#5a4000; margin-top:4px;">${invoice.service_type}</div>` : ""}
               <div style="margin-top:8px;">
-                <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#5a4000; margin-bottom:2px;">INVOICE FOR</div>
-                <div style="font-size:18px; font-weight:800; color:#2d1a00;">${issueDateFmt}</div>
+                <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#5a4000; margin-bottom:2px;">Invoice Date</div>
+                <div style="font-size:18px; font-weight:800; color:#2d1a00;">${dateDisplay}</div>
               </div>
             </div>
           </td>
@@ -372,6 +387,32 @@ function buildInvoiceEmail(
         ${currentBalanceRow}
       </table>
     </div>
+
+    ${expenseItems.length > 0 ? (() => {
+      const expenseRows = expenseItems.map(li => `
+        <tr style="border-bottom:1px solid #faf6f0;">
+          <td style="padding:6px 8px; font-size:11px; color:#6b5e52; white-space:nowrap;">${li.service_date || "—"}</td>
+          <td style="padding:6px 8px; font-size:12px; color:#3d2b1f;">${li.description}</td>
+          <td style="padding:6px 8px; font-size:12px; font-weight:600; color:#3d2b1f; text-align:right; white-space:nowrap;">${formatCurrency(Number(li.amount), invoice.currency)}</td>
+        </tr>`).join("");
+      return `
+    <!-- ── REIMBURSABLE EXPENSES ───────────────────────────── -->
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 4px;">
+      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#8a6a10; margin-bottom:10px;">Reimbursable Expenses</div>
+      <table style="width:100%; border-collapse:collapse; border:1px solid #e8d8a0; border-radius:8px; overflow:hidden; margin-bottom:12px;">
+        <tr style="background:#fdf8ed;">
+          <th style="padding:6px 8px; text-align:left; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#8a6a10; border-bottom:1px solid #e8d8a0;">Date</th>
+          <th style="padding:6px 8px; text-align:left; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#8a6a10; border-bottom:1px solid #e8d8a0;">Description</th>
+          <th style="padding:6px 8px; text-align:right; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#8a6a10; border-bottom:1px solid #e8d8a0;">Amount</th>
+        </tr>
+        ${expenseRows}
+        <tr style="border-top:1px solid #e8d8a0;">
+          <td colspan="2" style="padding:8px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#8a6a10;">Total Reimbursable</td>
+          <td style="padding:8px; font-size:13px; font-weight:700; color:#3d2b1f; text-align:right;">${formatCurrency(expenseTotal, invoice.currency)}</td>
+        </tr>
+      </table>
+    </div>`;
+    })() : ""}
 
     ${isCustomInvoice && invoice.custom_line_items ? (() => {
       const customLineItems = JSON.parse(invoice.custom_line_items as string) as Array<{description: string; amount: number}>;

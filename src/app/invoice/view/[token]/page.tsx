@@ -212,7 +212,10 @@ export default function PublicInvoicePage() {
     ? ALL_TABS.filter((t) => t.id === "summary")
     : ALL_TABS;
 
-  const grossHours = lineItems.reduce((s, li) => s + Number(li.quantity), 0);
+  // Separate time entries from expense line items
+  const timeItems = lineItems.filter((li) => !li.expense_id);
+
+  const grossHours = timeItems.reduce((s, li) => s + Number(li.quantity), 0);
   const notBilledHours = Number(invoice.hours_not_billed || 0);
   const totalHours = grossHours - notBilledHours;
   const adjustment = Number(invoice.adjustment_amount || 0);
@@ -233,17 +236,17 @@ export default function PublicInvoicePage() {
     timeZone: timezone,
   });
 
-  // Task summary
+  // Task summary (exclude expense items)
   const taskMap: Record<string, number> = {};
-  lineItems.forEach((li) => {
+  timeItems.forEach((li) => {
     const k = li.description || "Other";
     taskMap[k] = (taskMap[k] || 0) + Number(li.quantity);
   });
   const taskSummary = Object.entries(taskMap).sort((a, b) => b[1] - a[1]);
 
-  // Project summary
+  // Project summary (exclude expense items)
   const projMap: Record<string, number> = {};
-  lineItems.forEach((li) => {
+  timeItems.forEach((li) => {
     const k = li.project || li.account_name || "Unassigned";
     projMap[k] = (projMap[k] || 0) + Number(li.quantity);
   });
@@ -394,7 +397,7 @@ export default function PublicInvoicePage() {
                     ] : []),
                     { label: "Hours Billed", value: totalHours.toFixed(2) },
                   ] : []),
-                  { label: "Invoice Amount", value: formatCurrency(Number(invoice.subtotal), invoice.currency) },
+                  { label: prevBalance > 0 ? "Current Invoice Amount" : "Invoice Amount", value: formatCurrency(Number(invoice.subtotal), invoice.currency) },
                   ...(reimbTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(reimbTotal, invoice.currency) }] : []),
                   ...(hasAdjustment ? [
                     { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
@@ -561,7 +564,7 @@ export default function PublicInvoicePage() {
             <div className="bg-[#faf6f0] border-x border-[#e8e0d4] px-6 py-3">
               <div className="flex items-center justify-between">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52]">Detailed Time Allocation</div>
-                <div className="text-[10px] text-[#9e9080]">{lineItems.length} entries · {fmtHours(grossHours)} gross</div>
+                <div className="text-[10px] text-[#9e9080]">{timeItems.length} entries · {fmtHours(grossHours)} gross</div>
               </div>
             </div>
             <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl overflow-hidden">
@@ -575,7 +578,7 @@ export default function PublicInvoicePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {lineItems.map((li, i) => (
+                  {timeItems.map((li, i) => (
                     <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-[#fafaf8]"}>
                       <td className="px-3 py-1.5 text-right text-[11px] font-semibold text-[#3d2b1f] border-b border-[#e8e0d4]">{Math.round(Number(li.quantity) * 60)}</td>
                       <td className="px-3 py-1.5 text-[11px] text-[#3d2b1f] border-b border-[#e8e0d4]">{li.description}</td>
