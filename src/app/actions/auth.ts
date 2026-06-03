@@ -61,6 +61,26 @@ export async function signUp(
     return { error: "All fields are required." };
   }
 
+  // Only invited emails can register
+  const normalizedEmail = email.toLowerCase().trim();
+  const { data: invite, error: inviteCheckError } = await supabase
+    .from("invitations")
+    .select("id")
+    .eq("email", normalizedEmail)
+    .limit(1)
+    .maybeSingle();
+
+  if (inviteCheckError) {
+    return { error: SERVICE_UNAVAILABLE };
+  }
+
+  if (!invite) {
+    return {
+      error:
+        "Only invited users can register. Please contact your admin to request an invitation.",
+    };
+  }
+
   let error;
   try {
     const result = await withTimeout(
