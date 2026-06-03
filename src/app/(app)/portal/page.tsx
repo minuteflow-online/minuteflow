@@ -6,7 +6,7 @@ import type { Profile, PaymentAccountDetails } from "@/types/database";
 
 // ─── Types ───────────────────────────────────────────────────
 
-type PortalTab = "profile" | "onboarding" | "sops" | "coaching" | "jobs" | "requests";
+type PortalTab = "profile" | "onboarding" | "sops" | "coaching" | "jobs" | "requests" | "paystubs";
 
 type RequestType = "time_off" | "schedule_change" | "pay_question" | "general";
 type RequestStatus = "pending" | "approved" | "denied" | "noted";
@@ -103,6 +103,16 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M9 11l3 3L22 4" />
         <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+      </svg>
+    ),
+  },
+  {
+    id: "paystubs",
+    label: "Paystubs",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <rect x="2" y="5" width="20" height="14" rx="2" />
+        <line x1="2" y1="10" x2="22" y2="10" />
       </svg>
     ),
   },
@@ -865,6 +875,99 @@ function RequestsTab({
   );
 }
 
+// ─── Paystubs Tab ────────────────────────────────────────────
+
+interface PaystubRecord {
+  id: string;
+  pay_period_label: string;
+  sent_at: string;
+  amount_paid: number;
+  gross_pay: number;
+  payment_method: string | null;
+  paystub_link: string | null;
+}
+
+function PaystubsTab({ currentUserId }: { currentUserId: string }) {
+  const supabase = createClient();
+  const [paystubs, setPaystubs] = useState<PaystubRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const { data } = await supabase
+          .from("paystub_snapshots")
+          .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link")
+          .eq("user_id", currentUserId)
+          .order("sent_at", { ascending: false });
+        setPaystubs((data as PaystubRecord[]) || []);
+      } catch {
+        // non-fatal
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [supabase, currentUserId]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-10 text-sm text-stone">
+        <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
+        Loading paystubs...
+      </div>
+    );
+  }
+
+  if (paystubs.length === 0) {
+    return <EmptyState label="paystubs" />;
+  }
+
+  return (
+    <div className="max-w-2xl space-y-3">
+      {paystubs.map((p) => (
+        <div key={p.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-espresso truncate">{p.pay_period_label}</p>
+            <div className="flex items-center gap-3 mt-1">
+              <span className="text-xs text-stone">
+                {new Date(p.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </span>
+              {p.payment_method && (
+                <span className="text-[11px] capitalize rounded-full bg-parchment px-2 py-0.5 text-walnut font-medium">
+                  {p.payment_method.replace(/_/g, " ")}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="text-sm font-bold text-terracotta">
+              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(p.amount_paid)}
+            </span>
+            {p.paystub_link ? (
+              <a
+                href={p.paystub_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-terracotta px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a85840] transition-colors"
+              >
+                <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+                View
+              </a>
+            ) : (
+              <span className="text-[11px] text-stone italic">No link yet</span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Main Portal Page ────────────────────────────────────────
 
 export default function VaPortalPage() {
@@ -899,6 +1002,7 @@ export default function VaPortalPage() {
     coaching: "Coaching",
     jobs: "Job Postings",
     requests: "Requests",
+    paystubs: "Paystubs",
   };
 
   const tabSubtitle: Record<PortalTab, string> = {
@@ -910,6 +1014,7 @@ export default function VaPortalPage() {
     requests: isAdmin
       ? "Review and respond to team requests"
       : "Submit and track your requests",
+    paystubs: "Your payment history and paystub records",
   };
 
   if (loading) {
@@ -981,6 +1086,9 @@ export default function VaPortalPage() {
         )}
         {activeTab === "requests" && currentUserId && (
           <RequestsTab currentUserId={currentUserId} isAdmin={isAdmin} />
+        )}
+        {activeTab === "paystubs" && currentUserId && (
+          <PaystubsTab currentUserId={currentUserId} />
         )}
       </main>
     </div>

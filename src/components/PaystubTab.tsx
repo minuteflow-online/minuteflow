@@ -65,6 +65,7 @@ interface PaystubSnapshot {
   email_sent_to: string;
   company_name: string;
   personal_message: string | null;
+  paystub_link: string | null;
 }
 
 /* ── Date helpers ─────────────────────────────────────────── */
@@ -215,6 +216,11 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [resendSuccessId, setResendSuccessId] = useState<string | null>(null);
 
+  // Portal link editing
+  const [linkInputs, setLinkInputs] = useState<Record<string, string>>({});
+  const [savingLinkId, setSavingLinkId] = useState<string | null>(null);
+  const [savedLinkId, setSavedLinkId] = useState<string | null>(null);
+
   // Only show active profiles with a pay rate
   const eligibleProfiles = profiles.filter((p) => p.is_active);
 
@@ -332,6 +338,33 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
       setResendingId(null);
     }
   }, []);
+
+  const handleSaveLink = useCallback(async (snap: PaystubSnapshot) => {
+    const link = linkInputs[snap.id] ?? snap.paystub_link ?? "";
+    setSavingLinkId(snap.id);
+    setSavedLinkId(null);
+    try {
+      const res = await fetch("/api/paystub/update-link", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshot_id: snap.id, paystub_link: link.trim() || null }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || "Failed to save link.");
+      }
+      // Update local history so link shows immediately
+      setHistory((prev) =>
+        prev.map((s) => (s.id === snap.id ? { ...s, paystub_link: link.trim() || null } : s))
+      );
+      setSavedLinkId(snap.id);
+      setTimeout(() => setSavedLinkId(null), 3000);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Failed to save link.");
+    } finally {
+      setSavingLinkId(null);
+    }
+  }, [linkInputs]);
 
   const fetchHistory = useCallback(async (userId: string) => {
     if (!userId) { setHistory([]); return; }
@@ -908,6 +941,33 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                                     </div>
                                   </div>
                                 </div>
+                              </div>
+
+                              {/* Portal Link */}
+                              <div className="mt-4 pt-4 border-t border-linen">
+                                <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Portal Link</div>
+                                <p className="text-xs text-bark/40 mb-2">Paste the paystub link here and it will appear in the VA&apos;s portal.</p>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="url"
+                                    value={linkInputs[snap.id] ?? snap.paystub_link ?? ""}
+                                    onChange={(e) =>
+                                      setLinkInputs((prev) => ({ ...prev, [snap.id]: e.target.value }))
+                                    }
+                                    placeholder="https://drive.google.com/..."
+                                    className="flex-1 border border-linen rounded-lg px-3 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                                  />
+                                  <button
+                                    onClick={() => handleSaveLink(snap)}
+                                    disabled={savingLinkId === snap.id}
+                                    className="px-3 py-1.5 rounded-lg bg-terracotta text-white text-xs font-semibold hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                                  >
+                                    {savingLinkId === snap.id ? "Saving…" : "Save Link"}
+                                  </button>
+                                </div>
+                                {savedLinkId === snap.id && (
+                                  <p className="mt-1 text-xs text-green-600 font-medium">✓ Link saved — visible in VA portal</p>
+                                )}
                               </div>
 
                               {/* Action buttons */}
