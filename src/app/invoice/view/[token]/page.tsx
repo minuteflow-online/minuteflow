@@ -34,15 +34,21 @@ interface Invoice {
   previous_balance: number | null;
   invoice_type?: string | null;
   custom_line_items?: string | null;
+  period_start: string | null;
+  period_end: string | null;
 }
 
 interface LineItem {
   description: string;
   va_name: string | null;
   quantity: number;
+  unit_price: number;
+  amount: number;
   project: string | null;
   account_name: string | null;
   client_memo: string | null;
+  service_date: string | null;
+  expense_id: number | null;
   sort_order: number;
 }
 
@@ -107,6 +113,7 @@ export default function PublicInvoicePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("summary");
+  const [openExpenseNoteIdx, setOpenExpenseNoteIdx] = useState<number | null>(null);
 
   const activeTabRef = useRef<Tab>("summary");
   const timeTabStartRef = useRef<number | null>(null);
@@ -288,8 +295,12 @@ export default function PublicInvoicePage() {
                   <div className="text-[12px] font-semibold text-[#5a4000] mt-1">{invoice.service_type}</div>
                 )}
                 <div className="mt-2">
-                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice For</div>
-                  <div className="text-[18px] font-extrabold text-[#2d1a00]">{issueDateFmt}</div>
+                  <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice Date</div>
+                  <div className="text-[18px] font-extrabold text-[#2d1a00]">
+                    {invoice.period_start && invoice.period_end
+                      ? `${new Date(invoice.period_start + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(invoice.period_end + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+                      : issueDateFmt}
+                  </div>
                 </div>
               </div>
             </div>
@@ -373,6 +384,7 @@ export default function PublicInvoicePage() {
               {(() => {
                 // Build a flat list of all items to display
                 type BItem = { label: string; value: string; accent?: boolean };
+                const reimbTotal = lineItems.filter((li) => li.expense_id).reduce((s, li) => s + Number(li.amount), 0);
                 const allItems: BItem[] = [
                   ...(!isCustomInvoice ? [
                     ...(invoice.rate_amount != null ? [{ label: "Rate", value: `${formatCurrency(invoice.rate_amount, invoice.currency)}/hr` }] : []),
@@ -383,6 +395,7 @@ export default function PublicInvoicePage() {
                     { label: "Hours Billed", value: totalHours.toFixed(2) },
                   ] : []),
                   { label: "Invoice Amount", value: formatCurrency(Number(invoice.subtotal), invoice.currency) },
+                  ...(reimbTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(reimbTotal, invoice.currency) }] : []),
                   ...(hasAdjustment ? [
                     { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
                     { label: "Final Amount", value: formatCurrency(Number(invoice.total), invoice.currency), accent: true },
@@ -439,6 +452,56 @@ export default function PublicInvoicePage() {
                       </tr>
                     ))}
                   </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Reimbursable Expenses — shown in Summary tab above task/deliverable tabs */}
+            {lineItems.some((li) => li.expense_id) && (
+              <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-[#8a6a10] mb-3">Reimbursable Expenses</div>
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="border-b border-[#f0e8d0] text-[10px] font-semibold uppercase tracking-wider text-[#8a6a10]">
+                      <th className="pb-2 text-left px-1">Date</th>
+                      <th className="pb-2 text-left px-2">Description</th>
+                      <th className="pb-2 text-right px-1">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineItems.filter((li) => li.expense_id).map((li, i) => (
+                      <tr key={i} className="border-b border-[#faf6f0] last:border-0">
+                        <td className="py-2 px-1 text-[#6b5e52] text-[11px] whitespace-nowrap">{li.service_date || "—"}</td>
+                        <td className="py-2 px-2 text-[#3d2b1f]">
+                          <span className="flex items-center gap-1">
+                            {li.description}
+                            {li.client_memo && (
+                              <span className="relative inline-block flex-shrink-0">
+                                <button
+                                  onClick={() => setOpenExpenseNoteIdx(openExpenseNoteIdx === i ? null : i)}
+                                  className="w-4 h-4 rounded-full bg-[#e8d8a0] text-[#8a6a10] text-[9px] font-bold inline-flex items-center justify-center hover:bg-[#d4c070] cursor-pointer leading-none"
+                                >?</button>
+                                {openExpenseNoteIdx === i && (
+                                  <div className="absolute z-20 left-5 top-0 bg-white border border-[#e8d8a0] rounded-lg shadow-lg p-2.5 text-[11px] text-[#3d2b1f] w-52 whitespace-pre-wrap">
+                                    {li.client_memo}
+                                  </div>
+                                )}
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="py-2 px-1 text-right font-semibold text-[#3d2b1f]">{formatCurrency(Number(li.amount), invoice.currency)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-[#e8d8a0]">
+                      <td colSpan={2} className="pt-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-[#8a6a10]">Total Reimbursable</td>
+                      <td className="pt-2 px-1 text-right font-bold text-[#3d2b1f]">
+                        {formatCurrency(lineItems.filter((li) => li.expense_id).reduce((s, li) => s + Number(li.amount), 0), invoice.currency)}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}

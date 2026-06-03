@@ -5479,7 +5479,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     amount: number;
     account: string | null;
     expense_date: string;
+    excluded: boolean;
+    notes: string | null;
   }>>([]);
+  const [openBuilderNoteId, setOpenBuilderNoteId] = useState<number | null>(null);
+  const [openDetailNoteId, setOpenDetailNoteId] = useState<number | null>(null);
 
   // Tracks settled status for expense line items in detail view
   const [expenseSettledMap, setExpenseSettledMap] = useState<Record<number, boolean>>({});
@@ -5795,7 +5799,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     // Fetch reimbursable unsettled expenses for this account/client
     let expQuery = supabase
       .from("financial_expenses")
-      .select("id, description, amount, account, expense_date")
+      .select("id, description, amount, account, expense_date, notes")
       .eq("is_reimbursable", true)
       .eq("reimbursed", false);
 
@@ -5817,12 +5821,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
     const { data: expData } = await expQuery;
     setExpenseItems(
-      (expData ?? []).map((e: { id: number; description: string; amount: number; account: string | null; expense_date: string }) => ({
+      (expData ?? []).map((e: { id: number; description: string; amount: number; account: string | null; expense_date: string; notes: string | null }) => ({
         expense_id: e.id,
         description: e.description,
         amount: Number(e.amount),
         account: e.account,
         expense_date: e.expense_date,
+        excluded: false,
+        notes: e.notes || null,
       }))
     );
 
@@ -5839,7 +5845,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     const invoiceNumber = generateInvoiceNumber();
     const issueDate = new Date().toISOString().split("T")[0];
     const timeTotal = parseFloat(invoiceTotal) || 0;
-    const expenseTotal = expenseItems.reduce((s, e) => s + e.amount, 0);
+    const expenseTotal = expenseItems.filter(e => !e.excluded).reduce((s, e) => s + e.amount, 0);
     const manualTotal = timeTotal + expenseTotal;
     const adjustment = parseFloat(adjustmentAmount) || 0;
     const finalTotal = manualTotal - adjustment;
@@ -5886,6 +5892,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       invoice_type: invoiceType,
       custom_line_items: invoiceType === "custom" ? JSON.stringify(customItems.filter(i => i.description).map(i => ({ description: i.description, amount: parseFloat(i.amount) || 0 }))) : null,
       share_token: crypto.randomUUID(),
+      period_start: dateFrom || null,
+      period_end: dateTo || null,
     };
 
     const { data: newInvoice, error } = await supabase
@@ -5932,10 +5940,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       }
     }
 
-    // Insert expense line items and mark expenses as settled
-    if (expenseItems.length > 0) {
+    // Insert expense line items (non-excluded only)
+    const includedExpenses = expenseItems.filter(e => !e.excluded);
+    if (includedExpenses.length > 0) {
       const sortOffset = lineItems.length;
-      const expenseLineItemsData = expenseItems.map((exp, idx) => ({
+      const expenseLineItemsData = includedExpenses.map((exp, idx) => ({
         invoice_id: newInvoice.id,
         log_id: null,
         expense_id: exp.expense_id,
@@ -5944,7 +5953,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         account_name: exp.account || null,
         category: "expense",
         project: null,
-        client_memo: null,
+        client_memo: exp.notes || null,
         quantity: 1,
         unit_price: exp.amount,
         amount: exp.amount,
@@ -5953,10 +5962,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         sort_order: sortOffset + idx,
       }));
       await supabase.from("invoice_line_items").insert(expenseLineItemsData);
-
-      // Mark these expenses as settled in financial_expenses
-      const expenseIds = expenseItems.map((e) => e.expense_id);
-      await supabase.from("financial_expenses").update({ reimbursed: true }).in("id", expenseIds);
     }
 
     // If sending now, fire email
@@ -6515,6 +6520,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
       previous_balance: previousBalance ? parseFloat(previousBalance) : null,
       share_token: crypto.randomUUID(),
+      period_start: dateFrom || null,
+      period_end: dateTo || null,
     };
 
     const { data: newInvoice, error } = await supabase
@@ -7301,12 +7308,13 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               <div className="mt-4 rounded-lg border border-amber-200 overflow-hidden">
                 <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200">
                   <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">
-                    Reimbursable Expenses — Auto-added ({expenseItems.length})
+                    Reimbursable Expenses — Auto-added ({expenseItems.filter(e => !e.excluded).length} of {expenseItems.length} included)
                   </p>
                 </div>
                 <table className="w-full text-left text-[12px]">
                   <thead>
                     <tr className="border-b border-amber-100 bg-amber-50/50 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                      <th className="px-4 py-2.5">Include</th>
                       <th className="px-4 py-2.5">Date</th>
                       <th className="px-3 py-2.5">Description</th>
                       <th className="px-3 py-2.5">Account</th>
@@ -7315,9 +7323,34 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   </thead>
                   <tbody className="divide-y divide-amber-100">
                     {expenseItems.map((exp) => (
-                      <tr key={exp.expense_id} className="hover:bg-amber-50/50 transition-colors">
+                      <tr key={exp.expense_id} className={`hover:bg-amber-50/50 transition-colors${exp.excluded ? " line-through opacity-50" : ""}`}>
+                        <td className="px-4 py-2.5 text-center">
+                          <input
+                            type="checkbox"
+                            checked={!exp.excluded}
+                            onChange={() => setExpenseItems(prev => prev.map(e => e.expense_id === exp.expense_id ? { ...e, excluded: !e.excluded } : e))}
+                            className="cursor-pointer"
+                          />
+                        </td>
                         <td className="px-4 py-2.5 text-bark text-[11px]">{exp.expense_date}</td>
-                        <td className="px-3 py-2.5 text-espresso font-medium">{exp.description}</td>
+                        <td className="px-3 py-2.5 text-espresso font-medium">
+                          <span className="flex items-center gap-1">
+                            {exp.description}
+                            {exp.notes && (
+                              <span className="relative inline-block flex-shrink-0">
+                                <button
+                                  onClick={() => setOpenBuilderNoteId(openBuilderNoteId === exp.expense_id ? null : exp.expense_id)}
+                                  className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 text-[9px] font-bold inline-flex items-center justify-center hover:bg-amber-300 cursor-pointer leading-none"
+                                >?</button>
+                                {openBuilderNoteId === exp.expense_id && (
+                                  <div className="absolute z-20 left-5 top-0 bg-white border border-amber-200 rounded-lg shadow-lg p-2.5 text-[11px] text-bark w-52 whitespace-pre-wrap">
+                                    {exp.notes}
+                                  </div>
+                                )}
+                              </span>
+                            )}
+                          </span>
+                        </td>
                         <td className="px-3 py-2.5 text-bark">{exp.account || "—"}</td>
                         <td className="px-3 py-2.5 text-right font-medium text-espresso">${exp.amount.toFixed(2)}</td>
                       </tr>
@@ -7325,11 +7358,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   </tbody>
                   <tfoot>
                     <tr className="border-t border-amber-200 bg-amber-50">
-                      <td colSpan={3} className="px-4 py-2 text-[11px] font-semibold text-amber-700 text-right">
+                      <td colSpan={4} className="px-4 py-2 text-[11px] font-semibold text-amber-700 text-right">
                         Expense Total
                       </td>
                       <td className="px-3 py-2 text-right font-bold text-amber-700 text-[11px]">
-                        ${expenseItems.reduce((s, e) => s + e.amount, 0).toFixed(2)}
+                        ${expenseItems.filter(e => !e.excluded).reduce((s, e) => s + e.amount, 0).toFixed(2)}
                       </td>
                     </tr>
                   </tfoot>
@@ -8260,9 +8293,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                           <div className="text-[12px] font-semibold text-[#5a4000] mt-1">{inv.service_type}</div>
                         )}
                         <div className="mt-2">
-                          <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice For</div>
+                          <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice Date</div>
                           <div className="text-[18px] font-extrabold text-[#2d1a00]">
-                            {new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}
+                            {inv.period_start && inv.period_end
+                              ? `${new Date(inv.period_start + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone })} – ${new Date(inv.period_end + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}`
+                              : new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })
+                            }
                           </div>
                         </div>
                       </>
@@ -8328,6 +8364,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 const hasAdj = Number(inv.adjustment_amount || 0) > 0;
                 const prevBal = Number(inv.previous_balance || 0);
                 const currentBal = Number(inv.total) + prevBal;
+                const reimbTotal = selectedLineItems.filter((li) => li.expense_id).reduce((s, li) => s + Number(li.amount), 0);
 
                 type BItem = { label: string; value: string; accent?: boolean };
                 const allItems: BItem[] = [
@@ -8340,6 +8377,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     { label: "Hours Billed", value: billedHours.toFixed(2) },
                   ] : []),
                   { label: "Invoice Amount", value: formatCurrency(Number(inv.subtotal), inv.currency) },
+                  ...(reimbTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(reimbTotal, inv.currency) }] : []),
                   ...(hasAdj ? [
                     { label: "Savings", value: `− ${formatCurrency(Number(inv.adjustment_amount))}` },
                     { label: "Final Amount", value: formatCurrency(Number(inv.total), inv.currency), accent: true },
@@ -8380,6 +8418,85 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 );
               })()}
             </div>
+
+            {/* Reimbursable Expenses Section */}
+            {selectedLineItems.some((li) => li.expense_id) && (
+              <div className="mb-6 rounded-lg border border-amber-200 overflow-hidden">
+                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Reimbursable Expenses</p>
+                </div>
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-amber-100 bg-amber-50/50 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-3 py-3">Description</th>
+                      <th className="px-3 py-3">Account</th>
+                      <th className="px-3 py-3 text-right">Amount</th>
+                      <th className="px-4 py-3 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-50">
+                    {selectedLineItems.filter((li) => li.expense_id).map((li) => {
+                      const isSettled = expenseSettledMap[li.expense_id as number] ?? false;
+                      return (
+                        <tr key={li.id} className="hover:bg-amber-50/50 transition-colors">
+                          <td className="px-4 py-3 text-bark text-[11px]">{li.service_date || "—"}</td>
+                          <td className="px-3 py-3 text-espresso font-medium">
+                            <span className="flex items-center gap-1">
+                              {li.description}
+                              {li.client_memo && (
+                                <span className="relative inline-block flex-shrink-0">
+                                  <button
+                                    onClick={() => setOpenDetailNoteId(openDetailNoteId === li.id ? null : li.id)}
+                                    className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 text-[9px] font-bold inline-flex items-center justify-center hover:bg-amber-300 cursor-pointer leading-none"
+                                  >?</button>
+                                  {openDetailNoteId === li.id && (
+                                    <div className="absolute z-20 left-5 top-0 bg-white border border-amber-200 rounded-lg shadow-lg p-2.5 text-[11px] text-bark w-52 whitespace-pre-wrap">
+                                      {li.client_memo}
+                                    </div>
+                                  )}
+                                </span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-bark">{li.account_name || "—"}</td>
+                          <td className="px-3 py-3 text-right font-medium text-espresso">${Number(li.amount).toFixed(2)}</td>
+                          <td className="px-4 py-3 text-center">
+                            {isSettled ? (
+                              <button
+                                onClick={async () => {
+                                  await supabase
+                                    .from("financial_expenses")
+                                    .update({ reimbursed: false })
+                                    .eq("id", li.expense_id as number);
+                                  setExpenseSettledMap((prev) => ({ ...prev, [li.expense_id as number]: false }));
+                                }}
+                                className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-sage-soft text-sage hover:bg-red-100 hover:text-red-600 cursor-pointer transition-colors"
+                              >
+                                Mark Unsettled
+                              </button>
+                            ) : (
+                              <button
+                                onClick={async () => {
+                                  await supabase
+                                    .from("financial_expenses")
+                                    .update({ reimbursed: true })
+                                    .eq("id", li.expense_id as number);
+                                  setExpenseSettledMap((prev) => ({ ...prev, [li.expense_id as number]: true }));
+                                }}
+                                className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-parchment text-bark hover:bg-amber-100 hover:text-amber-700 cursor-pointer transition-colors"
+                              >
+                                Mark Settled
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Task Summary + Project Summary */}
             {selectedLineItems.length > 0 && (() => {
@@ -8459,59 +8576,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </tbody>
               </table>
             </div>
-
-            {/* Reimbursable Expenses Section */}
-            {selectedLineItems.some((li) => li.expense_id) && (
-              <div className="mb-6 rounded-lg border border-amber-200 overflow-hidden">
-                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Reimbursable Expenses</p>
-                </div>
-                <table className="w-full text-left text-[12px]">
-                  <thead>
-                    <tr className="border-b border-amber-100 bg-amber-50/50 text-[10px] font-semibold uppercase tracking-wider text-amber-700">
-                      <th className="px-4 py-3">Date</th>
-                      <th className="px-3 py-3">Description</th>
-                      <th className="px-3 py-3">Account</th>
-                      <th className="px-3 py-3 text-right">Amount</th>
-                      <th className="px-4 py-3 text-center">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-amber-50">
-                    {selectedLineItems.filter((li) => li.expense_id).map((li) => {
-                      const isSettled = expenseSettledMap[li.expense_id as number] ?? false;
-                      return (
-                        <tr key={li.id} className="hover:bg-amber-50/50 transition-colors">
-                          <td className="px-4 py-3 text-bark text-[11px]">{li.service_date || "—"}</td>
-                          <td className="px-3 py-3 text-espresso font-medium">{li.description}</td>
-                          <td className="px-3 py-3 text-bark">{li.account_name || "—"}</td>
-                          <td className="px-3 py-3 text-right font-medium text-espresso">${Number(li.amount).toFixed(2)}</td>
-                          <td className="px-4 py-3 text-center">
-                            {isSettled ? (
-                              <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-sage-soft text-sage">
-                                Settled
-                              </span>
-                            ) : (
-                              <button
-                                onClick={async () => {
-                                  await supabase
-                                    .from("financial_expenses")
-                                    .update({ reimbursed: true })
-                                    .eq("id", li.expense_id as number);
-                                  setExpenseSettledMap((prev) => ({ ...prev, [li.expense_id as number]: true }));
-                                }}
-                                className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-parchment text-bark hover:bg-amber-100 hover:text-amber-700 cursor-pointer transition-colors"
-                              >
-                                Mark Settled
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
 
             {/* Totals */}
             <div className="flex justify-end">
