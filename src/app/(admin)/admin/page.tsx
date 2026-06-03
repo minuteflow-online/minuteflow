@@ -1645,10 +1645,13 @@ function TeamManagementTab({
   const [addError, setAddError] = useState("");
   const [addSuccess, setAddSuccess] = useState("");
 
-  // Filter state
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterRole, setFilterRole] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
+  // Column filter state (col -> selected values; absent key = all shown)
+  const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
+  const [joinedStart, setJoinedStart] = useState("");
+  const [joinedEnd, setJoinedEnd] = useState("");
+  const [openFilter, setOpenFilter] = useState<string | null>(null);
+  const [dropPos, setDropPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const colFilterDropRef = useRef<HTMLDivElement>(null);
 
   // Add VA form state
   const [newEmail, setNewEmail] = useState("");
@@ -1726,6 +1729,91 @@ function TeamManagementTab({
 
   // Expandable row state
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Unique values per column for filter dropdowns
+  const uniqueValues = useMemo(() => {
+    const u = (arr: (string | null | undefined)[], numeric = false): string[] => {
+      const vals = [...new Set(arr.map((v) => (!v ? "—" : String(v))))];
+      if (numeric) {
+        return vals.sort((a, b) => {
+          const na = parseFloat(a.replace(/[^0-9.]/g, ""));
+          const nb = parseFloat(b.replace(/[^0-9.]/g, ""));
+          return isNaN(na) || isNaN(nb) ? a.localeCompare(b) : na - nb;
+        });
+      }
+      return vals.sort((a, b) => a.localeCompare(b));
+    };
+    const catNames = vaCatAssignments
+      .filter((a) => a.task_categories?.category_name)
+      .map((a) => a.task_categories!.category_name);
+    return {
+      name: u(profiles.map((p) => p.full_name)),
+      status: ["Active", "Inactive"],
+      username: u(profiles.map((p) => p.username)),
+      role: u(profiles.map((p) => p.role)),
+      department: u(profiles.map((p) => p.department)),
+      position: u(profiles.map((p) => p.position)),
+      payRate: u(profiles.map((p) => `$${(p.pay_rate || 0).toFixed(2)}`), true),
+      rateType: u(profiles.map((p) => p.pay_rate_type || "hourly")),
+      assignments: u([...new Set(catNames)]),
+      availTasks: ["On", "Off", "—"],
+    };
+  }, [profiles, vaCatAssignments]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!openFilter) return;
+    const handler = (e: MouseEvent) => {
+      if (colFilterDropRef.current && !colFilterDropRef.current.contains(e.target as Node)) {
+        setOpenFilter(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [openFilter]);
+
+  const openDropdown = useCallback((col: string, e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (openFilter === col) { setOpenFilter(null); return; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setDropPos({ x: rect.left, y: rect.bottom + 4 });
+    setOpenFilter(col);
+  }, [openFilter]);
+
+  const toggleColFilter = useCallback((col: string, val: string, allVals: string[]) => {
+    setColFilters((prev) => {
+      const current = prev[col] ?? allVals;
+      if (current.includes(val)) {
+        return { ...prev, [col]: current.filter((v) => v !== val) };
+      } else {
+        const next = [...current, val];
+        if (next.length >= allVals.length) {
+          const n = { ...prev }; delete n[col]; return n;
+        }
+        return { ...prev, [col]: next };
+      }
+    });
+  }, []);
+
+  const selectAllCol = useCallback((col: string) => {
+    setColFilters((prev) => { const n = { ...prev }; delete n[col]; return n; });
+  }, []);
+
+  const unselectAllCol = useCallback((col: string) => {
+    setColFilters((prev) => ({ ...prev, [col]: [] }));
+  }, []);
+
+  const activeFilterCount = useMemo(() => {
+    let count = Object.keys(colFilters).length;
+    if (joinedStart || joinedEnd) count++;
+    return count;
+  }, [colFilters, joinedStart, joinedEnd]);
+
+  const clearAllFilters = useCallback(() => {
+    setColFilters({});
+    setJoinedStart("");
+    setJoinedEnd("");
+  }, []);
 
   const getCategoryBadges = (userId: string) => {
     return vaCatAssignments
@@ -1976,30 +2064,58 @@ function TeamManagementTab({
     setEditValue("");
   };
 
-  // Filtered profiles
-  const filteredProfiles = profiles.filter((p) => {
-    const q = searchQuery.toLowerCase();
-    const matchesSearch =
-      !q ||
-      p.full_name?.toLowerCase().includes(q) ||
-      p.username?.toLowerCase().includes(q) ||
-      p.department?.toLowerCase().includes(q) ||
-      p.position?.toLowerCase().includes(q);
-    const matchesRole = filterRole === "all" || p.role === filterRole;
-    const matchesStatus =
-      filterStatus === "all" ||
-      (filterStatus === "active" && p.is_active !== false) ||
-      (filterStatus === "inactive" && p.is_active === false);
-    return matchesSearch && matchesRole && matchesStatus;
-  });
+  // Filtered profiles — per-column Excel-style filters
+  const filteredProfiles = useMemo(() => profiles.filter((p) => {
+    const check = (col: string, val: string): boolean => {
+      if (!(col in colFilters)) return true;
+      if (colFilters[col].length === 0) return false;
+      return colFilters[col].includes(val);
+    };
+    if (!check("status", p.is_active !== false ? "Active" : "Inactive")) return false;
+    if (!check("name", p.full_name || "—")) return false;
+    if (!check("username", p.username || "—")) return false;
+    if (!check("role", p.role || "va")) return false;
+    if (!check("department", p.department || "—")) return false;
+    if (!check("position", p.position || "—")) return false;
+    if (!check("payRate", `$${(p.pay_rate || 0).toFixed(2)}`)) return false;
+    if (!check("rateType", p.pay_rate_type || "hourly")) return false;
+    if ("assignments" in colFilters) {
+      if (colFilters.assignments.length === 0) return false;
+      const cats = getCategoryBadges(p.id);
+      const catStrs = cats.length === 0 ? ["—"] : cats;
+      if (!catStrs.some((c) => colFilters.assignments.includes(c))) return false;
+    }
+    if ("availTasks" in colFilters) {
+      const val = p.role === "va" ? (p.can_see_available_tasks ? "On" : "Off") : "—";
+      if (!check("availTasks", val)) return false;
+    }
+    if (joinedStart) {
+      if (new Date(p.created_at) < new Date(joinedStart + "T00:00:00")) return false;
+    }
+    if (joinedEnd) {
+      if (new Date(p.created_at) > new Date(joinedEnd + "T23:59:59.999")) return false;
+    }
+    return true;
+  }), [profiles, colFilters, joinedStart, joinedEnd, vaCatAssignments]);
 
   return (
     <>
       {/* Header with Add + Invite buttons */}
       <div className="mb-3 flex items-center justify-between">
-        <span className="text-[13px] text-bark">
-          {filteredProfiles.length} of {profiles.length} team members
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[13px] text-bark">
+            {filteredProfiles.length} of {profiles.length} team members
+          </span>
+          {activeFilterCount > 0 && (
+            <button
+              onClick={clearAllFilters}
+              className="flex items-center gap-1.5 rounded-lg bg-terracotta-soft border border-terracotta/30 px-2.5 py-1 text-[11px] font-semibold text-terracotta hover:bg-terracotta/20 transition-colors cursor-pointer"
+            >
+              <span>{activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""} active</span>
+              <span className="text-[10px]">&times;</span>
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setInviteOpen(true); setInviteResult(null); setInviteEmail(""); }}
@@ -2014,43 +2130,6 @@ function TeamManagementTab({
             {showAddForm ? "Cancel" : "+ Add VA"}
           </button>
         </div>
-      </div>
-
-      {/* Filter Bar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search by name, username, dept..."
-          className="flex-1 min-w-[180px] rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso placeholder:text-bark/50 focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta"
-        />
-        <select
-          value={filterRole}
-          onChange={(e) => setFilterRole(e.target.value)}
-          className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta cursor-pointer"
-        >
-          <option value="all">All Roles</option>
-          <option value="admin">Admin</option>
-          <option value="va">VA</option>
-        </select>
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta cursor-pointer"
-        >
-          <option value="all">All Status</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
-        {(searchQuery || filterRole !== "all" || filterStatus !== "all") && (
-          <button
-            onClick={() => { setSearchQuery(""); setFilterRole("all"); setFilterStatus("all"); }}
-            className="rounded-lg border border-sand px-3 py-2 text-[12px] text-bark hover:text-terracotta hover:border-terracotta transition-colors cursor-pointer"
-          >
-            Clear
-          </button>
-        )}
       </div>
 
       {/* Invite VA Modal */}
@@ -2339,19 +2418,37 @@ function TeamManagementTab({
         <div className="overflow-x-auto">
           <table className="w-full text-left text-[12px]">
             <thead>
-              <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-3 py-3 text-center">Status</th>
-                <th className="px-3 py-3">Username</th>
-                <th className="px-3 py-3">Role</th>
-                <th className="px-3 py-3">Department</th>
-                <th className="px-3 py-3">Position</th>
-                <th className="px-3 py-3 text-right">Pay Rate</th>
-                <th className="px-3 py-3">Rate Type</th>
-                <th className="px-3 py-3">Assignments</th>
-                <th className="px-3 py-3 text-center">Avail. Tasks</th>
-                <th className="px-3 py-3">Joined</th>
-                <th className="px-3 py-3 text-center">Actions</th>
+              <tr className="border-b border-parchment bg-parchment/30">
+                {([
+                  { col: "name", label: "Name", cls: "px-4 py-2.5" },
+                  { col: "status", label: "Status", cls: "px-3 py-2.5 text-center" },
+                  { col: "username", label: "Username", cls: "px-3 py-2.5" },
+                  { col: "role", label: "Role", cls: "px-3 py-2.5" },
+                  { col: "department", label: "Department", cls: "px-3 py-2.5" },
+                  { col: "position", label: "Position", cls: "px-3 py-2.5" },
+                  { col: "payRate", label: "Pay Rate", cls: "px-3 py-2.5 text-right" },
+                  { col: "rateType", label: "Rate Type", cls: "px-3 py-2.5" },
+                  { col: "assignments", label: "Assignments", cls: "px-3 py-2.5" },
+                  { col: "availTasks", label: "Avail. Tasks", cls: "px-3 py-2.5 text-center" },
+                  { col: "joined", label: "Joined", cls: "px-3 py-2.5" },
+                ] as { col: string; label: string; cls: string }[]).map(({ col, label, cls }) => {
+                  const isActive = col in colFilters || (col === "joined" && (!!joinedStart || !!joinedEnd));
+                  return (
+                    <th key={col} className={cls}>
+                      <button
+                        onClick={(e) => openDropdown(col, e)}
+                        className={`flex items-center gap-1 group cursor-pointer transition-colors ${isActive ? "text-terracotta" : "text-bark hover:text-espresso"}`}
+                      >
+                        <span className="uppercase tracking-wider text-[10px] font-semibold whitespace-nowrap">{label}</span>
+                        <svg className={`h-2.5 w-2.5 shrink-0 transition-transform ${openFilter === col ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M7 10l5 5 5-5H7z" />
+                        </svg>
+                        {isActive && <span className="w-1.5 h-1.5 rounded-full bg-terracotta shrink-0" />}
+                      </button>
+                    </th>
+                  );
+                })}
+                <th className="px-3 py-2.5 text-center text-[10px] font-semibold uppercase tracking-wider text-bark">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-parchment">
@@ -2985,6 +3082,97 @@ function TeamManagementTab({
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {/* ── Column Filter Dropdown ────────────────────────────── */}
+      {openFilter && (
+        <div
+          ref={colFilterDropRef}
+          style={{
+            position: "fixed",
+            left: Math.min(dropPos.x, (typeof window !== "undefined" ? window.innerWidth : 1200) - 230),
+            top: Math.min(dropPos.y, (typeof window !== "undefined" ? window.innerHeight : 800) - 340),
+            zIndex: 9999,
+          }}
+          className="w-56 rounded-xl border border-sand bg-white shadow-xl overflow-hidden"
+        >
+          {openFilter === "joined" ? (
+            <div className="p-3">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-bark">Date Range</span>
+                <button
+                  onClick={() => { setJoinedStart(""); setJoinedEnd(""); }}
+                  className="text-[10px] text-terracotta hover:underline cursor-pointer"
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="space-y-2">
+                <div>
+                  <label className="text-[10px] text-stone block mb-1">From</label>
+                  <input
+                    type="date"
+                    value={joinedStart}
+                    onChange={(e) => setJoinedStart(e.target.value)}
+                    className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] text-espresso focus:border-terracotta focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-stone block mb-1">To</label>
+                  <input
+                    type="date"
+                    value={joinedEnd}
+                    onChange={(e) => setJoinedEnd(e.target.value)}
+                    className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] text-espresso focus:border-terracotta focus:outline-none"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={() => setOpenFilter(null)}
+                className="mt-3 w-full rounded-lg bg-terracotta text-white text-[11px] font-semibold py-1.5 hover:bg-terracotta/80 cursor-pointer"
+              >
+                Apply
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center border-b border-parchment px-2 py-2 gap-1">
+                <button
+                  onClick={() => selectAllCol(openFilter)}
+                  className="flex-1 rounded px-2 py-1 text-[11px] font-semibold text-sage hover:bg-parchment cursor-pointer transition-colors"
+                >
+                  Select All
+                </button>
+                <span className="text-stone text-[10px]">|</span>
+                <button
+                  onClick={() => unselectAllCol(openFilter)}
+                  className="flex-1 rounded px-2 py-1 text-[11px] font-semibold text-bark hover:bg-parchment cursor-pointer transition-colors"
+                >
+                  Unselect All
+                </button>
+              </div>
+              <div className="max-h-60 overflow-y-auto py-1">
+                {(uniqueValues[openFilter as keyof typeof uniqueValues] ?? []).map((val) => {
+                  const allVals = uniqueValues[openFilter as keyof typeof uniqueValues] ?? [];
+                  const selected = !(openFilter in colFilters) || colFilters[openFilter].includes(val);
+                  return (
+                    <label
+                      key={val}
+                      className="flex items-center gap-2 px-3 py-1.5 hover:bg-parchment/50 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => toggleColFilter(openFilter, val, allVals)}
+                        className="rounded border-sand accent-terracotta cursor-pointer h-3.5 w-3.5 shrink-0"
+                      />
+                      <span className="text-[12px] text-espresso truncate">{val}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       )}
     </>
