@@ -1645,6 +1645,11 @@ function TeamManagementTab({
   const [addError, setAddError] = useState("");
   const [addSuccess, setAddSuccess] = useState("");
 
+  // Filter state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterRole, setFilterRole] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+
   // Add VA form state
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -1971,11 +1976,30 @@ function TeamManagementTab({
     setEditValue("");
   };
 
+  // Filtered profiles
+  const filteredProfiles = profiles.filter((p) => {
+    const q = searchQuery.toLowerCase();
+    const matchesSearch =
+      !q ||
+      p.full_name?.toLowerCase().includes(q) ||
+      p.username?.toLowerCase().includes(q) ||
+      p.department?.toLowerCase().includes(q) ||
+      p.position?.toLowerCase().includes(q);
+    const matchesRole = filterRole === "all" || p.role === filterRole;
+    const matchesStatus =
+      filterStatus === "all" ||
+      (filterStatus === "active" && p.is_active !== false) ||
+      (filterStatus === "inactive" && p.is_active === false);
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+
   return (
     <>
       {/* Header with Add + Invite buttons */}
-      <div className="mb-4 flex items-center justify-between">
-        <span className="text-[13px] text-bark">{profiles.length} team members</span>
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-[13px] text-bark">
+          {filteredProfiles.length} of {profiles.length} team members
+        </span>
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setInviteOpen(true); setInviteResult(null); setInviteEmail(""); }}
@@ -1990,6 +2014,43 @@ function TeamManagementTab({
             {showAddForm ? "Cancel" : "+ Add VA"}
           </button>
         </div>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search by name, username, dept..."
+          className="flex-1 min-w-[180px] rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso placeholder:text-bark/50 focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta"
+        />
+        <select
+          value={filterRole}
+          onChange={(e) => setFilterRole(e.target.value)}
+          className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta cursor-pointer"
+        >
+          <option value="all">All Roles</option>
+          <option value="admin">Admin</option>
+          <option value="va">VA</option>
+        </select>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+          className="rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta cursor-pointer"
+        >
+          <option value="all">All Status</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+        {(searchQuery || filterRole !== "all" || filterStatus !== "all") && (
+          <button
+            onClick={() => { setSearchQuery(""); setFilterRole("all"); setFilterStatus("all"); }}
+            className="rounded-lg border border-sand px-3 py-2 text-[12px] text-bark hover:text-terracotta hover:border-terracotta transition-colors cursor-pointer"
+          >
+            Clear
+          </button>
+        )}
       </div>
 
       {/* Invite VA Modal */}
@@ -2294,7 +2355,14 @@ function TeamManagementTab({
               </tr>
             </thead>
             <tbody className="divide-y divide-parchment">
-              {profiles.map((p) => (
+              {filteredProfiles.length === 0 && (
+                <tr>
+                  <td colSpan={12} className="py-10 text-center text-[13px] text-bark">
+                    No team members match your filters.
+                  </td>
+                </tr>
+              )}
+              {filteredProfiles.map((p) => (
                 <React.Fragment key={p.id}>
                 <tr className="hover:bg-parchment/20 transition-colors cursor-pointer" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
                   <td className="px-4 py-3">
