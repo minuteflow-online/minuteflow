@@ -1522,6 +1522,8 @@ export default function DashboardPage() {
   const [postBreakClientMemo, setPostBreakClientMemo] = useState("");
   const [postBreakInternalMemo, setPostBreakInternalMemo] = useState("");
   const [postBreakStatus, setPostBreakStatus] = useState("");
+  // After memos are done, force the VA to start a new task
+  const [showPostBreakNewTaskModal, setShowPostBreakNewTaskModal] = useState(false);
 
   // User chose "Start New Task" — show memo step first
   const showPostBreakMemos = useCallback(() => {
@@ -1550,9 +1552,11 @@ export default function DashboardPage() {
     setPostBreakInternalMemo("");
     setPostBreakStatus("");
     setPreBreakTask(null);
+    // Force the VA to start a new task — they can't walk away without logging one
+    setShowPostBreakNewTaskModal(true);
   }, [preBreakTask, postBreakClientMemo, postBreakInternalMemo, supabase]);
 
-  // Skip memos and go straight to wizard
+  // Skip memos and go straight to forced task entry
   const skipPostBreakMemos = useCallback(() => {
     setShowPostBreakPrompt(false);
     setPostBreakMemoStep(false);
@@ -1560,6 +1564,8 @@ export default function DashboardPage() {
     setPostBreakInternalMemo("");
     setPostBreakStatus("");
     setPreBreakTask(null);
+    // Force the VA to start a new task — they can't walk away without logging one
+    setShowPostBreakNewTaskModal(true);
   }, []);
 
   // ─── Screenshot utilities (must be before startTask) ──────
@@ -3489,11 +3495,7 @@ export default function DashboardPage() {
                     </div>
                   </button>
                   <button
-                    onClick={() => {
-                      setShowPostBreakPrompt(false);
-                      setPostBreakMemoStep(false);
-                      setPreBreakTask(null);
-                    }}
+                    onClick={showPostBreakMemos}
                     className="w-full flex items-center gap-3 p-3 rounded-lg border border-sand text-left cursor-pointer transition-all hover:bg-parchment hover:border-terracotta"
                   >
                     <div className="w-9 h-9 rounded-full bg-parchment flex items-center justify-center shrink-0">
@@ -3501,7 +3503,7 @@ export default function DashboardPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-espresso">Start New Task</div>
-                      <div className="text-[11px] text-bark mt-0.5">Use the form to log a new task</div>
+                      <div className="text-[11px] text-bark mt-0.5">Add notes for your last task, then log a new one</div>
                     </div>
                   </button>
                 </div>
@@ -3584,6 +3586,29 @@ export default function DashboardPage() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ─── Post-Break: Forced New Task Entry ─── */}
+      {showPostBreakNewTaskModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4 py-8 overflow-y-auto">
+          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md my-auto">
+            <div className="py-4 px-5 border-b border-parchment">
+              <h3 className="text-sm font-bold text-espresso">Start Your Next Task</h3>
+              <p className="text-xs text-bark mt-1">Log a task to keep your time tracked.</p>
+            </div>
+            <div className="p-4">
+              <TaskEntryForm
+                onStartTask={async (data) => {
+                  setShowPostBreakNewTaskModal(false);
+                  await handleCheckAndStartTask(data);
+                }}
+                hasActiveTask={false}
+                role={role}
+                sessionState={sessionState}
+              />
+            </div>
           </div>
         </div>
       )}
