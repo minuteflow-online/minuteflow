@@ -97,6 +97,15 @@ export default function TopNav({ user }: TopNavProps) {
   const [passwordSuccess, setPasswordSuccess] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
 
+  // Report an Issue modal state
+  const [showReportIssue, setShowReportIssue] = useState(false);
+  const [issueType, setIssueType] = useState("");
+  const [issueSubject, setIssueSubject] = useState("");
+  const [issueDescription, setIssueDescription] = useState("");
+  const [issueSubmitting, setIssueSubmitting] = useState(false);
+  const [issueSuccess, setIssueSuccess] = useState(false);
+  const [issueError, setIssueError] = useState("");
+
   // Close-task-before-logout modal state
   const [showCloseTaskModal, setShowCloseTaskModal] = useState(false);
   const [activeTaskName, setActiveTaskName] = useState("");
@@ -332,6 +341,40 @@ export default function TopNav({ user }: TopNavProps) {
     }
   }, [supabase, activeLogId, activeTaskStartTime, logoutTaskStatus, logoutClientMemo, logoutInternalMemo, logoutMood]);
 
+  const handleReportIssue = useCallback(async () => {
+    if (!issueSubject.trim() || !issueDescription.trim() || !issueType) return;
+    setIssueSubmitting(true);
+    setIssueError("");
+    try {
+      const res = await fetch("/api/va-feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: issueSubject.trim(),
+          message: issueDescription.trim(),
+          category: issueType,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setIssueError(data.error || "Failed to submit. Please try again.");
+        return;
+      }
+      setIssueSuccess(true);
+      setTimeout(() => {
+        setShowReportIssue(false);
+        setIssueSuccess(false);
+        setIssueSubject("");
+        setIssueDescription("");
+        setIssueType("");
+      }, 2000);
+    } catch {
+      setIssueError("Network error. Please try again.");
+    } finally {
+      setIssueSubmitting(false);
+    }
+  }, [issueSubject, issueDescription, issueType]);
+
   const cancelCloseTaskModal = useCallback(() => {
     setShowCloseTaskModal(false);
     setActiveTaskName("");
@@ -404,6 +447,14 @@ export default function TopNav({ user }: TopNavProps) {
               className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso cursor-pointer"
             >
               Password
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowReportIssue(true)}
+              className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso cursor-pointer"
+            >
+              Report Issue
             </button>
 
             {user.role === "admin" && (
@@ -487,6 +538,109 @@ export default function TopNav({ user }: TopNavProps) {
                     className="w-full py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {changingPassword ? "Updating..." : "Update Password"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Report an Issue Modal ─── */}
+      {showReportIssue && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-sm mx-4">
+            <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
+              <h3 className="text-sm font-bold text-espresso">Report an Issue</h3>
+              <button
+                onClick={() => {
+                  setShowReportIssue(false);
+                  setIssueSubject("");
+                  setIssueDescription("");
+                  setIssueType("");
+                  setIssueError("");
+                  setIssueSuccess(false);
+                }}
+                className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-5">
+              {issueSuccess ? (
+                <div className="p-3 rounded-lg bg-sage-soft border border-sage text-xs text-sage font-medium text-center">
+                  Issue reported! We&apos;ll look into it shortly.
+                </div>
+              ) : (
+                <>
+                  {/* Issue Type */}
+                  <div className="mb-3">
+                    <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                      Issue Type <span className="text-terracotta">*</span>
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { value: "bug", label: "Bug / Error" },
+                        { value: "access", label: "Access Problem" },
+                        { value: "not-working", label: "Feature Not Working" },
+                        { value: "other", label: "Other" },
+                      ].map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setIssueType(opt.value)}
+                          className={`py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                            issueType === opt.value
+                              ? "bg-terracotta text-white border border-terracotta"
+                              : "border border-sand bg-white text-bark hover:border-terracotta"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Subject */}
+                  <div className="mb-3">
+                    <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                      Subject <span className="text-terracotta">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={issueSubject}
+                      onChange={(e) => setIssueSubject(e.target.value)}
+                      placeholder="Short summary of the issue"
+                      className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone"
+                    />
+                  </div>
+
+                  {/* Description */}
+                  <div className="mb-3">
+                    <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
+                      Description <span className="text-terracotta">*</span>
+                    </label>
+                    <textarea
+                      value={issueDescription}
+                      onChange={(e) => setIssueDescription(e.target.value)}
+                      placeholder="Describe what happened and what you were trying to do..."
+                      rows={3}
+                      className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone resize-none"
+                    />
+                  </div>
+
+                  {issueError && (
+                    <div className="mb-3 p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600">
+                      {issueError}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleReportIssue}
+                    disabled={issueSubmitting || !issueType || !issueSubject.trim() || !issueDescription.trim()}
+                    className="w-full py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {issueSubmitting ? "Submitting..." : "Submit Issue"}
                   </button>
                 </>
               )}

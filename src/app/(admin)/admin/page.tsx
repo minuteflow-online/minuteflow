@@ -302,6 +302,41 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
+/* ── Sidebar Groups ──────────────────────────────────────── */
+
+type SidebarGroup = {
+  id: string;
+  label?: string;
+  tabs: { id: AdminTab; label: string; icon: React.ReactNode }[];
+};
+
+const SIDEBAR_GROUPS: SidebarGroup[] = [
+  {
+    id: "pinned",
+    tabs: SIDEBAR_TABS.filter((t) => (["overview"] as AdminTab[]).includes(t.id)),
+  },
+  {
+    id: "activity",
+    label: "Activity",
+    tabs: SIDEBAR_TABS.filter((t) => (["screenshots", "alerts", "corrections"] as AdminTab[]).includes(t.id)),
+  },
+  {
+    id: "team",
+    label: "Team",
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "va_resources", "va_trainings", "va_memos", "va_reviews", "va_tokens", "va_feedback", "paystubs"] as AdminTab[]).includes(t.id)),
+  },
+  {
+    id: "billing",
+    label: "Clients & Billing",
+    tabs: SIDEBAR_TABS.filter((t) => (["accounts", "projects", "clients", "invoices", "financial"] as AdminTab[]).includes(t.id)),
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    tabs: SIDEBAR_TABS.filter((t) => (["organization", "password"] as AdminTab[]).includes(t.id)),
+  },
+];
+
 /* ── Main Admin Page ─────────────────────────────────────── */
 
 export default function AdminPage() {
@@ -309,6 +344,7 @@ export default function AdminPage() {
 
   // Active tab
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // Data state
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -372,6 +408,17 @@ export default function AdminPage() {
     const interval = setInterval(updateClock, 1000);
     return () => clearInterval(interval);
   }, [orgTimezone]);
+
+  // Auto-expand the group containing the active tab
+  useEffect(() => {
+    const group = SIDEBAR_GROUPS.find((g) => g.label && g.tabs.some((t) => t.id === activeTab));
+    if (group) {
+      setExpandedGroups((prev) => {
+        if (prev.has(group.id)) return prev;
+        return new Set([...prev, group.id]);
+      });
+    }
+  }, [activeTab]);
 
   /* ── Data Fetching ──────────────────────────────────────── */
 
@@ -1038,29 +1085,106 @@ export default function AdminPage() {
           <h2 className="text-sm font-bold text-white tracking-wide">Admin Panel</h2>
           <p className="mt-0.5 text-[10px] text-white/50">{clock}</p>
         </div>
-        <nav className="flex-1 py-2 px-2 space-y-0.5">
-          {SIDEBAR_TABS.map((tab) => {
-            const isActive = activeTab === tab.id;
-            const hasBadge = (tab.id === "corrections" && (correctionRequests.length + breakCorrectionRequests.length + pendingManualEntries.length) > 0) || (tab.id === "sorting" && sortingReviews.length > 0);
-            const badgeCount = tab.id === "corrections" ? correctionRequests.length + breakCorrectionRequests.length + pendingManualEntries.length : tab.id === "sorting" ? sortingReviews.length : 0;
+        <nav className="flex-1 py-2 px-2 overflow-y-auto">
+          {SIDEBAR_GROUPS.map((group) => {
+            if (!group.label) {
+              // Pinned tabs (Overview) — no group header
+              return group.tabs.map((tab) => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition-all cursor-pointer ${
+                      isActive
+                        ? "bg-terracotta text-white"
+                        : "text-white/70 hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    {tab.icon}
+                    <span className="flex-1">{tab.label}</span>
+                  </button>
+                );
+              });
+            }
+
+            const isExpanded = expandedGroups.has(group.id);
+            const hasActiveTab = group.tabs.some((t) => t.id === activeTab);
+            const activityBadge =
+              group.id === "activity"
+                ? correctionRequests.length + breakCorrectionRequests.length + pendingManualEntries.length + sortingReviews.length
+                : 0;
+
             return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition-all cursor-pointer ${
-                  isActive
-                    ? "bg-terracotta text-white"
-                    : "text-white/70 hover:bg-white/10 hover:text-white"
-                }`}
-              >
-                {tab.icon}
-                <span className="flex-1">{tab.label}</span>
-                {hasBadge && (
-                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-terracotta-soft px-1.5 text-[10px] font-bold text-terracotta">
-                    {badgeCount}
-                  </span>
+              <div key={group.id} className="mt-2">
+                <button
+                  onClick={() =>
+                    setExpandedGroups((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(group.id)) next.delete(group.id);
+                      else next.add(group.id);
+                      return next;
+                    })
+                  }
+                  className={`w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wider transition-all cursor-pointer ${
+                    hasActiveTab && !isExpanded
+                      ? "text-terracotta hover:bg-white/10"
+                      : "text-white/40 hover:text-white/70 hover:bg-white/5"
+                  }`}
+                >
+                  <span className="flex-1">{group.label}</span>
+                  {activityBadge > 0 && !isExpanded && (
+                    <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-terracotta px-1 text-[9px] font-bold text-white">
+                      {activityBadge}
+                    </span>
+                  )}
+                  <svg
+                    className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                {isExpanded && (
+                  <div className="mt-0.5 space-y-0.5">
+                    {group.tabs.map((tab) => {
+                      const isActive = activeTab === tab.id;
+                      const hasBadge =
+                        (tab.id === "corrections" &&
+                          correctionRequests.length + breakCorrectionRequests.length + pendingManualEntries.length > 0) ||
+                        (tab.id === "sorting" && sortingReviews.length > 0);
+                      const badgeCount =
+                        tab.id === "corrections"
+                          ? correctionRequests.length + breakCorrectionRequests.length + pendingManualEntries.length
+                          : tab.id === "sorting"
+                          ? sortingReviews.length
+                          : 0;
+                      return (
+                        <button
+                          key={tab.id}
+                          onClick={() => setActiveTab(tab.id)}
+                          className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 pl-4 text-left text-[13px] font-medium transition-all cursor-pointer ${
+                            isActive
+                              ? "bg-terracotta text-white"
+                              : "text-white/70 hover:bg-white/10 hover:text-white"
+                          }`}
+                        >
+                          {tab.icon}
+                          <span className="flex-1">{tab.label}</span>
+                          {hasBadge && (
+                            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-terracotta-soft px-1.5 text-[10px] font-bold text-terracotta">
+                              {badgeCount}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
-              </button>
+              </div>
             );
           })}
         </nav>
