@@ -174,6 +174,9 @@ export async function PATCH(request: Request) {
     "is_active",
     "can_see_available_tasks",
     "payment_accounts",
+    "employment_type",
+    "requires_extension",
+    "extension_popup_shown",
   ];
   for (const field of allowedFields) {
     if (field in updates) {

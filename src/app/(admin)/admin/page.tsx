@@ -1883,6 +1883,8 @@ function TeamManagementTab({
   // Invite VA state
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteEmploymentType, setInviteEmploymentType] = useState("");
+  const [inviteRequiresExtension, setInviteRequiresExtension] = useState(false);
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteResult, setInviteResult] = useState<{ success?: boolean; message?: string; error?: string } | null>(null);
 
@@ -1894,12 +1896,18 @@ function TeamManagementTab({
       const res = await fetch("/api/invitations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: inviteEmail.trim() }),
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          employment_type: inviteEmploymentType || undefined,
+          requires_extension: inviteRequiresExtension,
+        }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setInviteResult({ success: true, message: data.message || `Invite sent to ${inviteEmail}` });
         setInviteEmail("");
+        setInviteEmploymentType("");
+        setInviteRequiresExtension(false);
       } else {
         setInviteResult({ error: data.error || "Failed to send invite." });
       }
@@ -1907,7 +1915,7 @@ function TeamManagementTab({
       setInviteResult({ error: "Unable to connect. Please try again." });
     }
     setInviteSending(false);
-  }, [inviteEmail]);
+  }, [inviteEmail, inviteEmploymentType, inviteRequiresExtension]);
 
   // VA category assignments (read-only summary)
   const [vaCatAssignments, setVaCatAssignments] = useState<Array<{ va_id: string; task_categories: { category_name: string } | null }>>([]);
@@ -2369,15 +2377,47 @@ function TeamManagementTab({
                   </div>
                 )}
 
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && !inviteSending && handleInvite()}
-                  placeholder="va@example.com"
-                  className="mb-4 w-full rounded-lg border border-sand bg-cream/50 px-3 py-2.5 text-sm text-ink placeholder:text-stone focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta"
-                  autoFocus
-                />
+                <div className="space-y-3 mb-4">
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && !inviteSending && handleInvite()}
+                    placeholder="va@example.com"
+                    className="w-full rounded-lg border border-sand bg-cream/50 px-3 py-2.5 text-sm text-ink placeholder:text-stone focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta"
+                    autoFocus
+                  />
+
+                  <div>
+                    <label className="mb-1 block text-[12px] font-semibold text-walnut">Employment Type</label>
+                    <select
+                      value={inviteEmploymentType}
+                      onChange={(e) => setInviteEmploymentType(e.target.value)}
+                      className="w-full rounded-lg border border-sand bg-cream/50 px-3 py-2.5 text-sm text-ink focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta cursor-pointer"
+                    >
+                      <option value="">— Select type —</option>
+                      <option value="full_time">Full Time</option>
+                      <option value="part_time">Part Time</option>
+                      <option value="hourly">Hourly</option>
+                      <option value="per_task">Per Task</option>
+                    </select>
+                  </div>
+
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={inviteRequiresExtension}
+                      onChange={(e) => setInviteRequiresExtension(e.target.checked)}
+                      className="h-4 w-4 rounded border-sand accent-terracotta cursor-pointer"
+                    />
+                    <span className="text-[13px] text-espresso">Send extension installation instructions</span>
+                  </label>
+                  {inviteRequiresExtension && (
+                    <p className="text-[11px] text-bark ml-6 -mt-1">
+                      The email will include steps to install the Chrome screen capture extension. They&apos;ll also see a setup popup on first login.
+                    </p>
+                  )}
+                </div>
 
                 <div className="flex gap-3">
                   <button
@@ -2963,6 +3003,35 @@ function TeamManagementTab({
                         <div>
                           <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Available Tasks</span>
                           <p className="mt-0.5 text-espresso font-medium">{p.can_see_available_tasks ? "Enabled" : "Disabled"}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Employment Type</span>
+                          <p className="mt-0.5 text-espresso font-medium capitalize">{p.employment_type ? p.employment_type.replace(/_/g, " ") : "—"}</p>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Extension Required</span>
+                          <div className="mt-0.5 flex items-center gap-2">
+                            <p className="text-espresso font-medium">{p.requires_extension ? "Yes" : "No"}</p>
+                            <button
+                              onClick={async () => {
+                                const newVal = !p.requires_extension;
+                                const payload: Record<string, unknown> = {
+                                  user_id: p.id,
+                                  requires_extension: newVal,
+                                };
+                                if (newVal) payload.extension_popup_shown = false;
+                                await fetch("/api/users", {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify(payload),
+                                });
+                                fetchData();
+                              }}
+                              className="text-[11px] text-terracotta hover:underline font-medium cursor-pointer"
+                            >
+                              {p.requires_extension ? "Remove" : "Require"}
+                            </button>
+                          </div>
                         </div>
                       </div>
                       {/* Payment Accounts */}

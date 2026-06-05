@@ -143,6 +143,9 @@ export default function DashboardPage() {
   // Loading state
   const [loading, setLoading] = useState(true);
 
+  // Extension install popup (first login for VAs who require extension)
+  const [showExtensionPopup, setShowExtensionPopup] = useState(false);
+
   // Session action debounce — prevents double-taps on Clock In/Out/Break
   const [sessionActionPending, setSessionActionPending] = useState(false);
 
@@ -381,6 +384,10 @@ export default function DashboardPage() {
       if (profileRes.data) {
         setProfile(profileRes.data);
         setRole(profileRes.data.role || "va");
+        // Show extension install popup on first login if required
+        if (profileRes.data.requires_extension && !profileRes.data.extension_popup_shown) {
+          setShowExtensionPopup(true);
+        }
       }
 
       // Process session
@@ -3647,6 +3654,119 @@ export default function DashboardPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ── Extension Install Popup ────────────────────────────── */}
+      {showExtensionPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-xl border border-sand bg-white shadow-xl overflow-hidden">
+            {/* Header */}
+            <div className="px-6 pt-6 pb-4 border-b border-sand">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-bark mb-1">Setup Required</div>
+              <h2 className="font-serif text-xl font-bold text-espresso">Install Screen Capture Extension</h2>
+              <p className="mt-1 text-sm text-bark">You need to install the Chrome extension to capture screenshots automatically while you work.</p>
+            </div>
+
+            {/* Steps */}
+            <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
+              {[
+                {
+                  n: 1,
+                  title: "Download the extension",
+                  body: (
+                    <span>
+                      Click below to download the extension file.
+                      <a
+                        href="/api/download-extension"
+                        className="ml-2 inline-flex items-center gap-1 rounded-md bg-terracotta px-3 py-1 text-xs font-semibold text-white hover:bg-terracotta/90"
+                      >
+                        ⬇ Download (.zip)
+                      </a>
+                    </span>
+                  ),
+                },
+                {
+                  n: 2,
+                  title: "Extract the zip file",
+                  body: (
+                    <span>
+                      <strong>Windows:</strong> Right-click the file → <strong>Extract All…</strong> → Extract.{" "}
+                      <strong>Mac:</strong> Double-click to extract. You&apos;ll get a folder called{" "}
+                      <code className="bg-parchment px-1.5 py-0.5 rounded text-terracotta text-[11px]">chrome-extension</code>.
+                    </span>
+                  ),
+                },
+                {
+                  n: 3,
+                  title: "Open Chrome Extensions",
+                  body: (
+                    <span>
+                      In Chrome, type{" "}
+                      <code className="bg-parchment px-1.5 py-0.5 rounded text-terracotta text-[11px]">chrome://extensions</code>{" "}
+                      in the address bar. Turn on <strong>Developer mode</strong> (toggle in the top right).
+                    </span>
+                  ),
+                },
+                {
+                  n: 4,
+                  title: "Load the extension",
+                  body: (
+                    <span>
+                      Click <strong>&ldquo;Load unpacked&rdquo;</strong> and select the{" "}
+                      <code className="bg-parchment px-1.5 py-0.5 rounded text-terracotta text-[11px]">chrome-extension</code>{" "}
+                      folder you extracted.
+                    </span>
+                  ),
+                },
+                {
+                  n: 5,
+                  title: "Sign in",
+                  body: "Click the puzzle piece icon in Chrome's toolbar → click MinuteFlow → sign in with your MinuteFlow email and password.",
+                },
+              ].map(({ n, title, body }) => (
+                <div key={n} className="flex gap-3">
+                  <div className="w-7 h-7 rounded-full bg-terracotta text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+                    {n}
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-espresso">{title}</p>
+                    <p className="text-xs text-bark mt-0.5 leading-relaxed">{body}</p>
+                  </div>
+                </div>
+              ))}
+
+              <div className="rounded-lg bg-sage-soft border border-[#b5ceb8] p-3 text-xs text-espresso">
+                <strong>What it does:</strong> Silently captures your active tab when you start or switch tasks. No bookmarks, personal tabs, or private info is ever captured.
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-sand flex gap-3">
+              <a
+                href="/install"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 rounded-lg border border-sand bg-parchment px-4 py-2.5 text-[13px] font-semibold text-walnut hover:bg-sand text-center transition-colors"
+              >
+                Open Full Guide
+              </a>
+              <button
+                onClick={async () => {
+                  setShowExtensionPopup(false);
+                  if (userId) {
+                    await supabase
+                      .from("profiles")
+                      .update({ extension_popup_shown: true })
+                      .eq("id", userId);
+                  }
+                }}
+                className="flex-1 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-terracotta/90 transition-colors cursor-pointer"
+              >
+                Got it, I&apos;ll install it
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

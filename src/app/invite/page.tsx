@@ -4,7 +4,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 
-type Step = "loading" | "invalid" | "account" | "profile" | "payment" | "success";
+type Step = "loading" | "invalid" | "account" | "payment" | "success";
 
 function InviteForm() {
   const searchParams = useSearchParams();
@@ -20,10 +20,6 @@ function InviteForm() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-
-  // Profile step
-  const [position, setPosition] = useState("");
-  const [department, setDepartment] = useState("");
 
   // Payment step
   const [paymentMethod, setPaymentMethod] = useState<"gcash" | "bank" | "none">("none");
@@ -77,11 +73,6 @@ function InviteForm() {
     const err = validateAccount();
     if (err) { setError(err); return; }
     setError("");
-    setStep("profile");
-  };
-
-  const handleProfileNext = () => {
-    setError("");
     setStep("payment");
   };
 
@@ -98,8 +89,6 @@ function InviteForm() {
           password,
           username,
           full_name: fullName,
-          position: position || undefined,
-          department: department || undefined,
           payment_method: paymentMethod,
           gcash_number: gcashNumber || undefined,
           gcash_name: gcashName || undefined,
@@ -158,16 +147,16 @@ function InviteForm() {
             </div>
           )}
 
-          {/* ── Step: Account ── */}
+          {/* ── Step 1: Account ── */}
           {step === "account" && (
             <>
               <div className="mb-6">
                 <h2 className="font-serif text-xl font-bold text-espresso">Create your account</h2>
-                <p className="mt-1 text-sm text-bark">Step 1 of 3</p>
+                <p className="mt-1 text-sm text-bark">Step 1 of 2</p>
               </div>
 
               {/* Progress dots */}
-              <StepDots current={1} total={3} />
+              <StepDots current={1} total={2} />
 
               {error && (
                 <div className="mb-4 rounded-md bg-terracotta-soft px-3 py-2 text-sm text-terracotta">
@@ -242,66 +231,15 @@ function InviteForm() {
             </>
           )}
 
-          {/* ── Step: Profile ── */}
-          {step === "profile" && (
-            <>
-              <div className="mb-6">
-                <h2 className="font-serif text-xl font-bold text-espresso">Your profile</h2>
-                <p className="mt-1 text-sm text-bark">Step 2 of 3 · Optional but helpful</p>
-              </div>
-
-              <StepDots current={2} total={3} />
-
-              <div className="space-y-4">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-espresso">Position / Title</label>
-                  <input
-                    type="text"
-                    value={position}
-                    onChange={(e) => setPosition(e.target.value)}
-                    placeholder="e.g. Virtual Assistant"
-                    className="w-full rounded-md border border-sand bg-cream/50 px-3 py-2 text-sm text-ink placeholder:text-stone focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-espresso">Department</label>
-                  <input
-                    type="text"
-                    value={department}
-                    onChange={(e) => setDepartment(e.target.value)}
-                    placeholder="e.g. Operations"
-                    className="w-full rounded-md border border-sand bg-cream/50 px-3 py-2 text-sm text-ink placeholder:text-stone focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta"
-                  />
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setStep("account")}
-                    className="flex-1 rounded-md border border-sand bg-parchment px-4 py-2.5 text-sm font-medium text-walnut transition-colors hover:bg-sand"
-                  >
-                    ← Back
-                  </button>
-                  <button
-                    onClick={handleProfileNext}
-                    className="flex-1 rounded-md bg-terracotta px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-terracotta/90"
-                  >
-                    Continue →
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* ── Step: Payment ── */}
+          {/* ── Step 2: Payment ── */}
           {step === "payment" && (
             <>
               <div className="mb-6">
                 <h2 className="font-serif text-xl font-bold text-espresso">Payment info</h2>
-                <p className="mt-1 text-sm text-bark">Step 3 of 3 · For receiving your pay</p>
+                <p className="mt-1 text-sm text-bark">Step 2 of 2 · For receiving your pay</p>
               </div>
 
-              <StepDots current={3} total={3} />
+              <StepDots current={2} total={2} />
 
               {error && (
                 <div className="mb-4 rounded-md bg-terracotta-soft px-3 py-2 text-sm text-terracotta">
@@ -418,7 +356,7 @@ function InviteForm() {
 
                 <div className="flex gap-3">
                   <button
-                    onClick={() => setStep("profile")}
+                    onClick={() => setStep("account")}
                     disabled={submitting}
                     className="flex-1 rounded-md border border-sand bg-parchment px-4 py-2.5 text-sm font-medium text-walnut transition-colors hover:bg-sand disabled:opacity-50"
                   >

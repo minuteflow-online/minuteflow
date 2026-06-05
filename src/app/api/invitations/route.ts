@@ -37,7 +37,7 @@ async function verifyAdmin(): Promise<{ userId: string } | Response> {
 
 /**
  * POST /api/invitations
- * Body: { email: string }
+ * Body: { email: string, employment_type?: string, requires_extension?: boolean }
  * Admin only — generates invite code, saves to DB, sends email via Resend.
  */
 export async function POST(request: Request) {
@@ -45,7 +45,11 @@ export async function POST(request: Request) {
   if (authResult instanceof Response) return authResult;
 
   const body = await request.json();
-  const { email } = body as { email: string };
+  const { email, employment_type, requires_extension } = body as {
+    email: string;
+    employment_type?: string;
+    requires_extension?: boolean;
+  };
 
   if (!email || !email.includes("@")) {
     return Response.json({ error: "Valid email is required" }, { status: 400 });
@@ -92,6 +96,8 @@ export async function POST(request: Request) {
     code,
     invited_by: (authResult as { userId: string }).userId,
     expires_at: expiresAt,
+    employment_type: employment_type || null,
+    requires_extension: requires_extension === true,
   });
 
   if (insertError) {
@@ -100,7 +106,7 @@ export async function POST(request: Request) {
 
   // Send invite email via Resend
   const inviteUrl = `${SITE_URL}/invite?code=${code}`;
-  const html = buildInviteEmail({ email, inviteUrl });
+  const html = buildInviteEmail({ email, inviteUrl, requires_extension: requires_extension === true });
 
   const resendRes = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -132,7 +138,7 @@ export async function POST(request: Request) {
 
 /**
  * GET /api/invitations?code=XXX
- * Public — validates an invite code. Returns { valid, email } or { valid: false, reason }.
+ * Public — validates an invite code. Returns { valid, email, requires_extension } or { valid: false, reason }.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -147,7 +153,7 @@ export async function GET(request: Request) {
 
   const { data: invite, error } = await adminClient
     .from("invitations")
-    .select("id, email, expires_at, used_at")
+    .select("id, email, expires_at, used_at, employment_type, requires_extension")
     .eq("code", code)
     .single();
 
@@ -163,12 +169,49 @@ export async function GET(request: Request) {
     return Response.json({ valid: false, reason: "This invite has expired" });
   }
 
-  return Response.json({ valid: true, email: invite.email });
+  return Response.json({
+    valid: true,
+    email: invite.email,
+    employment_type: invite.employment_type,
+    requires_extension: invite.requires_extension,
+  });
 }
 
 /* ── Email HTML Builder ───────────────────────────────────── */
 
-function buildInviteEmail({ email, inviteUrl }: { email: string; inviteUrl: string }): string {
+function buildInviteEmail({
+  email,
+  inviteUrl,
+  requires_extension,
+}: {
+  email: string;
+  inviteUrl: string;
+  requires_extension: boolean;
+}): string {
+  const extensionSection = requires_extension
+    ? `
+      <!-- Extension Instructions -->
+      <div style="margin: 24px 0; padding: 20px; background: #faf6f0; border-radius: 8px; border: 1px solid #e8e0d4;">
+        <div style="font-size: 13px; font-weight: 700; color: #c0704e; margin-bottom: 12px;">
+          📸 You'll also need to install the MinuteFlow Screen Capture extension
+        </div>
+        <p style="font-size: 13px; color: #3d2b1f; margin: 0 0 12px; line-height: 1.6;">
+          After you create your account, install the Chrome extension so screenshots can be captured automatically when you work.
+        </p>
+        <ol style="font-size: 13px; color: #3d2b1f; line-height: 2; margin: 0; padding-left: 20px;">
+          <li>Go to <a href="${inviteUrl.split('/invite')[0]}/install" style="color: #c0704e;">${inviteUrl.split('/invite')[0]}/install</a> after signing in</li>
+          <li>Click <strong>Download Extension (.zip)</strong></li>
+          <li>Extract the downloaded zip file (right-click → Extract All on Windows; double-click on Mac)</li>
+          <li>In Chrome, go to <code style="background:#fff;padding:2px 5px;border-radius:3px;font-size:11px;">chrome://extensions</code> and enable <strong>Developer mode</strong></li>
+          <li>Click <strong>Load unpacked</strong> and select the extracted <code style="background:#fff;padding:2px 5px;border-radius:3px;font-size:11px;">chrome-extension</code> folder</li>
+          <li>Click the puzzle piece icon in Chrome → click <strong>MinuteFlow</strong> → sign in</li>
+        </ol>
+        <div style="margin-top: 12px; padding: 10px 12px; background: #e8f4e8; border-radius: 6px; font-size: 12px; color: #3d5c3d;">
+          <strong>What it does:</strong> Silently captures your active tab when you start or switch tasks. No bookmarks, tabs, or personal info is ever captured.
+        </div>
+      </div>`
+    : "";
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -199,6 +242,8 @@ function buildInviteEmail({ email, inviteUrl }: { email: string; inviteUrl: stri
             Create My Account
           </a>
         </div>
+
+        ${extensionSection}
 
         <p style="font-size: 12px; color: #9e9080; line-height: 1.5; margin: 20px 0 0;">
           This invite was sent to <strong>${email}</strong>. If you weren't expecting this, you can safely ignore it.

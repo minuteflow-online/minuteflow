@@ -32,6 +32,9 @@ export interface Profile {
   can_see_available_tasks: boolean;
   payment_accounts: PaymentAccountDetails | null;
   created_at: string;
+  employment_type: string | null;
+  requires_extension: boolean;
+  extension_popup_shown: boolean;
 }
 
 export interface Session {

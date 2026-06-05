@@ -82,7 +82,7 @@ export async function POST(request: Request) {
   // 1. Look up and validate the invitation
   const { data: invite, error: inviteError } = await adminClient
     .from("invitations")
-    .select("id, email, expires_at, used_at")
+    .select("id, email, expires_at, used_at, employment_type, requires_extension")
     .eq("code", code)
     .single();
 
@@ -150,6 +150,9 @@ export async function POST(request: Request) {
       department: department || null,
       role: "va",
       payment_accounts: paymentAccounts,
+      employment_type: (invite as { employment_type?: string | null }).employment_type || null,
+      requires_extension: (invite as { requires_extension?: boolean }).requires_extension === true,
+      extension_popup_shown: false,
     })
     .eq("id", userId);
 
