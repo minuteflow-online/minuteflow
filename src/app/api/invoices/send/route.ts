@@ -246,64 +246,50 @@ function buildInvoiceEmail(
     )
     .join("");
 
+  // Financial breakdown — smart 1 or 2 row layout
+  interface EmailBItem { label: string; value: string; accent?: boolean }
+  const allBreakdownItems: EmailBItem[] = [
+    ...(!isCustomInvoice ? [
+      ...(invoice.rate_amount != null ? [{ label: "Rate", value: `${formatCurrency(invoice.rate_amount!, invoice.currency)}/hr` }] : []),
+      ...(notBilledHours > 0 ? [
+        { label: "Gross Hours", value: grossHours.toFixed(2) },
+        { label: invoice.hours_not_billed_label || "Not Billed", value: notBilledHours.toFixed(2) },
+      ] : []),
+      { label: "Hours Billed", value: totalHours.toFixed(2) },
+    ] : []),
+    { label: prevBalance > 0 ? "Current Invoice Amount" : "Invoice Amount", value: formatCurrency(invoiceAmount, invoice.currency) },
+    ...(expenseTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(expenseTotal, invoice.currency) }] : []),
+    ...(hasAdjustment ? [
+      { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
+      { label: "Final Amount", value: formatCurrency(finalTotal, invoice.currency), accent: true },
+    ] : []),
+    ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency) }] : []),
+  ];
+
+  // Always show full breakdown in a single row — no splitting
+
+  const buildEmailBreakdownRow = (items: EmailBItem[], bg: string) =>
+    `<tr style="background:${bg};">${items.map((item, i) =>
+      `<td style="padding:10px 8px; text-align:center; ${i < items.length - 1 ? "border-right:1px solid #e8e0d4;" : ""} word-break:break-word;">
+        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${item.label}</div>
+        <div style="font-size:14px; font-weight:700; color:${item.accent ? "#c0704e" : "#3d2b1f"}; margin-top:3px;">${item.value}</div>
+      </td>`
+    ).join("")}</tr>`;
+
+
+  // Current balance row (if prev balance exists)
+  const currentBalanceRow = prevBalance > 0 ? `
+    <tr style="background:#fff8f5; border-top:2px solid #c0704e;">
+      <td colspan="10" style="padding:10px 16px; text-align:center;">
+        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Current Balance Due</div>
+        <div style="font-size:18px; font-weight:800; color:#c0704e; margin-top:3px;">${formatCurrency(currentBalance, invoice.currency)}</div>
+      </td>
+    </tr>` : "";
+
   // PDF view link
   const pdfLink = invoice.share_token
     ? `https://minuteflow.click/invoice/view/${invoice.share_token}`
     : null;
-
-  // Financial breakdown — responsive, only show fields with actual values
-  // Helper: build one table row, each cell is a "bdc" class for mobile stacking
-  const buildBdcRow = (cells: Array<{ label: string; value: string; accent?: boolean; note?: string }>) => {
-    if (cells.length === 0) return "";
-    const w = Math.floor(100 / cells.length);
-    return `<table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden; margin-bottom:6px; table-layout:fixed;">
-      <tr style="background:#faf6f0;">${cells.map((c, i) =>
-        `<td class="bdc" style="width:${w}%; padding:10px 8px; text-align:center; vertical-align:top; ${i < cells.length - 1 ? "border-right:1px solid #e8e0d4;" : ""} word-break:break-word; box-sizing:border-box;">
-          <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${c.label}</div>
-          <div style="font-size:13px; font-weight:700; color:${c.accent ? "#c0704e" : "#3d2b1f"}; margin-top:3px;">${c.value}</div>
-          ${c.note ? `<div style="font-size:9px; color:#9e9080; margin-top:2px; line-height:1.3;">${c.note}</div>` : ""}
-        </td>`).join("")}
-      </tr>
-    </table>`;
-  };
-
-  // Hours cells — only include non-empty values
-  const hoursCells: Array<{ label: string; value: string }> = [];
-  if (!isCustomInvoice) {
-    if (invoice.rate_amount != null) {
-      hoursCells.push({ label: "Rate per hr", value: `${formatCurrency(invoice.rate_amount, invoice.currency)}/hr` });
-    }
-    if (notBilledHours > 0) {
-      hoursCells.push({ label: "Gross Hours", value: grossHours.toFixed(2) });
-      hoursCells.push({ label: invoice.hours_not_billed_label || "Unbilled Hours", value: notBilledHours.toFixed(2) });
-    }
-    hoursCells.push({ label: "Hours Billed", value: totalHours.toFixed(2) });
-  }
-
-  // Money cells — only include non-empty values
-  const moneyCells: Array<{ label: string; value: string; accent?: boolean; note?: string }> = [];
-  moneyCells.push({ label: "Gross Amount", value: formatCurrency(invoiceAmount, invoice.currency) });
-  if (expenseTotal > 0) {
-    moneyCells.push({ label: "Reimbursable Expenses", value: formatCurrency(expenseTotal, invoice.currency) });
-  }
-  if (hasAdjustment) {
-    moneyCells.push({ label: "Savings", value: `− ${formatCurrency(adjustment, invoice.currency)}` });
-    moneyCells.push({ label: "Current Month's Amount", value: formatCurrency(finalTotal, invoice.currency), accent: true });
-  }
-  if (prevBalance > 0) {
-    moneyCells.push({ label: "Previous Balance (?)", value: formatCurrency(prevBalance, invoice.currency), note: "Balance carried over from a previous invoice" });
-  }
-
-  // Final Balance Due — always shown, full-width
-  const finalBalanceRow = `
-    <table style="width:100%; border-collapse:collapse; border:2px solid #c0704e; border-radius:8px; overflow:hidden; margin-bottom:0;">
-      <tr style="background:#fff8f5;">
-        <td style="padding:10px 16px; text-align:center;">
-          <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Final Balance Due</div>
-          <div style="font-size:20px; font-weight:800; color:#c0704e; margin-top:3px;">${formatCurrency(currentBalance, invoice.currency)}</div>
-        </td>
-      </tr>
-    </table>`;
 
   // Display amount in header: current balance if prev balance, otherwise final total
   const headerAmount = prevBalance > 0 ? currentBalance : finalTotal;
@@ -400,9 +386,10 @@ function buildInvoiceEmail(
     <!-- ── FINANCIAL BREAKDOWN ────────────────────────────── -->
     <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 12px;">
       <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52; margin-bottom:10px;">Invoice Financial Breakdown</div>
-      ${hoursCells.length > 0 ? buildBdcRow(hoursCells) : ""}
-      ${buildBdcRow(moneyCells)}
-      ${finalBalanceRow}
+      <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden; margin-bottom:8px;">
+        ${buildEmailBreakdownRow(allBreakdownItems, "#faf6f0")}
+        ${currentBalanceRow}
+      </table>
     </div>
 
     ${expenseItems.length > 0 ? (() => {
