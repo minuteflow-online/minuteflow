@@ -266,9 +266,7 @@ function buildInvoiceEmail(
     ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency) }] : []),
   ];
 
-  const singleRow = allBreakdownItems.length <= 4;
-  const breakRow1 = singleRow ? allBreakdownItems : allBreakdownItems.slice(0, Math.ceil(allBreakdownItems.length / 2));
-  const breakRow2 = singleRow ? [] : allBreakdownItems.slice(Math.ceil(allBreakdownItems.length / 2));
+  // Always show full breakdown in a single row — no splitting
 
   const buildEmailBreakdownRow = (items: EmailBItem[], bg: string) =>
     `<tr style="background:${bg};">${items.map((item, i) =>
@@ -342,10 +340,9 @@ function buildInvoiceEmail(
             <div style="margin-top:14px;">
               <div style="font-size:10px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px;">${headerAmountLabel}</div>
               <div style="font-size:24px; font-weight:800; color:#2d1a00;">${formatCurrency(headerAmount, invoice.currency)}</div>
-              ${invoice.service_type ? `<div style="font-size:12px; font-weight:600; color:#5a4000; margin-top:4px;">${invoice.service_type}</div>` : ""}
               <div style="margin-top:8px;">
                 <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#5a4000; margin-bottom:2px;">Invoice Date</div>
-                <div style="font-size:18px; font-weight:800; color:#2d1a00;">${dateDisplay}</div>
+                <div style="font-size:13px; font-weight:600; color:#2d1a00; margin-top:2px;">${dateDisplay}</div>
               </div>
             </div>
           </td>
@@ -358,6 +355,7 @@ function buildInvoiceEmail(
             ${orgDba ? `<div style="font-size:11px; color:#5a4000; margin-top:1px;">DBA: ${orgDba}</div>` : ""}
             ${invoice.from_phone ? `<div style="font-size:11px; color:#5a4000; margin-top:2px;">${invoice.from_phone}</div>` : ""}
             ${invoice.from_email ? `<div style="font-size:11px; color:#5a4000; margin-top:2px;">${invoice.from_email}</div>` : ""}
+            ${invoice.service_type ? `<div style="font-size:11px; font-weight:600; color:#5a4000; margin-top:4px;">${invoice.service_type}</div>` : ""}
             <div style="margin-top:14px;">
               <div style="font-size:11px; font-weight:700; color:#2d1a00;">#${invoice.invoice_number}</div>
               ${invoice.due_date ? `<div style="font-size:10px; color:#5a4000; margin-top:2px;">Due: ${new Date(invoice.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: timezone })}</div>` : ""}
@@ -382,8 +380,7 @@ function buildInvoiceEmail(
     <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 4px;">
       <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52; margin-bottom:10px;">Invoice Financial Breakdown</div>
       <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden; margin-bottom:8px;">
-        ${buildEmailBreakdownRow(breakRow1, "#faf6f0")}
-        ${breakRow2.length > 0 ? `<tr style="background:#e8e0d4; height:1px;"><td colspan="10"></td></tr>${buildEmailBreakdownRow(breakRow2, "#f5f0e8")}` : ""}
+        ${buildEmailBreakdownRow(allBreakdownItems, "#faf6f0")}
         ${currentBalanceRow}
       </table>
     </div>

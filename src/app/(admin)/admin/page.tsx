@@ -1885,6 +1885,7 @@ function TeamManagementTab({
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteEmploymentType, setInviteEmploymentType] = useState("");
   const [inviteRequiresExtension, setInviteRequiresExtension] = useState(false);
+  const [inviteMessage, setInviteMessage] = useState("");
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteResult, setInviteResult] = useState<{ success?: boolean; message?: string; error?: string } | null>(null);
 
@@ -1900,6 +1901,7 @@ function TeamManagementTab({
           email: inviteEmail.trim(),
           employment_type: inviteEmploymentType || undefined,
           requires_extension: inviteRequiresExtension,
+          message: inviteMessage.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -1908,6 +1910,7 @@ function TeamManagementTab({
         setInviteEmail("");
         setInviteEmploymentType("");
         setInviteRequiresExtension(false);
+        setInviteMessage("");
       } else {
         setInviteResult({ error: data.error || "Failed to send invite." });
       }
@@ -1915,7 +1918,7 @@ function TeamManagementTab({
       setInviteResult({ error: "Unable to connect. Please try again." });
     }
     setInviteSending(false);
-  }, [inviteEmail, inviteEmploymentType, inviteRequiresExtension]);
+  }, [inviteEmail, inviteEmploymentType, inviteRequiresExtension, inviteMessage]);
 
   // VA category assignments (read-only summary)
   const [vaCatAssignments, setVaCatAssignments] = useState<Array<{ va_id: string; task_categories: { category_name: string } | null }>>([]);
@@ -2417,6 +2420,17 @@ function TeamManagementTab({
                       The email will include steps to install the Chrome screen capture extension. They&apos;ll also see a setup popup on first login.
                     </p>
                   )}
+
+                  <div>
+                    <label className="mb-1 block text-[12px] font-semibold text-walnut">Personal Message <span className="font-normal text-stone">(optional)</span></label>
+                    <textarea
+                      value={inviteMessage}
+                      onChange={(e) => setInviteMessage(e.target.value)}
+                      placeholder="Add a short note to include in the invite email…"
+                      rows={3}
+                      className="w-full rounded-lg border border-sand bg-cream/50 px-3 py-2.5 text-sm text-ink placeholder:text-stone focus:border-terracotta focus:outline-none focus:ring-1 focus:ring-terracotta resize-none"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex gap-3">
@@ -8202,6 +8216,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setSelectedAccount(inv.account_name);
                   setSelectedClientId(null);
                 }
+                setServiceType(inv.service_type ?? "");
                 setLineItems([]);
                 setInvoiceTotal("");
                 setAdjustmentAmount("0");
@@ -8814,12 +8829,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         <div className="text-[24px] font-extrabold text-[#2d1a00]">
                           {formatCurrency(prevBal > 0 ? currentBal : Number(inv.total), inv.currency)}
                         </div>
-                        {inv.service_type && (
-                          <div className="text-[12px] font-semibold text-[#5a4000] mt-1">{inv.service_type}</div>
-                        )}
                         <div className="mt-2">
                           <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice Date</div>
-                          <div className="text-[18px] font-extrabold text-[#2d1a00]">
+                          <div className="text-[13px] font-semibold text-[#2d1a00] mt-1">
                             {inv.period_start && inv.period_end
                               ? `${new Date(inv.period_start + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone })} – ${new Date(inv.period_end + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}`
                               : new Date(inv.issue_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })
@@ -8843,6 +8855,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 )}
                 {inv.from_phone && <div className="text-[11px] text-[#5a4000] mt-0.5">{inv.from_phone}</div>}
                 {inv.from_email && <div className="text-[11px] text-[#5a4000] mt-0.5">{inv.from_email}</div>}
+                {inv.service_type && <div className="text-[11px] font-semibold text-[#5a4000] mt-1">{inv.service_type}</div>}
                 <div className="mt-3">
                   <div className="text-[11px] font-bold text-[#2d1a00]">#{inv.invoice_number}</div>
                   {inv.due_date && (
@@ -8910,10 +8923,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   ...(prevBal > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBal, inv.currency) }] : []),
                 ];
 
-                const singleRow = allItems.length <= 4;
-                const row1 = singleRow ? allItems : allItems.slice(0, Math.ceil(allItems.length / 2));
-                const row2 = singleRow ? [] : allItems.slice(Math.ceil(allItems.length / 2));
-
                 const renderRow = (rowItems: BItem[]) => (
                   <div className="flex gap-3 mb-3">
                     {rowItems.map(({ label, value, accent }) => (
@@ -8927,12 +8936,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
                 return (
                   <>
-                    {renderRow(row1)}
-                    {row2.length > 0 && (
-                      <div className="border-t border-sand pt-3">
-                        {renderRow(row2)}
-                      </div>
-                    )}
+                    {renderRow(allItems)}
                     {prevBal > 0 && (
                       <div className="mt-2 rounded-lg border-2 border-terracotta bg-[#fff8f5] p-3 text-center">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Current Balance Due</p>
