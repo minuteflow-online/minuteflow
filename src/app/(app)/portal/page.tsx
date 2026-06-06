@@ -7,7 +7,7 @@ import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 
 // ─── Types ───────────────────────────────────────────────────
 
-type PortalTab = "profile" | "onboarding" | "sops" | "coaching" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "reviews" | "tokens" | "broadcasts";
+type PortalTab = "profile" | "onboarding" | "sops" | "coaching" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "coaching_notes" | "reviews" | "tokens";
 
 type RequestType = "time_off" | "schedule_change" | "pay_question" | "general";
 type RequestStatus = "pending" | "approved" | "denied" | "noted";
@@ -149,6 +149,15 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: "coaching_notes",
+    label: "Coaching Notes",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
+      </svg>
+    ),
+  },
+  {
     id: "reviews",
     label: "Reviews",
     icon: (
@@ -164,15 +173,6 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <circle cx="12" cy="12" r="10" />
         <path d="M12 6v6l4 2" />
-      </svg>
-    ),
-  },
-  {
-    id: "broadcasts",
-    label: "Broadcasts",
-    icon: (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
       </svg>
     ),
   },
@@ -1021,6 +1021,10 @@ function FeedbackTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmi
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [category, setCategory] = useState("general");
+  const [feedbackType, setFeedbackType] = useState("general");
+  const [regarding, setRegarding] = useState("");
+  const [reason, setReason] = useState("");
+  const [backgroundContext, setBackgroundContext] = useState("");
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -1048,11 +1052,12 @@ function FeedbackTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmi
     const res = await fetch("/api/va-feedback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subject: subject.trim(), message: message.trim(), category }),
+      body: JSON.stringify({ subject: subject.trim(), message: message.trim(), category, feedback_type: feedbackType, regarding: regarding.trim() || undefined, reason: reason.trim() || undefined, background_context: backgroundContext.trim() || undefined }),
     });
     setSubmitting(false);
     if (res.ok) {
       setSubject(""); setMessage(""); setShowForm(false);
+      setRegarding(""); setReason(""); setBackgroundContext(""); setFeedbackType("general");
       setSubmitMsg({ type: "ok", text: "Feedback submitted. Thank you!" });
       setTimeout(() => setSubmitMsg(null), 3000);
       fetchFeedback();
@@ -1105,20 +1110,39 @@ function FeedbackTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmi
             </button>
           </div>
           <div className="mb-4">
-            <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">Category</label>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {(["general", "suggestion", "concern", "appreciation"] as const).map((c) => (
+            <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">Type</label>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {([
+                { value: "general", label: "General" },
+                { value: "suggestion", label: "Suggestion" },
+                { value: "report_issue", label: "Report an Issue" },
+                { value: "appreciation", label: "Appreciation" },
+                { value: "concern", label: "Concern" },
+              ] as const).map((opt) => (
                 <button
-                  key={c}
-                  onClick={() => setCategory(c)}
-                  className={`py-2 px-3 rounded-lg text-[12px] font-medium border transition-all cursor-pointer ${
-                    category === c ? "bg-terracotta text-white border-terracotta" : "bg-white text-walnut border-sand hover:border-terracotta"
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setFeedbackType(opt.value)}
+                  className={`rounded-lg py-2 px-3 text-[12px] font-medium border transition-all cursor-pointer ${
+                    feedbackType === opt.value
+                      ? "bg-terracotta text-white border-terracotta"
+                      : "bg-white text-walnut border-sand hover:border-terracotta"
                   }`}
                 >
-                  {FEEDBACK_CATEGORY_LABELS[c]}
+                  {opt.label}
                 </button>
               ))}
             </div>
+          </div>
+          <div className="mb-3">
+            <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">Regarding</label>
+            <input
+              type="text"
+              value={regarding}
+              onChange={(e) => setRegarding(e.target.value)}
+              placeholder="Person, thing, or item of concern..."
+              className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+            />
           </div>
           <div className="mb-3">
             <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Subject</label>
@@ -1126,6 +1150,26 @@ function FeedbackTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmi
               type="text" value={subject} onChange={(e) => setSubject(e.target.value)}
               placeholder="Brief summary"
               className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta placeholder:text-stone"
+            />
+          </div>
+          <div className="mb-3">
+            <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">Reason</label>
+            <input
+              type="text"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Why are you submitting this?"
+              className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+            />
+          </div>
+          <div className="mb-3">
+            <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">Background / Context</label>
+            <textarea
+              value={backgroundContext}
+              onChange={(e) => setBackgroundContext(e.target.value)}
+              rows={3}
+              placeholder="Any background or context..."
+              className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
             />
           </div>
           <div className="mb-4">
@@ -1249,178 +1293,13 @@ function FeedbackTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmi
 // ─── Trainings Tab ────────────────────────────────────────────
 
 function TrainingsTab() {
-  const [trainings, setTrainings] = useState<VaTraining[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/va-trainings")
-      .then((r) => r.json())
-      .then((d) => { setTrainings(d.trainings || []); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-10 text-sm text-stone">
-        <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
-        Loading trainings...
-      </div>
-    );
-  }
-
-  if (trainings.length === 0) return <EmptyState label="trainings" />;
-
-  return (
-    <div className="grid gap-4 max-w-3xl">
-      {trainings.map((t) => (
-        <div key={t.id} className="rounded-xl border border-sand bg-white p-5 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-sm font-semibold text-espresso">{t.title}</h3>
-                {t.category && t.category !== "general" && (
-                  <span className="inline-flex items-center rounded-full bg-parchment px-2 py-0.5 text-[11px] font-medium text-walnut capitalize">{t.category}</span>
-                )}
-              </div>
-              {t.description && (
-                <p className="text-xs text-bark leading-relaxed mt-1">{t.description}</p>
-              )}
-            </div>
-          </div>
-          {t.url && (
-            <a
-              href={t.url} target="_blank" rel="noopener noreferrer"
-              className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-terracotta hover:underline"
-            >
-              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
-              </svg>
-              Open Training
-            </a>
-          )}
-        </div>
-      ))}
-    </div>
-  );
+  return <VaBroadcastsPortalTab category="training" />;
 }
 
 // ─── Memos Tab ────────────────────────────────────────────────
 
-function MemosTab({ currentUserId }: { currentUserId: string }) {
-  const [memos, setMemos] = useState<VaMemo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
-  const [confirming, setConfirming] = useState<Record<number, boolean>>({});
-
-  const fetchMemos = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/va-memos");
-      const d = await res.json();
-      setMemos(d.memos || []);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchMemos(); }, [fetchMemos]);
-
-  const handleConfirm = useCallback(async (memoId: number) => {
-    setConfirming((c) => ({ ...c, [memoId]: true }));
-    await fetch("/api/va-memo-reads", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ memo_id: memoId }),
-    });
-    await fetchMemos();
-    setConfirming((c) => ({ ...c, [memoId]: false }));
-  }, [fetchMemos]);
-
-  const unread = memos.filter((m) => m.requires_confirmation && !m.read_by_me);
-  const rest = memos.filter((m) => !m.requires_confirmation || m.read_by_me);
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-10 text-sm text-stone">
-        <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
-        Loading memos...
-      </div>
-    );
-  }
-
-  if (memos.length === 0) return <EmptyState label="memos" />;
-
-  const MemoCard = ({ memo }: { memo: VaMemo }) => {
-    const isExpanded = expanded[memo.id];
-    const needsConfirm = memo.requires_confirmation && !memo.read_by_me;
-    const preview = memo.body.length > 250 ? memo.body.slice(0, 250) + "..." : memo.body;
-
-    return (
-      <div className={`rounded-xl border bg-white p-5 shadow-sm ${needsConfirm ? "border-amber" : "border-sand"}`}>
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold text-espresso">{memo.title}</h3>
-            <p className="text-[11px] text-stone mt-0.5">{fmtDate(memo.created_at)}</p>
-          </div>
-          {memo.read_by_me ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2.5 py-1 text-[11px] font-semibold text-sage shrink-0">
-              <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
-              Confirmed
-            </span>
-          ) : memo.requires_confirmation ? (
-            <span className="inline-flex items-center rounded-full bg-amber-soft px-2.5 py-1 text-[11px] font-semibold text-amber shrink-0">Action Needed</span>
-          ) : null}
-        </div>
-
-        <div className="text-xs text-bark leading-relaxed whitespace-pre-wrap">
-          {isExpanded ? memo.body : preview}
-        </div>
-        {memo.body.length > 250 && (
-          <button
-            onClick={() => setExpanded((e) => ({ ...e, [memo.id]: !e[memo.id] }))}
-            className="mt-1 text-[11px] text-terracotta hover:underline cursor-pointer"
-          >
-            {isExpanded ? "Show less" : "Read more"}
-          </button>
-        )}
-
-        {needsConfirm && (
-          <button
-            onClick={() => handleConfirm(memo.id)} disabled={confirming[memo.id]}
-            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2 text-[12px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {confirming[memo.id] ? (
-              <div className="h-3 w-3 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-            ) : (
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
-            )}
-            {confirming[memo.id] ? "Confirming..." : "I&apos;ve Read This"}
-          </button>
-        )}
-      </div>
-    );
-  };
-
-  return (
-    <div className="max-w-3xl space-y-6">
-      {unread.length > 0 && (
-        <section>
-          <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-sm font-bold text-espresso">Needs Your Confirmation</h2>
-            <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[11px] font-semibold text-amber">{unread.length}</span>
-          </div>
-          <div className="space-y-4">{unread.map((m) => <MemoCard key={m.id} memo={m} />)}</div>
-        </section>
-      )}
-      {rest.length > 0 && (
-        <section>
-          {unread.length > 0 && <h2 className="text-sm font-bold text-espresso mb-4">All Memos</h2>}
-          <div className="space-y-4">{rest.map((m) => <MemoCard key={m.id} memo={m} />)}</div>
-        </section>
-      )}
-    </div>
-  );
+function MemosTab() {
+  return <VaBroadcastsPortalTab category="memo" />;
 }
 
 // ─── Reviews Tab ──────────────────────────────────────────────
@@ -1775,9 +1654,9 @@ export default function VaPortalPage() {
     feedback: "Feedback",
     trainings: "Trainings",
     memos: "Memos",
+    coaching_notes: "Coaching Notes",
     reviews: "Reviews",
     tokens: "Tokens & Ratings",
-    broadcasts: "Broadcasts",
   };
 
   const tabSubtitle: Record<PortalTab, string> = {
@@ -1788,12 +1667,12 @@ export default function VaPortalPage() {
     jobs: "Open positions and opportunities",
     requests: isAdmin ? "Review and respond to team requests" : "Submit and track your requests",
     paystubs: "Your payment history and paystub records",
-    feedback: isAdmin ? "Review feedback from your team" : "Share suggestions, concerns, or appreciation",
-    trainings: "Training materials and resources",
-    memos: "Team memos and announcements",
+    feedback: isAdmin ? "Review feedback from your team" : "Share feedback with the team",
+    trainings: "Training materials and resources from admin",
+    memos: "Memos from admin — team updates and announcements",
+    coaching_notes: "Coaching and performance notes from your supervisor",
     reviews: isAdmin ? "Manage performance reviews" : "Your performance reviews",
     tokens: isAdmin ? "Award tokens and rate performance" : "Your tokens and performance ratings",
-    broadcasts: "Team broadcasts, memos, and announcements",
   };
 
   if (loading) {
@@ -1875,17 +1754,17 @@ export default function VaPortalPage() {
         {activeTab === "trainings" && (
           <TrainingsTab />
         )}
-        {activeTab === "memos" && currentUserId && (
-          <MemosTab currentUserId={currentUserId} />
+        {activeTab === "memos" && (
+          <MemosTab />
+        )}
+        {activeTab === "coaching_notes" && (
+          <VaBroadcastsPortalTab category="coaching_notes" />
         )}
         {activeTab === "reviews" && (
           <ReviewsTab isAdmin={isAdmin} />
         )}
         {activeTab === "tokens" && currentUserId && (
           <TokensTab currentUserId={currentUserId} isAdmin={isAdmin} />
-        )}
-        {activeTab === "broadcasts" && (
-          <VaBroadcastsPortalTab />
         )}
       </main>
     </div>

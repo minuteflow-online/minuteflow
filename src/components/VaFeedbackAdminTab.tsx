@@ -8,6 +8,10 @@ interface VaFeedback {
   subject: string;
   message: string;
   category: string;
+  feedback_type: string | null;
+  regarding: string | null;
+  reason: string | null;
+  background_context: string | null;
   status: "new" | "reviewed" | "actioned";
   admin_notes: string | null;
   reviewed_at: string | null;
@@ -17,6 +21,14 @@ interface VaFeedback {
 
 const CATEGORY_LABELS: Record<string, string> = {
   general: "General", suggestion: "Suggestion", concern: "Concern", appreciation: "Appreciation",
+};
+
+const FEEDBACK_TYPE_LABELS: Record<string, string> = {
+  general: "General",
+  suggestion: "Suggestion",
+  concern: "Concern",
+  appreciation: "Appreciation",
+  report_issue: "Report an Issue",
 };
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
@@ -112,6 +124,26 @@ export default function VaFeedbackAdminTab() {
                   {STATUS_STYLES[f.status].label}
                 </span>
               </div>
+
+              {/* New structured fields */}
+              {(f.feedback_type || f.regarding || f.reason || f.background_context) && (
+                <div className="mt-2 space-y-1">
+                  {f.feedback_type && f.feedback_type !== f.category && (
+                    <span className="inline-flex items-center rounded-full bg-parchment px-2 py-0.5 text-[11px] font-medium text-walnut mr-2">
+                      {FEEDBACK_TYPE_LABELS[f.feedback_type] || f.feedback_type}
+                    </span>
+                  )}
+                  {f.regarding && (
+                    <p className="text-[12px] text-walnut"><span className="font-semibold">Regarding:</span> {f.regarding}</p>
+                  )}
+                  {f.reason && (
+                    <p className="text-[12px] text-walnut"><span className="font-semibold">Reason:</span> {f.reason}</p>
+                  )}
+                  {f.background_context && (
+                    <p className="text-[12px] text-walnut"><span className="font-semibold">Background:</span> {f.background_context}</p>
+                  )}
+                </div>
+              )}
 
               <p className="text-xs text-bark leading-relaxed mb-3">{f.message}</p>
               {f.admin_notes && <p className="text-xs text-stone italic mb-3">Note: &quot;{f.admin_notes}&quot;</p>}
