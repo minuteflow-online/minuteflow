@@ -39,6 +39,7 @@ import VaTrainingsAdminTab from "@/components/VaTrainingsAdminTab";
 import VaMemosAdminTab from "@/components/VaMemosAdminTab";
 import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
 import VaTokensAdminTab from "@/components/VaTokensAdminTab";
+import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -94,7 +95,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_trainings" | "va_memos" | "va_reviews" | "va_tokens";
+type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_trainings" | "va_memos" | "va_reviews" | "va_tokens" | "va_broadcasts";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -291,6 +292,15 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: "va_broadcasts",
+    label: "Broadcasts",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+      </svg>
+    ),
+  },
+  {
     id: "password",
     label: "Change Password",
     icon: (
@@ -323,7 +333,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "team",
     label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "va_resources", "va_trainings", "va_memos", "va_reviews", "va_tokens", "va_feedback", "paystubs"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "va_resources", "va_trainings", "va_memos", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs"] as AdminTab[]).includes(t.id)),
   },
   {
     id: "billing",
@@ -1230,6 +1240,7 @@ export default function AdminPage() {
                 {activeTab === "va_memos" && "Send memos and announcements to your team"}
                 {activeTab === "va_reviews" && "Create and publish performance reviews"}
                 {activeTab === "va_tokens" && "Award tokens and track daily ratings"}
+                {activeTab === "va_broadcasts" && "Send broadcasts, memos, and announcements to your team"}
               </p>
             </div>
             {activeTab === "overview" && (
@@ -1374,6 +1385,9 @@ export default function AdminPage() {
           )}
           {activeTab === "va_tokens" && (
             <VaTokensAdminTab />
+          )}
+          {activeTab === "va_broadcasts" && (
+            <VaBroadcastsAdminTab />
           )}
 
           {activeTab === "password" && (

@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, PaymentAccountDetails } from "@/types/database";
+import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 
 // ─── Types ───────────────────────────────────────────────────
 
-type PortalTab = "profile" | "onboarding" | "sops" | "coaching" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "reviews" | "tokens";
+type PortalTab = "profile" | "onboarding" | "sops" | "coaching" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "reviews" | "tokens" | "broadcasts";
 
 type RequestType = "time_off" | "schedule_change" | "pay_question" | "general";
 type RequestStatus = "pending" | "approved" | "denied" | "noted";
@@ -163,6 +164,15 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <circle cx="12" cy="12" r="10" />
         <path d="M12 6v6l4 2" />
+      </svg>
+    ),
+  },
+  {
+    id: "broadcasts",
+    label: "Broadcasts",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
       </svg>
     ),
   },
@@ -1767,6 +1777,7 @@ export default function VaPortalPage() {
     memos: "Memos",
     reviews: "Reviews",
     tokens: "Tokens & Ratings",
+    broadcasts: "Broadcasts",
   };
 
   const tabSubtitle: Record<PortalTab, string> = {
@@ -1782,6 +1793,7 @@ export default function VaPortalPage() {
     memos: "Team memos and announcements",
     reviews: isAdmin ? "Manage performance reviews" : "Your performance reviews",
     tokens: isAdmin ? "Award tokens and rate performance" : "Your tokens and performance ratings",
+    broadcasts: "Team broadcasts, memos, and announcements",
   };
 
   if (loading) {
@@ -1871,6 +1883,9 @@ export default function VaPortalPage() {
         )}
         {activeTab === "tokens" && currentUserId && (
           <TokensTab currentUserId={currentUserId} isAdmin={isAdmin} />
+        )}
+        {activeTab === "broadcasts" && (
+          <VaBroadcastsPortalTab />
         )}
       </main>
     </div>
