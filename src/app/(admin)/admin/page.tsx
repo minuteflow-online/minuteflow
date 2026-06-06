@@ -833,11 +833,11 @@ export default function AdminPage() {
 
   /* ── Correction Request Handlers ───────────────────────── */
 
-  const handleApproveCorrection = async (request: TimeCorrectionRequest) => {
-    if (!currentUserId) return;
+  const handleApproveCorrection = async (request: TimeCorrectionRequest, overrideChanges?: Record<string, string>): Promise<string | null> => {
+    if (!currentUserId) return "Not authenticated.";
     const supabase = createClient();
 
-    const changes = request.requested_changes as Record<string, string>;
+    const changes = overrideChanges ?? (request.requested_changes as Record<string, string>);
     const updatePayload: Record<string, unknown> = {};
     const auditRecords: { log_id: number; edited_by: string; field_name: string; old_value: string | null; new_value: string | null }[] = [];
 
@@ -871,8 +871,7 @@ export default function AdminPage() {
         if (startTime && endTime) {
           // Guard: end_time must be after start_time
           if (new Date(endTime).getTime() <= new Date(startTime).getTime()) {
-            console.error("Correction rejected: end_time is before or equal to start_time");
-            return;
+            return "The requested end time is before or equal to the task's start time. Please edit the date/time above before approving.";
           }
           updatePayload.duration_ms = Math.max(0, new Date(endTime).getTime() - new Date(startTime).getTime());
         }
@@ -925,6 +924,7 @@ export default function AdminPage() {
       .eq("id", request.id);
 
     fetchData();
+    return null;
   };
 
   const handleDenyCorrection = async (request: TimeCorrectionRequest) => {
@@ -4782,10 +4782,13 @@ function CorrectionsTab({
   logMap: Map<number, TimeLog>;
   reviewNotes: Record<number, string>;
   setReviewNotes: React.Dispatch<React.SetStateAction<Record<number, string>>>;
-  handleApproveCorrection: (req: TimeCorrectionRequest) => void;
+  handleApproveCorrection: (req: TimeCorrectionRequest, overrideChanges?: Record<string, string>) => Promise<string | null>;
   handleDenyCorrection: (req: TimeCorrectionRequest) => void;
   orgTimezone: string;
 }) {
+  const [editedChanges, setEditedChanges] = React.useState<Record<number, Record<string, string>>>({});
+  const [correctionErrors, setCorrectionErrors] = React.useState<Record<number, string>>({});
+
   if (correctionRequests.length === 0) {
     return (
       <div className="rounded-xl border border-sand bg-white px-5 py-12 text-center">
@@ -4861,20 +4864,34 @@ function CorrectionsTab({
                       </div>
                     </div>
                   )}
-                  {/* Requested changes with before/after comparison */}
+                  {/* Requested changes with before/after comparison — time fields are editable */}
                   <div className="mt-2 rounded-lg bg-parchment px-3 py-2">
                     <div className="text-[10px] font-semibold text-bark mb-1">
-                      Requested Changes:
+                      Requested Changes: <span className="font-normal text-stone">(edit time fields if the date looks wrong)</span>
                     </div>
                     {Object.entries(changes).map(([field, value]) => {
                       const originalValue = reqLog ? (reqLog as unknown as Record<string, unknown>)[field] : undefined;
+                      const isTimeField = field === "start_time" || field === "end_time";
+                      const editedVal = editedChanges[req.id]?.[field] ?? value;
                       return (
-                        <div key={field} className="text-[11px] text-espresso mb-0.5">
+                        <div key={field} className="text-[11px] text-espresso mb-1">
                           <span className="font-medium">{field}:</span>{" "}
                           {originalValue !== undefined && (
                             <span className="line-through text-stone mr-1">{String(originalValue) || "(empty)"}</span>
                           )}
-                          <span className="text-terracotta font-medium">{value || "(empty)"}</span>
+                          {isTimeField ? (
+                            <input
+                              type="datetime-local"
+                              value={editedVal || ""}
+                              onChange={(e) => setEditedChanges(prev => ({
+                                ...prev,
+                                [req.id]: { ...(prev[req.id] || {}), [field]: e.target.value }
+                              }))}
+                              className="rounded border border-terracotta px-1.5 py-0.5 text-[11px] text-terracotta font-medium outline-none focus:ring-1 focus:ring-terracotta bg-white"
+                            />
+                          ) : (
+                            <span className="text-terracotta font-medium">{value || "(empty)"}</span>
+                          )}
                         </div>
                       );
                     })}
@@ -4899,7 +4916,19 @@ function CorrectionsTab({
                   className="flex-1 rounded-lg border border-sand px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
                 />
                 <button
-                  onClick={() => handleApproveCorrection(req)}
+                  onClick={async () => {
+                    const reqChanges = req.requested_changes as Record<string, string>;
+                    const overrides: Record<string, string> = {};
+                    Object.entries(reqChanges).forEach(([field, val]) => {
+                      overrides[field] = editedChanges[req.id]?.[field] ?? val;
+                    });
+                    const err = await handleApproveCorrection(req, overrides);
+                    if (err) {
+                      setCorrectionErrors(prev => ({ ...prev, [req.id]: err }));
+                    } else {
+                      setCorrectionErrors(prev => { const n = { ...prev }; delete n[req.id]; return n; });
+                    }
+                  }}
                   className="rounded-lg bg-sage px-3 py-1.5 text-[11px] font-semibold text-white transition-all hover:bg-[#5a7a5a]"
                 >
                   Approve
@@ -4911,6 +4940,11 @@ function CorrectionsTab({
                   Deny
                 </button>
               </div>
+              {correctionErrors[req.id] && (
+                <div className="ml-10 mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-[11px] text-red-600">
+                  ⚠️ {correctionErrors[req.id]}
+                </div>
+              )}
             </div>
           );
         })}
