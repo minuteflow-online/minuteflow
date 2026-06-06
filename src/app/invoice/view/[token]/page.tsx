@@ -381,41 +381,55 @@ export default function PublicInvoicePage() {
 
         {/* ── Tab: Summary ── */}
         <div className={`invoice-tab-section ${activeTab === "summary" ? "" : "hidden"}`}>
-            {/* Financial Breakdown — smart 1 or 2 row layout */}
+            {/* Financial Breakdown — responsive grid, only filled fields */}
             <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
               <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52] mb-3">Invoice Financial Breakdown</div>
               {(() => {
-                // Build a flat list of all items to display
-                type BItem = { label: string; value: string; accent?: boolean };
+                type BItem = { label: string; value: string; accent?: boolean; tooltip?: string };
                 const reimbTotal = lineItems.filter((li) => li.expense_id).reduce((s, li) => s + Number(li.amount), 0);
-                const allItems: BItem[] = [
-                  ...(!isCustomInvoice ? [
-                    ...(invoice.rate_amount != null ? [{ label: "Rate", value: `${formatCurrency(invoice.rate_amount, invoice.currency)}/hr` }] : []),
-                    ...(notBilledHours > 0 ? [
-                      { label: "Gross Hours", value: grossHours.toFixed(2) },
-                      { label: invoice.hours_not_billed_label || "Not Billed", value: notBilledHours.toFixed(2) },
-                    ] : []),
-                    { label: "Hours Billed", value: totalHours.toFixed(2) },
-                  ] : []),
-                  { label: prevBalance > 0 ? "Current Invoice Amount" : "Invoice Amount", value: formatCurrency(Number(invoice.subtotal), invoice.currency) },
+
+                // Hours cells — only non-empty values
+                const hoursItems: BItem[] = [];
+                if (!isCustomInvoice) {
+                  if (invoice.rate_amount != null) {
+                    hoursItems.push({ label: "Rate per hr", value: `${formatCurrency(invoice.rate_amount, invoice.currency)}/hr` });
+                  }
+                  if (notBilledHours > 0) {
+                    hoursItems.push({ label: "Gross Hours", value: grossHours.toFixed(2) });
+                    hoursItems.push({ label: invoice.hours_not_billed_label || "Unbilled Hours", value: notBilledHours.toFixed(2) });
+                  }
+                  hoursItems.push({ label: "Hours Billed", value: totalHours.toFixed(2) });
+                }
+
+                // Money cells — only non-empty values
+                const moneyItems: BItem[] = [
+                  { label: "Gross Amount", value: formatCurrency(Number(invoice.subtotal), invoice.currency) },
                   ...(reimbTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(reimbTotal, invoice.currency) }] : []),
                   ...(hasAdjustment ? [
                     { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
-                    { label: "Final Amount", value: formatCurrency(Number(invoice.total), invoice.currency), accent: true },
+                    { label: "Current Month's Amount", value: formatCurrency(Number(invoice.total), invoice.currency), accent: true },
                   ] : []),
-                  ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency) }] : []),
+                  ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency), tooltip: "Balance carried over from a previous invoice" }] : []),
                 ];
 
-                const singleRow = allItems.length <= 4;
-                const row1 = singleRow ? allItems : allItems.slice(0, Math.ceil(allItems.length / 2));
-                const row2 = singleRow ? [] : allItems.slice(Math.ceil(allItems.length / 2));
-
-                const renderRow = (rowItems: BItem[], bg: string) => (
-                  <div className="flex gap-2 mb-2">
-                    {rowItems.map(({ label, value, accent }) => (
-                      <div key={label} className={`flex-1 rounded-lg border border-[#e8e0d4] ${bg} p-3 text-center`}>
-                        <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">{label}</div>
+                const renderGrid = (items: BItem[]) => (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-3">
+                    {items.map(({ label, value, accent, tooltip }) => (
+                      <div key={label} className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] p-3 text-center">
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] flex items-center justify-center gap-1">
+                          {label}
+                          {tooltip && (
+                            <span className="relative group/tip">
+                              <button
+                                onClick={() => {}}
+                                className="w-3.5 h-3.5 rounded-full bg-[#e8d8a0] text-[#8a6a10] text-[8px] font-bold inline-flex items-center justify-center leading-none cursor-help"
+                                title={tooltip}
+                              >?</button>
+                            </span>
+                          )}
+                        </div>
                         <div className={`text-[14px] font-bold mt-1 ${accent ? "text-[#c0704e]" : "text-[#3d2b1f]"}`}>{value}</div>
+                        {tooltip && <div className="text-[9px] text-[#9e9080] mt-1 leading-tight">{tooltip}</div>}
                       </div>
                     ))}
                   </div>
@@ -423,14 +437,12 @@ export default function PublicInvoicePage() {
 
                 return (
                   <>
-                    {renderRow(row1, "bg-[#faf6f0]")}
-                    {row2.length > 0 && renderRow(row2, "bg-[#f5f0e8]")}
-                    {prevBalance > 0 && (
-                      <div className="mt-1 rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] p-3 text-center">
-                        <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Current Balance Due</div>
-                        <div className="text-[18px] font-extrabold text-[#c0704e] mt-1">{formatCurrency(currentBalance, invoice.currency)}</div>
-                      </div>
-                    )}
+                    {hoursItems.length > 0 && renderGrid(hoursItems)}
+                    {renderGrid(moneyItems)}
+                    <div className="rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] p-3 text-center">
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Final Balance Due</div>
+                      <div className="text-[20px] font-extrabold text-[#c0704e] mt-1">{formatCurrency(currentBalance, invoice.currency)}</div>
+                    </div>
                   </>
                 );
               })()}

@@ -246,73 +246,64 @@ function buildInvoiceEmail(
     )
     .join("");
 
-  // PDF view link (moved up — needed for Previous Balance tooltip)
+  // PDF view link
   const pdfLink = invoice.share_token
     ? `https://minuteflow.click/invoice/view/${invoice.share_token}`
     : null;
 
-  // Financial breakdown — fixed 2-row layout (always show all columns, default to 0)
-  const notBilledLabel = invoice.hours_not_billed_label || "Unbilled Hours";
-  const rateDisplay = invoice.rate_amount != null
-    ? `${formatCurrency(invoice.rate_amount, invoice.currency)}/hr`
-    : "$0.00/hr";
-  const savingsDisplay = adjustment > 0
-    ? `− ${formatCurrency(adjustment, invoice.currency)}`
-    : formatCurrency(0, invoice.currency);
-  const prevQmark = pdfLink
-    ? `<a href="${pdfLink}" title="Balance carried over from a previous invoice" style="font-size:9px; color:#c0704e; text-decoration:none; font-weight:700; margin-left:2px;">(?)</a>`
-    : `<span title="Balance carried over from a previous invoice" style="font-size:9px; color:#c0704e; font-weight:700; margin-left:2px; cursor:help;">(?)</span>`;
+  // Financial breakdown — responsive, only show fields with actual values
+  // Helper: build one table row, each cell is a "bdc" class for mobile stacking
+  const buildBdcRow = (cells: Array<{ label: string; value: string; accent?: boolean; note?: string }>) => {
+    if (cells.length === 0) return "";
+    const w = Math.floor(100 / cells.length);
+    return `<table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden; margin-bottom:6px; table-layout:fixed;">
+      <tr style="background:#faf6f0;">${cells.map((c, i) =>
+        `<td class="bdc" style="width:${w}%; padding:10px 8px; text-align:center; vertical-align:top; ${i < cells.length - 1 ? "border-right:1px solid #e8e0d4;" : ""} word-break:break-word; box-sizing:border-box;">
+          <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${c.label}</div>
+          <div style="font-size:13px; font-weight:700; color:${c.accent ? "#c0704e" : "#3d2b1f"}; margin-top:3px;">${c.value}</div>
+          ${c.note ? `<div style="font-size:9px; color:#9e9080; margin-top:2px; line-height:1.3;">${c.note}</div>` : ""}
+        </td>`).join("")}
+      </tr>
+    </table>`;
+  };
 
-  // Row 1: Hours (non-custom invoices only)
-  const hoursRow = !isCustomInvoice ? `
-    <tr style="background:#faf6f0; border-bottom:1px solid #e8e0d4;">
-      <td style="padding:10px 8px; text-align:center; width:25%; border-right:1px solid #e8e0d4; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Rate per hr</div>
-        <div style="font-size:13px; font-weight:700; color:#3d2b1f; margin-top:3px;">${rateDisplay}</div>
-      </td>
-      <td style="padding:10px 8px; text-align:center; width:25%; border-right:1px solid #e8e0d4; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Gross Hours</div>
-        <div style="font-size:13px; font-weight:700; color:#3d2b1f; margin-top:3px;">${grossHours.toFixed(2)}</div>
-      </td>
-      <td style="padding:10px 8px; text-align:center; width:25%; border-right:1px solid #e8e0d4; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${notBilledLabel}</div>
-        <div style="font-size:13px; font-weight:700; color:#3d2b1f; margin-top:3px;">${notBilledHours.toFixed(2)}</div>
-      </td>
-      <td style="padding:10px 8px; text-align:center; width:25%; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Hours Billed</div>
-        <div style="font-size:13px; font-weight:700; color:#3d2b1f; margin-top:3px;">${totalHours.toFixed(2)}</div>
-      </td>
-    </tr>` : "";
+  // Hours cells — only include non-empty values
+  const hoursCells: Array<{ label: string; value: string }> = [];
+  if (!isCustomInvoice) {
+    if (invoice.rate_amount != null) {
+      hoursCells.push({ label: "Rate per hr", value: `${formatCurrency(invoice.rate_amount, invoice.currency)}/hr` });
+    }
+    if (notBilledHours > 0) {
+      hoursCells.push({ label: "Gross Hours", value: grossHours.toFixed(2) });
+      hoursCells.push({ label: invoice.hours_not_billed_label || "Unbilled Hours", value: notBilledHours.toFixed(2) });
+    }
+    hoursCells.push({ label: "Hours Billed", value: totalHours.toFixed(2) });
+  }
 
-  // Row 2: Money (always 4 columns, defaults to $0.00)
-  const moneyRow = `
-    <tr style="background:#faf6f0;">
-      <td style="padding:10px 8px; text-align:center; width:25%; border-right:1px solid #e8e0d4; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Gross Amount</div>
-        <div style="font-size:13px; font-weight:700; color:#3d2b1f; margin-top:3px;">${formatCurrency(invoiceAmount, invoice.currency)}</div>
-      </td>
-      <td style="padding:10px 8px; text-align:center; width:25%; border-right:1px solid #e8e0d4; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Savings</div>
-        <div style="font-size:13px; font-weight:700; color:#3d2b1f; margin-top:3px;">${savingsDisplay}</div>
-      </td>
-      <td style="padding:10px 8px; text-align:center; width:25%; border-right:1px solid #e8e0d4; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Current Month's Amount</div>
-        <div style="font-size:13px; font-weight:700; color:#c0704e; margin-top:3px;">${formatCurrency(finalTotal, invoice.currency)}</div>
-      </td>
-      <td style="padding:10px 8px; text-align:center; width:25%; word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Previous Balance ${prevQmark}</div>
-        <div style="font-size:13px; font-weight:700; color:#3d2b1f; margin-top:3px;">${formatCurrency(prevBalance, invoice.currency)}</div>
-      </td>
-    </tr>`;
+  // Money cells — only include non-empty values
+  const moneyCells: Array<{ label: string; value: string; accent?: boolean; note?: string }> = [];
+  moneyCells.push({ label: "Gross Amount", value: formatCurrency(invoiceAmount, invoice.currency) });
+  if (expenseTotal > 0) {
+    moneyCells.push({ label: "Reimbursable Expenses", value: formatCurrency(expenseTotal, invoice.currency) });
+  }
+  if (hasAdjustment) {
+    moneyCells.push({ label: "Savings", value: `− ${formatCurrency(adjustment, invoice.currency)}` });
+    moneyCells.push({ label: "Current Month's Amount", value: formatCurrency(finalTotal, invoice.currency), accent: true });
+  }
+  if (prevBalance > 0) {
+    moneyCells.push({ label: "Previous Balance (?)", value: formatCurrency(prevBalance, invoice.currency), note: "Balance carried over from a previous invoice" });
+  }
 
-  // Row 3: Final Balance Due (full-width, always shown)
+  // Final Balance Due — always shown, full-width
   const finalBalanceRow = `
-    <tr style="background:#fff8f5; border-top:2px solid #c0704e;">
-      <td colspan="4" style="padding:10px 16px; text-align:center;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Final Balance Due</div>
-        <div style="font-size:18px; font-weight:800; color:#c0704e; margin-top:3px;">${formatCurrency(currentBalance, invoice.currency)}</div>
-      </td>
-    </tr>`;
+    <table style="width:100%; border-collapse:collapse; border:2px solid #c0704e; border-radius:8px; overflow:hidden; margin-bottom:0;">
+      <tr style="background:#fff8f5;">
+        <td style="padding:10px 16px; text-align:center;">
+          <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Final Balance Due</div>
+          <div style="font-size:20px; font-weight:800; color:#c0704e; margin-top:3px;">${formatCurrency(currentBalance, invoice.currency)}</div>
+        </td>
+      </tr>
+    </table>`;
 
   // Display amount in header: current balance if prev balance, otherwise final total
   const headerAmount = prevBalance > 0 ? currentBalance : finalTotal;
@@ -340,6 +331,13 @@ function buildInvoiceEmail(
       }
       .invoice-header-col-right {
         text-align: left !important;
+      }
+      td.bdc {
+        display: inline-block !important;
+        width: 48% !important;
+        border-right: none !important;
+        border-bottom: 1px solid #e8e0d4 !important;
+        box-sizing: border-box !important;
       }
     }
   </style>
@@ -400,13 +398,11 @@ function buildInvoiceEmail(
     </div>
 
     <!-- ── FINANCIAL BREAKDOWN ────────────────────────────── -->
-    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 4px;">
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 12px;">
       <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52; margin-bottom:10px;">Invoice Financial Breakdown</div>
-      <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden; margin-bottom:8px;">
-        ${hoursRow}
-        ${moneyRow}
-        ${finalBalanceRow}
-      </table>
+      ${hoursCells.length > 0 ? buildBdcRow(hoursCells) : ""}
+      ${buildBdcRow(moneyCells)}
+      ${finalBalanceRow}
     </div>
 
     ${expenseItems.length > 0 ? (() => {

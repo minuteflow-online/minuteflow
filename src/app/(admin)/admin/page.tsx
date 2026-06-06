@@ -8907,7 +8907,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </div>
           <div className="bg-white p-8">
 
-            {/* Invoice Summary Box — smart 1 or 2 row layout */}
+            {/* Invoice Summary Box — responsive grid, only filled fields */}
             <div className="mb-6 rounded-lg border border-sand bg-parchment/30 p-5">
               {(() => {
                 const grossHours = selectedLineItems.filter((li) => !li.expense_id).reduce((s, li) => s + Number(li.quantity), 0);
@@ -8918,31 +8918,46 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 const currentBal = Number(inv.total) + prevBal;
                 const reimbTotal = selectedLineItems.filter((li) => li.expense_id).reduce((s, li) => s + Number(li.amount), 0);
 
-                type BItem = { label: string; value: string; accent?: boolean };
-                const allItems: BItem[] = [
-                  ...(invoiceType !== "custom" ? [
-                    ...(inv.rate_amount != null ? [{ label: "Rate", value: `${formatCurrency(Number(inv.rate_amount))}/hr` }] : []),
-                    ...(notBilled > 0 ? [
-                      { label: "Gross Hours", value: grossHours.toFixed(2) },
-                      { label: inv.hours_not_billed_label || "Not Billed", value: `${notBilled.toFixed(2)} hrs` },
-                    ] : []),
-                    { label: "Hours Billed", value: billedHours.toFixed(2) },
-                  ] : []),
-                  { label: "Invoice Amount", value: formatCurrency(Number(inv.subtotal), inv.currency) },
+                type BItem = { label: string; value: string; accent?: boolean; tooltip?: string };
+
+                // Hours items — only non-empty values
+                const hoursItems: BItem[] = [];
+                if (invoiceType !== "custom") {
+                  if (inv.rate_amount != null) {
+                    hoursItems.push({ label: "Rate per hr", value: `${formatCurrency(Number(inv.rate_amount))}/hr` });
+                  }
+                  if (notBilled > 0) {
+                    hoursItems.push({ label: "Gross Hours", value: grossHours.toFixed(2) });
+                    hoursItems.push({ label: inv.hours_not_billed_label || "Unbilled Hours", value: `${notBilled.toFixed(2)} hrs` });
+                  }
+                  hoursItems.push({ label: "Hours Billed", value: billedHours.toFixed(2) });
+                }
+
+                // Money items — only non-empty values
+                const moneyItems: BItem[] = [
+                  { label: "Gross Amount", value: formatCurrency(Number(inv.subtotal), inv.currency) },
                   ...(reimbTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(reimbTotal, inv.currency) }] : []),
                   ...(hasAdj ? [
                     { label: "Savings", value: `− ${formatCurrency(Number(inv.adjustment_amount))}` },
-                    { label: "Final Amount", value: formatCurrency(Number(inv.total), inv.currency), accent: true },
+                    { label: "Current Month's Amount", value: formatCurrency(Number(inv.total), inv.currency), accent: true },
                   ] : []),
-                  ...(prevBal > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBal, inv.currency) }] : []),
+                  ...(prevBal > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBal, inv.currency), tooltip: "Balance carried over from a previous invoice" }] : []),
                 ];
 
-                const renderRow = (rowItems: BItem[]) => (
-                  <div className="flex gap-3 mb-3">
-                    {rowItems.map(({ label, value, accent }) => (
-                      <div key={label} className="flex-1 text-center">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">{label}</p>
-                        <p className={`mt-1 text-[18px] font-bold ${accent ? "text-terracotta" : "text-espresso"}`}>{value}</p>
+                const renderGrid = (items: BItem[]) => (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 mb-3">
+                    {items.map(({ label, value, accent, tooltip }) => (
+                      <div key={label} className="rounded-lg border border-sand bg-parchment/50 p-2.5 text-center">
+                        <p className="text-[9px] font-semibold uppercase tracking-wider text-bark flex items-center justify-center gap-1">
+                          {label}
+                          {tooltip && (
+                            <span
+                              className="w-3.5 h-3.5 rounded-full bg-amber-200 text-amber-800 text-[8px] font-bold inline-flex items-center justify-center leading-none cursor-help"
+                              title={tooltip}
+                            >?</span>
+                          )}
+                        </p>
+                        <p className={`mt-1 text-[16px] font-bold ${accent ? "text-terracotta" : "text-espresso"}`}>{value}</p>
                       </div>
                     ))}
                   </div>
@@ -8950,13 +8965,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
                 return (
                   <>
-                    {renderRow(allItems)}
-                    {prevBal > 0 && (
-                      <div className="mt-2 rounded-lg border-2 border-terracotta bg-[#fff8f5] p-3 text-center">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-bark">Current Balance Due</p>
-                        <p className="mt-1 text-[22px] font-extrabold text-terracotta">{formatCurrency(currentBal, inv.currency)}</p>
-                      </div>
-                    )}
+                    {hoursItems.length > 0 && renderGrid(hoursItems)}
+                    {renderGrid(moneyItems)}
+                    <div className="rounded-lg border-2 border-terracotta bg-[#fff8f5] p-3 text-center">
+                      <p className="text-[9px] font-semibold uppercase tracking-wider text-bark">Final Balance Due</p>
+                      <p className="mt-1 text-[22px] font-extrabold text-terracotta">{formatCurrency(currentBal, inv.currency)}</p>
+                    </div>
                   </>
                 );
               })()}
