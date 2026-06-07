@@ -8,7 +8,7 @@ interface Broadcast {
   id: string;
   title: string;
   body: string;
-  category: "memo" | "training" | "coaching_notes";
+  category: "memo" | "training" | "announcement";
   magic_word: string | null;
   require_word: boolean;
   status: "published";
@@ -66,9 +66,9 @@ const CATEGORY_STYLES: Record<
   Broadcast["category"],
   { bg: string; text: string; label: string }
 > = {
-  memo:           { bg: "bg-sage-soft",        text: "text-sage",       label: "Memo"           },
-  training:       { bg: "bg-slate-blue-soft",  text: "text-slate-blue", label: "Training"       },
-  coaching_notes: { bg: "bg-slate-blue-soft",  text: "text-slate-blue", label: "Coaching Notes" },
+  memo:         { bg: "bg-sage-soft",        text: "text-sage",       label: "Memo"         },
+  training:     { bg: "bg-slate-blue-soft",  text: "text-slate-blue", label: "Training"     },
+  announcement: { bg: "bg-terracotta-soft",  text: "text-terracotta", label: "Announcement" },
 };
 
 function CategoryBadge({ category }: { category: Broadcast["category"] }) {
@@ -227,13 +227,7 @@ function BroadcastCard({
 
 // ─── Main Component ───────────────────────────────────────────
 
-const emptyMessages: Record<"memo" | "training" | "coaching_notes", string> = {
-  memo:           "No memos yet. Team memos will appear here.",
-  training:       "No training materials yet.",
-  coaching_notes: "No coaching notes yet.",
-};
-
-export default function VaBroadcastsPortalTab({ category }: { category: "memo" | "training" | "coaching_notes" }) {
+export default function VaBroadcastsPortalTab() {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -242,12 +236,11 @@ export default function VaBroadcastsPortalTab({ category }: { category: "memo" |
     try {
       const res = await fetch("/api/broadcasts");
       const d = await res.json();
-      const all: Broadcast[] = d.broadcasts || [];
-      setBroadcasts(all.filter((b) => b.category === category));
+      setBroadcasts(d.broadcasts || []);
     } finally {
       setLoading(false);
     }
-  }, [category]);
+  }, []);
 
   useEffect(() => {
     fetchBroadcasts();
@@ -278,8 +271,10 @@ export default function VaBroadcastsPortalTab({ category }: { category: "memo" |
               <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 00-5-5.917V4a1 1 0 00-2 0v1.083A6 6 0 006 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
             </svg>
           </div>
-          <p className="text-sm font-medium text-espresso">Nothing here yet</p>
-          <p className="mt-1 text-xs text-stone">{emptyMessages[category]}</p>
+          <p className="text-sm font-medium text-espresso">No broadcasts yet</p>
+          <p className="mt-1 text-xs text-stone">
+            Team announcements, trainings, and memos will appear here.
+          </p>
         </div>
       )}
 

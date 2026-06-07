@@ -2,8 +2,6 @@
 
 import { useEffect, useState, useCallback } from "react";
 
-type BroadcastCategory = "memo" | "training" | "coaching_notes";
-
 interface BroadcastRecipient {
   type: string;
   value: string;
@@ -13,52 +11,49 @@ interface Broadcast {
   id: string;
   title: string;
   body: string;
-  category: BroadcastCategory;
+  category: "memo" | "training" | "announcement";
   magic_word: string | null;
   require_word: boolean;
-  status: "draft" | "published" | "archived" | "scheduled";
-  scheduled_at: string | null;
+  status: "draft" | "published" | "archived";
   created_at: string;
   updated_at: string;
   read_count: number;
   recipients: BroadcastRecipient[];
 }
 
-interface Profile {
-  id: string;
-  full_name: string | null;
-  role: string;
-}
-
-const STATIC_RECIPIENT_OPTIONS = [
+const RECIPIENT_OPTIONS = [
   { label: "Everyone", type: "all", value: "all" },
   { label: "All VAs", type: "role", value: "va" },
-  { label: "Admins only", type: "role", value: "admin" },
-  { label: "Hourly", type: "employment_type", value: "hourly" },
-  { label: "Part-time", type: "employment_type", value: "part-time" },
-  { label: "Full-time", type: "employment_type", value: "full-time" },
 ];
 
-const CATEGORY_OPTIONS: { label: string; value: BroadcastCategory }[] = [
+const CATEGORY_OPTIONS: { label: string; value: Broadcast["category"] }[] = [
   { label: "Memo", value: "memo" },
   { label: "Training", value: "training" },
-  { label: "Coaching Notes", value: "coaching_notes" },
+  { label: "Announcement", value: "announcement" },
 ];
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function CategoryBadge({ category }: { category: BroadcastCategory }) {
-  const styles: Record<BroadcastCategory, string> = {
+function recipientLabel(recipients: BroadcastRecipient[]): string {
+  if (!recipients || recipients.length === 0) return "—";
+  const first = recipients[0];
+  if (first.type === "all") return "Everyone";
+  if (first.type === "role" && first.value === "va") return "All VAs";
+  return `${first.type}: ${first.value}`;
+}
+
+function CategoryBadge({ category }: { category: Broadcast["category"] }) {
+  const styles: Record<Broadcast["category"], string> = {
     memo: "bg-sage-soft text-sage",
     training: "bg-slate-blue-soft text-slate-blue",
-    coaching_notes: "bg-slate-blue-soft text-slate-blue",
+    announcement: "bg-terracotta-soft text-terracotta",
   };
-  const labels: Record<BroadcastCategory, string> = {
+  const labels: Record<Broadcast["category"], string> = {
     memo: "Memo",
     training: "Training",
-    coaching_notes: "Coaching Notes",
+    announcement: "Announcement",
   };
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${styles[category]}`}>
@@ -72,13 +67,11 @@ function StatusBadge({ status }: { status: Broadcast["status"] }) {
     published: "bg-sage-soft text-sage",
     draft: "bg-amber-50 text-amber-700",
     archived: "bg-stone/10 text-stone",
-    scheduled: "bg-slate-blue-soft text-slate-blue",
   };
   const labels: Record<Broadcast["status"], string> = {
     published: "Published",
     draft: "Draft",
     archived: "Archived",
-    scheduled: "Scheduled",
   };
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${styles[status]}`}>
@@ -90,7 +83,6 @@ function StatusBadge({ status }: { status: Broadcast["status"] }) {
 export default function VaBroadcastsAdminTab() {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Broadcast | null>(null);
   const [deleting, setDeleting] = useState<Record<string, boolean>>({});
@@ -101,12 +93,12 @@ export default function VaBroadcastsAdminTab() {
   // Form state
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [category, setCategory] = useState<BroadcastCategory>("memo");
+  const [category, setCategory] = useState<Broadcast["category"]>("memo");
   const [recipientKey, setRecipientKey] = useState("all|all");
   const [addMagicWord, setAddMagicWord] = useState(false);
   const [magicWord, setMagicWord] = useState("");
-  const [publishMode, setPublishMode] = useState<"immediate" | "schedule">("immediate");
-  const [scheduledAt, setScheduledAt] = useState("");
+  const [requireWord, setRequireWord] = useState(false);
+  const [publishImmediately, setPublishImmediately] = useState(true);
 
   const fetchBroadcasts = useCallback(async () => {
     setLoading(true);
@@ -121,30 +113,6 @@ export default function VaBroadcastsAdminTab() {
 
   useEffect(() => { fetchBroadcasts(); }, [fetchBroadcasts]);
 
-  useEffect(() => {
-    fetch("/api/profiles?active=true")
-      .then((r) => r.json())
-      .then((d) => setProfiles(d.profiles || []))
-      .catch(() => {});
-  }, []);
-
-  const recipientLabel = useCallback((recipients: BroadcastRecipient[]): string => {
-    if (!recipients || recipients.length === 0) return "—";
-    const first = recipients[0];
-    if (first.type === "all") return "Everyone";
-    if (first.type === "role" && first.value === "va") return "All VAs";
-    if (first.type === "role" && first.value === "admin") return "Admins only";
-    if (first.type === "employment_type") {
-      const etLabels: Record<string, string> = { hourly: "Hourly", "part-time": "Part-time", "full-time": "Full-time" };
-      return etLabels[first.value] ?? first.value;
-    }
-    if (first.type === "individual") {
-      const p = profiles.find((x) => x.id === first.value);
-      return p?.full_name ?? "Individual";
-    }
-    return `${first.type}: ${first.value}`;
-  }, [profiles]);
-
   const resetForm = () => {
     setTitle("");
     setBody("");
@@ -152,8 +120,8 @@ export default function VaBroadcastsAdminTab() {
     setRecipientKey("all|all");
     setAddMagicWord(false);
     setMagicWord("");
-    setPublishMode("immediate");
-    setScheduledAt("");
+    setRequireWord(false);
+    setPublishImmediately(true);
     setEditing(null);
   };
 
@@ -166,26 +134,9 @@ export default function VaBroadcastsAdminTab() {
     setRecipientKey(r ? `${r.type}|${r.value}` : "all|all");
     setAddMagicWord(!!b.magic_word);
     setMagicWord(b.magic_word || "");
-    if (b.status === "scheduled" && b.scheduled_at) {
-      setPublishMode("schedule");
-      // Convert ISO to datetime-local format (YYYY-MM-DDTHH:mm)
-      const dt = new Date(b.scheduled_at);
-      const local = new Date(dt.getTime() - dt.getTimezoneOffset() * 60000)
-        .toISOString()
-        .slice(0, 16);
-      setScheduledAt(local);
-    } else {
-      setPublishMode("immediate");
-      setScheduledAt("");
-    }
+    setRequireWord(b.require_word);
+    setPublishImmediately(b.status === "published");
     setShowForm(true);
-  };
-
-  const saveButtonLabel = () => {
-    if (saving) return "Saving...";
-    if (editing) return "Save Changes";
-    if (publishMode === "schedule") return "Schedule Broadcast";
-    return "Publish Now";
   };
 
   const handleSave = useCallback(async () => {
@@ -194,15 +145,14 @@ export default function VaBroadcastsAdminTab() {
     setSaveMsg(null);
 
     const [rType, rValue] = recipientKey.split("|");
-    const payload: Record<string, unknown> = {
+    const payload = {
       title: title.trim(),
       body: body.trim(),
       category,
       recipients: [{ type: rType, value: rValue }],
       magic_word: addMagicWord && magicWord.trim() ? magicWord.trim() : null,
-      require_word: addMagicWord && magicWord.trim().length > 0,
-      status: publishMode === "immediate" ? "published" : "scheduled",
-      scheduled_at: publishMode === "schedule" && scheduledAt ? new Date(scheduledAt).toISOString() : null,
+      require_word: addMagicWord ? requireWord : false,
+      status: publishImmediately ? "published" : "draft",
     };
 
     const res = editing
@@ -228,7 +178,7 @@ export default function VaBroadcastsAdminTab() {
       const e = await res.json();
       setSaveMsg({ type: "err", text: e.error || "Failed to save" });
     }
-  }, [title, body, category, recipientKey, addMagicWord, magicWord, publishMode, scheduledAt, editing, fetchBroadcasts]);
+  }, [title, body, category, recipientKey, addMagicWord, magicWord, requireWord, publishImmediately, editing, fetchBroadcasts]);
 
   const handleDelete = useCallback(async (id: string) => {
     if (!confirm("Delete this broadcast? This cannot be undone.")) return;
@@ -287,7 +237,7 @@ export default function VaBroadcastsAdminTab() {
               <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">Category</label>
               <select
                 value={category}
-                onChange={(e) => setCategory(e.target.value as BroadcastCategory)}
+                onChange={(e) => setCategory(e.target.value as Broadcast["category"])}
                 className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
               >
                 {CATEGORY_OPTIONS.map((o) => (
@@ -300,7 +250,7 @@ export default function VaBroadcastsAdminTab() {
             <div>
               <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">Send To</label>
               <div className="flex flex-col gap-2">
-                {STATIC_RECIPIENT_OPTIONS.map((o) => {
+                {RECIPIENT_OPTIONS.map((o) => {
                   const key = `${o.type}|${o.value}`;
                   return (
                     <label key={key} className="flex items-center gap-2 cursor-pointer">
@@ -316,37 +266,6 @@ export default function VaBroadcastsAdminTab() {
                     </label>
                   );
                 })}
-                {profiles.length > 0 && (
-                  <>
-                    <div className="flex items-center gap-2 mt-1">
-                      <div className="flex-1 h-px bg-sand" />
-                      <span className="text-[10px] font-semibold text-stone tracking-wider uppercase">Individual</span>
-                      <div className="flex-1 h-px bg-sand" />
-                    </div>
-                    {profiles
-                      .slice()
-                      .sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""))
-                      .map((p) => {
-                        const key = `individual|${p.id}`;
-                        return (
-                          <label key={key} className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="radio"
-                              name="recipient"
-                              value={key}
-                              checked={recipientKey === key}
-                              onChange={() => setRecipientKey(key)}
-                              className="accent-terracotta"
-                            />
-                            <span className="text-[13px] text-walnut">{p.full_name ?? p.id}</span>
-                            {p.role === "admin" && (
-                              <span className="text-[10px] text-stone">(admin)</span>
-                            )}
-                          </label>
-                        );
-                      })}
-                  </>
-                )}
               </div>
             </div>
 
@@ -362,57 +281,43 @@ export default function VaBroadcastsAdminTab() {
                 <span className="text-[13px] font-semibold text-walnut">Add magic word</span>
               </label>
               {addMagicWord && (
-                <div className="pl-5">
-                  <input
-                    type="text"
-                    value={magicWord}
-                    onChange={(e) => setMagicWord(e.target.value)}
-                    placeholder="Enter magic word..."
-                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                  />
-                  <p className="mt-1 text-[11px] text-stone">The magic word will be hidden in the message. VA must enter it to acknowledge.</p>
+                <div className="space-y-3 pl-5">
+                  <div>
+                    <input
+                      type="text"
+                      value={magicWord}
+                      onChange={(e) => setMagicWord(e.target.value)}
+                      placeholder="Enter magic word..."
+                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                    />
+                    <p className="mt-1 text-[11px] text-stone">The magic word will be automatically inserted into the message body.</p>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={requireWord}
+                      onChange={(e) => setRequireWord(e.target.checked)}
+                      className="accent-terracotta"
+                    />
+                    <span className="text-[13px] text-walnut">Require magic word to acknowledge</span>
+                  </label>
                 </div>
               )}
             </div>
 
-            {/* Publish options */}
-            <div>
-              <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">Publish</label>
-              <div className="flex flex-col gap-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="publishMode"
-                    value="immediate"
-                    checked={publishMode === "immediate"}
-                    onChange={() => setPublishMode("immediate")}
-                    className="accent-terracotta"
-                  />
-                  <span className="text-[13px] text-walnut">Immediately</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="publishMode"
-                    value="schedule"
-                    checked={publishMode === "schedule"}
-                    onChange={() => setPublishMode("schedule")}
-                    className="accent-terracotta"
-                  />
-                  <span className="text-[13px] text-walnut">Schedule</span>
-                </label>
-              </div>
-              {publishMode === "schedule" && (
-                <div className="mt-3 pl-5">
-                  <input
-                    type="datetime-local"
-                    value={scheduledAt}
-                    onChange={(e) => setScheduledAt(e.target.value)}
-                    className="py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                  />
-                </div>
+            {/* Status */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={publishImmediately}
+                onChange={(e) => setPublishImmediately(e.target.checked)}
+                className="accent-terracotta"
+              />
+              <span className="text-[13px] text-walnut">Publish immediately</span>
+              {!publishImmediately && (
+                <span className="text-[11px] text-stone ml-1">(will be saved as draft)</span>
               )}
-            </div>
+            </label>
 
           </div>
 
@@ -422,7 +327,7 @@ export default function VaBroadcastsAdminTab() {
               disabled={saving || !title.trim() || !body.trim()}
               className="rounded-lg bg-terracotta px-5 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {saveButtonLabel()}
+              {saving ? "Saving..." : editing ? "Save Changes" : publishImmediately ? "Publish Broadcast" : "Save Draft"}
             </button>
             <button
               onClick={() => { resetForm(); setShowForm(false); }}
@@ -464,9 +369,6 @@ export default function VaBroadcastsAdminTab() {
                     <span className="text-[11px] text-stone">{fmtDate(b.created_at)}</span>
                     <CategoryBadge category={b.category} />
                     <StatusBadge status={b.status} />
-                    {b.status === "scheduled" && b.scheduled_at && (
-                      <span className="text-[11px] text-stone">Sends {new Date(b.scheduled_at).toLocaleString()}</span>
-                    )}
                     <span className="inline-flex items-center gap-1 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-medium text-sage">
                       <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polyline points="20 6 9 17 4 12" />
