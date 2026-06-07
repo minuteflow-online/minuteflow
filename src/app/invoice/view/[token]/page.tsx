@@ -115,6 +115,7 @@ export default function PublicInvoicePage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("summary");
   const [openExpenseNoteIdx, setOpenExpenseNoteIdx] = useState<number | null>(null);
+  const [showPrevBalNote, setShowPrevBalNote] = useState(false);
 
   const activeTabRef = useRef<Tab>("summary");
   const timeTabStartRef = useRef<number | null>(null);
@@ -420,17 +421,20 @@ export default function PublicInvoicePage() {
                         <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52] flex items-center justify-center gap-1">
                           {label}
                           {tooltip && (
-                            <span className="relative group/tip">
+                            <span className="relative inline-block flex-shrink-0">
                               <button
-                                onClick={() => {}}
-                                className="w-3.5 h-3.5 rounded-full bg-[#e8d8a0] text-[#8a6a10] text-[8px] font-bold inline-flex items-center justify-center leading-none cursor-help"
-                                title={tooltip}
+                                onClick={() => setShowPrevBalNote((v) => !v)}
+                                className="w-3.5 h-3.5 rounded-full bg-[#e8d8a0] text-[#8a6a10] text-[8px] font-bold inline-flex items-center justify-center hover:bg-[#d4c070] cursor-pointer leading-none"
                               >?</button>
+                              {showPrevBalNote && (
+                                <div className="absolute z-20 left-4 top-0 bg-white border border-[#e8d8a0] rounded-lg shadow-lg p-2.5 text-[11px] text-[#3d2b1f] w-52 whitespace-pre-wrap text-left">
+                                  {tooltip}
+                                </div>
+                              )}
                             </span>
                           )}
                         </div>
                         <div className={`text-[14px] font-bold mt-1 ${accent ? "text-[#c0704e]" : "text-[#3d2b1f]"}`}>{value}</div>
-                        {tooltip && <div className="text-[9px] text-[#9e9080] mt-1 leading-tight">{tooltip}</div>}
                       </div>
                     ))}
                   </div>
