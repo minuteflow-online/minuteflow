@@ -9003,7 +9003,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     { label: "Savings", value: `− ${formatCurrency(Number(inv.adjustment_amount))}` },
                     { label: "Current Month's Amount", value: formatCurrency(Number(inv.total), inv.currency), accent: true },
                   ] : []),
-                  ...(prevBal > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBal, inv.currency), tooltip: "Balance carried over from a previous invoice" }] : []),
+                  ...(prevBal > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBal, inv.currency), tooltip: inv.previous_balance_note || "Balance carried over from a previous invoice" }] : []),
                 ];
 
                 const renderGrid = (items: BItem[]) => (
