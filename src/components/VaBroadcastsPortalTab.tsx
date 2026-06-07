@@ -8,7 +8,7 @@ interface Broadcast {
   id: string;
   title: string;
   body: string;
-  category: "memo" | "training" | "announcement";
+  category: "memo" | "training" | "announcement" | "coaching_notes";
   magic_word: string | null;
   require_word: boolean;
   status: "published";
@@ -66,9 +66,10 @@ const CATEGORY_STYLES: Record<
   Broadcast["category"],
   { bg: string; text: string; label: string }
 > = {
-  memo:         { bg: "bg-sage-soft",        text: "text-sage",       label: "Memo"         },
-  training:     { bg: "bg-slate-blue-soft",  text: "text-slate-blue", label: "Training"     },
-  announcement: { bg: "bg-terracotta-soft",  text: "text-terracotta", label: "Announcement" },
+  memo:            { bg: "bg-sage-soft",        text: "text-sage",       label: "Memo"          },
+  training:        { bg: "bg-slate-blue-soft",  text: "text-slate-blue", label: "Training"      },
+  announcement:    { bg: "bg-terracotta-soft",  text: "text-terracotta", label: "Announcement"  },
+  coaching_notes:  { bg: "bg-amber-100",        text: "text-amber-700",  label: "Coaching Notes"},
 };
 
 function CategoryBadge({ category }: { category: Broadcast["category"] }) {
