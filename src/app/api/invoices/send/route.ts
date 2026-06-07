@@ -166,37 +166,18 @@ function formatCurrency(amount: number, currency = "USD") {
   }).format(amount);
 }
 
-function fmtHours(h: number): string {
-  const hrs = Math.floor(h);
-  const mins = Math.round((h - hrs) * 60);
-  return mins > 0 ? `${hrs} hrs ${mins} mins` : `${hrs} hrs`;
-}
-
 /* ── Build Invoice HTML Email ─────────────────────────────── */
 
 function buildInvoiceEmail(
   invoice: InvoiceRow,
-  items: LineItemRow[],
+  _items: LineItemRow[],
   timezone = "UTC",
   orgRegisteredName: string | null = null,
   orgDba: string | null = null
 ): string {
-  const isCustomInvoice = invoice.invoice_type === "custom";
-
-  // Separate hour-based line items from expense line items
-  const hourItems = items.filter((li) => !li.expense_id);
-  const expenseItems = items.filter((li) => !!li.expense_id);
-
-  const grossHours = hourItems.reduce((s, li) => s + Number(li.quantity), 0);
-  const notBilledHours = Number(invoice.hours_not_billed || 0);
-  const totalHours = grossHours - notBilledHours;
-  const adjustment = Number(invoice.adjustment_amount || 0);
-  const invoiceAmount = Number(invoice.subtotal);
   const finalTotal = Number(invoice.total);
   const prevBalance = Number(invoice.previous_balance || 0);
   const currentBalance = finalTotal + prevBalance;
-  const hasAdjustment = adjustment > 0;
-  const expenseTotal = expenseItems.reduce((s, li) => s + Number(li.amount), 0);
 
   // Date display — show period range if available, otherwise issue date
   const issueDateFmt = new Date(invoice.issue_date + "T12:00:00Z").toLocaleDateString("en-US", {
@@ -208,85 +189,6 @@ function buildInvoiceEmail(
   const dateDisplay = invoice.period_start && invoice.period_end
     ? `${new Date(invoice.period_start + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(invoice.period_end + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
     : issueDateFmt;
-
-  // Task summary: group by description (exclude expense items)
-  const taskMap: Record<string, number> = {};
-  hourItems.forEach((li) => {
-    const k = li.description || "Other";
-    taskMap[k] = (taskMap[k] || 0) + Number(li.quantity);
-  });
-  const taskSummary = Object.entries(taskMap).sort((a, b) => b[1] - a[1]);
-
-  // Project summary: group by project (exclude expense items)
-  const projMap: Record<string, number> = {};
-  hourItems.forEach((li) => {
-    const k = li.project || li.account_name || "Unassigned";
-    projMap[k] = (projMap[k] || 0) + Number(li.quantity);
-  });
-  const projSummary = Object.entries(projMap).sort((a, b) => b[1] - a[1]);
-
-  // Task summary rows
-  const taskRows = taskSummary
-    .map(
-      ([task, hrs]) => `
-      <tr>
-        <td style="padding:4px 0; font-size:12px; color:#e8e0d4;">${task}</td>
-        <td style="padding:4px 0; font-size:12px; color:#ffffff; text-align:right; font-weight:600; white-space:nowrap;">${fmtHours(hrs)}</td>
-      </tr>`
-    )
-    .join("");
-
-  // Project summary rows
-  const projRows = projSummary
-    .map(
-      ([proj, hrs]) => `
-      <tr>
-        <td style="padding:4px 0; font-size:12px; color:#e8e0d4;">${proj}</td>
-        <td style="padding:4px 0; font-size:12px; color:#ffffff; text-align:right; font-weight:600; white-space:nowrap;">${fmtHours(hrs)}</td>
-      </tr>`
-    )
-    .join("");
-
-  // Financial breakdown — smart 1 or 2 row layout
-  interface EmailBItem { label: string; value: string; accent?: boolean; note?: string }
-  const allBreakdownItems: EmailBItem[] = [
-    ...(!isCustomInvoice ? [
-      ...(invoice.rate_amount != null ? [{ label: "Rate", value: `${formatCurrency(invoice.rate_amount!, invoice.currency)}/hr` }] : []),
-      ...(notBilledHours > 0 ? [
-        { label: "Gross Hours", value: grossHours.toFixed(2) },
-        { label: invoice.hours_not_billed_label || "Not Billed", value: notBilledHours.toFixed(2) },
-      ] : []),
-      { label: "Hours Billed", value: totalHours.toFixed(2) },
-    ] : []),
-    { label: prevBalance > 0 ? "Current Invoice Amount" : "Invoice Amount", value: formatCurrency(invoiceAmount, invoice.currency) },
-    ...(expenseTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(expenseTotal, invoice.currency) }] : []),
-    ...(hasAdjustment ? [
-      { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
-      { label: "Final Amount", value: formatCurrency(finalTotal, invoice.currency), accent: true },
-    ] : []),
-    ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency), note: invoice.previous_balance_note || undefined }] : []),
-  ];
-
-  // Always show full breakdown in a single row — no splitting
-
-  const buildEmailBreakdownRow = (items: EmailBItem[], bg: string) =>
-    `<tr style="background:${bg};">${items.map((item, i) =>
-      `<td style="padding:10px 8px; text-align:center; ${i < items.length - 1 ? "border-right:1px solid #e8e0d4;" : ""} word-break:break-word;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${item.label}</div>
-        <div style="font-size:14px; font-weight:700; color:${item.accent ? "#c0704e" : "#3d2b1f"}; margin-top:3px;">${item.value}</div>
-        ${item.note ? `<div style="font-size:9px; color:#9e9080; margin-top:3px; line-height:1.3;">${item.note}</div>` : ""}
-      </td>`
-    ).join("")}</tr>`;
-
-
-  // Current balance row (if prev balance exists)
-  const currentBalanceRow = prevBalance > 0 ? `
-    <tr style="background:#fff8f5; border-top:2px solid #c0704e;">
-      <td colspan="10" style="padding:10px 16px; text-align:center;">
-        <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">Current Balance Due</div>
-        <div style="font-size:18px; font-weight:800; color:#c0704e; margin-top:3px;">${formatCurrency(currentBalance, invoice.currency)}</div>
-      </td>
-    </tr>` : "";
 
   // PDF view link
   const pdfLink = invoice.share_token
@@ -385,79 +287,6 @@ function buildInvoiceEmail(
       </table>
     </div>
 
-    <!-- ── FINANCIAL BREAKDOWN ────────────────────────────── -->
-    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 12px;">
-      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52; margin-bottom:10px;">Invoice Financial Breakdown</div>
-      <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden; margin-bottom:8px;">
-        ${buildEmailBreakdownRow(allBreakdownItems, "#faf6f0")}
-        ${currentBalanceRow}
-      </table>
-    </div>
-
-    ${expenseItems.length > 0 ? (() => {
-      const expenseRows = expenseItems.map(li => `
-        <tr style="border-bottom:1px solid #faf6f0;">
-          <td style="padding:6px 8px; font-size:11px; color:#6b5e52; white-space:nowrap;">${li.service_date || "—"}</td>
-          <td style="padding:6px 8px; font-size:12px; color:#3d2b1f;">${li.description}</td>
-          <td style="padding:6px 8px; font-size:12px; font-weight:600; color:#3d2b1f; text-align:right; white-space:nowrap;">${formatCurrency(Number(li.amount), invoice.currency)}</td>
-        </tr>`).join("");
-      return `
-    <!-- ── REIMBURSABLE EXPENSES ───────────────────────────── -->
-    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px 4px;">
-      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#8a6a10; margin-bottom:10px;">Reimbursable Expenses</div>
-      <table style="width:100%; border-collapse:collapse; border:1px solid #e8d8a0; border-radius:8px; overflow:hidden; margin-bottom:12px;">
-        <tr style="background:#fdf8ed;">
-          <th style="padding:6px 8px; text-align:left; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#8a6a10; border-bottom:1px solid #e8d8a0;">Date</th>
-          <th style="padding:6px 8px; text-align:left; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#8a6a10; border-bottom:1px solid #e8d8a0;">Description</th>
-          <th style="padding:6px 8px; text-align:right; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#8a6a10; border-bottom:1px solid #e8d8a0;">Amount</th>
-        </tr>
-        ${expenseRows}
-        <tr style="border-top:1px solid #e8d8a0;">
-          <td colspan="2" style="padding:8px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#8a6a10;">Total Reimbursable</td>
-          <td style="padding:8px; font-size:13px; font-weight:700; color:#3d2b1f; text-align:right;">${formatCurrency(expenseTotal, invoice.currency)}</td>
-        </tr>
-      </table>
-    </div>`;
-    })() : ""}
-
-    ${isCustomInvoice && invoice.custom_line_items ? (() => {
-      const customLineItems = JSON.parse(invoice.custom_line_items as string) as Array<{description: string; amount: number}>;
-      const itemRows = customLineItems.map(item => `
-        <tr style="border-bottom:1px solid #e8e0d4;">
-          <td style="padding:8px 12px; font-size:12px; color:#3d2b1f;">${item.description}</td>
-          <td style="padding:8px 12px; font-size:12px; font-weight:600; color:#3d2b1f; text-align:right;">$${item.amount.toFixed(2)}</td>
-        </tr>`).join("");
-      return `
-    <!-- ── INVOICE ITEMS ──────────────────────────────────── -->
-    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:16px 24px;">
-      <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#6b5e52; margin-bottom:10px;">Invoice Items</div>
-      <table style="width:100%; border-collapse:collapse; border:1px solid #e8e0d4; border-radius:8px; overflow:hidden;">
-        <tr style="background:#faf6f0;">
-          <th style="padding:8px 12px; text-align:left; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Description</th>
-          <th style="padding:8px 12px; text-align:right; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52; border-bottom:1px solid #e8e0d4;">Amount</th>
-        </tr>
-        ${itemRows}
-      </table>
-    </div>`;
-    })() : `
-    <!-- ── TASK SUMMARY + DELIVERABLES (side by side) ──── -->
-    <table style="width:100%; border-collapse:collapse; background:#f5f0e8; border-left:1px solid #1a2535; border-right:1px solid #1a2535;">
-      <tr>
-        <td style="width:49%; vertical-align:top; background:#2d3a4a; padding:20px 16px;">
-          <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Task Summary</div>
-          <table style="width:100%; border-collapse:collapse;">
-            ${taskRows}
-          </table>
-        </td>
-        <td style="width:2%; background:#f5f0e8;"></td>
-        <td style="width:49%; vertical-align:top; background:#1e2a38; padding:20px 16px;">
-          <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#f5c842; margin-bottom:12px;">Deliverables</div>
-          <table style="width:100%; border-collapse:collapse;">
-            ${projRows}
-          </table>
-        </td>
-      </tr>
-    </table>`}
 
     ${invoice.notes ? `
     <!-- ── NOTES ────────────────────────────────────────── -->
