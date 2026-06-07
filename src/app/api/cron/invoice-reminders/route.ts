@@ -137,6 +137,7 @@ interface InvoiceRow {
   account_name: string | null;
   service_type: string | null;
   status: string;
+  amount_paid: number | null;
   rate_amount: number | null;
   hours_not_billed: number | null;
   hours_not_billed_label: string | null;
@@ -180,7 +181,21 @@ function buildInvoiceEmail(
 ): string {
   const finalTotal = Number(invoice.total);
   const prevBalance = Number(invoice.previous_balance || 0);
-  const currentBalance = finalTotal + prevBalance;
+  const amountPaid = Number(invoice.amount_paid || 0);
+
+  // Determine what amount to show in the header
+  let headerAmount: number;
+  let headerAmountLabel: string;
+  if (invoice.status === "partially_paid") {
+    headerAmount = finalTotal - amountPaid;
+    headerAmountLabel = "Remaining Balance";
+  } else if (prevBalance > 0) {
+    headerAmount = finalTotal + prevBalance;
+    headerAmountLabel = "Balance Due";
+  } else {
+    headerAmount = finalTotal;
+    headerAmountLabel = "Invoice Amount";
+  }
 
   const issueDateFmt = new Date(invoice.issue_date + "T12:00:00Z").toLocaleDateString("en-US", {
     month: "long",
@@ -196,9 +211,6 @@ function buildInvoiceEmail(
   const pdfLink = invoice.share_token
     ? `https://minuteflow.click/invoice/view/${invoice.share_token}`
     : null;
-
-  const headerAmount = prevBalance > 0 ? currentBalance : finalTotal;
-  const headerAmountLabel = prevBalance > 0 ? "Balance Due" : "Invoice Amount";
 
   return `<!DOCTYPE html>
 <html>

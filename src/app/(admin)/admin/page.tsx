@@ -6742,6 +6742,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       prev ? { ...prev, amount_paid: newAmountPaid, status: newStatus, ...(newStatus === "paid" ? { paid_date: new Date().toISOString().split("T")[0] } : {}) } : null
     );
 
+    // Sync to financial_payments
+    await supabase.from("financial_payments").insert({
+      account: selectedInvoice.account_name || null,
+      client_name: selectedInvoice.to_name || null,
+      amount: amt,
+      payment_date: paymentDate,
+      payment_method: paymentMethod || null,
+      confirmation_number: paymentRef || null,
+      notes: `Invoice #${selectedInvoice.invoice_number}${paymentNotes ? ` — ${paymentNotes}` : ""}`,
+    });
+
     // Refresh payments list
     const { data: payments } = await supabase
       .from("invoice_payments")
@@ -6916,6 +6927,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     fetchInvoices();
   };
 
+  /* ── Toggle reminder directly (no Edit form needed) ─────── */
+
+  const handleToggleReminderDirect = async (inv: Invoice) => {
+    const newValue = !inv.reminder_enabled;
+    await supabase.from("invoices").update({ reminder_enabled: newValue }).eq("id", inv.id);
+    const updated = { ...inv, reminder_enabled: newValue };
+    setSelectedInvoice(updated);
+    setInvoices((prev) => prev.map((i) => (i.id === inv.id ? updated : i)));
+  };
+
   /* ── Update invoice fields ────────────────────────────────── */
 
   const handleUpdateInvoice = async () => {
@@ -7042,6 +7063,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         payment_method: null,
         reference_number: null,
         notes: "Marked as fully paid",
+      });
+
+      // Sync to financial_payments
+      await supabase.from("financial_payments").insert({
+        account: invoice.account_name || null,
+        client_name: invoice.to_name || null,
+        amount: remaining,
+        payment_date: new Date().toISOString().split("T")[0],
+        payment_method: null,
+        confirmation_number: null,
+        notes: `Invoice #${invoice.invoice_number} — Marked as fully paid`,
       });
     }
 
@@ -8432,6 +8464,19 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             >
               Print / Download
             </button>
+            {/* Daily Reminder Toggle — instant save, no Edit form needed */}
+            {inv.status !== "paid" && inv.status !== "cancelled" && (
+              <div className="flex items-center gap-2 ml-2 pl-3 border-l border-sand">
+                <button
+                  onClick={() => handleToggleReminderDirect(inv)}
+                  className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer overflow-hidden flex-shrink-0 ${inv.reminder_enabled ? "bg-terracotta" : "bg-clay"}`}
+                  title={inv.reminder_enabled ? "Daily reminders ON — click to turn off" : "Daily reminders OFF — click to turn on"}
+                >
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${inv.reminder_enabled ? "translate-x-4" : "translate-x-0.5"}`} />
+                </button>
+                <span className="text-[12px] text-bark whitespace-nowrap">Daily reminder</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -8620,15 +8665,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   placeholder="replies@youremail.com"
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
                 <p className="mt-1 text-[11px] text-bark/60">Replies to this invoice will go here.</p>
-              </div>
-              <div className="flex items-center gap-3 pt-5">
-                <button
-                  onClick={() => setEditReminderEnabled(!editReminderEnabled)}
-                  className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer overflow-hidden ${editReminderEnabled ? "bg-terracotta" : "bg-clay"}`}
-                >
-                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${editReminderEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
-                </button>
-                <span className="text-[13px] text-bark">Daily reminder email</span>
               </div>
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Type of Services</label>
