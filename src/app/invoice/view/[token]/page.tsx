@@ -32,6 +32,7 @@ interface Invoice {
   hours_not_billed: number | null;
   hours_not_billed_label: string | null;
   previous_balance: number | null;
+  previous_balance_note: string | null;
   invoice_type?: string | null;
   custom_line_items?: string | null;
   period_start: string | null;
@@ -409,7 +410,7 @@ export default function PublicInvoicePage() {
                     { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
                     { label: "Current Month's Amount", value: formatCurrency(Number(invoice.total), invoice.currency), accent: true },
                   ] : []),
-                  ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency), tooltip: "Balance carried over from a previous invoice" }] : []),
+                  ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency), tooltip: invoice.previous_balance_note || "Balance carried over from a previous invoice" }] : []),
                 ];
 
                 const renderGrid = (items: BItem[]) => (

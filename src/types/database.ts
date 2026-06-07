@@ -253,6 +253,7 @@ export interface Invoice {
   to_phone: string | null;
   is_manual: boolean;
   previous_balance: number | null;
+  previous_balance_note: string | null;
   created_by: string | null;
   sent_at: string | null;
   hours_not_billed: number | null;

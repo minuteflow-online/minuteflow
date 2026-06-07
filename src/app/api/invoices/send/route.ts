@@ -138,6 +138,7 @@ interface InvoiceRow {
   hours_not_billed: number | null;
   hours_not_billed_label: string | null;
   previous_balance: number | null;
+  previous_balance_note: string | null;
   invoice_type?: string | null;
   custom_line_items?: string | null;
   period_start: string | null;
@@ -247,7 +248,7 @@ function buildInvoiceEmail(
     .join("");
 
   // Financial breakdown — smart 1 or 2 row layout
-  interface EmailBItem { label: string; value: string; accent?: boolean }
+  interface EmailBItem { label: string; value: string; accent?: boolean; note?: string }
   const allBreakdownItems: EmailBItem[] = [
     ...(!isCustomInvoice ? [
       ...(invoice.rate_amount != null ? [{ label: "Rate", value: `${formatCurrency(invoice.rate_amount!, invoice.currency)}/hr` }] : []),
@@ -263,7 +264,7 @@ function buildInvoiceEmail(
       { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
       { label: "Final Amount", value: formatCurrency(finalTotal, invoice.currency), accent: true },
     ] : []),
-    ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency) }] : []),
+    ...(prevBalance > 0 ? [{ label: "Previous Balance", value: formatCurrency(prevBalance, invoice.currency), note: invoice.previous_balance_note || undefined }] : []),
   ];
 
   // Always show full breakdown in a single row — no splitting
@@ -273,6 +274,7 @@ function buildInvoiceEmail(
       `<td style="padding:10px 8px; text-align:center; ${i < items.length - 1 ? "border-right:1px solid #e8e0d4;" : ""} word-break:break-word;">
         <div style="font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#6b5e52;">${item.label}</div>
         <div style="font-size:14px; font-weight:700; color:${item.accent ? "#c0704e" : "#3d2b1f"}; margin-top:3px;">${item.value}</div>
+        ${item.note ? `<div style="font-size:9px; color:#9e9080; margin-top:3px; line-height:1.3;">${item.note}</div>` : ""}
       </td>`
     ).join("")}</tr>`;
 

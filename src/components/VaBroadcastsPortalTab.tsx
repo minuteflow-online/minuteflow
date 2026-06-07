@@ -227,7 +227,7 @@ function BroadcastCard({
 
 // ─── Main Component ───────────────────────────────────────────
 
-export default function VaBroadcastsPortalTab() {
+export default function VaBroadcastsPortalTab({ category }: { category?: Broadcast["category"] } = {}) {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
 

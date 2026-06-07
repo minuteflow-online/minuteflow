@@ -6000,6 +6000,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [hoursNotBilledLabel, setHoursNotBilledLabel] = useState("Volunteer");
   const [rateAmount, setRateAmount] = useState("");
   const [previousBalance, setPreviousBalance] = useState("");
+  const [previousBalanceNote, setPreviousBalanceNote] = useState("");
 
   // Manual invoice state
   const [manualDescription, setManualDescription] = useState("");
@@ -6096,6 +6097,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editPaymentInfo, setEditPaymentInfo] = useState("");
   const [editReplyToEmail, setEditReplyToEmail] = useState("");
   const [editPreviousBalance, setEditPreviousBalance] = useState("");
+  const [editPreviousBalanceNote, setEditPreviousBalanceNote] = useState("");
 
   // Bill To info — generate form (pre-filled from client, editable)
   const [billingEmail, setBillingEmail] = useState("");
@@ -6475,6 +6477,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
       previous_balance: previousBalance ? parseFloat(previousBalance) : null,
+      previous_balance_note: previousBalanceNote || null,
       invoice_type: invoiceType,
       custom_line_items: invoiceType === "custom" ? JSON.stringify(customItems.filter(i => i.description).map(i => ({ description: i.description, amount: parseFloat(i.amount) || 0 }))) : null,
       share_token: crypto.randomUUID(),
@@ -6780,6 +6783,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setHoursNotBilled(invoice.hours_not_billed != null ? String(invoice.hours_not_billed) : "");
     setHoursNotBilledLabel(invoice.hours_not_billed_label || "Volunteer");
     setEditPreviousBalance(invoice.previous_balance != null ? String(invoice.previous_balance) : "");
+    setEditPreviousBalanceNote(invoice.previous_balance_note ?? "");
 
     const [lineItemsRes, paymentsRes] = await Promise.all([
       supabase
@@ -6904,6 +6908,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
       previous_balance: editPreviousBalance ? parseFloat(editPreviousBalance) : null,
+      previous_balance_note: editPreviousBalanceNote || null,
       service_type: serviceType || null,
       to_name: editToName || selectedInvoice.to_name,
       to_email: editToEmail || null,
@@ -6965,6 +6970,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
             hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
             previous_balance: editPreviousBalance ? parseFloat(editPreviousBalance) : null,
+            previous_balance_note: editPreviousBalanceNote || null,
             service_type: serviceType || null,
             to_name: editToName || prev.to_name,
             to_email: editToEmail || null,
@@ -7106,6 +7112,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       hours_not_billed: hoursNotBilled ? parseFloat(hoursNotBilled) : null,
       hours_not_billed_label: hoursNotBilled && hoursNotBilledLabel ? hoursNotBilledLabel : null,
       previous_balance: previousBalance ? parseFloat(previousBalance) : null,
+      previous_balance_note: previousBalanceNote || null,
       share_token: crypto.randomUUID(),
       period_start: dateFrom || null,
       period_end: dateTo || null,
@@ -7604,6 +7611,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     className="w-28 rounded border border-sand px-2 py-1.5 text-right text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
                   />
                 </div>
+                {parseFloat(previousBalance) > 0 && (
+                  <div className="mt-1 text-[11px] text-bark">
+                    <input
+                      type="text"
+                      value={previousBalanceNote}
+                      onChange={(e) => setPreviousBalanceNote(e.target.value)}
+                      placeholder="Note for client (e.g. Balance carried over from Invoice #12)"
+                      className="w-full rounded border border-sand px-2 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta bg-white"
+                    />
+                  </div>
+                )}
                 {parseFloat(previousBalance) > 0 && (
                   <div className="flex justify-between border-t border-sand pt-2 text-[13px]">
                     <span className="font-bold text-espresso">Current Balance Due</span>
@@ -8295,6 +8313,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setHoursNotBilled(inv.hours_not_billed != null ? String(inv.hours_not_billed) : "");
                   setHoursNotBilledLabel(inv.hours_not_billed_label || "Volunteer");
                   setEditPreviousBalance(inv.previous_balance != null ? String(inv.previous_balance) : "");
+                  setEditPreviousBalanceNote(inv.previous_balance_note ?? "");
                   setServiceType(inv.service_type ?? "");
                   setEditToName(inv.to_name ?? "");
                   setEditToEmail(inv.to_email ?? "");
@@ -8485,6 +8504,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   onChange={(e) => setEditPreviousBalance(e.target.value)}
                   placeholder="0.00"
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                {parseFloat(editPreviousBalance) > 0 && (
+                  <input
+                    type="text"
+                    value={editPreviousBalanceNote}
+                    onChange={(e) => setEditPreviousBalanceNote(e.target.value)}
+                    placeholder="Note for client (e.g. Balance carried over from Invoice #12)"
+                    className="mt-1.5 w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone"
+                  />
+                )}
               </div>
               {parseFloat(editPreviousBalance) > 0 && (
                 <div className="col-span-2">
