@@ -8464,21 +8464,23 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             >
               Print / Download
             </button>
-            {/* Daily Reminder Toggle — instant save, no Edit form needed */}
-            {inv.status !== "paid" && inv.status !== "cancelled" && (
-              <div className="flex items-center gap-2 ml-2 pl-3 border-l border-sand">
-                <button
-                  onClick={() => handleToggleReminderDirect(inv)}
-                  className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer overflow-hidden flex-shrink-0 ${inv.reminder_enabled ? "bg-terracotta" : "bg-clay"}`}
-                  title={inv.reminder_enabled ? "Daily reminders ON — click to turn off" : "Daily reminders OFF — click to turn on"}
-                >
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${inv.reminder_enabled ? "translate-x-4" : "translate-x-0.5"}`} />
-                </button>
-                <span className="text-[12px] text-bark whitespace-nowrap">Daily reminder</span>
-              </div>
-            )}
           </div>
         </div>
+
+        {/* Daily Reminder Toggle — standalone row, outside actions bar */}
+        {inv.status !== "paid" && inv.status !== "cancelled" && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-sand bg-white px-4 py-2.5">
+            <button
+              onClick={() => handleToggleReminderDirect(inv)}
+              className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer overflow-hidden flex-shrink-0 ${inv.reminder_enabled ? "bg-terracotta" : "bg-clay"}`}
+              title={inv.reminder_enabled ? "Daily reminders ON — click to turn off" : "Daily reminders OFF — click to turn on"}
+            >
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${inv.reminder_enabled ? "translate-x-4" : "translate-x-0.5"}`} />
+            </button>
+            <span className="text-[13px] text-bark">Daily reminder email</span>
+            <span className="text-[12px] text-stone">{inv.reminder_enabled ? "— ON (sends payment reminder each day)" : "— OFF"}</span>
+          </div>
+        )}
 
         {sendError && (
           <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-[12px] text-red-600">
