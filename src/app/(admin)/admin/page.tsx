@@ -6015,6 +6015,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
   const [sendSuccess, setSendSuccess] = useState("");
+  const [sendingReminder, setSendingReminder] = useState<number | null>(null);
+  const [reminderSuccess, setReminderSuccess] = useState("");
 
   // Record payment state
   const [showPaymentForm, setShowPaymentForm] = useState(false);
@@ -6024,6 +6026,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [paymentRef, setPaymentRef] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
   const [savingPayment, setSavingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
 
   // Edit invoice state
   const [editingInvoice, setEditingInvoice] = useState(false);
@@ -6706,9 +6709,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     });
 
     if (error) {
+      setPaymentError(error.message || "Failed to save payment. Please try again.");
       setSavingPayment(false);
       return;
     }
+    setPaymentError("");
 
     // Calculate new total paid
     const newAmountPaid = Number(selectedInvoice.amount_paid || 0) + amt;
@@ -6861,6 +6866,35 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
 
     setSending(false);
+  };
+
+  /* ── Send reminder email ──────────────────────────────────── */
+
+  const handleSendReminder = async (invoice: Invoice) => {
+    if (!invoice.to_email) return;
+    setSendingReminder(invoice.id);
+    setReminderSuccess("");
+    setSendError("");
+
+    try {
+      const res = await fetch("/api/invoices/remind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoice_id: invoice.id }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        setSendError(data.error || "Failed to send reminder");
+      } else {
+        setReminderSuccess("Reminder sent!");
+        setTimeout(() => setReminderSuccess(""), 3000);
+      }
+    } catch {
+      setSendError("Failed to send reminder");
+    }
+
+    setSendingReminder(null);
   };
 
   /* ── Mark as Ready to Send ────────────────────────────────── */
@@ -8370,7 +8404,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             )}
             {inv.status !== "paid" && inv.status !== "cancelled" && (
               <button
-                onClick={() => setShowPaymentForm(true)}
+                onClick={() => { setShowPaymentForm(true); setPaymentError(""); }}
                 className="rounded-lg bg-amber px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-amber/80 cursor-pointer"
               >
                 Record Payment
@@ -8411,6 +8445,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             {sendSuccess}
           </div>
         )}
+        {reminderSuccess && (
+          <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5 text-[12px] text-amber-700">
+            {reminderSuccess}
+          </div>
+        )}
 
         {/* Send Email Panel */}
         {(inv.status === "draft" || inv.status === "sent" || inv.status === "ready_to_send") && (
@@ -8435,6 +8474,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             <p className="mt-1.5 text-[11px] text-stone">
               {inv.to_email ? `Default: ${inv.to_email} — change above to send a test to yourself` : "No client email on file — type any address above"}
             </p>
+          </div>
+        )}
+
+        {/* Reminder Panel */}
+        {(inv.status === "sent" || inv.status === "overdue" || inv.status === "partially_paid") && inv.to_email && (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-amber-700">Send Gentle Reminder</p>
+            <p className="mb-3 text-[12px] text-amber-600">Sends a reminder to <span className="font-semibold">{inv.to_email}</span> with subject &ldquo;Gentle Reminder: Invoice {inv.invoice_number}&rdquo;</p>
+            <button
+              onClick={() => handleSendReminder(inv)}
+              disabled={sendingReminder === inv.id}
+              className="rounded-lg bg-amber-500 px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {sendingReminder === inv.id ? "Sending..." : "Send Reminder"}
+            </button>
           </div>
         )}
 
@@ -8877,6 +8931,124 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </div>
         )}
 
+        {/* Record Payment Form */}
+        {showPaymentForm && inv.status !== "paid" && (
+          <div className="mb-4 rounded-xl border border-amber/30 bg-amber-soft/30 p-5">
+            <h4 className="mb-4 font-serif text-[15px] font-bold text-espresso">Record Payment</h4>
+            {paymentError && (
+              <div className="mb-3 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-[12px] text-red-600">{paymentError}</div>
+            )}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Amount ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max={Number(inv.total) - Number(inv.amount_paid || 0)}
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  placeholder={`Max: ${formatCurrency(Number(inv.total) - Number(inv.amount_paid || 0))}`}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Date</label>
+                <input
+                  type="date"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Method</label>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer"
+                >
+                  <option value="">Select...</option>
+                  <option value="bank_transfer">Bank Transfer</option>
+                  <option value="check">Check</option>
+                  <option value="cash">Cash</option>
+                  <option value="paypal">PayPal</option>
+                  <option value="credit_card">Credit Card</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Reference #</label>
+                <input
+                  type="text"
+                  value={paymentRef}
+                  onChange={(e) => setPaymentRef(e.target.value)}
+                  placeholder="Check #, transaction ID, etc."
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Notes</label>
+                <input
+                  type="text"
+                  value={paymentNotes}
+                  onChange={(e) => setPaymentNotes(e.target.value)}
+                  placeholder="Optional payment notes..."
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowPaymentForm(false); setPaymentError(""); }}
+                className="rounded-lg border border-sand px-4 py-2 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRecordPayment}
+                disabled={savingPayment || !paymentAmount || parseFloat(paymentAmount) <= 0}
+                className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {savingPayment ? "Saving..." : "Save Payment"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Payment History */}
+        {invoicePayments.length > 0 && (
+          <div className="mb-4 rounded-xl border border-sand bg-white p-5">
+            <h4 className="mb-3 font-serif text-[15px] font-bold text-espresso">Payment History</h4>
+            <div className="rounded-lg border border-sand overflow-hidden">
+              <table className="w-full text-left text-[12px]">
+                <thead>
+                  <tr className="border-b border-sand bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                    <th className="px-4 py-2.5">Date</th>
+                    <th className="px-3 py-2.5 text-right">Amount</th>
+                    <th className="px-3 py-2.5">Method</th>
+                    <th className="px-3 py-2.5">Reference</th>
+                    <th className="px-3 py-2.5">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-parchment">
+                  {invoicePayments.map((pmt) => (
+                    <tr key={pmt.id} className="hover:bg-parchment/20 transition-colors">
+                      <td className="px-4 py-2.5 text-espresso">
+                        {new Date(pmt.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-semibold text-sage">{formatCurrency(Number(pmt.amount))}</td>
+                      <td className="px-3 py-2.5 text-bark capitalize">{pmt.payment_method?.replace("_", " ") || "-"}</td>
+                      <td className="px-3 py-2.5 text-bark">{pmt.reference_number || "-"}</td>
+                      <td className="px-3 py-2.5 text-bark text-[11px]">{pmt.notes || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* Invoice Preview */}
         <div className="rounded-xl border border-sand overflow-hidden print:border-none print:shadow-none" id="invoice-preview">
           {/* Yellow Header — 3 columns */}
@@ -9247,120 +9419,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </div>
         </div>
 
-        {/* Record Payment Form */}
-        {showPaymentForm && inv.status !== "paid" && (
-          <div className="mt-4 rounded-xl border border-amber/30 bg-amber-soft/30 p-5">
-            <h4 className="mb-4 font-serif text-[15px] font-bold text-espresso">Record Payment</h4>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Amount ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max={Number(inv.total) - Number(inv.amount_paid || 0)}
-                  value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value)}
-                  placeholder={`Max: ${formatCurrency(Number(inv.total) - Number(inv.amount_paid || 0))}`}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Date</label>
-                <input
-                  type="date"
-                  value={paymentDate}
-                  onChange={(e) => setPaymentDate(e.target.value)}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Payment Method</label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer"
-                >
-                  <option value="">Select...</option>
-                  <option value="bank_transfer">Bank Transfer</option>
-                  <option value="check">Check</option>
-                  <option value="cash">Cash</option>
-                  <option value="paypal">PayPal</option>
-                  <option value="credit_card">Credit Card</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Reference #</label>
-                <input
-                  type="text"
-                  value={paymentRef}
-                  onChange={(e) => setPaymentRef(e.target.value)}
-                  placeholder="Check #, transaction ID, etc."
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
-                />
-              </div>
-              <div className="col-span-2">
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Notes</label>
-                <input
-                  type="text"
-                  value={paymentNotes}
-                  onChange={(e) => setPaymentNotes(e.target.value)}
-                  placeholder="Optional payment notes..."
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
-                />
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end gap-3">
-              <button
-                onClick={() => setShowPaymentForm(false)}
-                className="rounded-lg border border-sand px-4 py-2 text-[13px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleRecordPayment}
-                disabled={savingPayment || !paymentAmount || parseFloat(paymentAmount) <= 0}
-                className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {savingPayment ? "Saving..." : "Save Payment"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Payment History */}
-        {invoicePayments.length > 0 && (
-          <div className="mt-4 rounded-xl border border-sand bg-white p-5">
-            <h4 className="mb-3 font-serif text-[15px] font-bold text-espresso">Payment History</h4>
-            <div className="rounded-lg border border-sand overflow-hidden">
-              <table className="w-full text-left text-[12px]">
-                <thead>
-                  <tr className="border-b border-sand bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
-                    <th className="px-4 py-2.5">Date</th>
-                    <th className="px-3 py-2.5 text-right">Amount</th>
-                    <th className="px-3 py-2.5">Method</th>
-                    <th className="px-3 py-2.5">Reference</th>
-                    <th className="px-3 py-2.5">Notes</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-parchment">
-                  {invoicePayments.map((pmt) => (
-                    <tr key={pmt.id} className="hover:bg-parchment/20 transition-colors">
-                      <td className="px-4 py-2.5 text-espresso">
-                        {new Date(pmt.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-semibold text-sage">{formatCurrency(Number(pmt.amount))}</td>
-                      <td className="px-3 py-2.5 text-bark capitalize">{pmt.payment_method?.replace("_", " ") || "-"}</td>
-                      <td className="px-3 py-2.5 text-bark">{pmt.reference_number || "-"}</td>
-                      <td className="px-3 py-2.5 text-bark text-[11px]">{pmt.notes || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
       </>
     );
   }
@@ -9498,6 +9556,19 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                             <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <line x1="22" y1="2" x2="11" y2="13" />
                               <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                            </svg>
+                          </button>
+                        )}
+                        {(inv.status === "sent" || inv.status === "overdue" || inv.status === "partially_paid") && inv.to_email && (
+                          <button
+                            onClick={() => handleSendReminder(inv)}
+                            disabled={sendingReminder === inv.id}
+                            title="Send Gentle Reminder"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sand text-bark transition-all hover:border-amber-500 hover:text-amber-500 disabled:opacity-50 cursor-pointer"
+                          >
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
                             </svg>
                           </button>
                         )}
