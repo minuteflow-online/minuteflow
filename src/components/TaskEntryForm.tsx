@@ -561,9 +561,28 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
             {/* Client Notes (free text — Today's Plan taps go here) */}
             {!isPersonalOrBreak && (
               <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
-                  Client Notes
-                </label>
+                <div className="flex items-center gap-2 mb-[5px]">
+                  <label className="text-[11px] font-semibold text-walnut tracking-wide">Client Notes</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowMemoGuide(!showMemoGuide)}
+                    className="text-[10px] w-4 h-4 rounded-full bg-slate-blue-soft text-slate-blue font-bold leading-none flex items-center justify-center cursor-pointer hover:bg-slate-blue hover:text-white transition-all flex-shrink-0"
+                    title="Memo writing guide"
+                  >?</button>
+                </div>
+                {showMemoGuide && (
+                  <div className="mb-2 p-3 rounded-lg bg-parchment border border-sand text-[11px] text-walnut">
+                    <p className="font-semibold mb-1.5 text-espresso">Client Memo Guide</p>
+                    <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
+                    <div className="space-y-1">
+                      <p><span className="font-semibold">1. Who:</span> Who</p>
+                      <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+                      <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+                      <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
+                      <p><span className="font-semibold">5. Status:</span> Done, Pause</p>
+                    </div>
+                  </div>
+                )}
                 <input
                   type="text"
                   value={clientMemo}
