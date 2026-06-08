@@ -87,6 +87,9 @@ export default function TeamPage() {
   // Member selection state
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
 
+  // Status filter
+  const [statusFilter, setStatusFilter] = useState<"all" | "working" | "on-break" | "away">("all");
+
   // Mood data: { [userId]: { [session_date_YYYY-MM-DD]: mood } }
   const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
 
@@ -423,13 +426,26 @@ export default function TeamPage() {
 
   const hasSelection = selectedMembers.size > 0;
 
+  // Apply status filter
+  const filteredMembers = statusFilter === "all"
+    ? members
+    : members.filter((m) => m.status === statusFilter);
+
   // Split members into selected (expanded) and unselected (compact)
   const expandedMembers = hasSelection
-    ? members.filter((m) => selectedMembers.has(m.profile.id))
+    ? filteredMembers.filter((m) => selectedMembers.has(m.profile.id))
     : [];
   const compactMembers = hasSelection
-    ? members.filter((m) => !selectedMembers.has(m.profile.id))
-    : members;
+    ? filteredMembers.filter((m) => !selectedMembers.has(m.profile.id))
+    : filteredMembers;
+
+  // Status counts for filter badges
+  const statusCounts = {
+    all: members.length,
+    working: members.filter((m) => m.status === "working").length,
+    "on-break": members.filter((m) => m.status === "on-break").length,
+    away: members.filter((m) => m.status === "away").length,
+  };
 
   // Don't render anything for VAs (redirect in progress)
   if (role === "va") {
@@ -499,6 +515,40 @@ export default function TeamPage() {
         )}
       </div>
 
+      {/* Status Filter */}
+      {!loading && members.length > 0 && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          {(["all", "working", "on-break", "away"] as const).map((f) => {
+            const labels = { all: "All", working: "Working", "on-break": "On Break", away: "Offline" };
+            const colors = {
+              all: "text-espresso border-sand",
+              working: "text-sage border-sage/40",
+              "on-break": "text-amber border-amber/40",
+              away: "text-stone border-sand",
+            };
+            const activeColors = {
+              all: "bg-parchment text-espresso border-sand",
+              working: "bg-sage-soft text-sage border-sage/40",
+              "on-break": "bg-amber-soft text-amber border-amber/40",
+              away: "bg-parchment text-stone border-sand",
+            };
+            const isActive = statusFilter === f;
+            return (
+              <button
+                key={f}
+                onClick={() => setStatusFilter(f)}
+                className={`rounded-full px-4 py-1.5 text-[12px] font-semibold border transition-all cursor-pointer ${
+                  isActive ? activeColors[f] : `bg-white ${colors[f]} hover:bg-parchment`
+                }`}
+              >
+                {labels[f]}
+                <span className="ml-1.5 opacity-60">({statusCounts[f]})</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Stats Row */}
       <div className={`mb-6 grid gap-4 ${isAdmin ? "grid-cols-5" : "grid-cols-4"}`}>
         <StatCard value={activeCount} label="Active Now" color="green" />
@@ -554,11 +604,11 @@ export default function TeamPage() {
       )}
 
       {/* Member Selection Controls */}
-      {!loading && members.length > 0 && (
+      {!loading && filteredMembers.length > 0 && (
         <div className="mb-4 flex items-center gap-3">
           <span className="text-[12px] font-semibold text-bark">
             {hasSelection
-              ? `${selectedMembers.size} of ${members.length} selected`
+              ? `${selectedMembers.size} of ${filteredMembers.length} selected`
               : "Click a member to expand"}
           </span>
           <div className="flex gap-2">
@@ -591,10 +641,12 @@ export default function TeamPage() {
             />
           ))}
         </div>
-      ) : members.length === 0 ? (
+      ) : filteredMembers.length === 0 ? (
         <div className="rounded-xl border border-sand bg-white p-8 text-center">
           <p className="text-sm text-bark">
-            No team members found. Invite your team to get started.
+            {members.length === 0
+              ? "No team members found. Invite your team to get started."
+              : `No members with "${statusFilter === "on-break" ? "On Break" : statusFilter === "away" ? "Offline" : statusFilter}" status right now.`}
           </p>
         </div>
       ) : (

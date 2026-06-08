@@ -22,6 +22,8 @@ interface EmailEvent {
   created_at: string;
 }
 
+type StatusFilter = "all" | "pending" | "registered" | "expired";
+
 /* ── Helpers ─────────────────────────────────────────────── */
 
 function formatDate(iso: string): string {
@@ -45,10 +47,10 @@ function formatDateTime(iso: string): string {
   });
 }
 
-function getStatus(invite: Invitation): { label: string; color: string } {
-  if (invite.used_at) return { label: "Registered", color: "#16a34a" };
-  if (new Date(invite.expires_at) < new Date()) return { label: "Expired", color: "#dc2626" };
-  return { label: "Pending", color: "#d97706" };
+function getStatus(invite: Invitation): { label: string; color: string; key: StatusFilter } {
+  if (invite.used_at) return { label: "Registered", color: "#16a34a", key: "registered" };
+  if (new Date(invite.expires_at) < new Date()) return { label: "Expired", color: "#dc2626", key: "expired" };
+  return { label: "Pending", color: "#d97706", key: "pending" };
 }
 
 /* ── Component ───────────────────────────────────────────── */
@@ -64,6 +66,10 @@ export default function VaInvitesAdminTab() {
   const [personalMessage, setPersonalMessage] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<{ id: string; text: string; isError: boolean } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,7 +81,7 @@ export default function VaInvitesAdminTab() {
         setEvents(data.events ?? []);
       }
     } catch {
-      // silently fail — table stays empty
+      // silently fail
     }
     setLoading(false);
   }, []);
@@ -98,6 +104,19 @@ export default function VaInvitesAdminTab() {
     }
     return map;
   }, [events]);
+
+  // Filter invitations by status
+  const filteredInvitations = React.useMemo(() => {
+    if (statusFilter === "all") return invitations;
+    return invitations.filter((inv) => getStatus(inv).key === statusFilter);
+  }, [invitations, statusFilter]);
+
+  // Status counts for filter badges
+  const counts = React.useMemo(() => {
+    const c = { all: invitations.length, pending: 0, registered: 0, expired: 0 };
+    invitations.forEach((inv) => { c[getStatus(inv).key]++; });
+    return c;
+  }, [invitations]);
 
   async function handleSendInvite(e: React.FormEvent) {
     e.preventDefault();
@@ -130,6 +149,67 @@ export default function VaInvitesAdminTab() {
       setSending(false);
     }
   }
+
+  async function handleDelete(id: string) {
+    if (!confirm("Delete this invitation? The link will stop working immediately.")) return;
+    setDeletingId(id);
+    setActionMsg(null);
+    try {
+      const res = await fetch(`/api/invitations?id=${id}`, { method: "DELETE" });
+      const data = await res.json() as { success?: boolean; error?: string };
+      if (!res.ok || data.error) {
+        setActionMsg({ id, text: data.error || "Failed to delete", isError: true });
+      } else {
+        await load();
+      }
+    } catch {
+      setActionMsg({ id, text: "Network error", isError: true });
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function handleResend(id: string, email: string) {
+    if (!confirm(`Resend invite to ${email}? A fresh link will be generated and the old one will stop working.`)) return;
+    setResendingId(id);
+    setActionMsg(null);
+    try {
+      const res = await fetch("/api/invitations", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action: "resend" }),
+      });
+      const data = await res.json() as { success?: boolean; error?: string; warning?: string; message?: string };
+      if (!res.ok || data.error) {
+        setActionMsg({ id, text: data.error || "Failed to resend", isError: true });
+      } else {
+        setActionMsg({
+          id,
+          text: data.warning ? `⚠️ ${data.warning}` : (data.message || `Resent to ${email}`),
+          isError: false,
+        });
+        await load();
+      }
+    } catch {
+      setActionMsg({ id, text: "Network error", isError: true });
+    } finally {
+      setResendingId(null);
+    }
+  }
+
+  const filterLabels: { key: StatusFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "pending", label: "Pending" },
+    { key: "registered", label: "Registered" },
+    { key: "expired", label: "Expired" },
+  ];
+
+  const filterColors: Record<StatusFilter, string> = {
+    all: "#3d2b1f",
+    pending: "#d97706",
+    registered: "#16a34a",
+    expired: "#dc2626",
+  };
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 0 40px" }}>
@@ -204,25 +284,55 @@ export default function VaInvitesAdminTab() {
 
       {/* ── Invite History ── */}
       <div style={{ background: "#fff", border: "1px solid #e8e0d4", borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ padding: "16px 24px", borderBottom: "1px solid #e8e0d4", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#3d2b1f" }}>Invite History</div>
-          <button
-            onClick={load}
-            style={{ fontSize: 11, color: "#9e9080", background: "none", border: "none", cursor: "pointer" }}
-          >
-            Refresh
-          </button>
+        <div style={{ padding: "16px 24px", borderBottom: "1px solid #e8e0d4" }}>
+          {/* Header row */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#3d2b1f" }}>Invite History</div>
+            <button
+              onClick={load}
+              style={{ fontSize: 11, color: "#9e9080", background: "none", border: "none", cursor: "pointer" }}
+            >
+              Refresh
+            </button>
+          </div>
+          {/* Filter tabs */}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {filterLabels.map(({ key, label }) => {
+              const isActive = statusFilter === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setStatusFilter(key)}
+                  style={{
+                    padding: "4px 12px",
+                    borderRadius: 20,
+                    border: `1px solid ${isActive ? filterColors[key] : "#e8e0d4"}`,
+                    background: isActive ? filterColors[key] + "18" : "#faf6f0",
+                    color: isActive ? filterColors[key] : "#6b5e52",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {label}
+                  <span style={{ marginLeft: 5, opacity: 0.7 }}>({counts[key]})</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "#9e9080", fontSize: 13 }}>Loading…</div>
-        ) : invitations.length === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", color: "#9e9080", fontSize: 13 }}>No invites sent yet.</div>
+        ) : filteredInvitations.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: "#9e9080", fontSize: 13 }}>
+            {invitations.length === 0 ? "No invites sent yet." : `No ${statusFilter} invites.`}
+          </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ background: "#faf6f0" }}>
-                {["Email", "Sent", "Expires", "Status", "Opened", "Clicked"].map((h) => (
+                {["Email", "Sent", "Expires", "Status", "Opened", "Clicked", "Actions"].map((h) => (
                   <th
                     key={h}
                     style={{ padding: "10px 16px", textAlign: "left", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px", color: "#9e9080", borderBottom: "1px solid #e8e0d4" }}
@@ -233,9 +343,12 @@ export default function VaInvitesAdminTab() {
               </tr>
             </thead>
             <tbody>
-              {invitations.map((inv) => {
+              {filteredInvitations.map((inv) => {
                 const status = getStatus(inv);
                 const tracking = inv.resend_message_id ? (eventMap[inv.resend_message_id] ?? {}) : {};
+                const isDeleting = deletingId === inv.id;
+                const isResending = resendingId === inv.id;
+                const msg = actionMsg?.id === inv.id ? actionMsg : null;
                 return (
                   <tr key={inv.id} style={{ borderBottom: "1px solid #f0ebe4" }}>
                     <td style={{ padding: "12px 16px", fontSize: 13, color: "#3d2b1f", fontWeight: 500 }}>
@@ -279,6 +392,54 @@ export default function VaInvitesAdminTab() {
                       ) : (
                         <span style={{ fontSize: 11, color: "#9e9080" }}>Not yet</span>
                       )}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          {/* Resend — only for pending or expired */}
+                          {!inv.used_at && (
+                            <button
+                              onClick={() => handleResend(inv.id, inv.email)}
+                              disabled={isResending || isDeleting}
+                              style={{
+                                padding: "4px 10px",
+                                background: isResending ? "#9e9080" : "#c0704e",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: 5,
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: isResending || isDeleting ? "not-allowed" : "pointer",
+                                opacity: isDeleting ? 0.5 : 1,
+                              }}
+                            >
+                              {isResending ? "Sending…" : "Resend"}
+                            </button>
+                          )}
+                          {/* Delete */}
+                          <button
+                            onClick={() => handleDelete(inv.id)}
+                            disabled={isDeleting || isResending}
+                            style={{
+                              padding: "4px 10px",
+                              background: "none",
+                              color: isDeleting ? "#bbb" : "#dc2626",
+                              border: `1px solid ${isDeleting ? "#e8e0d4" : "#fca5a5"}`,
+                              borderRadius: 5,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              cursor: isDeleting || isResending ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            {isDeleting ? "Deleting…" : "Delete"}
+                          </button>
+                        </div>
+                        {msg && (
+                          <div style={{ fontSize: 11, color: msg.isError ? "#dc2626" : "#16a34a" }}>
+                            {msg.text}
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

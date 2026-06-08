@@ -222,6 +222,111 @@ export async function GET(request: Request) {
   return Response.json({ invitations: allInvites, events });
 }
 
+/**
+ * DELETE /api/invitations?id=XXX
+ * Admin only — deletes an invitation record.
+ */
+export async function DELETE(request: Request) {
+  const authResult = await verifyAdmin();
+  if (authResult instanceof Response) return authResult;
+
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+  if (!id) return Response.json({ error: "id is required" }, { status: 400 });
+
+  const adminClient = makeAdminClient();
+  const { error } = await adminClient.from("invitations").delete().eq("id", id);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  return Response.json({ success: true });
+}
+
+/**
+ * PATCH /api/invitations
+ * Body: { id: string, action: "resend" }
+ * Admin only — generates a fresh code + expiry and resends the invite email.
+ */
+export async function PATCH(request: Request) {
+  const authResult = await verifyAdmin();
+  if (authResult instanceof Response) return authResult;
+
+  const body = await request.json() as { id?: string; action?: string };
+  if (!body.id || body.action !== "resend") {
+    return Response.json({ error: "id and action=resend are required" }, { status: 400 });
+  }
+
+  const adminClient = makeAdminClient();
+
+  // Fetch the existing invite
+  const { data: invite, error: fetchErr } = await adminClient
+    .from("invitations")
+    .select("id, email, employment_type, requires_extension, message, used_at")
+    .eq("id", body.id)
+    .single();
+
+  if (fetchErr || !invite) {
+    return Response.json({ error: "Invitation not found" }, { status: 404 });
+  }
+
+  if (invite.used_at) {
+    return Response.json({ error: "This invite has already been used and cannot be resent." }, { status: 409 });
+  }
+
+  // Generate new code + extend expiry
+  const newCode = randomBytes(12).toString("hex");
+  const newExpiry = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+
+  const { error: updateErr } = await adminClient
+    .from("invitations")
+    .update({ code: newCode, expires_at: newExpiry, resend_message_id: null })
+    .eq("id", body.id);
+
+  if (updateErr) return Response.json({ error: updateErr.message }, { status: 500 });
+
+  // Resend email
+  const inviteUrl = `${SITE_URL}/invite?code=${newCode}`;
+  const html = buildInviteEmail({
+    email: invite.email,
+    inviteUrl,
+    requires_extension: invite.requires_extension === true,
+    message: invite.message || null,
+  });
+
+  const resendRes = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: "Toni Colina <noreply@minuteflow.click>",
+      to: [invite.email],
+      subject: "You're invited to MinuteFlow",
+      html,
+      open_tracking: true,
+      click_tracking: true,
+    }),
+  });
+
+  if (!resendRes.ok) {
+    return Response.json({ success: true, warning: "Invite refreshed but email failed to send." });
+  }
+
+  try {
+    const resendData = await resendRes.json() as { id?: string };
+    if (resendData.id) {
+      await adminClient
+        .from("invitations")
+        .update({ resend_message_id: resendData.id })
+        .eq("id", body.id);
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  return Response.json({ success: true, message: `Invite resent to ${invite.email}` });
+}
+
 /* ── Email HTML Builder ───────────────────────────────────── */
 
 function buildInviteEmail({
