@@ -265,6 +265,10 @@ export interface Invoice {
   custom_line_items: string | null;
   period_start: string | null;
   period_end: string | null;
+  allow_custom_amount: boolean;
+  show_all_installments: boolean;
+  payment_schedule: PaymentScheduleItem[] | null;
+  payment_template_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -331,7 +335,35 @@ export interface InvoicePayment {
   reference_number: string | null;
   notes: string | null;
   recorded_by: string | null;
+  square_payment_id: string | null;
+  square_receipt_url: string | null;
   created_at: string;
+}
+
+/** One installment in a payment schedule */
+export interface PaymentScheduleItem {
+  label: string;
+  amount_type: 'percentage' | 'fixed';
+  value: number; // percentage (0–100) or fixed dollar amount
+}
+
+/** Reusable payment split template */
+export interface PaymentTemplate {
+  id: number;
+  name: string;
+  items: PaymentScheduleItem[];
+  created_at: string;
+}
+
+/** Square API credentials */
+export interface SquareSettings {
+  id: number;
+  application_id: string;
+  access_token: string;
+  location_id: string;
+  environment: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface TaskCategory {

@@ -153,6 +153,7 @@ interface InvoiceRow {
   custom_line_items?: string | null;
   period_start: string | null;
   period_end: string | null;
+  payment_schedule?: Array<{ label: string; amount_type: string; value: number }> | null;
 }
 
 interface LineItemRow {
@@ -203,6 +204,12 @@ function buildInvoiceEmail(
   // PDF view link
   const pdfLink = invoice.share_token
     ? `https://minuteflow.click/invoice/view/${invoice.share_token}`
+    : null;
+
+  // Square payment link — use if a payment schedule is configured
+  const hasSchedule = invoice.payment_schedule && invoice.payment_schedule.length > 0;
+  const squarePayLink = hasSchedule && invoice.share_token
+    ? `https://minuteflow.click/invoice/pay/${invoice.share_token}`
     : null;
 
   // Display amount in header: current balance if prev balance, otherwise final total
@@ -287,7 +294,11 @@ function buildInvoiceEmail(
           <td class="invoice-header-col invoice-header-col-right" style="vertical-align:top; text-align:right; width:34%; padding-left:12px;">
             <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:#5a4000; margin-bottom:6px;">HOW TO PAY</div>
             ${invoice.payment_info ? `<div style="font-size:11px; color:#5a4000; white-space:pre-line; text-align:right; margin-bottom:8px;">${invoice.payment_info}</div>` : ""}
-            ${invoice.payment_link ? `
+            ${squarePayLink ? `
+            <div style="margin-top:4px;">
+              <a href="${squarePayLink}" style="display:inline-block; background:#c0704e; color:#ffffff; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Pay with Card</a>
+              <div style="font-size:9px; color:#5a4000; margin-top:3px;">Secure payment via Square</div>
+            </div>` : invoice.payment_link ? `
             <div style="margin-top:4px;">
               <a href="${invoice.payment_link}" style="display:inline-block; background:#2d1a00; color:#f5c842; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Pay Online</a>
               <div style="font-size:9px; color:#5a4000; margin-top:3px;">*3% processing fee applies</div>

@@ -37,6 +37,9 @@ interface Invoice {
   custom_line_items?: string | null;
   period_start: string | null;
   period_end: string | null;
+  allow_custom_amount?: boolean | null;
+  payment_schedule?: Array<{ label: string; amount_type: "percentage" | "fixed"; value: number }> | null;
+  share_token?: string | null;
 }
 
 interface LineItem {
@@ -341,7 +344,20 @@ export default function PublicInvoicePage() {
               {invoice.payment_info && (
                 <div className="text-[11px] text-[#5a4000] whitespace-pre-line mb-2">{invoice.payment_info}</div>
               )}
-              {invoice.payment_link && (
+              {/* Square payment page — shown when a payment schedule exists */}
+              {invoice.payment_schedule && invoice.payment_schedule.length > 0 && invoice.status !== "paid" && (
+                <div className="mt-1">
+                  <a
+                    href={`/invoice/pay/${token}`}
+                    className="inline-block bg-[#c0704e] text-white text-[12px] font-bold px-4 py-1.5 rounded hover:opacity-90 transition-opacity"
+                  >
+                    Pay with Card
+                  </a>
+                  <div className="text-[9px] text-[#5a4000] mt-1">Secure payment via Square</div>
+                </div>
+              )}
+              {/* Legacy manual payment link (shown if no Square schedule) */}
+              {invoice.payment_link && !(invoice.payment_schedule && invoice.payment_schedule.length > 0) && (
                 <div className="mt-1">
                   <a
                     href={invoice.payment_link}
@@ -354,7 +370,7 @@ export default function PublicInvoicePage() {
                   <div className="text-[9px] text-[#5a4000] mt-1">*3% processing fee applies</div>
                 </div>
               )}
-              {!hasPaymentInfo && (
+              {!hasPaymentInfo && !(invoice.payment_schedule && invoice.payment_schedule.length > 0) && (
                 <div className="text-[11px] text-[#7a6040] italic">Contact us for payment options</div>
               )}
             </div>

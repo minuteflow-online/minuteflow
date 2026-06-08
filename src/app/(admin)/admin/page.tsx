@@ -20,6 +20,8 @@ import {
   type Invoice,
   type InvoiceLineItem,
   type InvoicePayment,
+  type PaymentScheduleItem,
+  type PaymentTemplate,
 } from "@/types/database";
 import {
   formatDuration,
@@ -4479,6 +4481,25 @@ function OrganizationTab() {
   const [uploadingOrgLogo, setUploadingOrgLogo] = useState(false);
   const orgLogoFileRef = useRef<HTMLInputElement>(null);
 
+  // Square credentials state
+  const [squareAppId, setSquareAppId] = useState("");
+  const [squareAccessToken, setSquareAccessToken] = useState("");
+  const [squareLocationId, setSquareLocationId] = useState("");
+  const [squareEnvironment, setSquareEnvironment] = useState("production");
+  const [savingSquare, setSavingSquare] = useState(false);
+  const [squareSaveSuccess, setSquareSaveSuccess] = useState(false);
+  const [squareSaveError, setSquareSaveError] = useState("");
+
+  // Payment templates state
+  const [orgTemplates, setOrgTemplates] = useState<PaymentTemplate[]>([]);
+  const [newTplName, setNewTplName] = useState("");
+  const [newTplItems, setNewTplItems] = useState<Array<{label: string; amount_type: "percentage" | "fixed"; value: string}>>([{ label: "", amount_type: "percentage", value: "" }]);
+  const [savingTpl, setSavingTpl] = useState(false);
+  const [editingTpl, setEditingTpl] = useState<PaymentTemplate | null>(null);
+  const [editTplName, setEditTplName] = useState("");
+  const [editTplItems, setEditTplItems] = useState<Array<{label: string; amount_type: "percentage" | "fixed"; value: string}>>([]);
+  const [tplError, setTplError] = useState("");
+
   // Form state
   const [orgName, setOrgName] = useState("");
   const [registeredBusinessName, setRegisteredBusinessName] = useState("");
@@ -4515,6 +4536,26 @@ function OrganizationTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Load Square settings + payment templates
+  useEffect(() => {
+    async function loadPaymentSettings() {
+      const [sqRes, tplRes] = await Promise.all([
+        fetch("/api/square-settings"),
+        fetch("/api/payment-templates"),
+      ]);
+      const sqData = await sqRes.json();
+      if (sqData.settings) {
+        setSquareAppId(sqData.settings.application_id || "");
+        setSquareLocationId(sqData.settings.location_id || "");
+        setSquareEnvironment(sqData.settings.environment || "production");
+        // access_token is never returned from GET — placeholder only
+      }
+      const tplData = await tplRes.json();
+      if (tplData.templates) setOrgTemplates(tplData.templates as PaymentTemplate[]);
+    }
+    loadPaymentSettings();
+  }, []);
+
   const handleOrgLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -4539,6 +4580,91 @@ function OrganizationTab() {
       setUploadingOrgLogo(false);
       if (orgLogoFileRef.current) orgLogoFileRef.current.value = "";
     }
+  };
+
+  const handleSaveSquare = async () => {
+    if (!squareAppId.trim() || !squareAccessToken.trim() || !squareLocationId.trim()) {
+      setSquareSaveError("All three fields (Application ID, Access Token, Location ID) are required.");
+      return;
+    }
+    setSavingSquare(true);
+    setSquareSaveError("");
+    setSquareSaveSuccess(false);
+    const res = await fetch("/api/square-settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        application_id: squareAppId.trim(),
+        access_token: squareAccessToken.trim(),
+        location_id: squareLocationId.trim(),
+        environment: squareEnvironment,
+      }),
+    });
+    const data = await res.json();
+    setSavingSquare(false);
+    if (!res.ok || !data.success) {
+      setSquareSaveError(data.error || "Failed to save Square settings.");
+    } else {
+      setSquareSaveSuccess(true);
+      setSquareAccessToken(""); // clear for security
+      setTimeout(() => setSquareSaveSuccess(false), 3000);
+    }
+  };
+
+  const handleSaveTemplate = async () => {
+    setTplError("");
+    const validItems = newTplItems.filter(i => i.label.trim() && i.value.trim() && parseFloat(i.value) > 0);
+    if (!newTplName.trim()) { setTplError("Template name is required."); return; }
+    if (validItems.length === 0) { setTplError("Add at least one installment."); return; }
+    setSavingTpl(true);
+    const res = await fetch("/api/payment-templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: newTplName.trim(),
+        items: validItems.map(i => ({ label: i.label.trim(), amount_type: i.amount_type, value: parseFloat(i.value) })),
+      }),
+    });
+    const data = await res.json();
+    setSavingTpl(false);
+    if (!res.ok || !data.template) {
+      setTplError(data.error || "Failed to save template.");
+    } else {
+      setOrgTemplates(prev => [...prev, data.template as PaymentTemplate]);
+      setNewTplName("");
+      setNewTplItems([{ label: "", amount_type: "percentage", value: "" }]);
+    }
+  };
+
+  const handleUpdateTemplate = async () => {
+    if (!editingTpl) return;
+    setTplError("");
+    const validItems = editTplItems.filter(i => i.label.trim() && i.value.trim() && parseFloat(i.value) > 0);
+    if (!editTplName.trim()) { setTplError("Template name is required."); return; }
+    if (validItems.length === 0) { setTplError("Add at least one installment."); return; }
+    setSavingTpl(true);
+    const res = await fetch("/api/payment-templates", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: editingTpl.id,
+        name: editTplName.trim(),
+        items: validItems.map(i => ({ label: i.label.trim(), amount_type: i.amount_type, value: parseFloat(i.value) })),
+      }),
+    });
+    const data = await res.json();
+    setSavingTpl(false);
+    if (!res.ok || !data.template) {
+      setTplError(data.error || "Failed to update template.");
+    } else {
+      setOrgTemplates(prev => prev.map(t => t.id === editingTpl.id ? data.template as PaymentTemplate : t));
+      setEditingTpl(null);
+    }
+  };
+
+  const handleDeleteTemplate = async (id: number) => {
+    const res = await fetch(`/api/payment-templates?id=${id}`, { method: "DELETE" });
+    if (res.ok) setOrgTemplates(prev => prev.filter(t => t.id !== id));
   };
 
   const handleSave = async () => {
@@ -4764,6 +4890,172 @@ function OrganizationTab() {
             {saving ? "Saving..." : "Save Settings"}
           </button>
         </div>
+      </div>
+
+      {/* ── Square Payment Settings ─────────────────────────── */}
+      <div className="mt-8 pt-8 border-t border-sand">
+        <h2 className="text-[14px] font-bold text-espresso mb-1">Square Payment Settings</h2>
+        <p className="text-[12px] text-bark mb-5">Connect your Square account to accept card payments on invoices. Get credentials at <a href="https://developer.squareup.com" target="_blank" rel="noopener noreferrer" className="text-terracotta hover:underline">developer.squareup.com</a> → Applications → Credentials.</p>
+
+        {squareSaveSuccess && (
+          <div className="mb-4 rounded-lg bg-sage-soft border border-sage px-4 py-2.5 text-xs text-sage font-medium">Square credentials saved!</div>
+        )}
+        {squareSaveError && (
+          <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-xs text-red-600">{squareSaveError}</div>
+        )}
+
+        <div className="space-y-4 max-w-lg">
+          <div>
+            <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Application ID</label>
+            <input type="text" value={squareAppId} onChange={(e) => setSquareAppId(e.target.value)}
+              placeholder="sq0idp-..."
+              className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] font-mono" />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Access Token</label>
+            <input type="password" value={squareAccessToken} onChange={(e) => setSquareAccessToken(e.target.value)}
+              placeholder="Enter new token to update (leave blank to keep current)"
+              className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] font-mono" />
+            <p className="mt-1 text-[10px] text-stone">Token is write-only — enter a value to update it.</p>
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Location ID</label>
+            <input type="text" value={squareLocationId} onChange={(e) => setSquareLocationId(e.target.value)}
+              placeholder="L..."
+              className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] font-mono" />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Environment</label>
+            <select value={squareEnvironment} onChange={(e) => setSquareEnvironment(e.target.value)}
+              className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta">
+              <option value="production">Production (Live)</option>
+              <option value="sandbox">Sandbox (Testing)</option>
+            </select>
+          </div>
+          <div className="pt-1">
+            <button onClick={handleSaveSquare} disabled={savingSquare}
+              className="rounded-lg bg-terracotta px-6 py-2.5 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:opacity-50">
+              {savingSquare ? "Saving..." : "Save Square Settings"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Payment Templates ──────────────────────────────────── */}
+      <div className="mt-8 pt-8 border-t border-sand">
+        <h2 className="text-[14px] font-bold text-espresso mb-1">Payment Split Templates</h2>
+        <p className="text-[12px] text-bark mb-5">Create reusable split plans (e.g. "50/50") that you can apply to any invoice.</p>
+
+        {tplError && (
+          <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-xs text-red-600">{tplError}</div>
+        )}
+
+        {/* Existing templates */}
+        {orgTemplates.length > 0 && (
+          <div className="space-y-3 mb-6">
+            {orgTemplates.map((tpl) => (
+              <div key={tpl.id} className="rounded-lg border border-sand bg-parchment/40 px-4 py-3">
+                {editingTpl?.id === tpl.id ? (
+                  <div className="space-y-3">
+                    <input type="text" value={editTplName} onChange={(e) => setEditTplName(e.target.value)}
+                      placeholder="Template name"
+                      className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+                    {editTplItems.map((item, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <input type="text" value={item.label} onChange={(e) => setEditTplItems(prev => prev.map((it, i) => i === idx ? {...it, label: e.target.value} : it))}
+                          placeholder="Label (e.g. Deposit)"
+                          className="flex-1 rounded-lg border border-sand bg-white px-2.5 py-1.5 text-[12px] outline-none focus:border-terracotta" />
+                        <select value={item.amount_type} onChange={(e) => setEditTplItems(prev => prev.map((it, i) => i === idx ? {...it, amount_type: e.target.value as "percentage"|"fixed"} : it))}
+                          className="rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] outline-none focus:border-terracotta">
+                          <option value="percentage">%</option>
+                          <option value="fixed">$</option>
+                        </select>
+                        <input type="number" value={item.value} onChange={(e) => setEditTplItems(prev => prev.map((it, i) => i === idx ? {...it, value: e.target.value} : it))}
+                          placeholder="Value" min="0"
+                          className="w-24 rounded-lg border border-sand bg-white px-2.5 py-1.5 text-[12px] outline-none focus:border-terracotta" />
+                        {editTplItems.length > 1 && (
+                          <button onClick={() => setEditTplItems(prev => prev.filter((_, i) => i !== idx))}
+                            className="text-red-400 hover:text-red-600 text-[11px] font-bold">✕</button>
+                        )}
+                      </div>
+                    ))}
+                    <button onClick={() => setEditTplItems(prev => [...prev, { label: "", amount_type: "percentage", value: "" }])}
+                      className="text-[11px] text-terracotta hover:underline">+ Add installment</button>
+                    <div className="flex gap-2">
+                      <button onClick={handleUpdateTemplate} disabled={savingTpl}
+                        className="rounded-lg bg-terracotta px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-[#a85840] disabled:opacity-50">
+                        {savingTpl ? "Saving..." : "Save"}
+                      </button>
+                      <button onClick={() => { setEditingTpl(null); setTplError(""); }}
+                        className="rounded-lg border border-sand px-4 py-1.5 text-[12px] font-medium text-bark hover:border-bark">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[13px] font-semibold text-espresso mb-1">{tpl.name}</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {tpl.items.map((item, i) => (
+                          <span key={i} className="rounded-full bg-parchment border border-sand px-2.5 py-0.5 text-[11px] text-bark">
+                            {item.label}: {item.amount_type === "percentage" ? `${item.value}%` : `$${item.value}`}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <button onClick={() => {
+                        setEditingTpl(tpl);
+                        setEditTplName(tpl.name);
+                        setEditTplItems(tpl.items.map(i => ({ label: i.label, amount_type: i.amount_type, value: String(i.value) })));
+                        setTplError("");
+                      }} className="text-[11px] text-terracotta hover:underline">Edit</button>
+                      <button onClick={() => handleDeleteTemplate(tpl.id)} className="text-[11px] text-red-400 hover:text-red-600 hover:underline">Delete</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* New template form */}
+        {!editingTpl && (
+          <div className="rounded-lg border border-dashed border-sand bg-parchment/20 px-4 py-4 space-y-3 max-w-lg">
+            <div className="text-[11px] font-semibold text-walnut tracking-wide mb-1">New Template</div>
+            <input type="text" value={newTplName} onChange={(e) => setNewTplName(e.target.value)}
+              placeholder="Template name (e.g. 50/50 Split)"
+              className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+            {newTplItems.map((item, idx) => (
+              <div key={idx} className="flex gap-2 items-center">
+                <input type="text" value={item.label} onChange={(e) => setNewTplItems(prev => prev.map((it, i) => i === idx ? {...it, label: e.target.value} : it))}
+                  placeholder="Label (e.g. Deposit)"
+                  className="flex-1 rounded-lg border border-sand bg-white px-2.5 py-1.5 text-[12px] outline-none focus:border-terracotta" />
+                <select value={item.amount_type} onChange={(e) => setNewTplItems(prev => prev.map((it, i) => i === idx ? {...it, amount_type: e.target.value as "percentage"|"fixed"} : it))}
+                  className="rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] outline-none focus:border-terracotta">
+                  <option value="percentage">%</option>
+                  <option value="fixed">$</option>
+                </select>
+                <input type="number" value={item.value} onChange={(e) => setNewTplItems(prev => prev.map((it, i) => i === idx ? {...it, value: e.target.value} : it))}
+                  placeholder="Value" min="0"
+                  className="w-24 rounded-lg border border-sand bg-white px-2.5 py-1.5 text-[12px] outline-none focus:border-terracotta" />
+                {newTplItems.length > 1 && (
+                  <button onClick={() => setNewTplItems(prev => prev.filter((_, i) => i !== idx))}
+                    className="text-red-400 hover:text-red-600 text-[11px] font-bold">✕</button>
+                )}
+              </div>
+            ))}
+            <button onClick={() => setNewTplItems(prev => [...prev, { label: "", amount_type: "percentage", value: "" }])}
+              className="text-[11px] text-terracotta hover:underline">+ Add installment</button>
+            <div>
+              <button onClick={handleSaveTemplate} disabled={savingTpl}
+                className="rounded-lg bg-terracotta px-5 py-2 text-[12px] font-semibold text-white hover:bg-[#a85840] disabled:opacity-50">
+                {savingTpl ? "Saving..." : "Save Template"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -6121,6 +6413,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [invoiceType, setInvoiceType] = useState<"timelog" | "custom">("timelog");
   const [customItems, setCustomItems] = useState<Array<{ id: string; description: string; amount: string }>>([{ id: "ci-1", description: "", amount: "" }]);
 
+  // Square payment schedule — create flow
+  const [invoiceTemplates, setInvoiceTemplates] = useState<PaymentTemplate[]>([]);
+  const [createAllowCustomAmount, setCreateAllowCustomAmount] = useState(true);
+  const [createTemplateId, setCreateTemplateId] = useState<number | null>(null);
+  const [createSchedule, setCreateSchedule] = useState<PaymentScheduleItem[]>([]);
+
+  // Square payment schedule — edit flow
+  const [editAllowCustomAmount, setEditAllowCustomAmount] = useState(true);
+  const [editTemplateId, setEditTemplateId] = useState<number | null>(null);
+  const [editSchedule, setEditSchedule] = useState<PaymentScheduleItem[]>([]);
+
   const supabase = createClient();
 
   /* ── Fetch invoices + clients ─────────────────────────────── */
@@ -6173,6 +6476,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setAccountRateMap(rateMap);
 
     setLoading(false);
+
+    // Load payment templates for Square split payment UI
+    try {
+      const tplRes = await fetch("/api/payment-templates");
+      if (tplRes.ok) {
+        const tplData = await tplRes.json();
+        setInvoiceTemplates((tplData.templates ?? []) as PaymentTemplate[]);
+      }
+    } catch { /* non-fatal */ }
   }, []);
 
   useEffect(() => {
@@ -6490,6 +6802,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       share_token: crypto.randomUUID(),
       period_start: dateFrom || null,
       period_end: dateTo || null,
+      allow_custom_amount: createAllowCustomAmount,
+      payment_schedule: createSchedule.length > 0 ? createSchedule : null,
+      payment_template_id: createTemplateId,
     };
 
     const { data: newInvoice, error } = await supabase
@@ -6650,6 +6965,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       payment_terms: selectedClient.payment_terms || "net_30",
       is_manual: true,
       share_token: crypto.randomUUID(),
+      allow_custom_amount: createAllowCustomAmount,
+      payment_schedule: createSchedule.length > 0 ? createSchedule : null,
+      payment_template_id: createTemplateId,
     };
 
     const { data: newInvoice, error } = await supabase
@@ -6804,6 +7122,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setHoursNotBilledLabel(invoice.hours_not_billed_label || "Volunteer");
     setEditPreviousBalance(invoice.previous_balance != null ? String(invoice.previous_balance) : "");
     setEditPreviousBalanceNote(invoice.previous_balance_note ?? "");
+    setEditAllowCustomAmount(invoice.allow_custom_amount ?? true);
+    setEditTemplateId(invoice.payment_template_id ?? null);
+    setEditSchedule((invoice.payment_schedule ?? []) as PaymentScheduleItem[]);
 
     const [lineItemsRes, paymentsRes] = await Promise.all([
       supabase
@@ -6973,6 +7294,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       to_email: editToEmail || null,
       to_phone: editToPhone || null,
       to_address: editToAddress || null,
+      allow_custom_amount: editAllowCustomAmount,
+      payment_schedule: editSchedule.length > 0 ? editSchedule : null,
+      payment_template_id: editTemplateId,
     };
     if (editDueDate) updateData.due_date = editDueDate;
 
@@ -7186,6 +7510,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       share_token: crypto.randomUUID(),
       period_start: dateFrom || null,
       period_end: dateTo || null,
+      allow_custom_amount: createAllowCustomAmount,
+      payment_schedule: createSchedule.length > 0 ? createSchedule : null,
+      payment_template_id: createTemplateId,
     };
 
     const { data: newInvoice, error } = await supabase
@@ -7556,6 +7883,82 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone resize-none"
                   rows={3}
                 />
+              </div>
+              {/* ── Square Split Payment ──────────────────────── */}
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Square Split Payment</label>
+                <p className="mb-3 text-[11px] text-bark/60">Offer structured installment options on the client payment page via Square. Leave empty to skip.</p>
+                {/* Template picker */}
+                {invoiceTemplates.length > 0 && (
+                  <div className="mb-3">
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-bark/70">Apply Template</label>
+                    <select
+                      value={createTemplateId ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value ? Number(e.target.value) : null;
+                        setCreateTemplateId(id);
+                        const tpl = invoiceTemplates.find(t => t.id === id);
+                        setCreateSchedule(tpl ? tpl.items.map(i => ({ ...i })) : []);
+                      }}
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none focus:border-terracotta"
+                    >
+                      <option value="">— No template —</option>
+                      {invoiceTemplates.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {/* Schedule items */}
+                {createSchedule.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    {createSchedule.map((item, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <input
+                          type="text"
+                          value={item.label}
+                          onChange={(e) => setCreateSchedule(prev => prev.map((s, i) => i === idx ? { ...s, label: e.target.value } : s))}
+                          placeholder="Label (e.g. Due Now)"
+                          className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone"
+                        />
+                        <select
+                          value={item.amount_type}
+                          onChange={(e) => setCreateSchedule(prev => prev.map((s, i) => i === idx ? { ...s, amount_type: e.target.value as 'percentage' | 'fixed' } : s))}
+                          className="rounded-lg border border-sand bg-parchment px-2 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
+                        >
+                          <option value="percentage">%</option>
+                          <option value="fixed">$</option>
+                        </select>
+                        <input
+                          type="number"
+                          value={item.value}
+                          onChange={(e) => setCreateSchedule(prev => prev.map((s, i) => i === idx ? { ...s, value: parseFloat(e.target.value) || 0 } : s))}
+                          placeholder={item.amount_type === 'percentage' ? "50" : "300"}
+                          className="w-20 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
+                        />
+                        <button onClick={() => setCreateSchedule(prev => prev.filter((_, i) => i !== idx))} className="text-bark/40 hover:text-terracotta text-[16px] leading-none">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setCreateSchedule(prev => [...prev, { label: '', amount_type: 'percentage', value: 0 }])}
+                  className="text-[11px] font-semibold text-terracotta hover:underline"
+                >
+                  + Add Installment
+                </button>
+                {/* Allow custom amount toggle */}
+                <div className="flex items-center gap-3 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => setCreateAllowCustomAmount(v => !v)}
+                    className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer overflow-hidden ${createAllowCustomAmount ? "bg-terracotta" : "bg-clay"}`}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${createAllowCustomAmount ? "translate-x-5" : "translate-x-0.5"}`} />
+                  </button>
+                  <span className="text-[13px] text-bark">Allow client to enter custom amount</span>
+                </div>
               </div>
             </div>
 
@@ -8684,6 +9087,79 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   placeholder="Payment instructions, Zelle info, etc."
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone resize-none"
                   rows={3} />
+              </div>
+              {/* ── Square Split Payment (edit) ──────────────── */}
+              <div className="col-span-2">
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Square Split Payment</label>
+                <p className="mb-3 text-[11px] text-bark/60">Structured installment options on the client payment page. Leave empty to skip.</p>
+                {invoiceTemplates.length > 0 && (
+                  <div className="mb-3">
+                    <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-bark/70">Apply Template</label>
+                    <select
+                      value={editTemplateId ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value ? Number(e.target.value) : null;
+                        setEditTemplateId(id);
+                        const tpl = invoiceTemplates.find(t => t.id === id);
+                        setEditSchedule(tpl ? tpl.items.map(i => ({ ...i })) : []);
+                      }}
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+                    >
+                      <option value="">— No template —</option>
+                      {invoiceTemplates.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {editSchedule.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    {editSchedule.map((item, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <input
+                          type="text"
+                          value={item.label}
+                          onChange={(e) => setEditSchedule(prev => prev.map((s, i) => i === idx ? { ...s, label: e.target.value } : s))}
+                          placeholder="Label (e.g. Due Now)"
+                          className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone"
+                        />
+                        <select
+                          value={item.amount_type}
+                          onChange={(e) => setEditSchedule(prev => prev.map((s, i) => i === idx ? { ...s, amount_type: e.target.value as 'percentage' | 'fixed' } : s))}
+                          className="rounded-lg border border-sand bg-parchment px-2 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
+                        >
+                          <option value="percentage">%</option>
+                          <option value="fixed">$</option>
+                        </select>
+                        <input
+                          type="number"
+                          value={item.value}
+                          onChange={(e) => setEditSchedule(prev => prev.map((s, i) => i === idx ? { ...s, value: parseFloat(e.target.value) || 0 } : s))}
+                          placeholder={item.amount_type === 'percentage' ? "50" : "300"}
+                          className="w-20 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
+                        />
+                        <button type="button" onClick={() => setEditSchedule(prev => prev.filter((_, i) => i !== idx))} className="text-bark/40 hover:text-terracotta text-[16px] leading-none">×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setEditSchedule(prev => [...prev, { label: '', amount_type: 'percentage', value: 0 }])}
+                  className="text-[11px] font-semibold text-terracotta hover:underline"
+                >
+                  + Add Installment
+                </button>
+                <div className="flex items-center gap-3 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => setEditAllowCustomAmount(v => !v)}
+                    className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer overflow-hidden ${editAllowCustomAmount ? "bg-terracotta" : "bg-clay"}`}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${editAllowCustomAmount ? "translate-x-5" : "translate-x-0.5"}`} />
+                  </button>
+                  <span className="text-[13px] text-bark">Allow client to enter custom amount</span>
+                </div>
               </div>
               {/* Bill To section */}
               <div className="col-span-2 pt-2 border-t border-sand">
