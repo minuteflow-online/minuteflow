@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 /* ── Types ────────────────────────────────────────────────── */
 
 type EmailType = "invoice" | "paystub" | "broadcast";
+type DateFilter = "all" | "today" | "week" | "month";
 
 interface UnifiedEmail {
   id: string;
@@ -36,6 +37,10 @@ function formatDateTime(iso: string): string {
   });
 }
 
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
 const TYPE_COLORS: Record<EmailType, { bg: string; text: string; label: string }> = {
   invoice:   { bg: "#f0f7ff", text: "#1d4ed8", label: "Invoice" },
   paystub:   { bg: "#f0fdf4", text: "#15803d", label: "Paystub" },
@@ -45,10 +50,18 @@ const TYPE_COLORS: Record<EmailType, { bg: string; text: string; label: string }
 /* ── Component ───────────────────────────────────────────── */
 
 export default function EmailStatusTab() {
-  const [records, setRecords] = useState<UnifiedEmail[]>([]);
-  const [events, setEvents] = useState<EmailEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [records, setRecords]       = useState<UnifiedEmail[]>([]);
+  const [events, setEvents]         = useState<EmailEvent[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [deleting, setDeleting]     = useState<string | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // Filters
+  const [search, setSearch]         = useState("");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+
+  // Selection
+  const [selected, setSelected]     = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,17 +170,98 @@ export default function EmailStatusTab() {
     load();
   }, [load]);
 
-  // Delete a row (hide it from the log)
+  // Clear selection whenever filters change
+  useEffect(() => {
+    setSelected(new Set());
+  }, [search, dateFilter]);
+
+  /* ── Filtering ── */
+  const filteredRecords = React.useMemo(() => {
+    const now = new Date();
+    const todayStart = startOfDay(now).getTime();
+    const weekStart  = todayStart - 6 * 24 * 60 * 60 * 1000;
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+    return records.filter((r) => {
+      // Date filter
+      const ts = new Date(r.sent_at).getTime();
+      if (dateFilter === "today"  && ts < todayStart)  return false;
+      if (dateFilter === "week"   && ts < weekStart)   return false;
+      if (dateFilter === "month"  && ts < monthStart)  return false;
+
+      // Search filter
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        const haystack = [r.label, r.sublabel ?? "", r.recipient].join(" ").toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+
+      return true;
+    });
+  }, [records, search, dateFilter]);
+
+  /* ── Single delete ── */
   const handleDelete = useCallback(async (type: EmailType, id: string) => {
     const key = `${type}:${id}`;
     setDeleting(key);
     const sb = createClient();
     await sb.from("email_log_hidden").upsert({ type, source_id: id });
     setRecords((prev) => prev.filter((r) => !(r.type === type && r.id === id)));
+    setSelected((prev) => { const next = new Set(prev); next.delete(key); return next; });
     setDeleting(null);
   }, []);
 
-  // Build event lookup: resend_message_id → { opened_at?, clicked_at? }
+  /* ── Bulk delete ── */
+  const handleBulkDelete = useCallback(async () => {
+    if (selected.size === 0) return;
+    setBulkDeleting(true);
+    const sb = createClient();
+    const toDelete = Array.from(selected).map((key) => {
+      const [type, ...rest] = key.split(":");
+      return { type, source_id: rest.join(":") };
+    });
+    await sb.from("email_log_hidden").upsert(toDelete);
+    setRecords((prev) =>
+      prev.filter((r) => !selected.has(`${r.type}:${r.id}`))
+    );
+    setSelected(new Set());
+    setBulkDeleting(false);
+  }, [selected]);
+
+  /* ── Selection helpers ── */
+  const allFilteredKeys = React.useMemo(
+    () => filteredRecords.map((r) => `${r.type}:${r.id}`),
+    [filteredRecords]
+  );
+
+  const allSelected = allFilteredKeys.length > 0 && allFilteredKeys.every((k) => selected.has(k));
+  const someSelected = !allSelected && allFilteredKeys.some((k) => selected.has(k));
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        allFilteredKeys.forEach((k) => next.delete(k));
+        return next;
+      });
+    } else {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        allFilteredKeys.forEach((k) => next.add(k));
+        return next;
+      });
+    }
+  };
+
+  const toggleOne = (key: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  /* ── Stats (based on all records, not filtered) ── */
   const eventMap = React.useMemo(() => {
     const map: Record<string, { opened_at?: string; clicked_at?: string }> = {};
     for (const evt of events) {
@@ -182,23 +276,23 @@ export default function EmailStatusTab() {
     return map;
   }, [events]);
 
-  // Counts for stats bar
   const stats = React.useMemo(() => {
-    const total = records.length;
-    const opened = records.filter((r) => !!eventMap[r.resend_message_id]?.opened_at).length;
+    const total   = records.length;
+    const opened  = records.filter((r) => !!eventMap[r.resend_message_id]?.opened_at).length;
     const clicked = records.filter((r) => !!eventMap[r.resend_message_id]?.clicked_at).length;
     return { total, opened, clicked };
   }, [records, eventMap]);
 
+  /* ── Render ── */
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 0 40px" }}>
 
       {/* ── Stats bar ── */}
       <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
         {[
-          { label: "Total Sent", value: stats.total, color: "#3d2b1f" },
-          { label: "Opened", value: stats.opened, color: "#15803d" },
-          { label: "Clicked", value: stats.clicked, color: "#1d4ed8" },
+          { label: "Total Sent",  value: stats.total,  color: "#3d2b1f" },
+          { label: "Opened",      value: stats.opened, color: "#15803d" },
+          { label: "Clicked",     value: stats.clicked, color: "#1d4ed8" },
           {
             label: "Open Rate",
             value: stats.total > 0 ? `${Math.round((stats.opened / stats.total) * 100)}%` : "—",
@@ -222,18 +316,91 @@ export default function EmailStatusTab() {
         ))}
       </div>
 
+      {/* ── Filters + Bulk Action bar ── */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+        {/* Search */}
+        <input
+          type="text"
+          placeholder="Search by name, email, or subject…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{
+            flex: 1,
+            minWidth: 200,
+            padding: "8px 12px",
+            border: "1px solid #e8e0d4",
+            borderRadius: 8,
+            fontSize: 13,
+            outline: "none",
+            background: "#fff",
+            color: "#3d2b1f",
+          }}
+        />
+
+        {/* Date filter buttons */}
+        {(["all", "today", "week", "month"] as DateFilter[]).map((f) => (
+          <button
+            key={f}
+            onClick={() => setDateFilter(f)}
+            style={{
+              padding: "7px 14px",
+              border: `1px solid ${dateFilter === f ? "#c0704e" : "#e8e0d4"}`,
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: dateFilter === f ? 700 : 400,
+              background: dateFilter === f ? "#fff5f0" : "#fff",
+              color: dateFilter === f ? "#c0704e" : "#6b5c4e",
+              cursor: "pointer",
+            }}
+          >
+            {f === "all" ? "All Dates" : f === "today" ? "Today" : f === "week" ? "Last 7 Days" : "This Month"}
+          </button>
+        ))}
+
+        {/* Bulk delete button */}
+        {selected.size > 0 && (
+          <button
+            onClick={handleBulkDelete}
+            disabled={bulkDeleting}
+            style={{
+              padding: "7px 16px",
+              border: "none",
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 700,
+              background: bulkDeleting ? "#e8e0d4" : "#c0704e",
+              color: "#fff",
+              cursor: bulkDeleting ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {bulkDeleting ? "Deleting…" : `Delete Selected (${selected.size})`}
+          </button>
+        )}
+      </div>
+
       {/* ── Table ── */}
       <div style={{ background: "#fff", border: "1px solid #e8e0d4", borderRadius: 10, overflow: "hidden" }}>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "#9e9080", fontSize: 13 }}>Loading…</div>
-        ) : records.length === 0 ? (
+        ) : filteredRecords.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: "#9e9080", fontSize: 13 }}>
-            No emails sent yet.
+            {records.length === 0 ? "No emails sent yet." : "No emails match your filters."}
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid #e8e0d4", background: "#faf8f5" }}>
+                {/* Select all checkbox */}
+                <th style={{ padding: "10px 16px", width: 36 }}>
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={(el) => { if (el) el.indeterminate = someSelected; }}
+                    onChange={toggleAll}
+                    style={{ cursor: "pointer", accentColor: "#c0704e" }}
+                  />
+                </th>
                 {["Type", "Email", "Recipient", "Sent", "Opened", "Clicked", ""].map((h, i) => (
                   <th
                     key={i}
@@ -253,21 +420,31 @@ export default function EmailStatusTab() {
               </tr>
             </thead>
             <tbody>
-              {records.map((rec, i) => {
-                const evts = eventMap[rec.resend_message_id] ?? {};
-                const tc = TYPE_COLORS[rec.type];
+              {filteredRecords.map((rec, i) => {
+                const evts   = eventMap[rec.resend_message_id] ?? {};
+                const tc     = TYPE_COLORS[rec.type];
                 const rowKey = `${rec.type}:${rec.id}`;
-                const isDeleting = deleting === rowKey;
+                const isDeleting  = deleting === rowKey;
+                const isSelected  = selected.has(rowKey);
                 return (
                   <tr
                     key={rowKey}
                     style={{
-                      borderBottom: i < records.length - 1 ? "1px solid #f0ece6" : "none",
-                      background: i % 2 === 0 ? "#fff" : "#faf8f5",
+                      borderBottom: i < filteredRecords.length - 1 ? "1px solid #f0ece6" : "none",
+                      background: isSelected ? "#fff8f5" : i % 2 === 0 ? "#fff" : "#faf8f5",
                       opacity: isDeleting ? 0.4 : 1,
-                      transition: "opacity 0.15s",
+                      transition: "opacity 0.15s, background 0.1s",
                     }}
                   >
+                    {/* Row checkbox */}
+                    <td style={{ padding: "12px 16px" }}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleOne(rowKey)}
+                        style={{ cursor: "pointer", accentColor: "#c0704e" }}
+                      />
+                    </td>
                     {/* Type */}
                     <td style={{ padding: "12px 16px" }}>
                       <span
@@ -301,17 +478,7 @@ export default function EmailStatusTab() {
                     <td style={{ padding: "12px 16px" }}>
                       {evts.opened_at ? (
                         <div>
-                          <span
-                            style={{
-                              display: "inline-block",
-                              padding: "3px 8px",
-                              borderRadius: 12,
-                              fontSize: 11,
-                              fontWeight: 700,
-                              background: "#f0fdf4",
-                              color: "#15803d",
-                            }}
-                          >
+                          <span style={{ display: "inline-block", padding: "3px 8px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: "#f0fdf4", color: "#15803d" }}>
                             ✓ Opened
                           </span>
                           <div style={{ fontSize: 10, color: "#9e9080", marginTop: 3 }}>
@@ -326,17 +493,7 @@ export default function EmailStatusTab() {
                     <td style={{ padding: "12px 16px" }}>
                       {evts.clicked_at ? (
                         <div>
-                          <span
-                            style={{
-                              display: "inline-block",
-                              padding: "3px 8px",
-                              borderRadius: 12,
-                              fontSize: 11,
-                              fontWeight: 700,
-                              background: "#f0f7ff",
-                              color: "#1d4ed8",
-                            }}
-                          >
+                          <span style={{ display: "inline-block", padding: "3px 8px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: "#f0f7ff", color: "#1d4ed8" }}>
                             ✓ Clicked
                           </span>
                           <div style={{ fontSize: 10, color: "#9e9080", marginTop: 3 }}>
@@ -347,16 +504,16 @@ export default function EmailStatusTab() {
                         <span style={{ fontSize: 12, color: "#c0b8b0" }}>—</span>
                       )}
                     </td>
-                    {/* Delete */}
+                    {/* Single delete */}
                     <td style={{ padding: "12px 16px", textAlign: "right" }}>
                       <button
                         onClick={() => handleDelete(rec.type, rec.id)}
-                        disabled={isDeleting}
+                        disabled={isDeleting || bulkDeleting}
                         title="Remove from log"
                         style={{
                           background: "none",
                           border: "none",
-                          cursor: isDeleting ? "not-allowed" : "pointer",
+                          cursor: isDeleting || bulkDeleting ? "not-allowed" : "pointer",
                           color: "#c0b8b0",
                           fontSize: 16,
                           lineHeight: 1,
@@ -364,7 +521,7 @@ export default function EmailStatusTab() {
                           borderRadius: 4,
                           transition: "color 0.15s",
                         }}
-                        onMouseEnter={(e) => { if (!isDeleting) (e.currentTarget as HTMLButtonElement).style.color = "#c0704e"; }}
+                        onMouseEnter={(e) => { if (!isDeleting && !bulkDeleting) (e.currentTarget as HTMLButtonElement).style.color = "#c0704e"; }}
                         onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#c0b8b0"; }}
                       >
                         ×
@@ -379,7 +536,10 @@ export default function EmailStatusTab() {
       </div>
 
       <div style={{ fontSize: 11, color: "#c0b8b0", marginTop: 12, textAlign: "right" }}>
-        {records.length} email{records.length !== 1 ? "s" : ""} · Open/click data from Resend webhooks
+        {filteredRecords.length !== records.length
+          ? `${filteredRecords.length} of ${records.length} emails`
+          : `${records.length} email${records.length !== 1 ? "s" : ""}`}
+        {" "}· Open/click data from Resend webhooks
       </div>
     </div>
   );
