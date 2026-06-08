@@ -123,7 +123,7 @@ export async function resetPassword(
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 
-  let actionLink: string;
+  let resetLink: string;
   try {
     const result = await withTimeout(
       adminClient.auth.admin.generateLink({
@@ -136,7 +136,10 @@ export async function resetPassword(
     if (result.error) {
       return { error: result.error.message };
     }
-    actionLink = result.data.properties.action_link;
+    // Build a direct link on minuteflow.click instead of using the supabase.co
+    // action_link — third-party domain links in emails trigger spam filters.
+    const hashedToken = result.data.properties.hashed_token;
+    resetLink = `${siteUrl}/auth/confirm?token_hash=${hashedToken}&type=recovery`;
   } catch {
     return { error: SERVICE_UNAVAILABLE };
   }
@@ -158,7 +161,7 @@ export async function resetPassword(
         from: "MinuteFlow <noreply@minuteflow.click>",
         to: [email],
         subject: "Reset your MinuteFlow password",
-        html: buildPasswordResetEmail(actionLink),
+        html: buildPasswordResetEmail(resetLink),
       }),
     });
 
