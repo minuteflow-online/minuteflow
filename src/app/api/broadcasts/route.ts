@@ -369,6 +369,9 @@ export async function POST(request: Request) {
     status,
     recipients,
     scheduled_at,
+    link,
+    image_url,
+    sort_order,
   } = body;
 
   if (!title?.trim()) return Response.json({ error: "title is required" }, { status: 400 });
@@ -389,6 +392,9 @@ export async function POST(request: Request) {
       status: status || "draft",
       created_by: user.id,
       scheduled_at: scheduled_at || null,
+      link: link?.trim() || null,
+      image_url: image_url?.trim() || null,
+      sort_order: typeof sort_order === "number" ? sort_order : 0,
     })
     .select()
     .single();
@@ -464,6 +470,9 @@ export async function PATCH(request: Request) {
   if (body.require_word !== undefined) fields.require_word = body.require_word;
   if (body.status !== undefined) fields.status = body.status;
   if (body.scheduled_at !== undefined) fields.scheduled_at = body.scheduled_at || null;
+  if (body.link !== undefined) fields.link = body.link?.trim() || null;
+  if (body.image_url !== undefined) fields.image_url = body.image_url?.trim() || null;
+  if (body.sort_order !== undefined) fields.sort_order = typeof body.sort_order === "number" ? body.sort_order : 0;
 
   const { data: broadcast, error } = await supabase
     .from("broadcasts")
@@ -474,12 +483,23 @@ export async function PATCH(request: Request) {
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
+  // Update recipients if provided
+  if (Array.isArray(body.recipients) && body.recipients.length > 0) {
+    await supabase.from("broadcast_recipients").delete().eq("broadcast_id", id);
+    const recipientInserts = body.recipients.map((r: { type: string; value: string }) => ({
+      broadcast_id: id,
+      recipient_type: r.type,
+      recipient_value: r.value,
+    }));
+    await supabase.from("broadcast_recipients").insert(recipientInserts);
+  }
+
   // If transitioning to published, send emails
   const wasPublished = current.status === "published";
   const nowPublished = broadcast.status === "published";
 
   if (!wasPublished && nowPublished) {
-    // Fetch recipients for this broadcast
+    // Fetch recipients for this broadcast (may have just been updated above)
     const { data: recipientRows } = await supabase
       .from("broadcast_recipients")
       .select("recipient_type, recipient_value")

@@ -7,7 +7,7 @@ import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 
 // ─── Types ───────────────────────────────────────────────────
 
-type PortalTab = "profile" | "onboarding" | "sops" | "coaching" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "coaching_notes" | "reviews" | "tokens";
+type PortalTab = "profile" | "onboarding" | "sops" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "coaching_notes" | "reviews" | "tokens";
 
 type RequestType = "time_off" | "schedule_change" | "pay_question" | "general";
 type RequestStatus = "pending" | "approved" | "denied" | "noted";
@@ -71,17 +71,6 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
         <line x1="16" y1="13" x2="8" y2="13" />
         <line x1="16" y1="17" x2="8" y2="17" />
         <polyline points="10 9 9 9 8 9" />
-      </svg>
-    ),
-  },
-  {
-    id: "coaching",
-    label: "Coaching",
-    icon: (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <circle cx="12" cy="12" r="10" />
-        <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-        <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
     ),
   },
@@ -1290,18 +1279,6 @@ function FeedbackTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmi
   );
 }
 
-// ─── Trainings Tab ────────────────────────────────────────────
-
-function TrainingsTab() {
-  return <VaBroadcastsPortalTab category="training" />;
-}
-
-// ─── Memos Tab ────────────────────────────────────────────────
-
-function MemosTab() {
-  return <VaBroadcastsPortalTab category="memo" />;
-}
-
 // ─── Reviews Tab ──────────────────────────────────────────────
 
 function ReviewsTab({ isAdmin }: { isAdmin: boolean }) {
@@ -1647,7 +1624,6 @@ export default function VaPortalPage() {
     profile: "My Profile",
     onboarding: "Start Here",
     sops: "SOPs",
-    coaching: "Coaching",
     jobs: "Job Postings",
     requests: "Requests",
     paystubs: "Paystubs",
@@ -1663,7 +1639,6 @@ export default function VaPortalPage() {
     profile: "Edit your personal info and payment details",
     onboarding: "Everything you need to get started",
     sops: "Standard operating procedures for your role",
-    coaching: "Resources to help you succeed",
     jobs: "Open positions and opportunities",
     requests: isAdmin ? "Review and respond to team requests" : "Submit and track your requests",
     paystubs: "Your payment history and paystub records",
@@ -1731,16 +1706,13 @@ export default function VaPortalPage() {
           <ProfileTab profile={profile} onSaved={setProfile} />
         )}
         {activeTab === "onboarding" && (
-          <ResourcesTab type="onboarding" label="Onboarding" emptyLabel="onboarding materials" />
+          <VaBroadcastsPortalTab category="onboarding" />
         )}
         {activeTab === "sops" && (
           <ResourcesTab type="sop" label="SOPs" emptyLabel="SOPs" />
         )}
-        {activeTab === "coaching" && (
-          <ResourcesTab type="coaching" label="Coaching" emptyLabel="coaching resources" />
-        )}
         {activeTab === "jobs" && (
-          <ResourcesTab type="job_posting" label="Job Postings" emptyLabel="job postings" />
+          <VaBroadcastsPortalTab category="job_posting" />
         )}
         {activeTab === "requests" && currentUserId && (
           <RequestsTab currentUserId={currentUserId} isAdmin={isAdmin} />
@@ -1752,10 +1724,10 @@ export default function VaPortalPage() {
           <FeedbackTab currentUserId={currentUserId} isAdmin={isAdmin} />
         )}
         {activeTab === "trainings" && (
-          <TrainingsTab />
+          <VaBroadcastsPortalTab category="training" />
         )}
         {activeTab === "memos" && (
-          <MemosTab />
+          <VaBroadcastsPortalTab category="memo" />
         )}
         {activeTab === "coaching_notes" && (
           <VaBroadcastsPortalTab category="coaching_notes" />

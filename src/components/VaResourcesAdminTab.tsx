@@ -14,26 +14,17 @@ interface VaResource {
 }
 
 const RESOURCE_TYPES = [
-  { value: "onboarding", label: "Onboarding / Start Here" },
   { value: "sop", label: "SOP" },
-  { value: "coaching", label: "Coaching" },
-  { value: "job_posting", label: "Job Posting" },
 ] as const;
 
 type ResourceType = typeof RESOURCE_TYPES[number]["value"];
 
 const TYPE_LABELS: Record<string, string> = {
-  onboarding: "Onboarding",
   sop: "SOP",
-  coaching: "Coaching",
-  job_posting: "Job Posting",
 };
 
 const TYPE_COLORS: Record<string, { bg: string; text: string }> = {
-  onboarding: { bg: "bg-sage-soft", text: "text-sage" },
   sop: { bg: "bg-slate-blue-soft", text: "text-slate-blue" },
-  coaching: { bg: "bg-amber-soft", text: "text-amber" },
-  job_posting: { bg: "bg-terracotta-soft", text: "text-terracotta" },
 };
 
 export default function VaResourcesAdminTab() {
@@ -43,7 +34,7 @@ export default function VaResourcesAdminTab() {
 
   // Add form state
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newType, setNewType] = useState<ResourceType>("onboarding");
+  const [newType, setNewType] = useState<ResourceType>("sop");
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
   const [newUrl, setNewUrl] = useState("");

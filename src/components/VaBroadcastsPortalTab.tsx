@@ -8,13 +8,16 @@ interface Broadcast {
   id: string;
   title: string;
   body: string;
-  category: "memo" | "training" | "announcement" | "coaching_notes";
+  category: "memo" | "training" | "announcement" | "coaching_notes" | "job_posting" | "onboarding";
   magic_word: string | null;
   require_word: boolean;
   status: "published";
   created_at: string;
   confirmed_by_me: boolean;
   word_entered_by_me: string | null;
+  link: string | null;
+  image_url: string | null;
+  sort_order: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -70,6 +73,8 @@ const CATEGORY_STYLES: Record<
   training:        { bg: "bg-slate-blue-soft",  text: "text-slate-blue", label: "Training"      },
   announcement:    { bg: "bg-terracotta-soft",  text: "text-terracotta", label: "Announcement"  },
   coaching_notes:  { bg: "bg-amber-100",        text: "text-amber-700",  label: "Coaching Notes"},
+  job_posting:     { bg: "bg-terracotta-soft",  text: "text-terracotta", label: "Job Posting"   },
+  onboarding:      { bg: "bg-sage-soft",        text: "text-sage",       label: "Onboarding"    },
 };
 
 function CategoryBadge({ category }: { category: Broadcast["category"] }) {
@@ -165,6 +170,13 @@ function BroadcastCard({
         </div>
       </div>
 
+      {/* Image */}
+      {broadcast.image_url && (
+        <div className="mb-3 rounded-lg overflow-hidden">
+          <img src={broadcast.image_url} alt={broadcast.title} className="w-full max-h-64 object-cover" />
+        </div>
+      )}
+
       {/* Body */}
       <div
         className={`text-xs text-bark leading-relaxed whitespace-pre-wrap ${
@@ -180,6 +192,24 @@ function BroadcastCard({
         >
           {expanded ? "Show less" : "Read more"}
         </button>
+      )}
+
+      {/* Link */}
+      {broadcast.link && (
+        <div className="mt-3">
+          <a
+            href={broadcast.link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-parchment px-3 py-1.5 text-[12px] font-medium text-terracotta hover:bg-sand transition-colors"
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+            </svg>
+            View Link
+          </a>
+        </div>
       )}
 
       {/* Acknowledge section */}
@@ -237,11 +267,19 @@ export default function VaBroadcastsPortalTab({ category }: { category?: Broadca
     try {
       const res = await fetch("/api/broadcasts");
       const d = await res.json();
-      setBroadcasts(d.broadcasts || []);
+      const all: Broadcast[] = d.broadcasts || [];
+      // Filter by category if specified
+      const filtered = category ? all.filter((b) => b.category === category) : all;
+      // Sort by sort_order ascending, then by created_at descending
+      filtered.sort((a, b) => {
+        if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+      setBroadcasts(filtered);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [category]);
 
   useEffect(() => {
     fetchBroadcasts();

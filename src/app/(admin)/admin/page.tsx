@@ -35,11 +35,13 @@ import CaptureAlertsTab from "@/components/CaptureAlertsTab";
 import PaystubTab from "@/components/PaystubTab";
 import VaResourcesAdminTab from "@/components/VaResourcesAdminTab";
 import VaFeedbackAdminTab from "@/components/VaFeedbackAdminTab";
-import VaTrainingsAdminTab from "@/components/VaTrainingsAdminTab";
-import VaMemosAdminTab from "@/components/VaMemosAdminTab";
 import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
 import VaTokensAdminTab from "@/components/VaTokensAdminTab";
 import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
+
+/* ── Constants ───────────────────────────────────────────── */
+
+const DEFAULT_PAYMENT_INFO = `Checks Payable to: \nMarie Toni Colina OR\nColina Productions LLC\n---\nZelle 470.430.1625\n---\nVenmo and Cashapp\nAvailable upon request`;
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -95,7 +97,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_trainings" | "va_memos" | "va_reviews" | "va_tokens" | "va_broadcasts";
+type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -251,28 +253,6 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
-    id: "va_trainings",
-    label: "Trainings",
-    icon: (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z" />
-        <path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z" />
-      </svg>
-    ),
-  },
-  {
-    id: "va_memos",
-    label: "Memos",
-    icon: (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="16" y1="13" x2="8" y2="13" />
-        <line x1="16" y1="17" x2="8" y2="17" />
-      </svg>
-    ),
-  },
-  {
     id: "va_reviews",
     label: "Reviews",
     icon: (
@@ -333,7 +313,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "team",
     label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "va_resources", "va_trainings", "va_memos", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs"] as AdminTab[]).includes(t.id)),
   },
   {
     id: "billing",
@@ -1236,8 +1216,6 @@ export default function AdminPage() {
                 {activeTab === "alerts" && "Track screen capture drops and VA responses"}
                 {activeTab === "va_resources" && "Manage onboarding, SOPs, coaching, and job postings for VAs"}
                 {activeTab === "va_feedback" && "Review feedback submitted by your team"}
-                {activeTab === "va_trainings" && "Create and manage training materials for VAs"}
-                {activeTab === "va_memos" && "Send memos and announcements to your team"}
                 {activeTab === "va_reviews" && "Create and publish performance reviews"}
                 {activeTab === "va_tokens" && "Award tokens and track daily ratings"}
                 {activeTab === "va_broadcasts" && "Send broadcasts, memos, and announcements to your team"}
@@ -1373,12 +1351,6 @@ export default function AdminPage() {
           )}
           {activeTab === "va_feedback" && (
             <VaFeedbackAdminTab />
-          )}
-          {activeTab === "va_trainings" && (
-            <VaTrainingsAdminTab />
-          )}
-          {activeTab === "va_memos" && (
-            <VaMemosAdminTab />
           )}
           {activeTab === "va_reviews" && (
             <VaReviewsAdminTab />
@@ -6093,7 +6065,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [removedEditOverrides, setRemovedEditOverrides] = useState<Map<number, { account: string; client: string }>>(new Map());
 
   // Payment info + reply-to for create flow
-  const [paymentInfo, setPaymentInfo] = useState("");
+  const [paymentInfo, setPaymentInfo] = useState(DEFAULT_PAYMENT_INFO);
   const [replyToEmail, setReplyToEmail] = useState("");
 
   // Payment info + reply-to for edit flow
@@ -6785,7 +6757,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setEditSubtotal(String(invoice.subtotal ?? ""));
     setEditAdjustment(String(invoice.adjustment_amount ?? "0"));
     setEditPaymentLink(invoice.payment_link ?? "");
-    setEditPaymentInfo(invoice.payment_info ?? "");
+    setEditPaymentInfo(invoice.payment_info ?? DEFAULT_PAYMENT_INFO);
     setEditFromName(invoice.from_name ?? "");
     setEditFromPhone(invoice.from_phone ?? "");
     setEditReplyToEmail(invoice.from_email ?? "");
@@ -8367,7 +8339,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setEditSubtotal(String(inv.subtotal ?? ""));
                   setEditAdjustment(String(inv.adjustment_amount ?? "0"));
                   setEditPaymentLink(inv.payment_link ?? "");
-                  setEditPaymentInfo(inv.payment_info ?? "");
+                  setEditPaymentInfo(inv.payment_info ?? DEFAULT_PAYMENT_INFO);
                   setEditFromName(inv.from_name ?? "");
                   setEditFromPhone(inv.from_phone ?? "");
                   setEditReplyToEmail(inv.from_email ?? "");
