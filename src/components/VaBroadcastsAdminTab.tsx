@@ -194,7 +194,6 @@ export default function VaBroadcastsAdminTab() {
   // Magic word
   const [addMagicWord, setAddMagicWord] = useState(false);
   const [magicWord, setMagicWord] = useState("");
-  const [requireWord, setRequireWord] = useState(false);
 
   // Link, image, sort order
   const [link, setLink] = useState("");
@@ -247,7 +246,6 @@ export default function VaBroadcastsAdminTab() {
     setSelectedIndividuals([]);
     setAddMagicWord(false);
     setMagicWord("");
-    setRequireWord(false);
     setLink("");
     setImageUrl("");
     setSortOrder(0);
@@ -269,7 +267,6 @@ export default function VaBroadcastsAdminTab() {
 
     setAddMagicWord(!!b.magic_word);
     setMagicWord(b.magic_word || "");
-    setRequireWord(b.require_word);
 
     setLink(b.link || "");
     setImageUrl(b.image_url || "");
@@ -331,7 +328,7 @@ export default function VaBroadcastsAdminTab() {
         category,
         recipients: buildRecipients(),
         magic_word: addMagicWord && magicWord.trim() ? magicWord.trim() : null,
-        require_word: addMagicWord ? requireWord : false,
+        require_word: addMagicWord && !!magicWord.trim(),
         status,
         scheduled_at,
         link: link.trim() || null,
@@ -372,7 +369,7 @@ export default function VaBroadcastsAdminTab() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [title, body, category, recipientMode, selectedEmpTypes, selectedIndividuals, addMagicWord, magicWord, requireWord, publishMode, scheduledAt, editing, fetchBroadcasts, link, imageUrl, sortOrder]
+    [title, body, category, recipientMode, selectedEmpTypes, selectedIndividuals, addMagicWord, magicWord, publishMode, scheduledAt, editing, fetchBroadcasts, link, imageUrl, sortOrder]
   );
 
   const handleDelete = useCallback(
@@ -609,28 +606,17 @@ export default function VaBroadcastsAdminTab() {
                 <span className="text-[13px] font-semibold text-walnut">Add magic word</span>
               </label>
               {addMagicWord && (
-                <div className="space-y-3 pl-5">
-                  <div>
-                    <input
-                      type="text"
-                      value={magicWord}
-                      onChange={(e) => setMagicWord(e.target.value)}
-                      placeholder="Enter magic word..."
-                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                    />
-                    <p className="mt-1 text-[11px] text-stone">
-                      The magic word will be automatically inserted into the message body.
-                    </p>
-                  </div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={requireWord}
-                      onChange={(e) => setRequireWord(e.target.checked)}
-                      className="accent-terracotta"
-                    />
-                    <span className="text-[13px] text-walnut">Require magic word to acknowledge</span>
-                  </label>
+                <div className="space-y-2 pl-5">
+                  <input
+                    type="text"
+                    value={magicWord}
+                    onChange={(e) => setMagicWord(e.target.value)}
+                    placeholder="Enter magic word..."
+                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                  />
+                  <p className="text-[11px] text-stone">
+                    VAs must enter this word to acknowledge the broadcast.
+                  </p>
                 </div>
               )}
             </div>
@@ -785,16 +771,6 @@ export default function VaBroadcastsAdminTab() {
                 ? "Save Changes"
                 : "Publish Broadcast"}
             </button>
-
-            {publishMode !== "draft" && (
-              <button
-                onClick={() => handleSave(true)}
-                disabled={saving || !title.trim() || !body.trim()}
-                className="rounded-lg border border-sand px-5 py-2.5 text-[13px] font-semibold text-walnut cursor-pointer transition-all hover:border-walnut disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Save as Draft
-              </button>
-            )}
 
             <button
               onClick={() => {
