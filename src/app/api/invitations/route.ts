@@ -351,11 +351,8 @@ function buildInviteEmail({
           After you create your account, install the Chrome extension so screenshots can be captured automatically when you work.
         </p>
         <ol style="font-size: 13px; color: #3d2b1f; line-height: 2; margin: 0; padding-left: 20px;">
-          <li>Go to <a href="${inviteUrl.split('/invite')[0]}/install" style="color: #c0704e;">${inviteUrl.split('/invite')[0]}/install</a> after signing in</li>
-          <li>Click <strong>Download Extension (.zip)</strong></li>
-          <li>Extract the downloaded zip file (right-click → Extract All on Windows; double-click on Mac)</li>
-          <li>In Chrome, go to <code style="background:#fff;padding:2px 5px;border-radius:3px;font-size:11px;">chrome://extensions</code> and enable <strong>Developer mode</strong></li>
-          <li>Click <strong>Load unpacked</strong> and select the extracted <code style="background:#fff;padding:2px 5px;border-radius:3px;font-size:11px;">chrome-extension</code> folder</li>
+          <li>Click <a href="https://chromewebstore.google.com/detail/minuteflow-screen-capture/lmfgamnipididbdgehimnbhmoodclack" style="color: #c0704e; font-weight: 600;">Install MinuteFlow Screen Capture</a> from the Chrome Web Store</li>
+          <li>Click <strong>Add to Chrome</strong> → confirm by clicking <strong>Add extension</strong></li>
           <li>Click the puzzle piece icon in Chrome → click <strong>MinuteFlow</strong> → sign in</li>
         </ol>
         <div style="margin-top: 12px; padding: 10px 12px; background: #e8f4e8; border-radius: 6px; font-size: 12px; color: #3d5c3d;">

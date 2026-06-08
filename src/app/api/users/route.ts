@@ -132,13 +132,71 @@ export async function PUT(request: Request) {
   }
 }
 
-/** PATCH: Update user profile or disable user */
+/** PATCH: Update user profile, disable user, or send password reset link */
 export async function PATCH(request: Request) {
   const authResult = await verifyAdmin();
   if (authResult instanceof Response) return authResult;
 
   const body = await request.json();
-  const { user_id, ...updates } = body;
+  const { user_id, action, email, ...updates } = body;
+
+  // ── Send Password Reset Link ──────────────────────────────────────────────
+  if (action === "send_reset_link") {
+    if (!email) {
+      return Response.json({ error: "email is required" }, { status: 400 });
+    }
+    const RESEND_API_KEY = process.env.RESEND_API_KEY!;
+    const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://minuteflow.click";
+
+    const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
+      type: "recovery",
+      email,
+      options: { redirectTo: `${SITE_URL}/update-password` },
+    });
+
+    if (linkError || !linkData?.properties?.action_link) {
+      return Response.json({ error: linkError?.message || "Failed to generate reset link" }, { status: 400 });
+    }
+
+    const resetLink = linkData.properties.action_link;
+
+    const resendRes = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "Toni Colina <noreply@minuteflow.click>",
+        to: [email],
+        subject: "Reset your MinuteFlow password",
+        html: `
+          <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#faf6f0;border-radius:12px;">
+            <h2 style="font-size:20px;color:#3d2b1f;margin-bottom:8px;">Reset your password</h2>
+            <p style="font-size:14px;color:#6b5e52;margin-bottom:24px;">
+              Your MinuteFlow admin has sent you a password reset link. Click the button below to set a new password.
+            </p>
+            <a href="${resetLink}" style="display:inline-block;background:#c0704e;color:#fff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;">
+              Reset Password
+            </a>
+            <p style="font-size:12px;color:#9e9080;margin-top:24px;">
+              This link expires in 24 hours. If you didn&apos;t expect this email, you can ignore it.
+            </p>
+          </div>
+        `,
+      }),
+    });
+
+    if (!resendRes.ok) {
+      return Response.json({ error: "Reset link generated but email failed to send." }, { status: 500 });
+    }
+
+    return Response.json({ success: true, message: `Password reset email sent to ${email}` });
+  }
 
   if (!user_id) {
     return Response.json({ error: "user_id is required" }, { status: 400 });

@@ -1895,6 +1895,10 @@ function TeamManagementTab({
   const [resetPasswordError, setResetPasswordError] = useState("");
   const [resetPasswordSuccess, setResetPasswordSuccess] = useState("");
 
+  // Send reset link state
+  const [sendingResetLinkFor, setSendingResetLinkFor] = useState<string | null>(null);
+  const [resetLinkMsg, setResetLinkMsg] = useState<{ userId: string; text: string; isError: boolean } | null>(null);
+
   // Delete VA state
   const [deleteTarget, setDeleteTarget] = useState<Profile | null>(null);
   const [deletingUser, setDeletingUser] = useState(false);
@@ -2197,6 +2201,34 @@ function TeamManagementTab({
     setResetPasswordValue("");
     setResetPasswordError("");
     setResetPasswordSuccess("");
+  };
+
+  const handleSendResetLink = async (p: Profile) => {
+    const email = emailMap[p.id];
+    if (!email) {
+      setResetLinkMsg({ userId: p.id, text: "No email found for this user.", isError: true });
+      return;
+    }
+    setSendingResetLinkFor(p.id);
+    setResetLinkMsg(null);
+    try {
+      const res = await fetch("/api/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "send_reset_link", email }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setResetLinkMsg({ userId: p.id, text: data.error || "Failed to send reset link.", isError: true });
+      } else {
+        setResetLinkMsg({ userId: p.id, text: `Reset link sent to ${email}`, isError: false });
+        setTimeout(() => setResetLinkMsg(null), 5000);
+      }
+    } catch {
+      setResetLinkMsg({ userId: p.id, text: "Network error.", isError: true });
+    } finally {
+      setSendingResetLinkFor(null);
+    }
   };
 
   const handleAddUser = async () => {
@@ -2952,6 +2984,7 @@ function TeamManagementTab({
                     {new Date(p.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                   </td>
                   <td className="px-3 py-3 text-center">
+                    <div className="flex flex-col items-center gap-1">
                     <div className="flex items-center justify-center gap-1">
                       <button
                         onClick={() => {
@@ -2960,13 +2993,28 @@ function TeamManagementTab({
                           setResetPasswordError("");
                           setResetPasswordSuccess("");
                         }}
-                        title="Reset Password"
+                        title="Set Password (manual)"
                         className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-sand text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
                       >
                         <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                           <path d="M7 11V7a5 5 0 0110 0v4" />
                         </svg>
+                      </button>
+                      <button
+                        onClick={() => handleSendResetLink(p)}
+                        disabled={sendingResetLinkFor === p.id}
+                        title="Send Password Reset Email"
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-sand text-bark transition-all hover:border-blue-400 hover:text-blue-500 cursor-pointer disabled:opacity-50"
+                      >
+                        {sendingResetLinkFor === p.id ? (
+                          <div className="h-3 w-3 rounded-full border-2 border-sand border-t-bark animate-spin" />
+                        ) : (
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                            <polyline points="22,6 12,13 2,6" />
+                          </svg>
+                        )}
                       </button>
                       {p.role === "manager" && (
                         <button
@@ -2995,6 +3043,12 @@ function TeamManagementTab({
                           </svg>
                         </button>
                       )}
+                    </div>
+                    {resetLinkMsg?.userId === p.id && (
+                      <span className={`text-[10px] font-medium ${resetLinkMsg.isError ? "text-red-500" : "text-green-600"}`}>
+                        {resetLinkMsg.text}
+                      </span>
+                    )}
                     </div>
                   </td>
                 </tr>
