@@ -45,10 +45,11 @@ export async function POST(request: Request) {
   if (authResult instanceof Response) return authResult;
 
   const body = await request.json();
-  const { email, employment_type, requires_extension } = body as {
+  const { email, employment_type, requires_extension, message } = body as {
     email: string;
     employment_type?: string;
     requires_extension?: boolean;
+    message?: string | null;
   };
 
   if (!email || !email.includes("@")) {
@@ -98,6 +99,7 @@ export async function POST(request: Request) {
     expires_at: expiresAt,
     employment_type: employment_type || null,
     requires_extension: requires_extension === true,
+    message: message || null,
   });
 
   if (insertError) {
@@ -106,7 +108,7 @@ export async function POST(request: Request) {
 
   // Send invite email via Resend
   const inviteUrl = `${SITE_URL}/invite?code=${code}`;
-  const html = buildInviteEmail({ email, inviteUrl, requires_extension: requires_extension === true });
+  const html = buildInviteEmail({ email, inviteUrl, requires_extension: requires_extension === true, message: message || null });
 
   const resendRes = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -198,10 +200,12 @@ function buildInviteEmail({
   email,
   inviteUrl,
   requires_extension,
+  message,
 }: {
   email: string;
   inviteUrl: string;
   requires_extension: boolean;
+  message?: string | null;
 }): string {
   const extensionSection = requires_extension
     ? `
@@ -250,6 +254,12 @@ function buildInviteEmail({
           Hi there! You've been invited to create your MinuteFlow account.
           Click the button below to set up your account — this link is valid for <strong>72 hours</strong>.
         </p>
+
+        ${message ? `
+        <div style="margin: 0 0 24px; padding: 16px 20px; background: #faf6f0; border-left: 3px solid #c0704e; border-radius: 6px;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #9e9080; margin-bottom: 8px;">A note from Toni</div>
+          <p style="font-size: 14px; color: #3d2b1f; line-height: 1.6; margin: 0; white-space: pre-line;">${message}</p>
+        </div>` : ""}
 
         <div style="text-align: center; margin: 28px 0;">
           <a href="${inviteUrl}"

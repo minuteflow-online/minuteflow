@@ -63,6 +63,7 @@ export default function VaInvitesAdminTab() {
   const [newEmail, setNewEmail] = useState("");
   const [employmentType, setEmploymentType] = useState<string>("full_time");
   const [requiresExtension, setRequiresExtension] = useState(false);
+  const [personalMessage, setPersonalMessage] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
 
@@ -127,6 +128,7 @@ export default function VaInvitesAdminTab() {
           email: newEmail.trim(),
           employment_type: employmentType,
           requires_extension: requiresExtension,
+          message: personalMessage.trim() || null,
         }),
       });
       const data = await res.json() as { success?: boolean; error?: string; warning?: string; message?: string };
@@ -135,6 +137,7 @@ export default function VaInvitesAdminTab() {
       } else {
         setSendSuccess(data.warning ? `⚠️ ${data.warning}` : (data.message || `Invite sent to ${newEmail}`));
         setNewEmail("");
+        setPersonalMessage("");
         await load();
       }
     } catch {
@@ -200,6 +203,16 @@ export default function VaInvitesAdminTab() {
           >
             {sending ? "Sending…" : "Send Invite"}
           </button>
+          <div style={{ flexBasis: "100%", marginTop: 4 }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#9e9080", marginBottom: 4 }}>Personal Note (optional)</label>
+            <textarea
+              value={personalMessage}
+              onChange={(e) => setPersonalMessage(e.target.value)}
+              placeholder="Add a personal message to include in the invite email…"
+              rows={2}
+              style={{ width: "100%", boxSizing: "border-box", padding: "8px 12px", border: "1px solid #e8e0d4", borderRadius: 6, fontSize: 13, color: "#3d2b1f", resize: "vertical", fontFamily: "inherit" }}
+            />
+          </div>
         </form>
         {sendError && <div style={{ marginTop: 10, fontSize: 12, color: "#dc2626" }}>{sendError}</div>}
         {sendSuccess && <div style={{ marginTop: 10, fontSize: 12, color: "#16a34a" }}>{sendSuccess}</div>}
