@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
+import VaInvitesAdminTab from "@/components/VaInvitesAdminTab";
 import {
   formatDuration,
   getInitials,
@@ -634,6 +635,17 @@ export default function TeamPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* Invitations (admin only) */}
+      {isAdmin && (
+        <div className="mt-8">
+          <div className="mb-4">
+            <h2 className="text-sm font-bold text-espresso">Invitations</h2>
+            <p className="mt-0.5 text-[12px] text-bark">Track invite history and email engagement.</p>
+          </div>
+          <VaInvitesAdminTab />
+        </div>
       )}
     </>
   );
