@@ -6,8 +6,6 @@ import { createClient } from "@/lib/supabase/client";
 /* ── Types ────────────────────────────────────────────────── */
 
 type EmailType = "invoice" | "paystub" | "broadcast";
-type TypeFilter = "all" | EmailType;
-type OpenFilter = "all" | "opened" | "not_opened";
 
 interface UnifiedEmail {
   id: string;
@@ -50,14 +48,13 @@ export default function EmailStatusTab() {
   const [records, setRecords] = useState<UnifiedEmail[]>([]);
   const [events, setEvents] = useState<EmailEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [openFilter, setOpenFilter] = useState<OpenFilter>("all");
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     const sb = createClient();
 
-    const [invoiceRes, paystubRes, broadcastRes, eventsRes] = await Promise.all([
+    const [invoiceRes, paystubRes, broadcastRes, eventsRes, hiddenRes] = await Promise.all([
       sb
         .from("invoices")
         .select("id, invoice_number, to_email, to_name, sent_at, resend_message_id")
@@ -76,7 +73,16 @@ export default function EmailStatusTab() {
         .from("email_events")
         .select("resend_message_id, event_type, created_at")
         .order("created_at", { ascending: true }),
+      sb
+        .from("email_log_hidden")
+        .select("type, source_id"),
     ]);
+
+    // Build hidden set
+    const hidden = new Set<string>();
+    for (const h of (hiddenRes.data ?? []) as { type: string; source_id: string }[]) {
+      hidden.add(`${h.type}:${h.source_id}`);
+    }
 
     // Build unified records
     const unified: UnifiedEmail[] = [];
@@ -90,6 +96,7 @@ export default function EmailStatusTab() {
       resend_message_id: string | null;
     }[]) {
       if (!inv.sent_at) continue;
+      if (hidden.has(`invoice:${inv.id}`)) continue;
       unified.push({
         id: String(inv.id),
         type: "invoice",
@@ -109,6 +116,7 @@ export default function EmailStatusTab() {
       resend_message_id: string | null;
       pay_period_label: string | null;
     }[]) {
+      if (hidden.has(`paystub:${ps.id}`)) continue;
       unified.push({
         id: ps.id,
         type: "paystub",
@@ -126,6 +134,7 @@ export default function EmailStatusTab() {
       created_at: string;
       resend_message_id: string | null;
     }[]) {
+      if (hidden.has(`broadcast:${bc.id}`)) continue;
       unified.push({
         id: bc.id,
         type: "broadcast",
@@ -148,6 +157,16 @@ export default function EmailStatusTab() {
     load();
   }, [load]);
 
+  // Delete a row (hide it from the log)
+  const handleDelete = useCallback(async (type: EmailType, id: string) => {
+    const key = `${type}:${id}`;
+    setDeleting(key);
+    const sb = createClient();
+    await sb.from("email_log_hidden").upsert({ type, source_id: id });
+    setRecords((prev) => prev.filter((r) => !(r.type === type && r.id === id)));
+    setDeleting(null);
+  }, []);
+
   // Build event lookup: resend_message_id → { opened_at?, clicked_at? }
   const eventMap = React.useMemo(() => {
     const map: Record<string, { opened_at?: string; clicked_at?: string }> = {};
@@ -163,15 +182,6 @@ export default function EmailStatusTab() {
     return map;
   }, [events]);
 
-  // Apply filters
-  const filtered = React.useMemo(() => {
-    let list = records;
-    if (typeFilter !== "all") list = list.filter((r) => r.type === typeFilter);
-    if (openFilter === "opened") list = list.filter((r) => !!eventMap[r.resend_message_id]?.opened_at);
-    if (openFilter === "not_opened") list = list.filter((r) => !eventMap[r.resend_message_id]?.opened_at);
-    return list;
-  }, [records, typeFilter, openFilter, eventMap]);
-
   // Counts for stats bar
   const stats = React.useMemo(() => {
     const total = records.length;
@@ -181,7 +191,7 @@ export default function EmailStatusTab() {
   }, [records, eventMap]);
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 0 40px" }}>
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 0 40px" }}>
 
       {/* ── Stats bar ── */}
       <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
@@ -212,67 +222,21 @@ export default function EmailStatusTab() {
         ))}
       </div>
 
-      {/* ── Filters ── */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          {(["all", "invoice", "paystub", "broadcast"] as TypeFilter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setTypeFilter(f)}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 20,
-                fontSize: 12,
-                fontWeight: 600,
-                border: "1px solid",
-                cursor: "pointer",
-                borderColor: typeFilter === f ? "#c0704e" : "#e8e0d4",
-                background: typeFilter === f ? "#c0704e" : "#fff",
-                color: typeFilter === f ? "#fff" : "#9e9080",
-              }}
-            >
-              {f === "all" ? "All Types" : TYPE_COLORS[f as EmailType].label + "s"}
-            </button>
-          ))}
-        </div>
-        <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
-          {(["all", "opened", "not_opened"] as OpenFilter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setOpenFilter(f)}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 20,
-                fontSize: 12,
-                fontWeight: 600,
-                border: "1px solid",
-                cursor: "pointer",
-                borderColor: openFilter === f ? "#3d2b1f" : "#e8e0d4",
-                background: openFilter === f ? "#3d2b1f" : "#fff",
-                color: openFilter === f ? "#fff" : "#9e9080",
-              }}
-            >
-              {f === "all" ? "All" : f === "opened" ? "Opened" : "Not Opened"}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* ── Table ── */}
       <div style={{ background: "#fff", border: "1px solid #e8e0d4", borderRadius: 10, overflow: "hidden" }}>
         {loading ? (
           <div style={{ padding: 40, textAlign: "center", color: "#9e9080", fontSize: 13 }}>Loading…</div>
-        ) : filtered.length === 0 ? (
+        ) : records.length === 0 ? (
           <div style={{ padding: 40, textAlign: "center", color: "#9e9080", fontSize: 13 }}>
-            No emails found for the selected filters.
+            No emails sent yet.
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid #e8e0d4", background: "#faf8f5" }}>
-                {["Type", "Email", "Recipient", "Sent", "Opened", "Clicked"].map((h) => (
+                {["Type", "Email", "Recipient", "Sent", "Opened", "Clicked", ""].map((h, i) => (
                   <th
-                    key={h}
+                    key={i}
                     style={{
                       padding: "10px 16px",
                       fontSize: 11,
@@ -289,15 +253,19 @@ export default function EmailStatusTab() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((rec, i) => {
+              {records.map((rec, i) => {
                 const evts = eventMap[rec.resend_message_id] ?? {};
                 const tc = TYPE_COLORS[rec.type];
+                const rowKey = `${rec.type}:${rec.id}`;
+                const isDeleting = deleting === rowKey;
                 return (
                   <tr
-                    key={`${rec.type}-${rec.id}`}
+                    key={rowKey}
                     style={{
-                      borderBottom: i < filtered.length - 1 ? "1px solid #f0ece6" : "none",
+                      borderBottom: i < records.length - 1 ? "1px solid #f0ece6" : "none",
                       background: i % 2 === 0 ? "#fff" : "#faf8f5",
+                      opacity: isDeleting ? 0.4 : 1,
+                      transition: "opacity 0.15s",
                     }}
                   >
                     {/* Type */}
@@ -379,6 +347,29 @@ export default function EmailStatusTab() {
                         <span style={{ fontSize: 12, color: "#c0b8b0" }}>—</span>
                       )}
                     </td>
+                    {/* Delete */}
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                      <button
+                        onClick={() => handleDelete(rec.type, rec.id)}
+                        disabled={isDeleting}
+                        title="Remove from log"
+                        style={{
+                          background: "none",
+                          border: "none",
+                          cursor: isDeleting ? "not-allowed" : "pointer",
+                          color: "#c0b8b0",
+                          fontSize: 16,
+                          lineHeight: 1,
+                          padding: "2px 6px",
+                          borderRadius: 4,
+                          transition: "color 0.15s",
+                        }}
+                        onMouseEnter={(e) => { if (!isDeleting) (e.currentTarget as HTMLButtonElement).style.color = "#c0704e"; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#c0b8b0"; }}
+                      >
+                        ×
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -388,7 +379,7 @@ export default function EmailStatusTab() {
       </div>
 
       <div style={{ fontSize: 11, color: "#c0b8b0", marginTop: 12, textAlign: "right" }}>
-        Showing {filtered.length} of {records.length} emails · Open/click data from Resend webhooks
+        {records.length} email{records.length !== 1 ? "s" : ""} · Open/click data from Resend webhooks
       </div>
     </div>
   );
