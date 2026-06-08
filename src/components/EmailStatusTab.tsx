@@ -61,17 +61,16 @@ export default function EmailStatusTab() {
       sb
         .from("invoices")
         .select("id, invoice_number, to_email, to_name, sent_at, resend_message_id")
-        .not("resend_message_id", "is", null)
+        .not("sent_at", "is", null)
         .order("sent_at", { ascending: false }),
       sb
         .from("paystub_snapshots")
-        .select("id, full_name, email_sent_to, sent_at, resend_message_id, pay_period_label")
-        .not("resend_message_id", "is", null)
-        .order("sent_at", { ascending: false }),
+        .select("id, full_name, email_sent_to, created_at, resend_message_id, pay_period_label")
+        .order("created_at", { ascending: false }),
       sb
         .from("broadcasts")
         .select("id, title, created_at, resend_message_id")
-        .not("resend_message_id", "is", null)
+        .eq("status", "published")
         .order("created_at", { ascending: false }),
       sb
         .from("email_events")
@@ -88,7 +87,7 @@ export default function EmailStatusTab() {
       to_email: string | null;
       to_name: string | null;
       sent_at: string | null;
-      resend_message_id: string;
+      resend_message_id: string | null;
     }[]) {
       if (!inv.sent_at) continue;
       unified.push({
@@ -98,7 +97,7 @@ export default function EmailStatusTab() {
         sublabel: inv.to_name ?? undefined,
         recipient: inv.to_email ?? "—",
         sent_at: inv.sent_at,
-        resend_message_id: inv.resend_message_id,
+        resend_message_id: inv.resend_message_id ?? "",
       });
     }
 
@@ -106,19 +105,18 @@ export default function EmailStatusTab() {
       id: string;
       full_name: string;
       email_sent_to: string | null;
-      sent_at: string | null;
-      resend_message_id: string;
+      created_at: string;
+      resend_message_id: string | null;
       pay_period_label: string | null;
     }[]) {
-      if (!ps.sent_at) continue;
       unified.push({
         id: ps.id,
         type: "paystub",
         label: ps.full_name,
         sublabel: ps.pay_period_label ?? undefined,
         recipient: ps.email_sent_to ?? "—",
-        sent_at: ps.sent_at,
-        resend_message_id: ps.resend_message_id,
+        sent_at: ps.created_at,
+        resend_message_id: ps.resend_message_id ?? "",
       });
     }
 
@@ -126,7 +124,7 @@ export default function EmailStatusTab() {
       id: string;
       title: string;
       created_at: string;
-      resend_message_id: string;
+      resend_message_id: string | null;
     }[]) {
       unified.push({
         id: bc.id,
@@ -134,7 +132,7 @@ export default function EmailStatusTab() {
         label: bc.title,
         recipient: "Team",
         sent_at: bc.created_at,
-        resend_message_id: bc.resend_message_id,
+        resend_message_id: bc.resend_message_id ?? "",
       });
     }
 
