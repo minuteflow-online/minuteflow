@@ -2,10 +2,14 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { resetPassword } from "@/app/actions/auth";
 
-export default function ForgotPasswordPage() {
+function ForgotPasswordForm() {
   const [state, formAction, pending] = useActionState(resetPassword, null);
+  const searchParams = useSearchParams();
+  const urlError = searchParams.get("error");
 
   return (
     <>
@@ -33,9 +37,9 @@ export default function ForgotPasswordPage() {
       ) : (
         <>
           <form action={formAction} className="space-y-4">
-            {state?.error && (
+            {(state?.error || urlError) && (
               <div className="rounded-md bg-terracotta-soft px-3 py-2 text-sm text-terracotta">
-                {state.error}
+                {state?.error || urlError}
               </div>
             )}
 
@@ -76,5 +80,13 @@ export default function ForgotPasswordPage() {
         </>
       )}
     </>
+  );
+}
+
+export default function ForgotPasswordPage() {
+  return (
+    <Suspense>
+      <ForgotPasswordForm />
+    </Suspense>
   );
 }
