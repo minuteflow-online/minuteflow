@@ -92,6 +92,8 @@ export async function POST(request: Request) {
       to: [snap.email_sent_to],
       subject: `Your MinuteFlow Paystub — ${snap.pay_period_label} (Resent)`,
       html,
+      open_tracking: true,
+      click_tracking: true,
     }),
   });
 
@@ -99,6 +101,17 @@ export async function POST(request: Request) {
     const err = await resendRes.text();
     return Response.json({ error: `Failed to send email: ${err}` }, { status: 500 });
   }
+
+  // Update snapshot with latest resend message ID
+  try {
+    const resendData = await resendRes.json() as { id?: string };
+    if (resendData.id) {
+      await adminClient
+        .from("paystub_snapshots")
+        .update({ resend_message_id: resendData.id })
+        .eq("id", snapshot_id);
+    }
+  } catch { /* non-fatal */ }
 
   return Response.json({ success: true, sentTo: snap.email_sent_to });
 }

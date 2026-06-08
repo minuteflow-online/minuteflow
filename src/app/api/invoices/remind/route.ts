@@ -86,6 +86,8 @@ export async function POST(request: Request) {
       ...(invoice.from_email ? { reply_to: invoice.from_email } : {}),
       subject: `Gentle Reminder: Invoice ${invoice.invoice_number} — ${invoice.from_name || "Toni Colina"}`,
       html,
+      open_tracking: true,
+      click_tracking: true,
     }),
   });
 
@@ -96,6 +98,17 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+
+  // Update invoice with latest resend message ID (from the reminder send)
+  try {
+    const resendData = await resendRes.json() as { id?: string };
+    if (resendData.id) {
+      await serviceClient
+        .from("invoices")
+        .update({ resend_message_id: resendData.id })
+        .eq("id", invoice_id);
+    }
+  } catch { /* non-fatal */ }
 
   return Response.json({ success: true });
 }

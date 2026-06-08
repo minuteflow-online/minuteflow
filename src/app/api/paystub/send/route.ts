@@ -213,6 +213,7 @@ export async function POST(request: Request) {
   const resendKey = process.env.RESEND_API_KEY;
   let emailSent = false;
   let emailError: string | null = null;
+  let paystubResendMessageId: string | null = null;
 
   if (!resendKey) {
     emailError = "Resend API key not configured";
@@ -257,11 +258,19 @@ export async function POST(request: Request) {
         to: [vaEmail],
         subject: `Your MinuteFlow Paystub — ${periodLabel}`,
         html,
+        open_tracking: true,
+        click_tracking: true,
       }),
     });
 
     if (resendRes.ok) {
       emailSent = true;
+      try {
+        const resendData = await resendRes.json() as { id?: string };
+        if (resendData.id) {
+          paystubResendMessageId = resendData.id;
+        }
+      } catch { /* non-fatal */ }
     } else {
       const resendErr = await resendRes.text();
       emailError = `Failed to send email: ${resendErr}`;
@@ -297,6 +306,7 @@ export async function POST(request: Request) {
       company_name: company_name || "MinuteFlow",
       personal_message: personal_message ?? null,
       created_by: user.id,
+      resend_message_id: paystubResendMessageId,
     });
   } catch (snapErr) {
     // Non-fatal — log but don't fail the response

@@ -115,10 +115,12 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "MinuteFlow <noreply@minuteflow.click>",
+      from: "Toni Colina <noreply@minuteflow.click>",
       to: [email.toLowerCase()],
       subject: "You're invited to MinuteFlow",
       html,
+      open_tracking: true,
+      click_tracking: true,
     }),
   });
 
@@ -131,6 +133,19 @@ export async function POST(request: Request) {
       warning: "Invite created but email failed to send. Copy the link manually.",
       inviteUrl,
     });
+  }
+
+  // Store the Resend message ID so we can track opens/clicks
+  try {
+    const resendData = await resendRes.json() as { id?: string };
+    if (resendData.id) {
+      await adminClient
+        .from("invitations")
+        .update({ resend_message_id: resendData.id })
+        .eq("code", code);
+    }
+  } catch {
+    // Non-fatal
   }
 
   return Response.json({ success: true, message: `Invite sent to ${email}` });

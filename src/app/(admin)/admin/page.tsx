@@ -38,6 +38,7 @@ import VaFeedbackAdminTab from "@/components/VaFeedbackAdminTab";
 import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
 import VaTokensAdminTab from "@/components/VaTokensAdminTab";
 import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
+import VaInvitesAdminTab from "@/components/VaInvitesAdminTab";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -97,7 +98,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts";
+type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "invitations";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -281,6 +282,16 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: "invitations",
+    label: "Invitations",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+        <polyline points="22,6 12,13 2,6" />
+      </svg>
+    ),
+  },
+  {
     id: "password",
     label: "Change Password",
     icon: (
@@ -313,7 +324,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "team",
     label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "invitations"] as AdminTab[]).includes(t.id)),
   },
   {
     id: "billing",
@@ -1219,6 +1230,7 @@ export default function AdminPage() {
                 {activeTab === "va_reviews" && "Create and publish performance reviews"}
                 {activeTab === "va_tokens" && "Award tokens and track daily ratings"}
                 {activeTab === "va_broadcasts" && "Send broadcasts, memos, and announcements to your team"}
+                {activeTab === "invitations" && "Send invites, track who opened and clicked"}
               </p>
             </div>
             {activeTab === "overview" && (
@@ -1360,6 +1372,9 @@ export default function AdminPage() {
           )}
           {activeTab === "va_broadcasts" && (
             <VaBroadcastsAdminTab />
+          )}
+          {activeTab === "invitations" && (
+            <VaInvitesAdminTab />
           )}
 
           {activeTab === "password" && (

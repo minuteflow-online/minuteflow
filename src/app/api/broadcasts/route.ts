@@ -174,7 +174,7 @@ async function sendBroadcastEmail(
   const subject = `${label}: ${broadcast.title}`;
   const htmlBody = buildEmailHtml(broadcast);
 
-  await fetch("https://api.resend.com/emails", {
+  const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${RESEND_API_KEY}`,
@@ -185,8 +185,23 @@ async function sendBroadcastEmail(
       to: emails,
       subject,
       html: htmlBody,
+      open_tracking: true,
+      click_tracking: true,
     }),
   });
+
+  // Store resend message ID on the broadcast for tracking
+  if (res.ok) {
+    try {
+      const data = await res.json() as { id?: string };
+      if (data.id) {
+        await adminClient
+          .from("broadcasts")
+          .update({ resend_message_id: data.id })
+          .eq("id", broadcast.id);
+      }
+    } catch { /* non-fatal */ }
+  }
 }
 
 /** GET: List broadcasts visible to the current user */

@@ -83,6 +83,8 @@ export async function POST(request: Request) {
       ...(invoice.from_email ? { reply_to: invoice.from_email } : {}),
       subject: `Invoice ${invoice.invoice_number} — ${invoice.from_name || "Toni Colina"}`,
       html,
+      open_tracking: true,
+      click_tracking: true,
     }),
   });
 
@@ -94,12 +96,20 @@ export async function POST(request: Request) {
     );
   }
 
+  // Capture message ID for tracking
+  let invoiceResendMessageId: string | null = null;
+  try {
+    const resendData = await resendRes.json() as { id?: string };
+    if (resendData.id) invoiceResendMessageId = resendData.id;
+  } catch { /* non-fatal */ }
+
   // Update invoice status to sent
   await serviceClient
     .from("invoices")
     .update({
       status: invoice.status === "draft" ? "sent" : invoice.status,
       sent_at: new Date().toISOString(),
+      resend_message_id: invoiceResendMessageId,
     })
     .eq("id", invoice_id);
 
