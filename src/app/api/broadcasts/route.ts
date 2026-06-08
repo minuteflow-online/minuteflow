@@ -181,7 +181,7 @@ async function sendBroadcastEmail(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "MinuteFlow <noreply@minuteflow.click>",
+      from: "Toni Colina <noreply@minuteflow.click>",
       to: emails,
       subject,
       html: htmlBody,

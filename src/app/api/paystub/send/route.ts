@@ -254,7 +254,7 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "MinuteFlow <noreply@minuteflow.click>",
+        from: "Toni Colina <noreply@minuteflow.click>",
         to: [vaEmail],
         subject: `Your MinuteFlow Paystub — ${periodLabel}`,
         html,

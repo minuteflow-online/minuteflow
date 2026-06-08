@@ -88,7 +88,7 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "MinuteFlow <noreply@minuteflow.click>",
+      from: "Toni Colina <noreply@minuteflow.click>",
       to: [snap.email_sent_to],
       subject: `Your MinuteFlow Paystub — ${snap.pay_period_label} (Resent)`,
       html,
