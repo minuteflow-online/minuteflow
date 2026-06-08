@@ -287,15 +287,16 @@ export default function VaBroadcastsAdminTab() {
   };
 
   // Build recipients array from current form state
-  const buildRecipients = (): { type: string; value: string }[] => {
+  // Returns null if validation fails (caller should show an error)
+  const buildRecipients = (): { type: string; value: string }[] | null => {
     if (recipientMode === "all") return [{ type: "all", value: "all" }];
     if (recipientMode === "role_va") return [{ type: "role", value: "va" }];
     if (recipientMode === "employment_type") {
-      if (selectedEmpTypes.length === 0) return [{ type: "all", value: "all" }];
+      if (selectedEmpTypes.length === 0) return null; // must pick at least one
       return selectedEmpTypes.map((t) => ({ type: "employment_type", value: t }));
     }
     if (recipientMode === "individual") {
-      if (selectedIndividuals.length === 0) return [{ type: "all", value: "all" }];
+      if (selectedIndividuals.length === 0) return null; // must pick at least one
       return selectedIndividuals.map((id) => ({ type: "individual", value: id }));
     }
     return [{ type: "all", value: "all" }];
@@ -322,11 +323,23 @@ export default function VaBroadcastsAdminTab() {
         status = "draft";
       }
 
+      const builtRecipients = buildRecipients();
+      if (!builtRecipients) {
+        setSaveMsg({
+          type: "err",
+          text: recipientMode === "individual"
+            ? "Please select at least one individual."
+            : "Please select at least one employment type.",
+        });
+        setSaving(false);
+        return;
+      }
+
       const payload = {
         title: title.trim(),
         body: body.trim(),
         category,
-        recipients: buildRecipients(),
+        recipients: builtRecipients,
         magic_word: addMagicWord && magicWord.trim() ? magicWord.trim() : null,
         require_word: addMagicWord && !!magicWord.trim(),
         status,
@@ -758,7 +771,13 @@ export default function VaBroadcastsAdminTab() {
           <div className="flex items-center gap-3 mt-5 flex-wrap">
             <button
               onClick={() => handleSave(false)}
-              disabled={saving || !title.trim() || !body.trim()}
+              disabled={
+                saving ||
+                !title.trim() ||
+                !body.trim() ||
+                (recipientMode === "individual" && selectedIndividuals.length === 0) ||
+                (recipientMode === "employment_type" && selectedEmpTypes.length === 0)
+              }
               className="rounded-lg bg-terracotta px-5 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving
