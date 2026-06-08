@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
 
 /* ── Types ────────────────────────────────────────────────── */
 
@@ -55,7 +54,6 @@ function getStatus(invite: Invitation): { label: string; color: string } {
 /* ── Component ───────────────────────────────────────────── */
 
 export default function VaInvitesAdminTab() {
-  const supabase = createClient();
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [events, setEvents] = useState<EmailEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,32 +67,18 @@ export default function VaInvitesAdminTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    // Fetch all invitations ordered by newest first
-    const { data: invites } = await supabase
-      .from("invitations")
-      .select("id, email, created_at, expires_at, used_at, employment_type, requires_extension, resend_message_id, code")
-      .order("created_at", { ascending: false });
-
-    setInvitations((invites ?? []) as Invitation[]);
-
-    // Fetch email events for all invitations that have a resend_message_id
-    const messageIds = (invites ?? [])
-      .filter((i) => i.resend_message_id)
-      .map((i) => i.resend_message_id as string);
-
-    if (messageIds.length > 0) {
-      const { data: evts } = await supabase
-        .from("email_events")
-        .select("resend_message_id, event_type, created_at")
-        .in("resend_message_id", messageIds)
-        .order("created_at", { ascending: true });
-      setEvents((evts ?? []) as EmailEvent[]);
-    } else {
-      setEvents([]);
+    try {
+      const res = await fetch("/api/invitations");
+      if (res.ok) {
+        const data = await res.json() as { invitations: Invitation[]; events: EmailEvent[] };
+        setInvitations(data.invitations ?? []);
+        setEvents(data.events ?? []);
+      }
+    } catch {
+      // silently fail — table stays empty
     }
-
     setLoading(false);
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     load();

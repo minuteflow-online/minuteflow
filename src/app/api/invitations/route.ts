@@ -154,44 +154,72 @@ export async function POST(request: Request) {
 }
 
 /**
- * GET /api/invitations?code=XXX
- * Public — validates an invite code. Returns { valid, email, requires_extension } or { valid: false, reason }.
+ * GET /api/invitations?code=XXX  — public, validates an invite code
+ * GET /api/invitations            — admin only, lists all invitations + email events
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
 
-  if (!code) {
-    return Response.json({ valid: false, reason: "No code provided" });
-  }
-
   const adminClient = makeAdminClient();
-  const now = new Date().toISOString();
 
-  const { data: invite, error } = await adminClient
+  // ── Code validation (public) ───────────────────────────────
+  if (code) {
+    const now = new Date().toISOString();
+
+    const { data: invite, error } = await adminClient
+      .from("invitations")
+      .select("id, email, expires_at, used_at, employment_type, requires_extension")
+      .eq("code", code)
+      .single();
+
+    if (error || !invite) {
+      return Response.json({ valid: false, reason: "Invalid invite code" });
+    }
+
+    if (invite.used_at) {
+      return Response.json({ valid: false, reason: "This invite has already been used" });
+    }
+
+    if (invite.expires_at < now) {
+      return Response.json({ valid: false, reason: "This invite has expired" });
+    }
+
+    return Response.json({
+      valid: true,
+      email: invite.email,
+      employment_type: invite.employment_type,
+      requires_extension: invite.requires_extension,
+    });
+  }
+
+  // ── Admin list (authenticated admin only) ─────────────────
+  const authResult = await verifyAdmin();
+  if (authResult instanceof Response) return authResult;
+
+  const { data: invitations } = await adminClient
     .from("invitations")
-    .select("id, email, expires_at, used_at, employment_type, requires_extension")
-    .eq("code", code)
-    .single();
+    .select("id, email, created_at, expires_at, used_at, employment_type, requires_extension, resend_message_id, code")
+    .order("created_at", { ascending: false });
 
-  if (error || !invite) {
-    return Response.json({ valid: false, reason: "Invalid invite code" });
+  const allInvites = invitations ?? [];
+
+  // Fetch email events for invites that have a resend_message_id
+  const messageIds = allInvites
+    .filter((i) => i.resend_message_id)
+    .map((i) => i.resend_message_id as string);
+
+  let events: { resend_message_id: string; event_type: string; created_at: string }[] = [];
+  if (messageIds.length > 0) {
+    const { data: evts } = await adminClient
+      .from("email_events")
+      .select("resend_message_id, event_type, created_at")
+      .in("resend_message_id", messageIds)
+      .order("created_at", { ascending: true });
+    events = (evts ?? []) as typeof events;
   }
 
-  if (invite.used_at) {
-    return Response.json({ valid: false, reason: "This invite has already been used" });
-  }
-
-  if (invite.expires_at < now) {
-    return Response.json({ valid: false, reason: "This invite has expired" });
-  }
-
-  return Response.json({
-    valid: true,
-    email: invite.email,
-    employment_type: invite.employment_type,
-    requires_extension: invite.requires_extension,
-  });
+  return Response.json({ invitations: allInvites, events });
 }
 
 /* ── Email HTML Builder ───────────────────────────────────── */
