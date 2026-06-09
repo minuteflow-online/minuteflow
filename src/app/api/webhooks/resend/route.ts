@@ -137,5 +137,31 @@ export async function POST(request: Request) {
     return Response.json({ error: insertError.message }, { status: 500 });
   }
 
+  // Notify Toni when an email is opened or clicked (fire-and-forget)
+  if (process.env.RESEND_API_KEY) {
+    const actionLabel = eventType === "email.opened" ? "opened" : "clicked a link in";
+    const typeLabel = emailType ?? "email";
+    const subject = `📬 ${recipientEmail ?? "A recipient"} ${actionLabel} your ${typeLabel}`;
+    const html = `
+      <div style="font-family:sans-serif; font-size:15px; color:#333; max-width:480px; margin:0 auto; padding:24px;">
+        <p style="margin:0 0 12px;"><strong>${recipientEmail ?? "Someone"}</strong> just <strong>${actionLabel}</strong> a MinuteFlow <strong>${typeLabel}</strong> email.</p>
+        ${referenceId ? `<p style="margin:0 0 12px; color:#666; font-size:13px;">Reference ID: ${referenceId}</p>` : ""}
+        <p style="margin:0; color:#999; font-size:12px;">MinuteFlow notification</p>
+      </div>`;
+    fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "MinuteFlow <noreply@minuteflow.click>",
+        to: ["minuteflow.online@gmail.com"],
+        subject,
+        html,
+      }),
+    }).catch(() => {/* non-fatal */});
+  }
+
   return Response.json({ ok: true });
 }

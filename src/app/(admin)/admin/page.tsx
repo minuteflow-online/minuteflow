@@ -7184,6 +7184,20 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       .order("payment_date", { ascending: false });
     setInvoicePayments((payments ?? []) as InvoicePayment[]);
 
+    // Send receipt email to client (fire-and-forget)
+    if (selectedInvoice.to_email) {
+      fetch("/api/invoices/send-receipt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceId: selectedInvoice.id,
+          amountPaid: amt,
+          newAmountPaid,
+          newStatus,
+        }),
+      }).catch(() => {/* non-fatal */});
+    }
+
     // Reset form
     setPaymentAmount("");
     setPaymentDate(new Date().toISOString().split("T")[0]);
