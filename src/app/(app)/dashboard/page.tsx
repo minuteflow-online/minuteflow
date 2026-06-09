@@ -1265,6 +1265,48 @@ export default function DashboardPage() {
       setPreBreakTask(null);
     }
 
+    // Safety net: close ANY open non-break task logs at DB level.
+    // stopCurrentTask() bails if activeTask.logId is empty (e.g. Clock In Planning log
+    // whose insert returned null). This catches those orphaned Planning logs.
+    {
+      const { data: openLogs } = await supabase
+        .from("time_logs")
+        .select("id, start_time")
+        .eq("user_id", userId)
+        .is("end_time", null)
+        .neq("category", "Break")
+        .neq("category", "Clock Out");
+
+      if (openLogs && openLogs.length > 0) {
+        for (const openLog of openLogs) {
+          const logStartMs = openLog.start_time
+            ? new Date(openLog.start_time).getTime()
+            : Date.now();
+          const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+          await supabase
+            .from("time_logs")
+            .update({ end_time: now, duration_ms: logDurationMs })
+            .eq("id", openLog.id);
+        }
+        setTimeLogs((prev) =>
+          prev.map((log) => {
+            const match = openLogs.find((o) => o.id === log.id);
+            if (match && !log.end_time) {
+              const logStartMs = match.start_time
+                ? new Date(match.start_time).getTime()
+                : Date.now();
+              return {
+                ...log,
+                end_time: now,
+                duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
+              } as TimeLog;
+            }
+            return log;
+          })
+        );
+      }
+    }
+
     // Create a break time log
     const { data: logData } = await supabase
       .from("time_logs")
@@ -1458,6 +1500,48 @@ export default function DashboardPage() {
     // Stop current task if any
     if (activeTask && !activeTask.isBreak) {
       await stopCurrentTask();
+    }
+
+    // Safety net: close ANY open non-break task logs at DB level.
+    // stopCurrentTask() bails if activeTask.logId is empty (e.g. Clock In Planning log
+    // whose insert returned null). This catches those orphaned Planning logs.
+    {
+      const { data: openLogs } = await supabase
+        .from("time_logs")
+        .select("id, start_time")
+        .eq("user_id", userId)
+        .is("end_time", null)
+        .neq("category", "Break")
+        .neq("category", "Clock Out");
+
+      if (openLogs && openLogs.length > 0) {
+        for (const openLog of openLogs) {
+          const logStartMs = openLog.start_time
+            ? new Date(openLog.start_time).getTime()
+            : Date.now();
+          const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+          await supabase
+            .from("time_logs")
+            .update({ end_time: now, duration_ms: logDurationMs })
+            .eq("id", openLog.id);
+        }
+        setTimeLogs((prev) =>
+          prev.map((log) => {
+            const match = openLogs.find((o) => o.id === log.id);
+            if (match && !log.end_time) {
+              const logStartMs = match.start_time
+                ? new Date(match.start_time).getTime()
+                : Date.now();
+              return {
+                ...log,
+                end_time: now,
+                duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
+              } as TimeLog;
+            }
+            return log;
+          })
+        );
+      }
     }
 
     const isBillable = log.category !== "Personal";
