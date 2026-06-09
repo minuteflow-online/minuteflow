@@ -19,7 +19,7 @@ export async function GET(
 
   const { data: invoice, error } = await serviceClient
     .from("invoices")
-    .select("id, invoice_number, to_name, to_email, total, currency, status, amount_paid, allow_custom_amount, show_all_installments, payment_schedule")
+    .select("id, invoice_number, to_name, to_email, total, previous_balance, currency, status, amount_paid, allow_custom_amount, show_all_installments, payment_schedule")
     .eq("share_token", token)
     .single();
 
@@ -43,7 +43,8 @@ export async function GET(
     .single();
 
   const amountPaid = (payments ?? []).reduce((sum, p) => sum + Number(p.amount), 0);
-  const balanceDue = Math.max(0, Number(invoice.total) - amountPaid);
+  const prevBalance = Number(invoice.previous_balance || 0);
+  const balanceDue = Math.max(0, Number(invoice.total) + prevBalance - amountPaid);
 
   return Response.json({
     invoice: {
@@ -89,7 +90,7 @@ export async function POST(
   // Load invoice
   const { data: invoice, error: invError } = await serviceClient
     .from("invoices")
-    .select("id, invoice_number, to_name, to_email, total, currency, status, amount_paid, allow_custom_amount, payment_schedule")
+    .select("id, invoice_number, to_name, to_email, total, previous_balance, currency, status, amount_paid, allow_custom_amount, payment_schedule")
     .eq("share_token", token)
     .single();
 
@@ -103,7 +104,9 @@ export async function POST(
     .eq("invoice_id", invoice.id);
 
   const alreadyPaid = (existingPayments ?? []).reduce((s, p) => s + Number(p.amount), 0);
-  const balanceDue = Math.max(0, Number(invoice.total) - alreadyPaid);
+  const prevBalancePost = Number(invoice.previous_balance || 0);
+  const grandTotal = Number(invoice.total) + prevBalancePost;
+  const balanceDue = Math.max(0, grandTotal - alreadyPaid);
 
   if (balanceDue <= 0) {
     return Response.json({ error: "This invoice has already been paid in full" }, { status: 400 });
@@ -197,7 +200,7 @@ export async function POST(
 
   // Update invoice status
   const newAmountPaid = alreadyPaid + payAmount;
-  const newStatus = newAmountPaid >= Number(invoice.total) - 0.01 ? "paid" : "partially_paid";
+  const newStatus = newAmountPaid >= grandTotal - 0.01 ? "paid" : "partially_paid";
 
   await serviceClient
     .from("invoices")
@@ -211,13 +214,13 @@ export async function POST(
   // Send receipt email to client (fire-and-forget)
   if (invoice.to_email && process.env.RESEND_API_KEY) {
     const receiptUrl = squarePayment?.receipt_url ?? null;
-    const balanceRemaining = Math.max(0, Number(invoice.total) - newAmountPaid);
+    const balanceRemaining = Math.max(0, grandTotal - newAmountPaid);
     const isPaid = newStatus === "paid";
     const receiptHtml = buildReceiptEmail({
       invoiceNumber: invoice.invoice_number,
       toName: invoice.to_name,
       amountPaid: payAmount,
-      total: Number(invoice.total),
+      total: grandTotal,
       balanceRemaining,
       isPaid,
       receiptUrl,
@@ -244,7 +247,7 @@ export async function POST(
     amountPaid: payAmount,
     totalCharged: chargeAmount,
     newStatus,
-    balanceRemaining: Math.max(0, Number(invoice.total) - newAmountPaid),
+    balanceRemaining: Math.max(0, grandTotal - newAmountPaid),
   });
 }
 
