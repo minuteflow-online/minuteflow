@@ -6432,6 +6432,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editPaymentLink, setEditPaymentLink] = useState("");
   const [editFromName, setEditFromName] = useState("");
   const [editFromPhone, setEditFromPhone] = useState("");
+  const [editDba, setEditDba] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [editDueDate, setEditDueDate] = useState("");
   const [editReminderEnabled, setEditReminderEnabled] = useState(false);
@@ -6456,6 +6457,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editOpenFilterPanel, setEditOpenFilterPanel] = useState<string | null>(null);
   const [editFilterSearch, setEditFilterSearch] = useState("");
   const [editCustomCell, setEditCustomCell] = useState<{ idx: number; field: "desc" | "project" } | null>(null);
+  const [editCustomItems, setEditCustomItems] = useState<Array<{ id: string; description: string; amount: string }>>([]);
 
   // All project_tags from DB (for Deliverables dropdown)
   const [allProjectTags, setAllProjectTags] = useState<string[]>([]);
@@ -7418,8 +7420,20 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       payment_template_id: editTemplateId,
     };
     if (editDueDate) updateData.due_date = editDueDate;
+    // Save custom line items for custom invoices
+    if (selectedInvoice.invoice_type === "custom") {
+      updateData.custom_line_items = JSON.stringify(
+        editCustomItems.filter(i => i.description).map(i => ({ description: i.description, amount: parseFloat(i.amount) || 0 }))
+      );
+    }
 
     await supabase.from("invoices").update(updateData).eq("id", selectedInvoice.id);
+
+    // Save DBA to org settings if present
+    if (orgSettings) {
+      await supabase.from("organization_settings").update({ dba: editDba || null }).eq("id", orgSettings.id);
+      setOrgSettings(prev => prev ? { ...prev, dba: editDba || null } : prev);
+    }
 
     // Save line item changes
     for (const li of editLineItemsState) {
@@ -8911,6 +8925,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setEditToEmail(inv.to_email ?? "");
                   setEditToPhone(inv.to_phone ?? "");
                   setEditToAddress(inv.to_address ?? "");
+                  setEditDba(orgSettings?.dba ?? "");
+                  // For custom invoices, populate editable line items from JSON
+                  if (inv.invoice_type === "custom" && inv.custom_line_items) {
+                    try {
+                      const parsed = JSON.parse(inv.custom_line_items) as Array<{ description: string; amount: number }>;
+                      setEditCustomItems(parsed.map((item, i) => ({ id: `eci-${i}`, description: item.description, amount: String(item.amount) })));
+                    } catch { setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]); }
+                  } else if (inv.invoice_type === "custom") {
+                    setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]);
+                  }
                 }
               }}
               className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${editingInvoice ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}
@@ -9085,45 +9109,121 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           <div className="mb-4 rounded-xl border border-terracotta/30 bg-white p-5">
             <h4 className="mb-4 font-serif text-[15px] font-bold text-espresso">Edit Invoice</h4>
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Hourly Rate ($)</label>
-                <input type="number" step="0.01" min="0" value={rateAmount}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setRateAmount(v);
-                    const rate = parseFloat(v) || 0;
-                    if (rate > 0) {
-                      const gross = editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0);
-                      const notBilled = parseFloat(hoursNotBilled) || 0;
-                      setEditSubtotal((gross * rate).toFixed(2));
-                      setEditAdjustment((notBilled * rate).toFixed(2));
-                    }
-                  }}
-                  placeholder="e.g. 25.00"
-                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Hours Not Billed</label>
-                <div className="flex gap-2">
-                  <input type="text" value={hoursNotBilledLabel} onChange={(e) => setHoursNotBilledLabel(e.target.value)}
-                    placeholder="Label (e.g. Volunteer)"
-                    className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
-                  <input type="number" step="0.01" min="0" value={hoursNotBilled}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setHoursNotBilled(v);
-                      const rate = parseFloat(rateAmount) || 0;
-                      if (rate > 0) {
-                        const gross = editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0);
-                        const notBilled = parseFloat(v) || 0;
-                        setEditSubtotal((gross * rate).toFixed(2));
-                        setEditAdjustment((notBilled * rate).toFixed(2));
-                      }
-                    }}
-                    placeholder="0.00"
-                    className="w-24 rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+              {inv.invoice_type !== "custom" && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Hourly Rate ($)</label>
+                    <input type="number" step="0.01" min="0" value={rateAmount}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setRateAmount(v);
+                        const rate = parseFloat(v) || 0;
+                        if (rate > 0) {
+                          const gross = editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0);
+                          const notBilled = parseFloat(hoursNotBilled) || 0;
+                          setEditSubtotal((gross * rate).toFixed(2));
+                          setEditAdjustment((notBilled * rate).toFixed(2));
+                        }
+                      }}
+                      placeholder="e.g. 25.00"
+                      className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Hours Not Billed</label>
+                    <div className="flex gap-2">
+                      <input type="text" value={hoursNotBilledLabel} onChange={(e) => setHoursNotBilledLabel(e.target.value)}
+                        placeholder="Label (e.g. Volunteer)"
+                        className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                      <input type="number" step="0.01" min="0" value={hoursNotBilled}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setHoursNotBilled(v);
+                          const rate = parseFloat(rateAmount) || 0;
+                          if (rate > 0) {
+                            const gross = editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0);
+                            const notBilled = parseFloat(v) || 0;
+                            setEditSubtotal((gross * rate).toFixed(2));
+                            setEditAdjustment((notBilled * rate).toFixed(2));
+                          }
+                        }}
+                        placeholder="0.00"
+                        className="w-24 rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+                    </div>
+                  </div>
+                </>
+              )}
+              {inv.invoice_type === "custom" && (
+                <div className="col-span-2">
+                  <div className="mb-2 flex items-center justify-between">
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-bark">Service / Task Items</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newItems = [...editCustomItems, { id: `eci-${Date.now()}`, description: "", amount: "" }];
+                        setEditCustomItems(newItems);
+                      }}
+                      className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                    >+ Add Item</button>
+                  </div>
+                  <div className="rounded-lg border border-sand overflow-hidden">
+                    <table className="w-full text-left text-[12px]">
+                      <thead>
+                        <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                          <th className="px-3 py-2.5">Description</th>
+                          <th className="px-3 py-2.5 text-right w-32">Amount ($)</th>
+                          <th className="px-3 py-2.5 w-10"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-parchment">
+                        {editCustomItems.map((item, idx) => (
+                          <tr key={item.id} className="hover:bg-parchment/20 transition-colors">
+                            <td className="px-3 py-2">
+                              <input
+                                type="text"
+                                value={item.description}
+                                onChange={(e) => setEditCustomItems(prev => prev.map((ci, i) => i === idx ? { ...ci, description: e.target.value } : ci))}
+                                placeholder="e.g. Social Media Management — May 2025"
+                                className="w-full bg-transparent text-[12px] text-espresso outline-none placeholder:text-stone border-b border-transparent hover:border-sand focus:border-terracotta transition-colors"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={item.amount}
+                                onChange={(e) => {
+                                  const updated = editCustomItems.map((ci, i) => i === idx ? { ...ci, amount: e.target.value } : ci);
+                                  setEditCustomItems(updated);
+                                  setEditSubtotal(updated.reduce((s, ci) => s + (parseFloat(ci.amount) || 0), 0).toFixed(2));
+                                }}
+                                placeholder="0.00"
+                                className="w-full bg-transparent text-right text-[12px] text-espresso outline-none placeholder:text-stone border-b border-transparent hover:border-sand focus:border-terracotta transition-colors"
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {editCustomItems.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = editCustomItems.filter((_, i) => i !== idx);
+                                    setEditCustomItems(updated);
+                                    setEditSubtotal(updated.reduce((s, ci) => s + (parseFloat(ci.amount) || 0), 0).toFixed(2));
+                                  }}
+                                  className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-amber-soft hover:text-amber cursor-pointer"
+                                >&times;</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-2 text-right text-[12px] font-semibold text-espresso">
+                    Total: {formatCurrency(editCustomItems.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))}
+                  </div>
                 </div>
-              </div>
+              )}
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Invoice Amount ($)</label>
                 <input type="number" step="0.01" min="0" value={editSubtotal} onChange={(e) => setEditSubtotal(e.target.value)}
@@ -9179,6 +9279,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Name</label>
                 <input type="text" value={editFromName} onChange={(e) => setEditFromName(e.target.value)}
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">DBA</label>
+                <input type="text" value={editDba} onChange={(e) => setEditDba(e.target.value)}
+                  placeholder="Trade name / DBA"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
               </div>
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Sender Phone</label>
@@ -9291,7 +9397,27 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               </div>
               {/* Bill To section */}
               <div className="col-span-2 pt-2 border-t border-sand">
-                <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-bark">Bill To Info</div>
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="text-[11px] font-semibold uppercase tracking-wider text-bark">Bill To Info</div>
+                  {inv.client_id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const c = clients.find(cl => cl.id === inv.client_id);
+                        if (c) {
+                          setEditToName(c.name ?? "");
+                          setEditToEmail(c.email ?? "");
+                          setEditToPhone(c.phone ?? "");
+                          const parts = [c.address, c.city, c.state, c.zip, c.country].filter(Boolean);
+                          setEditToAddress(parts.join(", "));
+                        }
+                      }}
+                      className="text-[11px] font-semibold text-terracotta hover:underline cursor-pointer"
+                    >
+                      ↺ Sync from client record
+                    </button>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="mb-1 block text-[10px] font-medium text-bark/70">Client Name</label>
@@ -9333,8 +9459,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </div>
         )}
 
-        {/* Edit Line Items (shown when editing) */}
-        {editingInvoice && (
+        {/* Edit Line Items (shown when editing timelog invoices only) */}
+        {editingInvoice && inv.invoice_type !== "custom" && (
           <div className="mb-4 rounded-xl border border-sand bg-white p-5">
             <div className="mb-3 flex items-center justify-between">
               <h4 className="font-serif text-[14px] font-bold text-espresso">
@@ -9802,7 +9928,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
                 // Hours items — only non-empty values
                 const hoursItems: BItem[] = [];
-                if (invoiceType !== "custom") {
+                if (inv.invoice_type !== "custom") {
                   if (inv.rate_amount != null) {
                     hoursItems.push({ label: "Rate per hr", value: `${formatCurrency(Number(inv.rate_amount))}/hr` });
                   }
