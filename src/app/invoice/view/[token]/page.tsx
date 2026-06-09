@@ -351,7 +351,7 @@ export default function PublicInvoicePage() {
                     href={`/invoice/pay/${token}?mode=full`}
                     className="inline-block bg-[#2d6a4f] text-white text-[12px] font-bold px-4 py-1.5 rounded hover:opacity-90 transition-opacity"
                   >
-                    Pay in Full
+                    Pay in Full with Card
                   </a>
                   {invoice.payment_schedule && invoice.payment_schedule.length > 0 && (
                     <a
@@ -429,7 +429,7 @@ export default function PublicInvoicePage() {
 
                 // Money cells — only non-empty values
                 const moneyItems: BItem[] = [
-                  { label: "Gross Amount", value: formatCurrency(Number(invoice.subtotal), invoice.currency) },
+                  { label: "Billing Month's Total", value: formatCurrency(Number(invoice.subtotal), invoice.currency) },
                   ...(reimbTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(reimbTotal, invoice.currency) }] : []),
                   ...(hasAdjustment ? [
                     { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
