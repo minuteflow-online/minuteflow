@@ -301,13 +301,13 @@ function buildInvoiceEmail(
             ${invoice.payment_info ? `<div style="font-size:11px; color:#5a4000; white-space:pre-line; text-align:right; margin-bottom:8px;">${invoice.payment_info}</div>` : ""}
             ${squareSplitLink ? `
             <div style="margin-top:4px;">
-              <a href="${squareFullLink}" style="display:inline-block; background:#c0704e; color:#ffffff; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Pay in Full with Card</a>
+              <a href="${squareFullLink}" style="display:inline-block; background:#2d6a4f; color:#ffffff; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Pay in Full with Card</a>
               <div style="height:6px;"></div>
-              <a href="${squareSplitLink}" style="display:inline-block; background:#2d1a00; color:#f5c842; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Split Payments</a>
+              <a href="${squareSplitLink}" style="display:inline-block; background:#2d6a4f; color:#ffffff; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Split Payments</a>
               <div style="font-size:9px; color:#5a4000; margin-top:3px;">Secure payment via Square</div>
             </div>` : squareFullLink ? `
             <div style="margin-top:4px;">
-              <a href="${squareFullLink}" style="display:inline-block; background:#c0704e; color:#ffffff; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Pay in Full with Card</a>
+              <a href="${squareFullLink}" style="display:inline-block; background:#2d6a4f; color:#ffffff; font-size:12px; font-weight:700; padding:8px 16px; border-radius:6px; text-decoration:none;">Pay in Full with Card</a>
               <div style="font-size:9px; color:#5a4000; margin-top:3px;">Secure payment via Square</div>
             </div>` : invoice.payment_link ? `
             <div style="margin-top:4px;">
