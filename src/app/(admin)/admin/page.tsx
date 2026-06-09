@@ -6607,7 +6607,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     let overdue = 0;
     invoices.forEach((inv) => {
       if (inv.status === "trash") return; // trash excluded from all totals
-      totalInvoiced += Number(inv.total);
+      if (["sent", "paid", "partially_paid", "overdue"].includes(inv.status)) {
+        totalInvoiced += Number(inv.total);
+      }
       if (inv.status === "sent") outstanding += Number(inv.total);
       if (inv.status === "partially_paid") outstanding += Number(inv.total) - Number(inv.amount_paid || 0);
       if (inv.status === "paid") paid += Number(inv.total);
@@ -7552,6 +7554,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       .from("invoices")
       .update({ status: "trash" as const })
       .eq("id", invoice.id);
+    fetchInvoices();
+  };
+
+  const handleEmptyTrash = async () => {
+    if (!confirm("Permanently delete all trashed invoices? This cannot be undone.")) return;
+    await supabase.from("invoices").delete().eq("status", "trash");
     fetchInvoices();
   };
 
@@ -10067,7 +10075,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     <>
       {/* Summary Stats */}
       <div className="mb-6 grid grid-cols-4 gap-4">
-        <StatCard value={formatCurrency(summaryStats.totalInvoiced)} label="Total Invoiced" sub={`${invoices.length} invoices`} color="terracotta" />
+        <StatCard value={formatCurrency(summaryStats.totalInvoiced)} label="Total Invoiced" sub={`${invoices.filter((i) => i.status !== "trash").length} invoices`} color="terracotta" />
         <StatCard value={formatCurrency(summaryStats.outstanding)} label="Outstanding" sub="unpaid sent invoices" color="slate-blue" />
         <StatCard value={formatCurrency(summaryStats.paid)} label="Paid" sub="total collected" color="sage" />
         <StatCard value={formatCurrency(summaryStats.overdue)} label="Overdue" sub="past due date" color="amber" />
@@ -10096,6 +10104,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           ))}
         </div>
         <div className="flex items-center gap-2">
+          {statusFilter === "trash" && invoices.some((i) => i.status === "trash") && (
+            <button
+              onClick={handleEmptyTrash}
+              className="rounded-lg border border-red-400 px-4 py-2 text-[13px] font-semibold text-red-500 transition-all hover:bg-red-500 hover:text-white cursor-pointer"
+            >
+              Empty Trash
+            </button>
+          )}
           <button
             onClick={() => setView("create-manual")}
             className="rounded-lg border border-terracotta px-4 py-2 text-[13px] font-semibold text-terracotta transition-all hover:bg-terracotta hover:text-white cursor-pointer"
