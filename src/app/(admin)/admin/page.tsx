@@ -10148,8 +10148,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       {inv.status === "paid"
                         ? <span className="text-sage font-semibold">{formatCurrency(0)}</span>
                         : Number(inv.amount_paid || 0) > 0
-                          ? <span className="text-terracotta font-semibold">{formatCurrency(Number(inv.total) - Number(inv.amount_paid || 0))}</span>
-                          : formatCurrency(Number(inv.total))}
+                          ? <span className="text-terracotta font-semibold">{formatCurrency(Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0))}</span>
+                          : formatCurrency(Number(inv.total) + Number(inv.previous_balance || 0))}
                     </td>
                     <td className="px-3 py-3 text-center">
                       <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${statusBadge(inv.status)}`}>
