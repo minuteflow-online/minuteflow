@@ -73,7 +73,7 @@ export async function POST(
   const token = rawToken.replace(/[^0-9a-f-]/gi, "");
 
   const body = await request.json();
-  const { sourceId, amount, idempotencyKey } = body;
+  const { sourceId, amount, processingFee, idempotencyKey } = body;
 
   if (!sourceId) return Response.json({ error: "sourceId (card nonce) is required" }, { status: 400 });
   if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
@@ -110,8 +110,10 @@ export async function POST(
   }
 
   const payAmount = Number(amount);
+  const fee = Number(processingFee) || 0;
+  const chargeAmount = Math.round((payAmount + fee) * 100) / 100;
 
-  // Validate amount does not exceed balance
+  // Validate base amount does not exceed balance (fee is on top, not counted against balance)
   if (payAmount > balanceDue + 0.01) {
     return Response.json({ error: `Amount exceeds balance due of $${balanceDue.toFixed(2)}` }, { status: 400 });
   }
@@ -156,7 +158,7 @@ export async function POST(
       source_id: sourceId,
       idempotency_key: idempotencyKey,
       amount_money: {
-        amount: Math.round(payAmount * 100), // Square uses cents
+        amount: Math.round(chargeAmount * 100), // Square uses cents — includes base + 3% processing fee
         currency: invoice.currency || "USD",
       },
       location_id: squareSettings.location_id,
@@ -210,6 +212,7 @@ export async function POST(
     success: true,
     receiptUrl: squarePayment?.receipt_url ?? null,
     amountPaid: payAmount,
+    totalCharged: chargeAmount,
     newStatus,
     balanceRemaining: Math.max(0, Number(invoice.total) - newAmountPaid),
   });

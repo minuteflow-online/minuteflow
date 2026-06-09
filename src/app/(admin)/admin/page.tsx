@@ -4547,7 +4547,7 @@ function OrganizationTab() {
   // Payment templates state
   const [orgTemplates, setOrgTemplates] = useState<PaymentTemplate[]>([]);
   const [newTplName, setNewTplName] = useState("");
-  const [newTplItems, setNewTplItems] = useState<Array<{label: string; amount_type: "percentage" | "fixed"; value: string}>>([{ label: "", amount_type: "percentage", value: "" }]);
+  const [newTplItems, setNewTplItems] = useState<Array<{label: string; amount_type: "percentage" | "fixed"; value: string}>>([{ label: "", amount_type: "fixed", value: "" }]);
   const [savingTpl, setSavingTpl] = useState(false);
   const [editingTpl, setEditingTpl] = useState<PaymentTemplate | null>(null);
   const [editTplName, setEditTplName] = useState("");
@@ -4686,7 +4686,7 @@ function OrganizationTab() {
     } else {
       setOrgTemplates(prev => [...prev, data.template as PaymentTemplate]);
       setNewTplName("");
-      setNewTplItems([{ label: "", amount_type: "percentage", value: "" }]);
+      setNewTplItems([{ label: "", amount_type: "fixed", value: "" }]);
     }
   };
 
@@ -5033,7 +5033,7 @@ function OrganizationTab() {
                         )}
                       </div>
                     ))}
-                    <button onClick={() => setEditTplItems(prev => [...prev, { label: "", amount_type: "percentage", value: "" }])}
+                    <button onClick={() => setEditTplItems(prev => [...prev, { label: "", amount_type: "fixed", value: "" }])}
                       className="text-[11px] text-terracotta hover:underline">+ Add installment</button>
                     <div className="flex gap-2">
                       <button onClick={handleUpdateTemplate} disabled={savingTpl}
@@ -5100,7 +5100,7 @@ function OrganizationTab() {
                 )}
               </div>
             ))}
-            <button onClick={() => setNewTplItems(prev => [...prev, { label: "", amount_type: "percentage", value: "" }])}
+            <button onClick={() => setNewTplItems(prev => [...prev, { label: "", amount_type: "fixed", value: "" }])}
               className="text-[11px] text-terracotta hover:underline">+ Add installment</button>
             <div>
               <button onClick={handleSaveTemplate} disabled={savingTpl}
@@ -7997,7 +7997,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 )}
                 <button
                   type="button"
-                  onClick={() => setCreateSchedule(prev => [...prev, { label: '', amount_type: 'percentage', value: 0 }])}
+                  onClick={() => setCreateSchedule(prev => [...prev, { label: '', amount_type: 'fixed', value: 0 }])}
                   className="text-[11px] font-semibold text-terracotta hover:underline"
                 >
                   + Add Installment
@@ -9199,7 +9199,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 )}
                 <button
                   type="button"
-                  onClick={() => setEditSchedule(prev => [...prev, { label: '', amount_type: 'percentage', value: 0 }])}
+                  onClick={() => setEditSchedule(prev => [...prev, { label: '', amount_type: 'fixed', value: 0 }])}
                   className="text-[11px] font-semibold text-terracotta hover:underline"
                 >
                   + Add Installment

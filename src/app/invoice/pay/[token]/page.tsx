@@ -72,10 +72,11 @@ export default function InvoicePayPage() {
 
   // Payment form state
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [customAmount, setCustomAmount] = useState("");
   const [processing, setProcessing] = useState(false);
   const [paymentError, setPaymentError] = useState("");
-  const [paymentSuccess, setPaymentSuccess] = useState<{ receiptUrl: string | null; amount: number; balanceRemaining: number } | null>(null);
+  const [paymentSuccess, setPaymentSuccess] = useState<{ receiptUrl: string | null; amount: number; totalCharged?: number; balanceRemaining: number } | null>(null);
 
   const [squareLoaded, setSquareLoaded] = useState(false);
   const [cardReady, setCardReady] = useState(false);
@@ -99,11 +100,15 @@ export default function InvoicePayPage() {
           setPayments(data.payments ?? []);
           setSquareConfig(data.square ?? null);
 
-          // Pre-select first installment if schedule exists and custom is not allowed
+          // Pre-select first installment if schedule exists; otherwise auto-select full balance
           if (data.invoice?.payment_schedule?.length > 0) {
             const first = data.invoice.payment_schedule[0];
             const firstAmount = computeInstallmentAmount(first, data.invoice.total);
             setSelectedAmount(firstAmount);
+            setSelectedIndex(0);
+          } else {
+            // No payment schedule — auto-select full balance so card form is always enabled
+            setSelectedAmount(data.invoice.balance_due);
           }
         }
         setLoading(false);
@@ -192,6 +197,8 @@ export default function InvoicePayPage() {
       return;
     }
 
+    const fee = Math.round(payAmount * 0.03 * 100) / 100;
+
     setProcessing(true);
     setPaymentError("");
 
@@ -213,6 +220,7 @@ export default function InvoicePayPage() {
         body: JSON.stringify({
           sourceId: result.token,
           amount: payAmount,
+          processingFee: fee,
           idempotencyKey,
         }),
       });
@@ -228,6 +236,7 @@ export default function InvoicePayPage() {
       setPaymentSuccess({
         receiptUrl: data.receiptUrl,
         amount: data.amountPaid,
+        totalCharged: data.totalCharged,
         balanceRemaining: data.balanceRemaining,
       });
     } catch {
@@ -261,6 +270,13 @@ export default function InvoicePayPage() {
   const isFullyPaid = invoice.status === "paid" || invoice.balance_due <= 0.01;
   const hasSchedule = invoice.payment_schedule && invoice.payment_schedule.length > 0;
 
+  // 3% processing fee
+  const basePayAmount = invoice.allow_custom_amount && customAmount
+    ? Number(customAmount)
+    : (selectedAmount ?? 0);
+  const processingFee = basePayAmount > 0 ? Math.round(basePayAmount * 0.03 * 100) / 100 : 0;
+  const totalCharged = basePayAmount > 0 ? Math.round((basePayAmount + processingFee) * 100) / 100 : 0;
+
   /* ── Payment success screen ──────────────────────────── */
 
   if (paymentSuccess) {
@@ -270,7 +286,7 @@ export default function InvoicePayPage() {
           <div className="bg-[#2d6a4f] px-6 py-8 text-center">
             <div className="text-5xl mb-3">✓</div>
             <div className="text-[22px] font-extrabold text-white">Payment Received!</div>
-            <div className="text-[15px] text-[#a8d5b5] mt-1">{formatCurrency(paymentSuccess.amount, invoice.currency)} paid</div>
+            <div className="text-[15px] text-[#a8d5b5] mt-1">{formatCurrency(paymentSuccess.totalCharged ?? paymentSuccess.amount, invoice.currency)} paid</div>
           </div>
           <div className="px-6 py-6 text-center">
             <div className="text-[13px] text-[#6b5e52] mb-1">Invoice #{invoice.invoice_number}</div>
@@ -365,12 +381,13 @@ export default function InvoicePayPage() {
                     <div className="space-y-2">
                       {(invoice.show_all_installments ? invoice.payment_schedule! : invoice.payment_schedule!.slice(0, 1)).map((item, i) => {
                         const amt = computeInstallmentAmount(item, invoice.total);
-                        const isSelected = !invoice.allow_custom_amount ? selectedAmount === amt : selectedAmount === amt;
+                        const isSelected = selectedIndex === i;
                         return (
                           <button
                             key={i}
                             onClick={() => {
                               setSelectedAmount(amt);
+                              setSelectedIndex(i);
                               setCustomAmount("");
                             }}
                             className={`w-full flex items-center justify-between rounded-lg border-2 px-4 py-3 transition-colors cursor-pointer ${
@@ -430,16 +447,31 @@ export default function InvoicePayPage() {
                   </div>
                 )}
 
+                {/* Processing fee breakdown */}
+                {basePayAmount > 0 && (
+                  <div className="rounded-lg bg-[#faf6f0] border border-[#e8e0d4] px-4 py-3 space-y-1.5">
+                    <div className="flex justify-between text-[12px] text-[#6b5e52]">
+                      <span>Amount</span>
+                      <span>{formatCurrency(basePayAmount, invoice.currency)}</span>
+                    </div>
+                    <div className="flex justify-between text-[12px] text-[#6b5e52]">
+                      <span>Processing fee (3%)</span>
+                      <span>{formatCurrency(processingFee, invoice.currency)}</span>
+                    </div>
+                    <div className="flex justify-between text-[13px] font-bold text-[#3d2b1f] border-t border-[#e8e0d4] pt-1.5">
+                      <span>Total charged</span>
+                      <span>{formatCurrency(totalCharged, invoice.currency)}</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Pay button */}
                 <button
                   onClick={handlePay}
                   disabled={processing || !cardReady || (!selectedAmount && !customAmount)}
                   className="w-full rounded-lg bg-[#c0704e] text-white text-[15px] font-bold py-4 hover:bg-[#a85a3c] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  {processing ? "Processing…" : `Pay ${formatCurrency(
-                    customAmount ? Number(customAmount) : (selectedAmount ?? invoice.balance_due),
-                    invoice.currency
-                  )}`}
+                  {processing ? "Processing…" : `Pay ${formatCurrency(totalCharged, invoice.currency)}`}
                 </button>
 
                 <p className="text-center text-[11px] text-[#9e9080]">
