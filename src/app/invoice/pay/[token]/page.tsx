@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -21,6 +21,7 @@ interface InvoiceData {
     label: string;
     amount_type: "percentage" | "fixed";
     value: number;
+    due_date?: string;
   }> | null;
 }
 
@@ -63,6 +64,8 @@ function computeInstallmentAmount(item: { amount_type: "percentage" | "fixed"; v
 export default function InvoicePayPage() {
   const params = useParams();
   const token = params?.token as string;
+  const searchParams = useSearchParams();
+  const mode = searchParams?.get("mode") ?? "full";
 
   const [invoice, setInvoice] = useState<InvoiceData | null>(null);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
@@ -100,14 +103,14 @@ export default function InvoicePayPage() {
           setPayments(data.payments ?? []);
           setSquareConfig(data.square ?? null);
 
-          // Pre-select first installment if schedule exists; otherwise auto-select full balance
-          if (data.invoice?.payment_schedule?.length > 0) {
+          // Pre-select first installment if split mode and schedule exists; otherwise auto-select full balance
+          if (mode !== "full" && data.invoice?.payment_schedule?.length > 0) {
             const first = data.invoice.payment_schedule[0];
             const firstAmount = computeInstallmentAmount(first, data.invoice.total);
             setSelectedAmount(firstAmount);
             setSelectedIndex(0);
           } else {
-            // No payment schedule — auto-select full balance so card form is always enabled
+            // Full mode or no payment schedule — auto-select full balance
             setSelectedAmount(data.invoice.balance_due);
           }
         }
@@ -268,7 +271,8 @@ export default function InvoicePayPage() {
   }
 
   const isFullyPaid = invoice.status === "paid" || invoice.balance_due <= 0.01;
-  const hasSchedule = invoice.payment_schedule && invoice.payment_schedule.length > 0;
+  // mode=full forces full balance payment even if a split schedule exists
+  const hasSchedule = mode !== "full" && invoice.payment_schedule && invoice.payment_schedule.length > 0;
 
   // 3% processing fee
   const basePayAmount = invoice.allow_custom_amount && customAmount
@@ -396,11 +400,27 @@ export default function InvoicePayPage() {
                                 : "border-[#e8e0d4] bg-[#faf6f0] hover:border-[#d4b8a0]"
                             }`}
                           >
-                            <span className="text-[13px] font-semibold text-[#3d2b1f]">{item.label}</span>
-                            <span className="text-[15px] font-bold text-[#c0704e]">{formatCurrency(amt, invoice.currency)}</span>
+                            <div>
+                              <span className="text-[13px] font-semibold text-[#3d2b1f]">{item.label}</span>
+                              {item.due_date && (
+                                <div className="text-[10px] text-[#9e9080] mt-0.5">Due: {new Date(item.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+                              )}
+                            </div>
+                            <span className="text-[15px] font-bold text-[#2d6a4f]">{formatCurrency(amt, invoice.currency)}</span>
                           </button>
                         );
                       })}
+                    </div>
+                  </div>
+                )}
+
+                {/* No schedule, no custom amount — show full balance as the payment amount */}
+                {!hasSchedule && !invoice.allow_custom_amount && (
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#6b5e52] mb-2">Amount</div>
+                    <div className="rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] px-4 py-3 flex items-center justify-between">
+                      <span className="text-[13px] font-semibold text-[#3d2b1f]">Balance Due</span>
+                      <span className="text-[15px] font-bold text-[#c0704e]">{formatCurrency(invoice.balance_due, invoice.currency)}</span>
                     </div>
                   </div>
                 )}
@@ -455,7 +475,7 @@ export default function InvoicePayPage() {
                       <span>{formatCurrency(basePayAmount, invoice.currency)}</span>
                     </div>
                     <div className="flex justify-between text-[12px] text-[#6b5e52]">
-                      <span>Processing fee (3%)</span>
+                      <span>Card processing fee (3%)</span>
                       <span>{formatCurrency(processingFee, invoice.currency)}</span>
                     </div>
                     <div className="flex justify-between text-[13px] font-bold text-[#3d2b1f] border-t border-[#e8e0d4] pt-1.5">
@@ -469,9 +489,9 @@ export default function InvoicePayPage() {
                 <button
                   onClick={handlePay}
                   disabled={processing || !cardReady || (!selectedAmount && !customAmount)}
-                  className="w-full rounded-lg bg-[#c0704e] text-white text-[15px] font-bold py-4 hover:bg-[#a85a3c] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="w-full rounded-lg bg-[#2d6a4f] text-white text-[15px] font-bold py-4 hover:bg-[#1f4d38] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  {processing ? "Processing…" : `Pay ${formatCurrency(totalCharged, invoice.currency)}`}
+                  {processing ? "Processing…" : !cardReady ? "Loading payment form…" : `Pay ${formatCurrency(totalCharged, invoice.currency)}`}
                 </button>
 
                 <p className="text-center text-[11px] text-[#9e9080]">

@@ -7895,7 +7895,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
                 />
                 {paymentLink && (
-                  <p className="mt-1 text-[11px] text-bark/60">Note: A 3% processing fee applies to online payments.</p>
+                  <p className="mt-1 text-[11px] text-bark/60">Note: A card processing fee (3%) applies to card payments.</p>
                 )}
               </div>
               <div>
@@ -7938,10 +7938,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   rows={3}
                 />
               </div>
-              {/* ── Square Split Payment ──────────────────────── */}
+              {/* ── Split Payment Schedule ──────────────────────── */}
               <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Square Split Payment</label>
-                <p className="mb-3 text-[11px] text-bark/60">Offer structured installment options on the client payment page via Square. Leave empty to skip.</p>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Split Payment Schedule</label>
+                <p className="mb-3 text-[11px] text-bark/60">Set up installment amounts and due dates. Clients will see a &ldquo;Split Payment Option&rdquo; button on their invoice. Leave empty to skip.</p>
                 {/* Template picker */}
                 {invoiceTemplates.length > 0 && (
                   <div className="mb-3">
@@ -7968,27 +7968,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   <div className="mb-3 space-y-2">
                     {createSchedule.map((item, idx) => (
                       <div key={idx} className="flex gap-2 items-center">
-                        <input
-                          type="text"
-                          value={item.label}
-                          onChange={(e) => setCreateSchedule(prev => prev.map((s, i) => i === idx ? { ...s, label: e.target.value } : s))}
-                          placeholder="Label (e.g. Due Now)"
-                          className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone"
-                        />
-                        <select
-                          value={item.amount_type}
-                          onChange={(e) => setCreateSchedule(prev => prev.map((s, i) => i === idx ? { ...s, amount_type: e.target.value as 'percentage' | 'fixed' } : s))}
-                          className="rounded-lg border border-sand bg-parchment px-2 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
-                        >
-                          <option value="percentage">%</option>
-                          <option value="fixed">$</option>
-                        </select>
+                        <span className="text-[11px] text-bark/60 whitespace-nowrap w-16 shrink-0">Inst. {idx + 1}</span>
+                        <span className="text-[12px] text-bark shrink-0">$</span>
                         <input
                           type="number"
                           value={item.value}
-                          onChange={(e) => setCreateSchedule(prev => prev.map((s, i) => i === idx ? { ...s, value: parseFloat(e.target.value) || 0 } : s))}
-                          placeholder={item.amount_type === 'percentage' ? "50" : "300"}
-                          className="w-20 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
+                          onChange={(e) => setCreateSchedule(prev => prev.map((s, i) => i === idx ? { ...s, value: parseFloat(e.target.value) || 0, label: `Installment ${i + 1}`, amount_type: 'fixed' as const } : s))}
+                          placeholder="300.00"
+                          className="w-24 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
+                        />
+                        <span className="text-[11px] text-bark/60 shrink-0">Due:</span>
+                        <input
+                          type="date"
+                          value={(item as PaymentScheduleItem & { due_date?: string }).due_date || ''}
+                          onChange={(e) => setCreateSchedule(prev => prev.map((s, i) => i === idx ? { ...s, due_date: e.target.value } : s))}
+                          className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
                         />
                         <button onClick={() => setCreateSchedule(prev => prev.filter((_, i) => i !== idx))} className="text-bark/40 hover:text-terracotta text-[16px] leading-none">×</button>
                       </div>
@@ -7997,7 +7991,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 )}
                 <button
                   type="button"
-                  onClick={() => setCreateSchedule(prev => [...prev, { label: '', amount_type: 'fixed', value: 0 }])}
+                  onClick={() => setCreateSchedule(prev => [...prev, { label: `Installment ${prev.length + 1}`, amount_type: 'fixed' as const, value: 0, due_date: '' } as PaymentScheduleItem & { due_date?: string }])}
                   className="text-[11px] font-semibold text-terracotta hover:underline"
                 >
                   + Add Installment
@@ -9112,7 +9106,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   placeholder="https://..."
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
                 {editPaymentLink && (
-                  <p className="mt-1 text-[11px] text-bark/60">Note: A 3% processing fee applies to online payments.</p>
+                  <p className="mt-1 text-[11px] text-bark/60">Note: A card processing fee (3%) applies to card payments.</p>
                 )}
               </div>
               <div>
@@ -9142,10 +9136,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone resize-none"
                   rows={3} />
               </div>
-              {/* ── Square Split Payment (edit) ──────────────── */}
+              {/* ── Split Payment Schedule (edit) ──────────────── */}
               <div className="col-span-2">
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Square Split Payment</label>
-                <p className="mb-3 text-[11px] text-bark/60">Structured installment options on the client payment page. Leave empty to skip.</p>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Split Payment Schedule</label>
+                <p className="mb-3 text-[11px] text-bark/60">Set up installment amounts and due dates. Clients will see a &ldquo;Split Payment Option&rdquo; button on their invoice. Leave empty to skip.</p>
                 {invoiceTemplates.length > 0 && (
                   <div className="mb-3">
                     <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-bark/70">Apply Template</label>
@@ -9170,27 +9164,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   <div className="mb-3 space-y-2">
                     {editSchedule.map((item, idx) => (
                       <div key={idx} className="flex gap-2 items-center">
-                        <input
-                          type="text"
-                          value={item.label}
-                          onChange={(e) => setEditSchedule(prev => prev.map((s, i) => i === idx ? { ...s, label: e.target.value } : s))}
-                          placeholder="Label (e.g. Due Now)"
-                          className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta placeholder:text-stone"
-                        />
-                        <select
-                          value={item.amount_type}
-                          onChange={(e) => setEditSchedule(prev => prev.map((s, i) => i === idx ? { ...s, amount_type: e.target.value as 'percentage' | 'fixed' } : s))}
-                          className="rounded-lg border border-sand bg-parchment px-2 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
-                        >
-                          <option value="percentage">%</option>
-                          <option value="fixed">$</option>
-                        </select>
+                        <span className="text-[11px] text-bark/60 whitespace-nowrap w-16 shrink-0">Inst. {idx + 1}</span>
+                        <span className="text-[12px] text-bark shrink-0">$</span>
                         <input
                           type="number"
                           value={item.value}
-                          onChange={(e) => setEditSchedule(prev => prev.map((s, i) => i === idx ? { ...s, value: parseFloat(e.target.value) || 0 } : s))}
-                          placeholder={item.amount_type === 'percentage' ? "50" : "300"}
-                          className="w-20 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
+                          onChange={(e) => setEditSchedule(prev => prev.map((s, i) => i === idx ? { ...s, value: parseFloat(e.target.value) || 0, label: `Installment ${i + 1}`, amount_type: 'fixed' as const } : s))}
+                          placeholder="300.00"
+                          className="w-24 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
+                        />
+                        <span className="text-[11px] text-bark/60 shrink-0">Due:</span>
+                        <input
+                          type="date"
+                          value={(item as PaymentScheduleItem & { due_date?: string }).due_date || ''}
+                          onChange={(e) => setEditSchedule(prev => prev.map((s, i) => i === idx ? { ...s, due_date: e.target.value } : s))}
+                          className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[12px] text-espresso outline-none focus:border-terracotta"
                         />
                         <button type="button" onClick={() => setEditSchedule(prev => prev.filter((_, i) => i !== idx))} className="text-bark/40 hover:text-terracotta text-[16px] leading-none">×</button>
                       </div>
@@ -9199,7 +9187,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 )}
                 <button
                   type="button"
-                  onClick={() => setEditSchedule(prev => [...prev, { label: '', amount_type: 'fixed', value: 0 }])}
+                  onClick={() => setEditSchedule(prev => [...prev, { label: `Installment ${prev.length + 1}`, amount_type: 'fixed' as const, value: 0, due_date: '' } as PaymentScheduleItem & { due_date?: string }])}
                   className="text-[11px] font-semibold text-terracotta hover:underline"
                 >
                   + Add Installment
@@ -9702,7 +9690,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       className="inline-block bg-[#2d1a00] text-[#f5c842] text-[12px] font-bold px-4 py-1.5 rounded-md hover:opacity-90 transition-opacity">
                       Pay Online
                     </a>
-                    <div className="text-[10px] text-[#5a4000] mt-1">*3% processing fee applies</div>
+                    <div className="text-[10px] text-[#5a4000] mt-1">Card processing fee applies</div>
                   </div>
                 )}
                 {!inv.payment_link && !inv.payment_info && (

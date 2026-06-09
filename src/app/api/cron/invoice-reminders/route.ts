@@ -1,4 +1,5 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import type { PaymentScheduleItem } from "@/types/database";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -101,10 +102,77 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // ── Split payment due-tomorrow reminders ───────────────
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().split("T")[0]; // YYYY-MM-DD
+
+  const { data: splitInvoices } = await serviceClient
+    .from("invoices")
+    .select("id, invoice_number, to_name, to_email, from_name, from_email, total, amount_paid, currency, share_token, payment_schedule")
+    .not("payment_schedule", "is", null)
+    .not("status", "in", '("paid","cancelled","trash")')
+    .not("to_email", "is", null);
+
+  let splitSent = 0;
+  let splitFailed = 0;
+
+  for (const invoice of splitInvoices ?? []) {
+    const schedule = invoice.payment_schedule as PaymentScheduleItem[];
+    if (!schedule?.length) continue;
+
+    const dueItems = schedule.filter((item) => item.due_date === tomorrowStr);
+    if (dueItems.length === 0) continue;
+
+    const dueAmount = dueItems.reduce((sum, item) => {
+      if (item.amount_type === "percentage") {
+        return sum + Math.round((item.value / 100) * Number(invoice.total) * 100) / 100;
+      }
+      return sum + item.value;
+    }, 0);
+
+    const payLink = invoice.share_token
+      ? `https://minuteflow.click/invoice/pay/${invoice.share_token}?mode=split`
+      : null;
+
+    const html = buildSplitReminderEmail(invoice, dueItems, dueAmount, tomorrowStr, payLink);
+
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: `${invoice.from_name || "Toni Colina"} <noreply@minuteflow.click>`,
+          to: [invoice.to_email],
+          ...(invoice.from_email ? { reply_to: invoice.from_email } : {}),
+          subject: `Payment Reminder: ${formatCurrency(dueAmount, invoice.currency)} due tomorrow — Invoice ${invoice.invoice_number}`,
+          html,
+        }),
+      });
+
+      if (res.ok) {
+        splitSent++;
+        console.log(`[cron/invoice-reminders] Split reminder sent for invoice ${invoice.invoice_number} to ${invoice.to_email}`);
+      } else {
+        const errText = await res.text();
+        splitFailed++;
+        console.error(`[cron/invoice-reminders] Split reminder failed for invoice ${invoice.invoice_number}:`, errText);
+      }
+    } catch (err) {
+      splitFailed++;
+      console.error(`[cron/invoice-reminders] Split reminder exception for invoice ${invoice.invoice_number}:`, err);
+    }
+  }
+
   return Response.json({
     sent,
     failed,
     total: invoices.length,
+    splitSent,
+    splitFailed,
     ...(failures.length > 0 ? { failures } : {}),
   });
 }
@@ -303,6 +371,80 @@ function buildInvoiceEmail(
       <div style="font-size:11px; color:#9e9080; margin-top:8px;">View &amp; download your invoice with complete time allocation</div>
     </div>` : `
     <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; border-bottom:1px solid #e8e0d4; border-radius:0 0 12px 12px; height:16px;"></div>`}
+
+    <div style="padding:16px 0; text-align:center;">
+      <div style="font-size:11px; color:#9e9080;">Sent by ${invoice.from_name} · MinuteFlow</div>
+    </div>
+
+  </div>
+</body>
+</html>`;
+}
+
+/* ── Split Payment Reminder Email ─────────────────────────── */
+
+function buildSplitReminderEmail(
+  invoice: { invoice_number: string; from_name: string; from_email: string | null; to_name: string; total: number; currency: string; share_token: string | null },
+  dueItems: PaymentScheduleItem[],
+  dueAmount: number,
+  dueDateStr: string,
+  payLink: string | null
+): string {
+  const dueDateFmt = new Date(dueDateStr + "T12:00:00Z").toLocaleDateString("en-US", {
+    month: "long", day: "numeric", year: "numeric",
+  });
+
+  const installmentRows = dueItems.map((item) => {
+    const amt = item.amount_type === "percentage"
+      ? Math.round((item.value / 100) * Number(invoice.total) * 100) / 100
+      : item.value;
+    return `<tr>
+      <td style="padding:8px 12px; border-bottom:1px solid #f0e8d0; font-size:13px; color:#3d2b1f;">${item.label}</td>
+      <td style="padding:8px 12px; border-bottom:1px solid #f0e8d0; text-align:right; font-size:14px; font-weight:700; color:#2d6a4f;">${formatCurrency(amt, invoice.currency)}</td>
+    </tr>`;
+  }).join("");
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0; padding:0; background-color:#f5f0e8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="max-width:600px; margin:0 auto; padding:24px 16px;">
+
+    <div style="background:#f5c842; border-radius:12px 12px 0 0; padding:24px 28px;">
+      <div style="font-size:10px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Payment Reminder</div>
+      <div style="font-size:22px; font-weight:800; color:#2d1a00; margin-bottom:4px;">${formatCurrency(dueAmount, invoice.currency)} due tomorrow</div>
+      <div style="font-size:13px; color:#5a4000;">Invoice #${invoice.invoice_number} · Due ${dueDateFmt}</div>
+    </div>
+
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; padding:24px 28px;">
+      <div style="font-size:13px; color:#3d2b1f; margin-bottom:16px;">Hi ${invoice.to_name},</div>
+      <div style="font-size:13px; color:#3d2b1f; margin-bottom:20px;">
+        This is a friendly reminder that your next scheduled payment of <strong>${formatCurrency(dueAmount, invoice.currency)}</strong> is due <strong>tomorrow, ${dueDateFmt}</strong>.
+      </div>
+
+      <table style="width:100%; border-collapse:collapse; margin-bottom:20px;">
+        <thead>
+          <tr style="background:#faf6f0;">
+            <th style="padding:8px 12px; text-align:left; font-size:10px; font-weight:600; color:#6b5e52; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e8e0d4;">Installment</th>
+            <th style="padding:8px 12px; text-align:right; font-size:10px; font-weight:600; color:#6b5e52; text-transform:uppercase; letter-spacing:0.5px; border-bottom:2px solid #e8e0d4;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>${installmentRows}</tbody>
+      </table>
+
+      ${payLink ? `
+      <div style="text-align:center; margin-bottom:16px;">
+        <a href="${payLink}" style="display:inline-block; background:#2d6a4f; color:#ffffff; font-size:14px; font-weight:700; padding:14px 32px; border-radius:8px; text-decoration:none;">Pay Now →</a>
+        <div style="font-size:11px; color:#9e9080; margin-top:8px;">Card processing fee applies · Secured by Square</div>
+      </div>` : ""}
+    </div>
+
+    <div style="background:#ffffff; border-left:1px solid #e8e0d4; border-right:1px solid #e8e0d4; border-bottom:1px solid #e8e0d4; border-radius:0 0 12px 12px; padding:16px 28px; text-align:center;">
+      <div style="font-size:12px; color:#6b5e52;">Questions? Reply to this email or contact ${invoice.from_name}${invoice.from_email ? ` at ${invoice.from_email}` : ""}.</div>
+    </div>
 
     <div style="padding:16px 0; text-align:center;">
       <div style="font-size:11px; color:#9e9080;">Sent by ${invoice.from_name} · MinuteFlow</div>

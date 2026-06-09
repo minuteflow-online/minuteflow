@@ -38,7 +38,7 @@ interface Invoice {
   period_start: string | null;
   period_end: string | null;
   allow_custom_amount?: boolean | null;
-  payment_schedule?: Array<{ label: string; amount_type: "percentage" | "fixed"; value: number }> | null;
+  payment_schedule?: Array<{ label: string; amount_type: "percentage" | "fixed"; value: number; due_date?: string }> | null;
   share_token?: string | null;
 }
 
@@ -344,16 +344,24 @@ export default function PublicInvoicePage() {
               {invoice.payment_info && (
                 <div className="text-[11px] text-[#5a4000] whitespace-pre-line mb-2">{invoice.payment_info}</div>
               )}
-              {/* Square payment page — shown for all unpaid invoices */}
+              {/* Payment buttons — shown for all unpaid invoices */}
               {invoice.status !== "paid" && invoice.status !== "cancelled" && (
-                <div className="mt-1">
+                <div className="mt-1 flex flex-col gap-2 items-start sm:items-end">
                   <a
-                    href={`/invoice/pay/${token}`}
-                    className="inline-block bg-[#c0704e] text-white text-[12px] font-bold px-4 py-1.5 rounded hover:opacity-90 transition-opacity"
+                    href={`/invoice/pay/${token}?mode=full`}
+                    className="inline-block bg-[#2d6a4f] text-white text-[12px] font-bold px-4 py-1.5 rounded hover:opacity-90 transition-opacity"
                   >
-                    Pay with Card
+                    Pay in Full
                   </a>
-                  <div className="text-[9px] text-[#5a4000] mt-1">Secure payment via Square</div>
+                  {invoice.payment_schedule && invoice.payment_schedule.length > 0 && (
+                    <a
+                      href={`/invoice/pay/${token}?mode=split`}
+                      className="inline-block bg-[#2d6a4f] text-white text-[12px] font-bold px-4 py-1.5 rounded hover:opacity-90 transition-opacity"
+                    >
+                      Split Payment Option
+                    </a>
+                  )}
+                  <div className="text-[9px] text-[#5a4000]">Card processing fee applies · Secured by Square</div>
                 </div>
               )}
               {/* Legacy manual payment link (shown if a manual payment link is set and invoice is unpaid) */}
@@ -367,7 +375,7 @@ export default function PublicInvoicePage() {
                   >
                     Pay Online
                   </a>
-                  <div className="text-[9px] text-[#5a4000] mt-1">*3% processing fee applies</div>
+                  <div className="text-[9px] text-[#5a4000] mt-1">Card processing fee applies</div>
                 </div>
               )}
               {!hasPaymentInfo && !(invoice.payment_schedule && invoice.payment_schedule.length > 0) && (

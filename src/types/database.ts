@@ -345,6 +345,7 @@ export interface PaymentScheduleItem {
   label: string;
   amount_type: 'percentage' | 'fixed';
   value: number; // percentage (0–100) or fixed dollar amount
+  due_date?: string; // ISO date string (YYYY-MM-DD) for split payment reminders
 }
 
 /** Reusable payment split template */
