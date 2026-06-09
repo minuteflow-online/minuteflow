@@ -128,7 +128,7 @@ export default function InvoicePayPage() {
           ".input-container": { borderColor: "#e8e0d4", borderRadius: "8px" },
           ".input-container.is-focus": { borderColor: "#c0704e" },
           ".input-container.is-error": { borderColor: "#dc2626" },
-          input: { color: "#3d2b1f", fontSize: "14px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
+          input: { color: "#3d2b1f", fontSize: "14px", fontFamily: "Arial, sans-serif" },
           "input::placeholder": { color: "#9e9080" },
         },
       });
