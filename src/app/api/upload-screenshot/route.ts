@@ -10,13 +10,30 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const GOOGLE_DRIVE_FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID!;
 
+/** Read the latest OAuth refresh token from DB (_oauth_temp), fall back to env var. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getRefreshToken(supabase: any): Promise<string> {
+  const { data } = await supabase
+    .from("_oauth_temp")
+    .select("value")
+    .eq("key", "GOOGLE_REFRESH_TOKEN")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data as any)?.value ?? process.env.GOOGLE_REFRESH_TOKEN!;
+}
 
-function getGoogleAuth() {
-  const keyJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY!);
-  return new google.auth.GoogleAuth({
-    credentials: keyJson,
-    scopes: ["https://www.googleapis.com/auth/drive"],
-  });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getGoogleAuth(supabase: any) {
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID!,
+    process.env.GOOGLE_CLIENT_SECRET!,
+    "https://minuteflow.click/api/oauth-callback"
+  );
+  const refreshToken = await getRefreshToken(supabase);
+  oauth2Client.setCredentials({ refresh_token: refreshToken });
+  return oauth2Client;
 }
 
 function sanitizeFilename(name: string): string {
@@ -78,7 +95,7 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
 
     // Upload directly to Google Drive
-    const auth = getGoogleAuth();
+    const auth = await getGoogleAuth(supabase);
     const drive = google.drive({ version: "v3", auth });
 
     const driveResponse = await drive.files.create({

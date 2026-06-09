@@ -46,12 +46,13 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Store refresh token in Supabase temp table for Manny to pick up
+  // Store refresh token in Supabase — replace any existing entry so there's always exactly one.
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
+  await supabase.from("_oauth_temp").delete().eq("key", "GOOGLE_REFRESH_TOKEN");
   await supabase.from("_oauth_temp").insert({
     key: "GOOGLE_REFRESH_TOKEN",
     value: tokenData.refresh_token,
