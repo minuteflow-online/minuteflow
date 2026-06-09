@@ -6438,8 +6438,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editAccountName, setEditAccountName] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Send-to override (for test sends)
+  // Send-to override (for test sends) — supports comma-separated multiple addresses
   const [sendToEmail, setSendToEmail] = useState("");
+  const [sendCcEmail, setSendCcEmail] = useState("");
 
   // Holding cell for items removed from create view
   const [removedLineItems, setRemovedLineItems] = useState<LineItemDraft[]>([]);
@@ -7298,6 +7299,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         body: JSON.stringify({
           invoice_id: invoice.id,
           ...(sendToEmail && sendToEmail !== invoice.to_email ? { override_email: sendToEmail } : {}),
+          ...(sendCcEmail.trim() ? { cc_emails: sendCcEmail } : {}),
         }),
       });
 
@@ -9018,24 +9020,39 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         {(inv.status === "draft" || inv.status === "sent" || inv.status === "ready_to_send") && (
           <div className="mb-4 rounded-xl border border-sand bg-white p-4">
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-bark">Send Invoice Email</p>
-            <div className="flex items-center gap-3">
-              <input
-                type="email"
-                value={sendToEmail}
-                onChange={(e) => setSendToEmail(e.target.value)}
-                placeholder="recipient@email.com"
-                className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
-              />
-              <button
-                onClick={() => handleSendInvoice(inv)}
-                disabled={sending || !sendToEmail}
-                className="rounded-lg bg-slate-blue px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-slate-blue/80 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
-              >
-                {sending ? "Sending..." : inv.status === "sent" ? "Resend Email" : "Send via Email"}
-              </button>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <span className="w-7 shrink-0 text-right text-[11px] font-semibold text-stone">To</span>
+                <input
+                  type="text"
+                  value={sendToEmail}
+                  onChange={(e) => setSendToEmail(e.target.value)}
+                  placeholder="email1@example.com, email2@example.com"
+                  className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-7 shrink-0 text-right text-[11px] font-semibold text-stone">CC</span>
+                <input
+                  type="text"
+                  value={sendCcEmail}
+                  onChange={(e) => setSendCcEmail(e.target.value)}
+                  placeholder="cc1@example.com, cc2@example.com (optional)"
+                  className="flex-1 rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => handleSendInvoice(inv)}
+                  disabled={sending || !sendToEmail}
+                  className="rounded-lg bg-slate-blue px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-slate-blue/80 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
+                >
+                  {sending ? "Sending..." : inv.status === "sent" ? "Resend Email" : "Send via Email"}
+                </button>
+              </div>
             </div>
             <p className="mt-1.5 text-[11px] text-stone">
-              {inv.to_email ? `Default: ${inv.to_email} — change above to send a test to yourself` : "No client email on file — type any address above"}
+              {inv.to_email ? `Default: ${inv.to_email} — separate multiple addresses with commas` : "No client email on file — type any address above"}
             </p>
           </div>
         )}

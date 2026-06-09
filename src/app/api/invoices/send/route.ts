@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { invoice_id, override_email } = body;
+  const { invoice_id, override_email, cc_emails } = body;
 
   if (!invoice_id) {
     return Response.json({ error: "invoice_id is required" }, { status: 400 });
@@ -38,10 +38,24 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invoice not found" }, { status: 404 });
   }
 
-  const recipientEmail = override_email || invoice.to_email;
-  if (!recipientEmail) {
+  // Parse To: supports comma-separated string or array
+  const rawTo = override_email || invoice.to_email;
+  const recipientEmails: string[] = Array.isArray(rawTo)
+    ? rawTo.map((e: string) => e.trim()).filter(Boolean)
+    : typeof rawTo === "string"
+    ? rawTo.split(",").map((e: string) => e.trim()).filter(Boolean)
+    : [];
+
+  if (recipientEmails.length === 0) {
     return Response.json({ error: "No recipient email — enter a send-to email address above the Send button" }, { status: 400 });
   }
+
+  // Parse CC: supports comma-separated string or array
+  const ccEmails: string[] = Array.isArray(cc_emails)
+    ? cc_emails.map((e: string) => e.trim()).filter(Boolean)
+    : typeof cc_emails === "string"
+    ? cc_emails.split(",").map((e: string) => e.trim()).filter(Boolean)
+    : [];
 
   // Fetch line items
   const { data: lineItems } = await serviceClient
@@ -79,7 +93,8 @@ export async function POST(request: Request) {
     },
     body: JSON.stringify({
       from: `${invoice.from_name || "Toni Colina"} <noreply@minuteflow.click>`,
-      to: [recipientEmail],
+      to: recipientEmails,
+      ...(ccEmails.length > 0 ? { cc: ccEmails } : {}),
       ...(invoice.from_email ? { reply_to: invoice.from_email } : {}),
       subject: `Invoice ${invoice.invoice_number} — ${invoice.from_name || "Toni Colina"}`,
       html,

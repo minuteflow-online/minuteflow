@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -64,8 +64,6 @@ function computeInstallmentAmount(item: { amount_type: "percentage" | "fixed"; v
 export default function InvoicePayPage() {
   const params = useParams();
   const token = params?.token as string;
-  const searchParams = useSearchParams();
-  const mode = searchParams?.get("mode") ?? "full";
 
   const [invoice, setInvoice] = useState<InvoiceData | null>(null);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
@@ -74,9 +72,9 @@ export default function InvoicePayPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Payment form state
+  // selectedIndex: 0 = next installment, 1 = full payment
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [customAmount, setCustomAmount] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState<number>(1);
   const [processing, setProcessing] = useState(false);
   const [paymentError, setPaymentError] = useState("");
   const [paymentSuccess, setPaymentSuccess] = useState<{ receiptUrl: string | null; amount: number; totalCharged?: number; balanceRemaining: number } | null>(null);
@@ -103,15 +101,37 @@ export default function InvoicePayPage() {
           setPayments(data.payments ?? []);
           setSquareConfig(data.square ?? null);
 
-          // Pre-select first installment if split mode and schedule exists; otherwise auto-select full balance
-          if (mode !== "full" && data.invoice?.payment_schedule?.length > 0) {
-            const first = data.invoice.payment_schedule[0];
-            const firstAmount = computeInstallmentAmount(first, data.invoice.total);
-            setSelectedAmount(firstAmount);
-            setSelectedIndex(0);
+          const inv = data.invoice as InvoiceData;
+
+          // Find the next unpaid installment based on due date order + amount_paid
+          if (inv.payment_schedule && inv.payment_schedule.length > 0) {
+            const sorted = [...inv.payment_schedule].sort((a, b) => {
+              if (!a.due_date && !b.due_date) return 0;
+              if (!a.due_date) return 1;
+              if (!b.due_date) return -1;
+              return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+            });
+            let paidSoFar = inv.amount_paid;
+            let foundNext = false;
+            for (const item of sorted) {
+              const amt = computeInstallmentAmount(item, inv.total);
+              if (paidSoFar < amt - 0.01) {
+                setSelectedAmount(amt);
+                setSelectedIndex(0); // next installment
+                foundNext = true;
+                break;
+              }
+              paidSoFar -= amt;
+            }
+            if (!foundNext) {
+              // All installments covered — default to full balance
+              setSelectedAmount(inv.balance_due);
+              setSelectedIndex(1);
+            }
           } else {
-            // Full mode or no payment schedule — auto-select full balance
-            setSelectedAmount(data.invoice.balance_due);
+            // No schedule — full payment only
+            setSelectedAmount(inv.balance_due);
+            setSelectedIndex(1);
           }
         }
         setLoading(false);
@@ -186,12 +206,10 @@ export default function InvoicePayPage() {
   const handlePay = async () => {
     if (!invoice || !cardInstanceRef.current || !paymentsRef.current) return;
 
-    const payAmount = invoice.allow_custom_amount && customAmount
-      ? Number(customAmount)
-      : selectedAmount;
+    const payAmount = selectedAmount;
 
     if (!payAmount || isNaN(payAmount) || payAmount <= 0) {
-      setPaymentError("Please enter or select a valid payment amount.");
+      setPaymentError("Please select a payment option.");
       return;
     }
 
@@ -271,13 +289,54 @@ export default function InvoicePayPage() {
   }
 
   const isFullyPaid = invoice.status === "paid" || invoice.balance_due <= 0.01;
-  // mode=full forces full balance payment even if a split schedule exists
-  const hasSchedule = mode !== "full" && invoice.payment_schedule && invoice.payment_schedule.length > 0;
+
+  // Compute next unpaid installment (sorted by due date, skip fully-covered ones)
+  const sortedSchedule = invoice.payment_schedule
+    ? [...invoice.payment_schedule].sort((a, b) => {
+        if (!a.due_date && !b.due_date) return 0;
+        if (!a.due_date) return 1;
+        if (!b.due_date) return -1;
+        return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+      })
+    : [];
+
+  let nextInstallment: (typeof sortedSchedule)[0] | null = null;
+  let nextInstallmentAmount = 0;
+  if (sortedSchedule.length > 0) {
+    let paidSoFar = invoice.amount_paid;
+    for (const item of sortedSchedule) {
+      const amt = computeInstallmentAmount(item, invoice.total);
+      if (paidSoFar < amt - 0.01) {
+        nextInstallment = item;
+        nextInstallmentAmount = amt;
+        break;
+      }
+      paidSoFar -= amt;
+    }
+  }
+
+  // Precompute paid / next / future status for each installment
+  const installmentWithStatus = (() => {
+    let paidRemaining = invoice.amount_paid;
+    let nextFound = false;
+    return sortedSchedule.map((item) => {
+      const amt = computeInstallmentAmount(item, invoice.total);
+      let status: "paid" | "next" | "future";
+      if (!nextFound && paidRemaining >= amt - 0.01) {
+        paidRemaining -= amt;
+        status = "paid";
+      } else if (!nextFound) {
+        nextFound = true;
+        status = "next";
+      } else {
+        status = "future";
+      }
+      return { item, amt, status };
+    });
+  })();
 
   // 3% processing fee
-  const basePayAmount = invoice.allow_custom_amount && customAmount
-    ? Number(customAmount)
-    : (selectedAmount ?? 0);
+  const basePayAmount = selectedAmount ?? 0;
   const processingFee = basePayAmount > 0 ? Math.round(basePayAmount * 0.03 * 100) / 100 : 0;
   const totalCharged = basePayAmount > 0 ? Math.round((basePayAmount + processingFee) * 100) / 100 : 0;
 
@@ -333,15 +392,9 @@ export default function InvoicePayPage() {
           <div className="rounded-xl bg-[#f5c842] px-6 py-6 mb-4">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-[#5a4000] mb-1">Invoice #{invoice.invoice_number}</div>
             <div className="text-[20px] font-extrabold text-[#2d1a00] mb-1">{invoice.to_name}</div>
-            <div className="flex items-end justify-between gap-4 mt-3">
-              <div>
-                <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice Total</div>
-                <div className="text-[16px] font-bold text-[#5a4000] line-through decoration-[#8a6a10]">{formatCurrency(invoice.total, invoice.currency)}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Balance Due</div>
-                <div className="text-[28px] font-extrabold text-[#2d1a00]">{formatCurrency(invoice.balance_due, invoice.currency)}</div>
-              </div>
+            <div className="mt-3">
+              <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice Balance Due</div>
+              <div className="text-[28px] font-extrabold text-[#2d1a00]">{formatCurrency(invoice.balance_due, invoice.currency)}</div>
             </div>
           </div>
 
@@ -376,80 +429,103 @@ export default function InvoicePayPage() {
               )}
 
               <div className="px-5 py-5 space-y-5">
-                {/* Payment schedule / installments */}
-                {hasSchedule && (
-                  <div>
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#6b5e52] mb-2">
-                      {invoice.show_all_installments ? "Payment Options" : "Amount Due Now"}
-                    </div>
-                    <div className="space-y-2">
-                      {(invoice.show_all_installments ? invoice.payment_schedule! : invoice.payment_schedule!.slice(0, 1)).map((item, i) => {
-                        const amt = computeInstallmentAmount(item, invoice.total);
-                        const isSelected = selectedIndex === i;
+
+                {/* Payment options */}
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-[#6b5e52] mb-2">Payment Options</div>
+                  <div className="space-y-2">
+
+                    {/* All installments — paid are dimmed, next is clickable, future are disabled */}
+                    {installmentWithStatus.map(({ item, amt, status }, idx) => {
+                      if (status === "paid") {
+                        return (
+                          <div
+                            key={idx}
+                            className="w-full flex items-center justify-between rounded-lg border-2 border-[#e8e0d4] bg-[#f5f5f0] px-4 py-3 opacity-60 cursor-not-allowed"
+                          >
+                            <div className="text-left">
+                              <span className="text-[13px] font-semibold text-[#9e9080] line-through">{item.label}</span>
+                              {item.due_date && (
+                                <div className="text-[10px] text-[#b0a090] mt-0.5">
+                                  Due: {new Date(item.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-[#2d6a4f] bg-[#e8f5ee] px-1.5 py-0.5 rounded">Paid ✓</span>
+                              <span className="text-[14px] font-bold text-[#9e9080]">{formatCurrency(amt, invoice.currency)}</span>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (status === "next") {
                         return (
                           <button
-                            key={i}
+                            key={idx}
                             onClick={() => {
                               setSelectedAmount(amt);
-                              setSelectedIndex(i);
-                              setCustomAmount("");
+                              setSelectedIndex(0);
                             }}
                             className={`w-full flex items-center justify-between rounded-lg border-2 px-4 py-3 transition-colors cursor-pointer ${
-                              isSelected
+                              selectedIndex === 0
                                 ? "border-[#c0704e] bg-[#fff8f5]"
                                 : "border-[#e8e0d4] bg-[#faf6f0] hover:border-[#d4b8a0]"
                             }`}
                           >
-                            <div>
+                            <div className="text-left">
                               <span className="text-[13px] font-semibold text-[#3d2b1f]">{item.label}</span>
                               {item.due_date && (
-                                <div className="text-[10px] text-[#9e9080] mt-0.5">Due: {new Date(item.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+                                <div className="text-[10px] text-[#9e9080] mt-0.5">
+                                  Due: {new Date(item.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                </div>
                               )}
                             </div>
                             <span className="text-[15px] font-bold text-[#2d6a4f]">{formatCurrency(amt, invoice.currency)}</span>
                           </button>
                         );
-                      })}
-                    </div>
-                  </div>
-                )}
+                      }
 
-                {/* No schedule, no custom amount — show full balance as the payment amount */}
-                {!hasSchedule && !invoice.allow_custom_amount && (
-                  <div>
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#6b5e52] mb-2">Amount</div>
-                    <div className="rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] px-4 py-3 flex items-center justify-between">
-                      <span className="text-[13px] font-semibold text-[#3d2b1f]">Balance Due</span>
-                      <span className="text-[15px] font-bold text-[#c0704e]">{formatCurrency(invoice.balance_due, invoice.currency)}</span>
-                    </div>
-                  </div>
-                )}
+                      // Future — visible but disabled
+                      return (
+                        <div
+                          key={idx}
+                          className="w-full flex items-center justify-between rounded-lg border-2 border-[#e8e0d4] bg-[#f5f5f0] px-4 py-3 opacity-40 cursor-not-allowed select-none"
+                        >
+                          <div className="text-left">
+                            <span className="text-[13px] font-semibold text-[#6b5e52]">{item.label}</span>
+                            {item.due_date && (
+                              <div className="text-[10px] text-[#9e9080] mt-0.5">
+                                Due: {new Date(item.due_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-[14px] font-bold text-[#9e9080]">{formatCurrency(amt, invoice.currency)}</span>
+                        </div>
+                      );
+                    })}
 
-                {/* Custom amount input */}
-                {invoice.allow_custom_amount && (
-                  <div>
-                    <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-[#6b5e52]">
-                      {hasSchedule ? "Or enter a custom amount" : "Amount to Pay"}
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[14px] font-semibold text-[#9e9080]">$</span>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        max={invoice.balance_due}
-                        value={customAmount}
-                        onChange={(e) => {
-                          setCustomAmount(e.target.value);
-                          setSelectedAmount(null);
-                        }}
-                        placeholder={invoice.balance_due.toFixed(2)}
-                        className="w-full rounded-lg border-2 border-[#e8e0d4] bg-[#faf6f0] pl-7 pr-4 py-3 text-[15px] font-semibold text-[#3d2b1f] outline-none transition-colors focus:border-[#c0704e] placeholder:text-[#b0a090]"
-                      />
-                    </div>
-                    <p className="mt-1 text-[11px] text-[#9e9080]">Max: {formatCurrency(invoice.balance_due, invoice.currency)}</p>
+                    {/* Full Payment — always shown */}
+                    <button
+                      onClick={() => {
+                        setSelectedAmount(invoice.balance_due);
+                        setSelectedIndex(1);
+                      }}
+                      className={`w-full flex items-center justify-between rounded-lg border-2 px-4 py-3 transition-colors cursor-pointer ${
+                        selectedIndex === 1
+                          ? "border-[#c0704e] bg-[#fff8f5]"
+                          : "border-[#e8e0d4] bg-[#faf6f0] hover:border-[#d4b8a0]"
+                      }`}
+                    >
+                      <div className="text-left">
+                        <span className="text-[13px] font-semibold text-[#3d2b1f]">Full Payment</span>
+                        <div className="text-[10px] text-[#9e9080] mt-0.5">Pay remaining balance in full</div>
+                      </div>
+                      <span className="text-[15px] font-bold text-[#2d6a4f]">{formatCurrency(invoice.balance_due, invoice.currency)}</span>
+                    </button>
+
                   </div>
-                )}
+                </div>
 
                 {/* Square card form */}
                 <div>
@@ -488,7 +564,7 @@ export default function InvoicePayPage() {
                 {/* Pay button */}
                 <button
                   onClick={handlePay}
-                  disabled={processing || !cardReady || (!selectedAmount && !customAmount)}
+                  disabled={processing || !cardReady || !selectedAmount}
                   className="w-full rounded-lg bg-[#2d6a4f] text-white text-[15px] font-bold py-4 hover:bg-[#1f4d38] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {processing ? "Processing…" : !cardReady ? "Loading payment form…" : `Pay ${formatCurrency(totalCharged, invoice.currency)}`}
