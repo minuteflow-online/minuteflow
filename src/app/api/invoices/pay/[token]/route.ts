@@ -7,8 +7,10 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ token: string }> }
 ) {
-  const { token } = await params;
-  if (!token) return Response.json({ error: "Token required" }, { status: 400 });
+  const { token: rawToken } = await params;
+  if (!rawToken) return Response.json({ error: "Token required" }, { status: 400 });
+  // Strip any non-UUID characters (e.g. trailing backtick from Telegram link formatting)
+  const token = rawToken.replace(/[^0-9a-f-]/gi, "");
 
   const serviceClient = createServiceClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -65,8 +67,10 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ token: string }> }
 ) {
-  const { token } = await params;
-  if (!token) return Response.json({ error: "Token required" }, { status: 400 });
+  const { token: rawToken } = await params;
+  if (!rawToken) return Response.json({ error: "Token required" }, { status: 400 });
+  // Strip any non-UUID characters (e.g. trailing backtick from Telegram link formatting)
+  const token = rawToken.replace(/[^0-9a-f-]/gi, "");
 
   const body = await request.json();
   const { sourceId, amount, idempotencyKey } = body;
