@@ -471,15 +471,16 @@ export default function EditTimeLogModal({
           const invoiceIds = [...new Set(linkedItems.map((li) => li.invoice_id))];
           const { data: invoicesData } = await supabase
             .from("invoices")
-            .select("id, status, adjustment_amount")
+            .select("id, status, adjustment_amount, rate_amount")
             .in("id", invoiceIds);
 
           for (const li of linkedItems) {
             const inv = invoicesData?.find((i) => i.id === li.invoice_id);
             if (!inv || inv.status === "paid") continue;
 
+            const ratePerHour = Number(inv.rate_amount) || Number(li.unit_price) || 0;
             const newQuantity = parseFloat((durationMs / 3600000).toFixed(4));
-            const newAmount = parseFloat((newQuantity * Number(li.unit_price)).toFixed(4));
+            const newAmount = parseFloat((newQuantity * ratePerHour).toFixed(4));
 
             await supabase
               .from("invoice_line_items")

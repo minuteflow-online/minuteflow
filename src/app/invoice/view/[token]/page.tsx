@@ -467,7 +467,7 @@ export default function PublicInvoicePage() {
                 return (
                   <>
                     {hoursItems.length > 0 && renderGrid(hoursItems)}
-                    {renderGrid(moneyItems)}
+                    {moneyItems.length > 1 && renderGrid(moneyItems)}
                     <div className="rounded-lg border-2 border-[#c0704e] bg-[#fff8f5] p-3 text-center">
                       <div className="text-[9px] font-semibold uppercase tracking-wide text-[#6b5e52]">Final Balance Due</div>
                       <div className="text-[20px] font-extrabold text-[#c0704e] mt-1">{formatCurrency(currentBalance, invoice.currency)}</div>

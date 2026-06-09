@@ -6516,6 +6516,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   // Custom invoice type state
   const [invoiceType, setInvoiceType] = useState<"timelog" | "custom">("timelog");
   const [customItems, setCustomItems] = useState<Array<{ id: string; description: string; amount: string }>>([{ id: "ci-1", description: "", amount: "" }]);
+  const [customPeriodStart, setCustomPeriodStart] = useState("");
+  const [customPeriodEnd, setCustomPeriodEnd] = useState("");
 
   // Square payment schedule — create flow
   const [invoiceTemplates, setInvoiceTemplates] = useState<PaymentTemplate[]>([]);
@@ -6906,8 +6908,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       invoice_type: invoiceType,
       custom_line_items: invoiceType === "custom" ? JSON.stringify(customItems.filter(i => i.description).map(i => ({ description: i.description, amount: parseFloat(i.amount) || 0 }))) : null,
       share_token: crypto.randomUUID(),
-      period_start: dateFrom || null,
-      period_end: dateTo || null,
+      period_start: invoiceType === "custom"
+        ? (customPeriodStart || null)
+        : (dateFrom || null),
+      period_end: invoiceType === "custom"
+        ? (customPeriodEnd || null)
+        : (dateTo || null),
       allow_custom_amount: createAllowCustomAmount,
       payment_schedule: createSchedule.length > 0 ? createSchedule : null,
       payment_template_id: createTemplateId,
@@ -7798,7 +7804,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           {/* Invoice Type Toggle */}
           <div className="mb-6 flex items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-bark mr-2">Type:</span>
-            <button onClick={() => { setInvoiceType("timelog"); setExpenseItems([]); }} className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${invoiceType === "timelog" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}>Time Log Based</button>
+            <button onClick={() => { setInvoiceType("timelog"); setExpenseItems([]); setCustomPeriodStart(""); setCustomPeriodEnd(""); }} className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${invoiceType === "timelog" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}>Time Log Based</button>
             <button onClick={() => { setInvoiceType("custom"); setExpenseItems([]); setSelectedClientId(null); setBillingEmail(""); setBillingPhone(""); setBillingAddress(""); }} className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${invoiceType === "custom" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}>Custom Invoice</button>
           </div>
 
@@ -7895,14 +7901,34 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </div>
           </>)}
 
-          {/* Custom Invoice: Bill To selector */}
+          {/* Custom Invoice: Bill To selector + Billing Month */}
           {invoiceType === "custom" && (
-            <div className="mb-6">
-              <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">Bill To (Client)</label>
-              <select value={selectedClientId ?? ""} onChange={(e) => { setSelectedClientId(e.target.value ? Number(e.target.value) : null); setExpenseItems([]); }} className="w-full max-w-xs rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer">
-                <option value="">Choose a client...</option>
-                {clients.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-              </select>
+            <div className="mb-6 flex flex-wrap items-end gap-6">
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">Bill To (Client)</label>
+                <select value={selectedClientId ?? ""} onChange={(e) => { setSelectedClientId(e.target.value ? Number(e.target.value) : null); setExpenseItems([]); }} className="w-full max-w-xs rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer">
+                  <option value="">Choose a client...</option>
+                  {clients.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">Billing Period Start</label>
+                <input
+                  type="date"
+                  value={customPeriodStart}
+                  onChange={(e) => setCustomPeriodStart(e.target.value)}
+                  className="rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">Billing Period End</label>
+                <input
+                  type="date"
+                  value={customPeriodEnd}
+                  onChange={(e) => setCustomPeriodEnd(e.target.value)}
+                  className="rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                />
+              </div>
             </div>
           )}
 
@@ -9983,7 +10009,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 return (
                   <>
                     {hoursItems.length > 0 && renderGrid(hoursItems)}
-                    {renderGrid(moneyItems)}
+                    {moneyItems.length > 1 && renderGrid(moneyItems)}
                     <div className="rounded-lg border-2 border-terracotta bg-[#fff8f5] p-3 text-center">
                       <p className="text-[9px] font-semibold uppercase tracking-wider text-bark">Final Balance Due</p>
                       <p className="mt-1 text-[22px] font-extrabold text-terracotta">{formatCurrency(currentBal, inv.currency)}</p>
