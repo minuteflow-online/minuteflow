@@ -459,6 +459,55 @@ export default function EditTimeLogModal({
           }
         }
       }
+
+      // ── Sync changes to any linked invoice line items (skip paid invoices)
+      {
+        const { data: linkedItems } = await supabase
+          .from("invoice_line_items")
+          .select("id, invoice_id, unit_price")
+          .eq("log_id", log.id);
+
+        if (linkedItems && linkedItems.length > 0) {
+          const invoiceIds = [...new Set(linkedItems.map((li) => li.invoice_id))];
+          const { data: invoicesData } = await supabase
+            .from("invoices")
+            .select("id, status, adjustment_amount")
+            .in("id", invoiceIds);
+
+          for (const li of linkedItems) {
+            const inv = invoicesData?.find((i) => i.id === li.invoice_id);
+            if (!inv || inv.status === "paid") continue;
+
+            const newQuantity = parseFloat((durationMs / 3600000).toFixed(4));
+            const newAmount = parseFloat((newQuantity * Number(li.unit_price)).toFixed(4));
+
+            await supabase
+              .from("invoice_line_items")
+              .update({
+                description: taskName.trim(),
+                project: project || null,
+                client_memo: clientMemo || null,
+                quantity: newQuantity,
+                amount: newAmount,
+              })
+              .eq("id", li.id);
+
+            // Recalculate invoice subtotal from all line items
+            const { data: allItems } = await supabase
+              .from("invoice_line_items")
+              .select("amount")
+              .eq("invoice_id", inv.id);
+            if (allItems) {
+              const newSubtotal = allItems.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+              const adj = Number(inv.adjustment_amount) || 0;
+              await supabase
+                .from("invoices")
+                .update({ subtotal: newSubtotal, total: newSubtotal - adj })
+                .eq("id", inv.id);
+            }
+          }
+        }
+      }
     }
 
     setSaving(false);

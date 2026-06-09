@@ -7387,6 +7387,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   const handleUpdateInvoice = async () => {
     if (!selectedInvoice) return;
+    if (selectedInvoice.status === "paid") return;
     setSavingEdit(true);
 
     const subtotal = parseFloat(editSubtotal) || Number(selectedInvoice.subtotal);
@@ -7443,6 +7444,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         client_memo: li.client_memo,
         va_name: li.va_name,
       }).eq("id", li.id);
+    }
+    // Sync line item edits back to time_logs (X'd-out items are in removedEditItems — naturally excluded)
+    for (const li of editLineItemsState) {
+      if (li.log_id) {
+        await supabase.from("time_logs").update({
+          task_name: li.description,
+          project: li.project || null,
+          client_memo: li.client_memo || null,
+        }).eq("id", li.log_id);
+      }
     }
     // Remove line items that were deleted
     for (const li of removedEditItems) {
@@ -8900,7 +8911,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             >
               + New Invoice
             </button>
-            <button
+            {inv.status !== "paid" && <button
               onClick={() => {
                 setEditingInvoice(!editingInvoice);
                 if (!editingInvoice) {
@@ -8940,7 +8951,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${editingInvoice ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}
             >
               {editingInvoice ? "✕ Cancel Edit" : "✏️ Edit Invoice"}
-            </button>
+            </button>}
             {inv.share_token && (
               <a
                 href={`https://minuteflow.click/invoice/view/${inv.share_token}`}
