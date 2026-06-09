@@ -31,7 +31,7 @@ type TaskRow = {
   created_by: string | null;
   created_at: string | null;
   updated_at: string | null;
-  assignees: AssigneeRow[];
+  assigned_task_assignees: AssigneeRow[];
 };
 
 /**
@@ -68,31 +68,56 @@ export async function GET(request: Request) {
 
   if (isAdminOrManager) {
     const assigneeSelect =
-      "id, va_id, status, log_id, notes, assigned_at, updated_at, profiles:va_id(id, full_name, username)";
+      "id, va_id, status, log_id, notes, assigned_at, updated_at";
 
     const query = supabase
       .from("assigned_tasks")
       .select(
         `id, account, project, task_name, task_detail, due_date, created_by, created_at, updated_at,
-         assignees:assigned_task_assignees(${assigneeSelect})`
+         assigned_task_assignees(${assigneeSelect})`
       )
       .order("created_at", { ascending: false });
 
     const { data, error } = await query;
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
-    let result = (data ?? []) as unknown as TaskRow[];
+    // Fetch profiles separately (PostgREST can't join profiles via auth.users FK)
+    const allVaIds = [
+      ...new Set(
+        (data ?? []).flatMap((t) =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ((t as any).assigned_task_assignees ?? []).map((a: AssigneeRow) => a.va_id)
+        )
+      ),
+    ];
+    let profilesMap: Record<string, { id: string; full_name: string; username: string }> = {};
+    if (allVaIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, full_name, username")
+        .in("id", allVaIds);
+      profilesMap = Object.fromEntries((profiles ?? []).map((p) => [p.id, p]));
+    }
+
+    let result = ((data ?? []).map((task) => ({
+      ...task,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      assigned_task_assignees: ((task as any).assigned_task_assignees ?? []).map((a: AssigneeRow) => ({
+        ...a,
+        profiles: profilesMap[a.va_id] ?? null,
+      })),
+    }))) as unknown as TaskRow[];
 
     // Post-filter: if vaId param, keep only tasks that have that VA as assignee
     if (vaIdParam) {
       result = result
         .map((task) => ({
           ...task,
-          assignees: (task.assignees as AssigneeRow[]).filter(
+          assigned_task_assignees: task.assigned_task_assignees.filter(
             (a) => a.va_id === vaIdParam
           ),
         }))
-        .filter((task) => (task.assignees as AssigneeRow[]).length > 0);
+        .filter((task) => task.assigned_task_assignees.length > 0);
     }
 
     // Post-filter: if status param, filter assignees by status
@@ -100,11 +125,11 @@ export async function GET(request: Request) {
       result = result
         .map((task) => ({
           ...task,
-          assignees: (task.assignees as AssigneeRow[]).filter(
+          assigned_task_assignees: task.assigned_task_assignees.filter(
             (a) => a.status === statusParam
           ),
         }))
-        .filter((task) => (task.assignees as AssigneeRow[]).length > 0);
+        .filter((task) => task.assigned_task_assignees.length > 0);
     }
 
     return Response.json({ tasks: result });
@@ -201,10 +226,10 @@ export async function POST(request: Request) {
   const { data: assignees, error: assigneeError } = await supabase
     .from("assigned_task_assignees")
     .insert(assigneeRows)
-    .select("id, va_id, status, log_id, notes, assigned_at, updated_at, profiles:va_id(id, full_name, username)");
+    .select("id, va_id, status, log_id, notes, assigned_at, updated_at");
 
   if (assigneeError)
     return Response.json({ error: assigneeError.message }, { status: 500 });
 
-  return Response.json({ task: { ...task, assignees: assignees ?? [] } }, { status: 201 });
+  return Response.json({ task: { ...task, assigned_task_assignees: assignees ?? [] } }, { status: 201 });
 }

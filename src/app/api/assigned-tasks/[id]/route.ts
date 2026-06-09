@@ -130,14 +130,14 @@ export async function PUT(request: Request, { params }: RouteContext) {
   // Return updated task with current assignees
   const { data: finalAssignees, error: finalError } = await supabase
     .from("assigned_task_assignees")
-    .select("id, va_id, status, log_id, notes, assigned_at, updated_at, profiles:va_id(id, full_name, username)")
+    .select("id, va_id, status, log_id, notes, assigned_at, updated_at")
     .eq("assigned_task_id", id);
 
   if (finalError)
     return Response.json({ error: finalError.message }, { status: 500 });
 
   return Response.json({
-    task: { ...updatedTask, assignees: finalAssignees ?? [] },
+    task: { ...updatedTask, assigned_task_assignees: finalAssignees ?? [] },
   });
 }
 
