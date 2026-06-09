@@ -344,8 +344,8 @@ export default function PublicInvoicePage() {
               {invoice.payment_info && (
                 <div className="text-[11px] text-[#5a4000] whitespace-pre-line mb-2">{invoice.payment_info}</div>
               )}
-              {/* Square payment page — shown when a payment schedule exists */}
-              {invoice.payment_schedule && invoice.payment_schedule.length > 0 && invoice.status !== "paid" && (
+              {/* Square payment page — shown for all unpaid invoices */}
+              {invoice.status !== "paid" && invoice.status !== "cancelled" && (
                 <div className="mt-1">
                   <a
                     href={`/invoice/pay/${token}`}
@@ -356,8 +356,8 @@ export default function PublicInvoicePage() {
                   <div className="text-[9px] text-[#5a4000] mt-1">Secure payment via Square</div>
                 </div>
               )}
-              {/* Legacy manual payment link (shown if no Square schedule) */}
-              {invoice.payment_link && !(invoice.payment_schedule && invoice.payment_schedule.length > 0) && (
+              {/* Legacy manual payment link (shown if a manual payment link is set and invoice is unpaid) */}
+              {invoice.payment_link && invoice.status !== "paid" && invoice.status !== "cancelled" && (
                 <div className="mt-1">
                   <a
                     href={invoice.payment_link}
