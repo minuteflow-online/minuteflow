@@ -456,3 +456,44 @@ export interface ExtensionUploadStatus {
   last_reported_at: string;
   extension_version: string | null;
 }
+
+// ── Assigned Tasks ──────────────────────────────────────────────────────────
+
+export interface AssignedTask {
+  id: number;
+  account: string | null;
+  project: string | null;
+  task_name: string;
+  task_detail: string | null;
+  due_date: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AssignedTaskStatus = 'pending' | 'on_queue' | 'in_progress' | 'completed' | 'cancelled';
+
+export interface AssignedTaskAssignee {
+  id: number;
+  assigned_task_id: number;
+  va_id: string;
+  status: AssignedTaskStatus;
+  log_id: number | null;
+  notes: string | null;
+  assigned_at: string;
+  updated_at: string;
+  profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>;
+  assigned_tasks?: AssignedTask;
+}
+
+/** Enriched view: task + its assignees (used in admin panel) */
+export interface AssignedTaskWithAssignees extends AssignedTask {
+  assigned_task_assignees: (AssignedTaskAssignee & {
+    profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>;
+  })[];
+}
+
+/** Enriched view: assignee row + task details (used in VA dashboard) */
+export interface VAAssignedTask extends AssignedTaskAssignee {
+  assigned_tasks: AssignedTask;
+}

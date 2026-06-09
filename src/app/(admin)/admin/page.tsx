@@ -41,6 +41,7 @@ import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
 import VaTokensAdminTab from "@/components/VaTokensAdminTab";
 import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
 import EmailStatusTab from "@/components/EmailStatusTab";
+import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -100,7 +101,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "email_log";
+type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "email_log";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -135,6 +136,17 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
         <circle cx="9" cy="7" r="4" />
         <path d="M23 21v-2a4 4 0 00-3-3.87" />
         <path d="M16 3.13a4 4 0 010 7.75" />
+      </svg>
+    ),
+  },
+  {
+    id: "task_assignments",
+    label: "Task Assignments",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
+        <rect x="9" y="3" width="6" height="4" rx="1" />
+        <path d="M9 12l2 2 4-4" />
       </svg>
     ),
   },
@@ -315,7 +327,7 @@ type SidebarGroup = {
   tabs: { id: AdminTab; label: string; icon: React.ReactNode }[];
 };
 
-const SIDEBAR_GROUPS: SidebarGroup[] = [
+const ADMIN_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "pinned",
     tabs: SIDEBAR_TABS.filter((t) => (["overview"] as AdminTab[]).includes(t.id)),
@@ -324,11 +336,6 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
     id: "activity",
     label: "Activity",
     tabs: SIDEBAR_TABS.filter((t) => (["screenshots", "alerts", "corrections"] as AdminTab[]).includes(t.id)),
-  },
-  {
-    id: "team",
-    label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log"] as AdminTab[]).includes(t.id)),
   },
   {
     id: "billing",
@@ -342,14 +349,39 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
   },
 ];
 
+const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
+  {
+    id: "team",
+    label: "Team",
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log"] as AdminTab[]).includes(t.id)),
+  },
+];
+
+// Combined for auto-expand logic
+const SIDEBAR_GROUPS: SidebarGroup[] = [...ADMIN_SIDEBAR_GROUPS, ...TEAM_SIDEBAR_GROUPS];
+
+// Tab IDs that belong to the TEAM section
+const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log"];
+
 /* ── Main Admin Page ─────────────────────────────────────── */
 
 export default function AdminPage() {
   const supabase = createClient();
 
-  // Active tab
+  // Active tab + sidebar section (admin | team)
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [sidebarSection, setSidebarSection] = useState<"admin" | "team">("admin");
+
+  // Switch section and navigate to the section's default tab
+  const handleSectionSwitch = (section: "admin" | "team") => {
+    setSidebarSection(section);
+    if (section === "team") {
+      setActiveTab("team");
+    } else {
+      setActiveTab("overview");
+    }
+  };
 
   // Data state
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -414,7 +446,7 @@ export default function AdminPage() {
     return () => clearInterval(interval);
   }, [orgTimezone]);
 
-  // Auto-expand the group containing the active tab
+  // Auto-expand the group containing the active tab + sync sidebar section
   useEffect(() => {
     const group = SIDEBAR_GROUPS.find((g) => g.label && g.tabs.some((t) => t.id === activeTab));
     if (group) {
@@ -423,6 +455,8 @@ export default function AdminPage() {
         return new Set([...prev, group.id]);
       });
     }
+    // Sync sidebar section to match the active tab
+    setSidebarSection(TEAM_TAB_IDS.includes(activeTab) ? "team" : "admin");
   }, [activeTab]);
 
   /* ── Data Fetching ──────────────────────────────────────── */
@@ -1086,12 +1120,35 @@ export default function AdminPage() {
     <div className="flex h-[calc(100vh-56px)]">
       {/* ── Left Sidebar ──────────────────────────────────── */}
       <aside className="w-[220px] shrink-0 bg-[#3d2b1f] flex flex-col">
-        <div className="px-5 py-5 border-b border-white/10">
+        <div className="px-4 py-4 border-b border-white/10">
           <h2 className="text-sm font-bold text-white tracking-wide">Admin Panel</h2>
           <p className="mt-0.5 text-[10px] text-white/50">{clock}</p>
+          {/* Admin / Team section switcher */}
+          <div className="mt-3 flex rounded-lg bg-black/25 p-0.5">
+            <button
+              onClick={() => handleSectionSwitch("admin")}
+              className={`flex-1 rounded-md py-1.5 text-[11px] font-semibold tracking-wide transition-all ${
+                sidebarSection === "admin"
+                  ? "bg-terracotta text-white shadow-sm"
+                  : "text-white/50 hover:text-white/80"
+              }`}
+            >
+              ADMIN
+            </button>
+            <button
+              onClick={() => handleSectionSwitch("team")}
+              className={`flex-1 rounded-md py-1.5 text-[11px] font-semibold tracking-wide transition-all ${
+                sidebarSection === "team"
+                  ? "bg-terracotta text-white shadow-sm"
+                  : "text-white/50 hover:text-white/80"
+              }`}
+            >
+              TEAM
+            </button>
+          </div>
         </div>
         <nav className="flex-1 py-2 px-2 overflow-y-auto">
-          {SIDEBAR_GROUPS.map((group) => {
+          {(sidebarSection === "admin" ? ADMIN_SIDEBAR_GROUPS : TEAM_SIDEBAR_GROUPS).map((group) => {
             if (!group.label) {
               // Pinned tabs (Overview) — no group header
               return group.tabs.map((tab) => {
@@ -1235,6 +1292,7 @@ export default function AdminPage() {
                 {activeTab === "va_tokens" && "Award tokens and track daily ratings"}
                 {activeTab === "va_broadcasts" && "Send broadcasts, memos, and announcements to your team"}
                 {activeTab === "email_log" && "Track opens and clicks for all outgoing emails"}
+                {activeTab === "task_assignments" && "Assign tasks to VAs and track their progress"}
               </p>
             </div>
             {activeTab === "overview" && (
@@ -1293,6 +1351,10 @@ export default function AdminPage() {
               fetchData={fetchData}
               orgTimezone={orgTimezone}
             />
+          )}
+
+          {activeTab === "task_assignments" && (
+            <TaskAssignmentsAdminTab profiles={profiles} orgTimezone={orgTimezone} />
           )}
 
           {activeTab === "projects" && (

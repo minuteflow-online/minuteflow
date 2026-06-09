@@ -12,6 +12,7 @@ import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSid
 import DailyTaskPlanner from "@/components/DailyTaskPlanner";
 import VaAssignmentsColumn from "@/components/VaAssignmentsColumn";
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
+import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import { getTodayBoundsInTimezone } from "@/lib/utils";
 import type {
@@ -23,6 +24,7 @@ import type {
   UserRole,
   Message,
   PlannedTask,
+  VAAssignedTask,
 } from "@/types/database";
 
 // ─── Helpers ───────────────────────────────────────────────
@@ -98,6 +100,10 @@ export default function DashboardPage() {
   const [liveSessionData, setLiveSessionData] = useState<TimeLog | null>(null);
   const [showLivePrompt, setShowLivePrompt] = useState(false);
   const [pendingFormData, setPendingFormData] = useState<TaskFormData | null>(null);
+
+  // Assigned task pending play (tracks which assignee row to mark in_progress)
+  const [pendingAssignedTaskId, setPendingAssignedTaskId] = useState<number | null>(null);
+  const prevActiveLogIdRef = useRef<string | null>(null);
 
   // Close-old-task wizard state
   const [closeOldStep, setCloseOldStep] = useState<"screenshot" | "details" | null>(null);
@@ -2384,6 +2390,78 @@ export default function DashboardPage() {
     [checkLiveSession, startTask, activeTask]
   );
 
+  // ─── Assigned Task Play ───────────────────────────────────
+  // When VA hits Play on an assigned task, trigger the close-old-task wizard
+  // (if there's an active task) then start the new task. After the task
+  // actually starts, the status is updated to in_progress via PATCH.
+
+  const handlePlayAssignedTask = useCallback((task: VAAssignedTask) => {
+    const detail = task.assigned_tasks;
+    const formData: TaskFormData = {
+      task_name: detail.task_name,
+      category: "Task",
+      account: detail.account || "",
+      client_name: "",
+      project: detail.project || "",
+      client_memo: "",
+      internal_memo: detail.task_detail || "",
+    };
+
+    setPendingAssignedTaskId(task.id);
+
+    if (activeTask) {
+      // Build a TimeLog shape from the current active task so the wizard can
+      // display it and save memos/status before starting the assigned task.
+      const taskAsLog: TimeLog = {
+        id: parseInt(activeTask.logId, 10),
+        user_id: userId!,
+        username: profile?.username || "",
+        full_name: profile?.full_name || "",
+        department: profile?.department || null,
+        position: profile?.position || null,
+        task_name: activeTask.task_name,
+        category: activeTask.category,
+        project: activeTask.project || null,
+        account: activeTask.account || null,
+        client_name: activeTask.client_name || null,
+        start_time: activeTask.start_time,
+        end_time: null,
+        duration_ms: taskElapsed * 1000,
+        billable: true,
+        client_memo: activeTask.client_memo || null,
+        internal_memo: activeTask.internal_memo || null,
+        is_manual: false,
+        form_fill_ms: 0,
+        progress: null,
+        billing_type: activeTask.billing_type || "hourly",
+        task_rate: activeTask.task_rate ?? null,
+        manual_status: null,
+        session_date: null,
+        created_at: activeTask.start_time,
+        deleted_at: null,
+      };
+      setLiveSessionData(taskAsLog);
+      setPendingFormData(formData);
+      setCloseOldStep("screenshot");
+    } else {
+      handleCheckAndStartTask(formData);
+    }
+  }, [activeTask, userId, profile, taskElapsed, handleCheckAndStartTask]);
+
+  // When a new task log ID appears, the assigned task has started — mark it in_progress.
+  useEffect(() => {
+    const newLogId = activeTask?.logId ?? null;
+    if (pendingAssignedTaskId && newLogId && newLogId !== prevActiveLogIdRef.current) {
+      fetch(`/api/assigned-tasks/${pendingAssignedTaskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "in_progress" }),
+      }).catch(console.error);
+      setPendingAssignedTaskId(null);
+    }
+    prevActiveLogIdRef.current = newLogId;
+  }, [activeTask?.logId, pendingAssignedTaskId]);
+
   // ─── Notes modal ──────────────────────────────────────────
 
   const [showNotesModal, setShowNotesModal] = useState(false);
@@ -2833,10 +2911,11 @@ export default function DashboardPage() {
         const canSeeAvailable = isVa && !!profile?.can_see_available_tasks;
 
         // Grid: when VA is idle, always show 4 columns (locked panels fill the gaps)
+        // When VA is clocked in, show 4 columns: form | plan | assigned tasks | quick pick
         const gridClass = isVa
           ? sessionState === "idle"
             ? "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
-            : "grid-cols-1 md:grid-cols-[1fr_260px_260px]"
+            : "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]";
 
         return (
@@ -2854,6 +2933,16 @@ export default function DashboardPage() {
                 role={role}
                 onStartPlannedTask={handleStartPlannedTask}
                 teamMembers={teamMembers.map((m) => m.profile)}
+                orgTimezone={orgTimezone}
+              />
+            )}
+            {/* Assigned Tasks Widget — visible for VAs when clocked in */}
+            {isVa && userId && sessionState !== "idle" && (
+              <AssignedTasksWidget
+                userId={userId}
+                sessionState={sessionState}
+                hasActiveTask={!!activeTask}
+                onPlayAssignedTask={handlePlayAssignedTask}
                 orgTimezone={orgTimezone}
               />
             )}
@@ -2947,6 +3036,7 @@ export default function DashboardPage() {
                   setCloseOldStep(null);
                   setLiveSessionData(null);
                   setPendingFormData(null);
+                  setPendingAssignedTaskId(null);
                 }}
                 className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
               >
@@ -3005,6 +3095,7 @@ export default function DashboardPage() {
                   setCloseOldClientMemo("");
                   setCloseOldInternalMemo("");
                   setBreakPending(false);
+                  setPendingAssignedTaskId(null);
                 }}
                 className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
               >
@@ -3153,6 +3244,7 @@ export default function DashboardPage() {
                     setCloseOldClientMemo("");
                     setCloseOldInternalMemo("");
                     setBreakPending(false);
+                    setPendingAssignedTaskId(null);
                   }}
                   className="flex-1 py-2.5 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"
                 >
