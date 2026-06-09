@@ -5,8 +5,9 @@ import { createClient } from "@/lib/supabase/client";
 
 /* ── Types ────────────────────────────────────────────────── */
 
-type EmailType = "invoice" | "paystub" | "broadcast";
+type EmailType = "invoice" | "paystub" | "broadcast" | "invite";
 type DateFilter = "all" | "today" | "week" | "month";
+type TypeFilter = "all" | EmailType;
 
 interface UnifiedEmail {
   id: string;
@@ -45,6 +46,7 @@ const TYPE_COLORS: Record<EmailType, { bg: string; text: string; label: string }
   invoice:   { bg: "#f0f7ff", text: "#1d4ed8", label: "Invoice" },
   paystub:   { bg: "#f0fdf4", text: "#15803d", label: "Paystub" },
   broadcast: { bg: "#fef9ec", text: "#b45309", label: "Broadcast" },
+  invite:    { bg: "#f5f0ff", text: "#7c3aed", label: "Invite" },
 };
 
 /* ── Component ───────────────────────────────────────────── */
@@ -59,6 +61,7 @@ export default function EmailStatusTab() {
   // Filters
   const [search, setSearch]         = useState("");
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
 
   // Selection
   const [selected, setSelected]     = useState<Set<string>>(new Set());
@@ -67,7 +70,7 @@ export default function EmailStatusTab() {
     setLoading(true);
     const sb = createClient();
 
-    const [invoiceRes, paystubRes, broadcastRes, eventsRes, hiddenRes] = await Promise.all([
+    const [invoiceRes, paystubRes, broadcastRes, inviteRes, eventsRes, hiddenRes] = await Promise.all([
       sb
         .from("invoices")
         .select("id, invoice_number, to_email, to_name, sent_at, resend_message_id")
@@ -81,6 +84,11 @@ export default function EmailStatusTab() {
         .from("broadcasts")
         .select("id, title, created_at, resend_message_id")
         .eq("status", "published")
+        .order("created_at", { ascending: false }),
+      sb
+        .from("invitations")
+        .select("id, email, created_at, resend_message_id, employment_type, used_at, expires_at")
+        .not("resend_message_id", "is", null)
         .order("created_at", { ascending: false }),
       sb
         .from("email_events")
@@ -158,6 +166,34 @@ export default function EmailStatusTab() {
       });
     }
 
+    for (const invite of (inviteRes.data ?? []) as {
+      id: string;
+      email: string;
+      created_at: string;
+      resend_message_id: string | null;
+      employment_type: string | null;
+      used_at: string | null;
+      expires_at: string;
+    }[]) {
+      if (hidden.has(`invite:${invite.id}`)) continue;
+      const inviteStatus = invite.used_at
+        ? "Registered"
+        : new Date(invite.expires_at) < new Date()
+        ? "Expired"
+        : "Pending";
+      unified.push({
+        id: invite.id,
+        type: "invite",
+        label: invite.email,
+        sublabel: invite.employment_type
+          ? `${invite.employment_type.replace("_", " ")} · ${inviteStatus}`
+          : inviteStatus,
+        recipient: invite.email,
+        sent_at: invite.created_at,
+        resend_message_id: invite.resend_message_id ?? "",
+      });
+    }
+
     // Sort newest first
     unified.sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime());
 
@@ -173,7 +209,7 @@ export default function EmailStatusTab() {
   // Clear selection whenever filters change
   useEffect(() => {
     setSelected(new Set());
-  }, [search, dateFilter]);
+  }, [search, dateFilter, typeFilter]);
 
   /* ── Filtering ── */
   const filteredRecords = React.useMemo(() => {
@@ -183,6 +219,9 @@ export default function EmailStatusTab() {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
     return records.filter((r) => {
+      // Type filter
+      if (typeFilter !== "all" && r.type !== typeFilter) return false;
+
       // Date filter
       const ts = new Date(r.sent_at).getTime();
       if (dateFilter === "today"  && ts < todayStart)  return false;
@@ -198,7 +237,7 @@ export default function EmailStatusTab() {
 
       return true;
     });
-  }, [records, search, dateFilter]);
+  }, [records, search, dateFilter, typeFilter]);
 
   /* ── Single delete ── */
   const handleDelete = useCallback(async (type: EmailType, id: string) => {
@@ -317,7 +356,7 @@ export default function EmailStatusTab() {
       </div>
 
       {/* ── Filters + Bulk Action bar ── */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
         {/* Search */}
         <input
           type="text"
@@ -377,6 +416,39 @@ export default function EmailStatusTab() {
             {bulkDeleting ? "Deleting…" : `Delete Selected (${selected.size})`}
           </button>
         )}
+      </div>
+
+      {/* ── Type filter pills ── */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {([
+          { key: "all" as TypeFilter, label: "All Types" },
+          { key: "invoice" as TypeFilter, label: "Invoice" },
+          { key: "paystub" as TypeFilter, label: "Paystub" },
+          { key: "broadcast" as TypeFilter, label: "Broadcast" },
+          { key: "invite" as TypeFilter, label: "Invite" },
+        ]).map(({ key, label }) => {
+          const isActive = typeFilter === key;
+          const color = key === "all" ? "#6b5c4e" : TYPE_COLORS[key as EmailType].text;
+          const bgColor = key === "all" ? "#f0ece6" : TYPE_COLORS[key as EmailType].bg;
+          return (
+            <button
+              key={key}
+              onClick={() => setTypeFilter(key)}
+              style={{
+                padding: "5px 14px",
+                borderRadius: 20,
+                border: `1px solid ${isActive ? color : "#e8e0d4"}`,
+                background: isActive ? bgColor : "#fff",
+                color: isActive ? color : "#9e9080",
+                fontSize: 12,
+                fontWeight: isActive ? 700 : 400,
+                cursor: "pointer",
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {/* ── Table ── */}
