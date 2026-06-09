@@ -262,7 +262,7 @@ export default function ActivityLog({
     // Screenshots already synced to Drive — use public Drive URL directly (no Supabase hit)
     const driveReady = missing.filter((s) => s.drive_file_id);
     driveReady.forEach((ss) => {
-      newUrls[ss.id] = `https://drive.google.com/uc?export=view&id=${ss.drive_file_id}`;
+      newUrls[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
     });
 
     // Screenshots not yet synced — fall back to Supabase signed URL
