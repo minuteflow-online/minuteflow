@@ -7702,8 +7702,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           {/* Invoice Type Toggle */}
           <div className="mb-6 flex items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-bark mr-2">Type:</span>
-            <button onClick={() => setInvoiceType("timelog")} className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${invoiceType === "timelog" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}>Time Log Based</button>
-            <button onClick={() => setInvoiceType("custom")} className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${invoiceType === "custom" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}>Custom Invoice</button>
+            <button onClick={() => { setInvoiceType("timelog"); setExpenseItems([]); }} className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${invoiceType === "timelog" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}>Time Log Based</button>
+            <button onClick={() => { setInvoiceType("custom"); setExpenseItems([]); setSelectedClientId(null); setBillingEmail(""); setBillingPhone(""); setBillingAddress(""); }} className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${invoiceType === "custom" ? "bg-terracotta text-white" : "border border-sand text-bark hover:border-terracotta hover:text-terracotta"}`}>Custom Invoice</button>
           </div>
 
           {/* Step 1: Filter By — timelog only */}
@@ -7803,7 +7803,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           {invoiceType === "custom" && (
             <div className="mb-6">
               <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-bark">Bill To (Client)</label>
-              <select value={selectedClientId ?? ""} onChange={(e) => setSelectedClientId(e.target.value ? Number(e.target.value) : null)} className="w-full max-w-xs rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer">
+              <select value={selectedClientId ?? ""} onChange={(e) => { setSelectedClientId(e.target.value ? Number(e.target.value) : null); setExpenseItems([]); }} className="w-full max-w-xs rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta cursor-pointer">
                 <option value="">Choose a client...</option>
                 {clients.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
               </select>
