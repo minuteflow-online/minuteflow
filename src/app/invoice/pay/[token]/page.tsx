@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import Script from "next/script";
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -138,8 +137,34 @@ export default function InvoicePayPage() {
       setCardReady(true);
     } catch (err) {
       console.error("Square SDK init error:", err);
-      setPaymentError("Failed to initialize payment form. Please refresh the page.");
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setPaymentError(`Payment form error: ${errMsg}`);
     }
+  }, [squareConfig]);
+
+  /* ── Load Square SDK manually when squareConfig is ready ── */
+
+  useEffect(() => {
+    if (!squareConfig) return;
+
+    // If script already exists and Square is already defined, mark loaded
+    if (document.getElementById("square-sdk")) {
+      if (window.Square) setSquareLoaded(true);
+      return;
+    }
+
+    const src =
+      squareConfig.environment === "sandbox"
+        ? "https://sandbox.web.squarecdn.com/v1/square.js"
+        : "https://web.squarecdn.com/v1/square.js";
+
+    const script = document.createElement("script");
+    script.id = "square-sdk";
+    script.src = src;
+    script.onload = () => setSquareLoaded(true);
+    script.onerror = () =>
+      setPaymentError("Failed to load payment SDK. Please refresh and try again.");
+    document.head.appendChild(script);
   }, [squareConfig]);
 
   useEffect(() => {
@@ -281,19 +306,6 @@ export default function InvoicePayPage() {
 
   return (
     <>
-      {/* Load Square Web Payments SDK */}
-      {squareConfig && (
-        <Script
-          src={
-            squareConfig.environment === "sandbox"
-              ? "https://sandbox.web.squarecdn.com/v1/square.js"
-              : "https://web.squarecdn.com/v1/square.js"
-          }
-          onLoad={() => setSquareLoaded(true)}
-          strategy="afterInteractive"
-        />
-      )}
-
       <div className="min-h-screen bg-[#f5f0e8] py-8 px-4 font-sans">
         <div className="max-w-lg mx-auto">
 
