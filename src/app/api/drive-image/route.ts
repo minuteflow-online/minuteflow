@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import { NextRequest } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,16 @@ function getGoogleAuth() {
 }
 
 export async function GET(request: NextRequest) {
+  // Auth guard — any logged-in user may view drive images (screenshots)
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const fileId = request.nextUrl.searchParams.get("id");
   if (!fileId) {
     return new Response("Missing id", { status: 400 });

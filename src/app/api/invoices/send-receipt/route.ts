@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { createClient as createAuthClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +9,23 @@ export const dynamic = "force-dynamic";
  * Called by the admin dashboard after manually recording a payment.
  */
 export async function POST(request: Request) {
+  // Auth guard — only authenticated admins may send receipts
+  const authClient = await createAuthClient();
+  const {
+    data: { user },
+  } = await authClient.auth.getUser();
+  if (!user) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const { data: profile } = await authClient
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if (profile?.role !== "admin") {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const body = await request.json().catch(() => null);
   if (!body?.invoiceId) {
     return Response.json({ error: "invoiceId required" }, { status: 400 });

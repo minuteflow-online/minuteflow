@@ -29,6 +29,16 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
+  // Admin role check — only admins may overwrite Square credentials
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if (profile?.role !== "admin") {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const body = await request.json();
   const { application_id, access_token, location_id, environment = "production" } = body;
 

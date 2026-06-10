@@ -14,8 +14,21 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Admin role check — only admins may send invoices
+  const { data: senderProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if (senderProfile?.role !== "admin") {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const body = await request.json();
-  const { invoice_id, override_email, cc_emails } = body;
+  const { invoice_id } = body;
+  // Recipient is taken solely from the invoice record — no arbitrary
+  // override_email / cc override is honored (prevents sending invoices to
+  // an attacker-controlled address).
 
   if (!invoice_id) {
     return Response.json({ error: "invoice_id is required" }, { status: 400 });
@@ -39,7 +52,7 @@ export async function POST(request: Request) {
   }
 
   // Parse To: supports comma-separated string or array
-  const rawTo = override_email || invoice.to_email;
+  const rawTo = invoice.to_email;
   const recipientEmails: string[] = Array.isArray(rawTo)
     ? rawTo.map((e: string) => e.trim()).filter(Boolean)
     : typeof rawTo === "string"
@@ -50,12 +63,8 @@ export async function POST(request: Request) {
     return Response.json({ error: "No recipient email — enter a send-to email address above the Send button" }, { status: 400 });
   }
 
-  // Parse CC: supports comma-separated string or array
-  const ccEmails: string[] = Array.isArray(cc_emails)
-    ? cc_emails.map((e: string) => e.trim()).filter(Boolean)
-    : typeof cc_emails === "string"
-    ? cc_emails.split(",").map((e: string) => e.trim()).filter(Boolean)
-    : [];
+  // CC overrides are not honored — invoices go only to the recorded recipient.
+  const ccEmails: string[] = [];
 
   // Fetch line items
   const { data: lineItems } = await serviceClient

@@ -14,8 +14,19 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Admin role check — only admins may send invoice reminders
+  const { data: senderProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if (senderProfile?.role !== "admin") {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const body = await request.json();
-  const { invoice_id, override_email } = body;
+  const { invoice_id } = body;
+  // Recipient is taken solely from the invoice record — no override_email.
 
   if (!invoice_id) {
     return Response.json({ error: "invoice_id is required" }, { status: 400 });
@@ -38,7 +49,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invoice not found" }, { status: 404 });
   }
 
-  const recipientEmail = override_email || invoice.to_email;
+  const recipientEmail = invoice.to_email;
   if (!recipientEmail) {
     return Response.json(
       { error: "No recipient email — enter a send-to email address" },

@@ -66,6 +66,33 @@ async function uploadToDrive(
   return fileId;
 }
 
+/**
+ * Grant anyone/reader permission on a freshly uploaded Drive file so the app
+ * can display the screenshot immediately. Mirrors the hourly
+ * fix_screenshot_permissions.py band-aid, applied here at upload time so images
+ * are visible without waiting for the cron. Non-fatal: a failure here must not
+ * fail the upload (the cron will still pick it up), so errors are logged only.
+ */
+async function makeDriveFilePublic(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  auth: any,
+  fileId: string
+): Promise<void> {
+  try {
+    const drive = google.drive({ version: "v3", auth });
+    await drive.permissions.create({
+      fileId,
+      requestBody: { type: "anyone", role: "reader" },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[upload-screenshot] Could not set anyone/reader permission on ${fileId} (non-fatal, cron will retry):`,
+      message
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -122,18 +149,20 @@ export async function POST(request: NextRequest) {
 
     // ── Drive upload with self-healing retry ─────────────────
     let driveFileId: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let driveAuth: any;
 
     try {
-      const auth = await buildGoogleAuthClient();
-      driveFileId = await uploadToDrive(auth, driveFilename, buffer);
+      driveAuth = await buildGoogleAuthClient();
+      driveFileId = await uploadToDrive(driveAuth, driveFilename, buffer);
     } catch (firstErr) {
       if (isAuthError(firstErr)) {
         // Token was invalid — force a fresh refresh and retry once
         console.warn("[upload-screenshot] Auth error on first attempt, refreshing token and retrying:", firstErr);
         try {
           await refreshGoogleToken();
-          const authRetry = await buildGoogleAuthClient();
-          driveFileId = await uploadToDrive(authRetry, driveFilename, buffer);
+          driveAuth = await buildGoogleAuthClient();
+          driveFileId = await uploadToDrive(driveAuth, driveFilename, buffer);
           console.log("[upload-screenshot] Self-heal retry succeeded.");
         } catch (retryErr) {
           const message = retryErr instanceof Error ? retryErr.message : String(retryErr);
@@ -147,6 +176,10 @@ export async function POST(request: NextRequest) {
         throw firstErr; // Non-auth error — bubble up
       }
     }
+
+    // Make the file viewable immediately (anyone/reader) so the app can render
+    // it without waiting for the hourly fix_screenshot_permissions.py cron.
+    await makeDriveFilePublic(driveAuth, driveFileId);
 
     // Insert task_screenshots record — Drive only, no storage_path
     const { data: ssData, error: insertError } = await supabase
