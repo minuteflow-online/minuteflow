@@ -295,6 +295,10 @@ export default function TaskAssignmentsAdminTab({
 
   const handleSave = useCallback(async () => {
     if (!form.task_name.trim()) return;
+    if (form.assignee_ids.length === 0) {
+      setSaveMsg({ type: "err", text: "Please select at least one VA to assign this task to." });
+      return;
+    }
     setSaving(true);
     setSaveMsg(null);
 
@@ -606,7 +610,7 @@ export default function TaskAssignmentsAdminTab({
             {/* Assign To */}
             <div>
               <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">
-                Assign To
+                Assign To <span className="text-terracotta">*</span>
               </label>
               {vaProfiles.length === 0 ? (
                 <p className="text-[12px] text-stone">No VAs available</p>
@@ -639,7 +643,7 @@ export default function TaskAssignmentsAdminTab({
           <div className="flex items-center gap-3 mt-5 flex-wrap">
             <button
               onClick={handleSave}
-              disabled={saving || !form.task_name.trim()}
+              disabled={saving || !form.task_name.trim() || form.assignee_ids.length === 0}
               className="rounded-lg bg-terracotta px-5 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? "Saving..." : editingId ? "Save Changes" : "Create Task"}
