@@ -7369,19 +7369,34 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         .order("payment_date", { ascending: false }),
     ]);
 
-    const items = (lineItemsRes.data ?? []) as InvoiceLineItem[];
+    const rawItems = (lineItemsRes.data ?? []) as InvoiceLineItem[];
+
+    // For timelog invoices, line items are stored with amount=0 / unit_price=0 — the authoritative
+    // subtotal lives on the invoice itself (already set into editSubtotal above from invoice.subtotal).
+    // Compute per-item amounts from the invoice rate so removal/filter recalcs work correctly.
+    let items: InvoiceLineItem[] = rawItems;
+    if (invoice.invoice_type === "timelog" && rawItems.length > 0) {
+      const timeItems = rawItems.filter(li => li.unit_price === 0);
+      const totalTimeHours = timeItems.reduce((sum, li) => sum + li.quantity, 0);
+      const expenseTotal = rawItems
+        .filter(li => li.unit_price > 0)
+        .reduce((sum, li) => sum + li.quantity * li.unit_price, 0);
+      const timeSubtotal = invoice.subtotal - expenseTotal;
+      const effectiveRate =
+        invoice.rate_amount != null
+          ? invoice.rate_amount
+          : totalTimeHours > 0
+          ? timeSubtotal / totalTimeHours
+          : 0;
+      items = rawItems.map(li =>
+        li.unit_price === 0
+          ? { ...li, amount: Math.round(li.quantity * effectiveRate * 100) / 100 }
+          : { ...li, amount: Math.round(li.quantity * li.unit_price * 100) / 100 }
+      );
+    }
+
     setSelectedLineItems(items);
     setEditLineItemsState(items);
-
-    // Auto-recalculate subtotal from line items to catch stale stored totals
-    if (invoice.invoice_type !== "custom" && items.length > 0) {
-      const computedSubtotal = items.reduce((sum, li) => sum + (li.amount || 0), 0).toFixed(2);
-      setEditSubtotal(computedSubtotal);
-      // Also update selectedInvoice so detail view reflects the recomputed values, not the stale DB value
-      const adjustment = Number(invoice.adjustment_amount ?? 0);
-      const computedTotal = (parseFloat(computedSubtotal) - adjustment).toFixed(2);
-      setSelectedInvoice({ ...invoice, subtotal: parseFloat(computedSubtotal), total: parseFloat(computedTotal) });
-    }
 
     // Fetch settled status for any expense line items
     const expIds = items.filter((li) => li.expense_id).map((li) => li.expense_id as number);
