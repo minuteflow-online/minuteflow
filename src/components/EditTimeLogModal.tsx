@@ -493,13 +493,15 @@ export default function EditTimeLogModal({
               })
               .eq("id", li.id);
 
-            // Recalculate invoice subtotal from all line items
+            // Recalculate invoice subtotal using quantity × rate
+            // (line item amounts may be uninitialized/0 on older invoices — quantity is the source of truth)
             const { data: allItems } = await supabase
               .from("invoice_line_items")
-              .select("amount")
+              .select("quantity")
               .eq("invoice_id", inv.id);
-            if (allItems) {
-              const newSubtotal = allItems.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+            if (allItems && ratePerHour > 0) {
+              const totalHours = allItems.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+              const newSubtotal = parseFloat((totalHours * ratePerHour).toFixed(2));
               const adj = Number(inv.adjustment_amount) || 0;
               await supabase
                 .from("invoices")

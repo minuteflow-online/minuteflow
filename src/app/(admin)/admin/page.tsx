@@ -6429,6 +6429,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editingInvoice, setEditingInvoice] = useState(false);
   const [editSubtotal, setEditSubtotal] = useState("");
   const [editAdjustment, setEditAdjustment] = useState("0");
+  const [editPeriodStart, setEditPeriodStart] = useState("");
+  const [editPeriodEnd, setEditPeriodEnd] = useState("");
   const [editPaymentLink, setEditPaymentLink] = useState("");
   const [editFromName, setEditFromName] = useState("");
   const [editFromPhone, setEditFromPhone] = useState("");
@@ -6664,11 +6666,40 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
   }, [lineItems, selectedClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Unique option lists for Step 3 filter panels
-  const filterVAOptions = useMemo(() => [...new Set(lineItems.map(li => li.va_name || "").filter(Boolean))].sort(), [lineItems]);
-  const filterTaskOptions = useMemo(() => [...new Set(lineItems.map(li => li.description).filter(Boolean))].sort(), [lineItems]);
-  const filterDelivOptions = useMemo(() => [...new Set(lineItems.map(li => li.project || "").filter(Boolean))].sort(), [lineItems]);
-  const filterMemoOptions = useMemo(() => [...new Set(lineItems.map(li => li.client_memo || "").filter(Boolean))].sort(), [lineItems]);
+  // Cascading filter bases — each excludes its own column so options narrow as you filter
+  const vaFilterBase = useMemo(() => lineItems.filter(li => {
+    const taskOk = filterTaskNone ? false : (filterTaskValues.size === 0 || filterTaskValues.has(li.description));
+    const delivOk = filterDelivNone ? false : (filterDelivValues.size === 0 || filterDelivValues.has(li.project || ""));
+    const memoOk = filterMemoNone ? false : (filterMemoValues.size === 0 || filterMemoValues.has(li.client_memo || ""));
+    return taskOk && delivOk && memoOk;
+  }), [lineItems, filterTaskValues, filterDelivValues, filterMemoValues, filterTaskNone, filterDelivNone, filterMemoNone]);
+
+  const taskFilterBase = useMemo(() => lineItems.filter(li => {
+    const vaOk = filterVANone ? false : (filterVAValues.size === 0 || filterVAValues.has(li.va_name || ""));
+    const delivOk = filterDelivNone ? false : (filterDelivValues.size === 0 || filterDelivValues.has(li.project || ""));
+    const memoOk = filterMemoNone ? false : (filterMemoValues.size === 0 || filterMemoValues.has(li.client_memo || ""));
+    return vaOk && delivOk && memoOk;
+  }), [lineItems, filterVAValues, filterDelivValues, filterMemoValues, filterVANone, filterDelivNone, filterMemoNone]);
+
+  const delivFilterBase = useMemo(() => lineItems.filter(li => {
+    const vaOk = filterVANone ? false : (filterVAValues.size === 0 || filterVAValues.has(li.va_name || ""));
+    const taskOk = filterTaskNone ? false : (filterTaskValues.size === 0 || filterTaskValues.has(li.description));
+    const memoOk = filterMemoNone ? false : (filterMemoValues.size === 0 || filterMemoValues.has(li.client_memo || ""));
+    return vaOk && taskOk && memoOk;
+  }), [lineItems, filterVAValues, filterTaskValues, filterMemoValues, filterVANone, filterTaskNone, filterMemoNone]);
+
+  const memoFilterBase = useMemo(() => lineItems.filter(li => {
+    const vaOk = filterVANone ? false : (filterVAValues.size === 0 || filterVAValues.has(li.va_name || ""));
+    const taskOk = filterTaskNone ? false : (filterTaskValues.size === 0 || filterTaskValues.has(li.description));
+    const delivOk = filterDelivNone ? false : (filterDelivValues.size === 0 || filterDelivValues.has(li.project || ""));
+    return vaOk && taskOk && delivOk;
+  }), [lineItems, filterVAValues, filterTaskValues, filterDelivValues, filterVANone, filterTaskNone, filterDelivNone]);
+
+  // Unique option lists for Step 3 filter panels (cascading — each based on other active filters)
+  const filterVAOptions = useMemo(() => [...new Set(vaFilterBase.map(li => li.va_name || "").filter(Boolean))].sort(), [vaFilterBase]);
+  const filterTaskOptions = useMemo(() => [...new Set(taskFilterBase.map(li => li.description).filter(Boolean))].sort(), [taskFilterBase]);
+  const filterDelivOptions = useMemo(() => [...new Set(delivFilterBase.map(li => li.project || "").filter(Boolean))].sort(), [delivFilterBase]);
+  const filterMemoOptions = useMemo(() => [...new Set(memoFilterBase.map(li => li.client_memo || "").filter(Boolean))].sort(), [memoFilterBase]);
 
   // Options for inline combo dropdowns
   const taskDescOptions = useMemo(() => [...new Set(lineItems.map(li => li.description))].sort(), [lineItems]);
@@ -6688,11 +6719,40 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     });
   }, [lineItems, filterVAValues, filterTaskValues, filterDelivValues, filterMemoValues, filterVANone, filterTaskNone, filterDelivNone, filterMemoNone]);
 
-  // Edit mode filter options
-  const editFilterVAOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.va_name || "").filter(Boolean))].sort(), [editLineItemsState]);
-  const editFilterTaskOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.description).filter(Boolean))].sort(), [editLineItemsState]);
-  const editFilterDelivOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.project || "").filter(Boolean))].sort(), [editLineItemsState]);
-  const editFilterMemoOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.client_memo || "").filter(Boolean))].sort(), [editLineItemsState]);
+  // Edit mode cascading filter bases
+  const editVAFilterBase = useMemo(() => editLineItemsState.filter(li => {
+    const taskOk = editFilterTaskNone ? false : (editFilterTaskValues.size === 0 || editFilterTaskValues.has(li.description));
+    const delivOk = editFilterDelivNone ? false : (editFilterDelivValues.size === 0 || editFilterDelivValues.has(li.project || ""));
+    const memoOk = editFilterMemoNone ? false : (editFilterMemoValues.size === 0 || editFilterMemoValues.has(li.client_memo || ""));
+    return taskOk && delivOk && memoOk;
+  }), [editLineItemsState, editFilterTaskValues, editFilterDelivValues, editFilterMemoValues, editFilterTaskNone, editFilterDelivNone, editFilterMemoNone]);
+
+  const editTaskFilterBase = useMemo(() => editLineItemsState.filter(li => {
+    const vaOk = editFilterVANone ? false : (editFilterVAValues.size === 0 || editFilterVAValues.has(li.va_name || ""));
+    const delivOk = editFilterDelivNone ? false : (editFilterDelivValues.size === 0 || editFilterDelivValues.has(li.project || ""));
+    const memoOk = editFilterMemoNone ? false : (editFilterMemoValues.size === 0 || editFilterMemoValues.has(li.client_memo || ""));
+    return vaOk && delivOk && memoOk;
+  }), [editLineItemsState, editFilterVAValues, editFilterDelivValues, editFilterMemoValues, editFilterVANone, editFilterDelivNone, editFilterMemoNone]);
+
+  const editDelivFilterBase = useMemo(() => editLineItemsState.filter(li => {
+    const vaOk = editFilterVANone ? false : (editFilterVAValues.size === 0 || editFilterVAValues.has(li.va_name || ""));
+    const taskOk = editFilterTaskNone ? false : (editFilterTaskValues.size === 0 || editFilterTaskValues.has(li.description));
+    const memoOk = editFilterMemoNone ? false : (editFilterMemoValues.size === 0 || editFilterMemoValues.has(li.client_memo || ""));
+    return vaOk && taskOk && memoOk;
+  }), [editLineItemsState, editFilterVAValues, editFilterTaskValues, editFilterMemoValues, editFilterVANone, editFilterTaskNone, editFilterMemoNone]);
+
+  const editMemoFilterBase = useMemo(() => editLineItemsState.filter(li => {
+    const vaOk = editFilterVANone ? false : (editFilterVAValues.size === 0 || editFilterVAValues.has(li.va_name || ""));
+    const taskOk = editFilterTaskNone ? false : (editFilterTaskValues.size === 0 || editFilterTaskValues.has(li.description));
+    const delivOk = editFilterDelivNone ? false : (editFilterDelivValues.size === 0 || editFilterDelivValues.has(li.project || ""));
+    return vaOk && taskOk && delivOk;
+  }), [editLineItemsState, editFilterVAValues, editFilterTaskValues, editFilterDelivValues, editFilterVANone, editFilterTaskNone, editFilterDelivNone]);
+
+  // Edit mode filter options (cascading)
+  const editFilterVAOptions = useMemo(() => [...new Set(editVAFilterBase.map(li => li.va_name || "").filter(Boolean))].sort(), [editVAFilterBase]);
+  const editFilterTaskOptions = useMemo(() => [...new Set(editTaskFilterBase.map(li => li.description).filter(Boolean))].sort(), [editTaskFilterBase]);
+  const editFilterDelivOptions = useMemo(() => [...new Set(editDelivFilterBase.map(li => li.project || "").filter(Boolean))].sort(), [editDelivFilterBase]);
+  const editFilterMemoOptions = useMemo(() => [...new Set(editMemoFilterBase.map(li => li.client_memo || "").filter(Boolean))].sort(), [editMemoFilterBase]);
 
   const filteredEditLineItems = useMemo(() => {
     return editLineItemsState.filter((li) => {
@@ -7425,6 +7485,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       allow_custom_amount: editAllowCustomAmount,
       payment_schedule: editSchedule.length > 0 ? editSchedule : null,
       payment_template_id: editTemplateId,
+      period_start: editPeriodStart || null,
+      period_end: editPeriodEnd || null,
     };
     if (editDueDate) updateData.due_date = editDueDate;
     // Save custom line items for custom invoices
@@ -7509,6 +7571,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             to_email: editToEmail || null,
             to_phone: editToPhone || null,
             to_address: editToAddress || null,
+            period_start: editPeriodStart || null,
+            period_end: editPeriodEnd || null,
           }
         : null
     );
@@ -8963,6 +9027,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setEditToPhone(inv.to_phone ?? "");
                   setEditToAddress(inv.to_address ?? "");
                   setEditDba(orgSettings?.dba ?? "");
+                  setEditPeriodStart(inv.period_start ?? "");
+                  setEditPeriodEnd(inv.period_end ?? "");
                   // For custom invoices, populate editable line items from JSON
                   if (inv.invoice_type === "custom" && inv.custom_line_items) {
                     try {
@@ -9304,6 +9370,16 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Due Date</label>
                 <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)}
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Billing Period Start</label>
+                <input type="date" value={editPeriodStart} onChange={(e) => setEditPeriodStart(e.target.value)}
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Billing Period End</label>
+                <input type="date" value={editPeriodEnd} onChange={(e) => setEditPeriodEnd(e.target.value)}
                   className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
               </div>
               <div>
