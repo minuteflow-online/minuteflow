@@ -223,7 +223,7 @@ export interface Invoice {
   id: number;
   invoice_number: string;
   client_id: number | null;
-  status: 'draft' | 'sent' | 'paid' | 'partially_paid' | 'overdue' | 'cancelled' | 'trash' | 'ready_to_send';
+  status: 'draft' | 'sent' | 'paid' | 'partially_paid' | 'overdue' | 'cancelled' | 'trash' | 'ready_to_send' | 'archived';
   from_name: string;
   from_address: string | null;
   from_email: string | null;

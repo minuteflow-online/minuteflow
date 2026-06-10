@@ -6398,6 +6398,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [rateAmount, setRateAmount] = useState("");
   const [previousBalance, setPreviousBalance] = useState("");
   const [previousBalanceNote, setPreviousBalanceNote] = useState("");
+  // Create-form only fields (match edit invoice)
+  const [createDueDate, setCreateDueDate] = useState("");
+  const [createDba, setCreateDba] = useState("");
+  const [createAccountName, setCreateAccountName] = useState("");
+  // Invoice list filters
+  const [filterClient, setFilterClient] = useState<number | null>(null);
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
 
   // Manual invoice state
   const [manualDescription, setManualDescription] = useState("");
@@ -6602,26 +6610,45 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   /* ── Computed ──────────────────────────────────────────────── */
 
   const filteredInvoices = useMemo(() => {
-    if (statusFilter === "all") return invoices.filter((inv) => inv.status !== "trash");
-    return invoices.filter((inv) => inv.status === statusFilter);
-  }, [invoices, statusFilter]);
+    let list = invoices;
+    // Status filtering
+    if (statusFilter === "all") {
+      list = list.filter((inv) => inv.status !== "trash" && inv.status !== "archived");
+    } else {
+      list = list.filter((inv) => inv.status === statusFilter);
+    }
+    // Client filter
+    if (filterClient !== null) {
+      list = list.filter((inv) => inv.client_id === filterClient);
+    }
+    // Date range filter (issue_date)
+    if (filterDateFrom) {
+      list = list.filter((inv) => inv.issue_date >= filterDateFrom);
+    }
+    if (filterDateTo) {
+      list = list.filter((inv) => inv.issue_date <= filterDateTo);
+    }
+    return list;
+  }, [invoices, statusFilter, filterClient, filterDateFrom, filterDateTo]);
 
   const summaryStats = useMemo(() => {
     let totalInvoiced = 0;
     let outstanding = 0;
     let paid = 0;
     let overdue = 0;
+    let draftTotal = 0;
     invoices.forEach((inv) => {
       if (inv.status === "trash") return; // trash excluded from all totals
-      if (["sent", "paid", "partially_paid", "overdue"].includes(inv.status)) {
+      if (inv.status === "draft") { draftTotal += Number(inv.total); return; }
+      if (["sent", "paid", "partially_paid", "overdue", "archived"].includes(inv.status)) {
         totalInvoiced += Number(inv.total);
       }
       if (inv.status === "sent") outstanding += Number(inv.total);
       if (inv.status === "partially_paid") outstanding += Number(inv.total) - Number(inv.amount_paid || 0);
-      if (inv.status === "paid") paid += Number(inv.total);
+      if (inv.status === "paid" || inv.status === "archived") paid += Number(inv.total);
       if (inv.status === "overdue") overdue += Number(inv.total) - Number(inv.amount_paid || 0);
     });
-    return { totalInvoiced, outstanding, paid, overdue };
+    return { totalInvoiced, outstanding, paid, overdue, draftTotal };
   }, [invoices]);
 
   const selectedClient = useMemo(() => {
@@ -6805,8 +6832,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   const generateInvoiceNumber = useCallback(() => {
     const year = new Date().getFullYear();
+    // Only count active invoices (exclude trash) so deleted invoices don't occupy numbers
     const existingThisYear = invoices.filter((inv) =>
-      inv.invoice_number.startsWith(`MF-${year}-`)
+      inv.invoice_number.startsWith(`MF-${year}-`) && inv.status !== "trash"
     );
     const maxNum = existingThisYear.reduce((max, inv) => {
       const parts = inv.invoice_number.split("-");
@@ -6944,13 +6972,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     const invoiceData = {
       invoice_number: invoiceNumber,
       client_id: billingClient?.id || null,
-      account_name: generateBy === "account" ? selectedAccount : (billingClient ? null : null),
+      account_name: createAccountName || (generateBy === "account" ? selectedAccount : null),
       status: sendNow ? "sent" as const : "draft" as const,
       from_name: fromName || orgSettings?.registered_business_name || orgSettings?.org_name || "Toni Colina",
       from_phone: fromPhone || null,
       from_address: orgSettings?.address || null,
       from_email: replyToEmail || orgSettings?.billing_email || null,
       from_logo_url: orgSettings?.logo_url || null,
+      dba: createDba || null,
       to_name: toName,
       to_contact: toContact,
       to_email: billingEmail || null,
@@ -6958,7 +6987,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       to_address: billingAddress || null,
       service_type: serviceType || null,
       issue_date: issueDate,
-      due_date: null,
+      due_date: createDueDate || null,
       subtotal: manualTotal,
       tax_rate: 0,
       tax_amount: 0,
@@ -7090,6 +7119,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setHoursNotBilledLabel("Volunteer");
     setRateAmount("");
     setPreviousBalance("");
+    setCreateDueDate("");
+    setCreateDba("");
+    setCreateAccountName("");
     setFilterVAValues(new Set<string>());
     setFilterTaskValues(new Set<string>());
     setFilterDelivValues(new Set<string>());
@@ -7763,6 +7795,23 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     fetchInvoices();
   };
 
+  const handleArchiveInvoice = async (invoice: Invoice) => {
+    await supabase
+      .from("invoices")
+      .update({ status: "archived" as const })
+      .eq("id", invoice.id);
+    fetchInvoices();
+  };
+
+  const handleUnarchiveInvoice = async (invoice: Invoice) => {
+    await supabase
+      .from("invoices")
+      .update({ status: "paid" as const })
+      .eq("id", invoice.id);
+    fetchInvoices();
+    setStatusFilter("paid");
+  };
+
   /* ── Save draft early (no line items required) ────────────── */
 
   const handleSaveDraft = async () => {
@@ -7781,13 +7830,14 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     const invoiceData = {
       invoice_number: invoiceNumber,
       client_id: billingClient?.id || null,
-      account_name: generateBy === "account" ? selectedAccount : null,
+      account_name: createAccountName || (generateBy === "account" ? selectedAccount : null),
       status: "draft" as const,
       from_name: fromName || orgSettings?.registered_business_name || orgSettings?.org_name || "MinuteFlow",
       from_phone: fromPhone || null,
       from_address: orgSettings?.address || null,
       from_email: replyToEmail || orgSettings?.billing_email || null,
       from_logo_url: orgSettings?.logo_url || null,
+      dba: createDba || null,
       to_name: toName,
       to_contact: billingClient?.contact_name || null,
       to_email: billingClient?.email || null,
@@ -7797,7 +7847,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         : null,
       service_type: serviceType || null,
       issue_date: issueDate,
-      due_date: null,
+      due_date: createDueDate || null,
       subtotal: manualTotal,
       tax_rate: 0,
       tax_amount: 0,
@@ -7879,6 +7929,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       cancelled: { bg: "bg-stone/10", text: "text-stone" },
       trash: { bg: "bg-red-50", text: "text-red-400" },
       ready_to_send: { bg: "bg-amber-soft", text: "text-amber" },
+      archived: { bg: "bg-stone/10", text: "text-stone" },
     };
     const s = styles[status] || styles.draft;
     return `${s.bg} ${s.text}`;
@@ -7888,6 +7939,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (status === "partially_paid") return "Partial";
     if (status === "trash") return "Trash";
     if (status === "ready_to_send") return "Ready to Send";
+    if (status === "archived") return "Archived";
     return status.charAt(0).toUpperCase() + status.slice(1);
   };
 
@@ -8127,6 +8179,38 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           {/* Info Fields + Invoice Summary — always visible */}
           <div className="mt-5 grid grid-cols-2 gap-6">
             <div className="space-y-4">
+              {/* Due Date */}
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Due Date</label>
+                <input
+                  type="date"
+                  value={createDueDate}
+                  onChange={(e) => setCreateDueDate(e.target.value)}
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                />
+              </div>
+              {/* Account Name */}
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Account Name</label>
+                <input
+                  type="text"
+                  value={createAccountName}
+                  onChange={(e) => setCreateAccountName(e.target.value)}
+                  placeholder="e.g. TAT Foundation"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
+              {/* DBA */}
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">DBA</label>
+                <input
+                  type="text"
+                  value={createDba}
+                  onChange={(e) => setCreateDba(e.target.value)}
+                  placeholder="Trade name / DBA"
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
+                />
+              </div>
               {/* Type of Services */}
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Type of Services</label>
@@ -10401,17 +10485,18 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   return (
     <>
       {/* Summary Stats */}
-      <div className="mb-6 grid grid-cols-4 gap-4">
-        <StatCard value={formatCurrency(summaryStats.totalInvoiced)} label="Total Invoiced" sub={`${invoices.filter((i) => i.status !== "trash").length} invoices`} color="terracotta" />
+      <div className="mb-6 grid grid-cols-5 gap-4">
+        <StatCard value={formatCurrency(summaryStats.draftTotal)} label="Draft Total" sub={`${invoices.filter((i) => i.status === "draft").length} drafts`} color="slate-blue" />
+        <StatCard value={formatCurrency(summaryStats.totalInvoiced)} label="Total Invoiced" sub="active invoices only" color="terracotta" />
         <StatCard value={formatCurrency(summaryStats.outstanding)} label="Outstanding" sub="unpaid sent invoices" color="slate-blue" />
         <StatCard value={formatCurrency(summaryStats.paid)} label="Paid" sub="total collected" color="sage" />
         <StatCard value={formatCurrency(summaryStats.overdue)} label="Overdue" sub="past due date" color="amber" />
       </div>
 
       {/* Filter + New buttons */}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-3 flex items-center justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          {(["all", "draft", "ready_to_send", "sent", "partially_paid", "paid", "overdue", "cancelled", "trash"] as const).map((status) => (
+          {(["all", "draft", "ready_to_send", "sent", "partially_paid", "paid", "overdue", "cancelled", "archived", "trash"] as const).map((status) => (
             <button
               key={status}
               onClick={() => setStatusFilter(status)}
@@ -10452,6 +10537,46 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             + New Invoice
           </button>
         </div>
+      </div>
+
+      {/* Additional Filters */}
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-sand bg-parchment/30 px-4 py-3">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-bark">Filter:</span>
+        <select
+          value={filterClient ?? ""}
+          onChange={(e) => setFilterClient(e.target.value ? Number(e.target.value) : null)}
+          className="rounded-lg border border-sand bg-white px-3 py-1.5 text-[12px] text-espresso outline-none focus:border-terracotta cursor-pointer"
+        >
+          <option value="">All Clients</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={filterDateFrom}
+            onChange={(e) => setFilterDateFrom(e.target.value)}
+            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-[12px] text-espresso outline-none focus:border-terracotta"
+            title="Issue date from"
+          />
+          <span className="text-[11px] text-bark">to</span>
+          <input
+            type="date"
+            value={filterDateTo}
+            onChange={(e) => setFilterDateTo(e.target.value)}
+            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-[12px] text-espresso outline-none focus:border-terracotta"
+            title="Issue date to"
+          />
+        </div>
+        {(filterClient !== null || filterDateFrom || filterDateTo) && (
+          <button
+            onClick={() => { setFilterClient(null); setFilterDateFrom(""); setFilterDateTo(""); }}
+            className="text-[11px] font-semibold text-terracotta hover:underline cursor-pointer"
+          >
+            Clear Filters
+          </button>
+        )}
       </div>
 
       {/* Invoice Table */}
@@ -10553,7 +10678,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                             </svg>
                           </button>
                         )}
-                        {inv.status !== "paid" && inv.status !== "cancelled" && inv.status !== "trash" && (
+                        {inv.status !== "paid" && inv.status !== "cancelled" && inv.status !== "trash" && inv.status !== "archived" && (
                           <button
                             onClick={() => handleMarkPaid(inv)}
                             title="Mark Paid"
@@ -10561,6 +10686,31 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                           >
                             <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          </button>
+                        )}
+                        {inv.status === "paid" && (
+                          <button
+                            onClick={() => handleArchiveInvoice(inv)}
+                            title="Archive"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sand text-bark transition-all hover:border-slate-400 hover:text-slate-500 cursor-pointer"
+                          >
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="21 8 21 21 3 21 3 8" />
+                              <rect x="1" y="3" width="22" height="5" />
+                              <line x1="10" y1="12" x2="14" y2="12" />
+                            </svg>
+                          </button>
+                        )}
+                        {inv.status === "archived" && (
+                          <button
+                            onClick={() => handleUnarchiveInvoice(inv)}
+                            title="Unarchive (move back to Paid)"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sand text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                          >
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="1 4 1 10 7 10" />
+                              <path d="M3.51 15a9 9 0 1 0 .49-3.5" />
                             </svg>
                           </button>
                         )}
