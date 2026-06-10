@@ -269,6 +269,7 @@ export interface Invoice {
   show_all_installments: boolean;
   payment_schedule: PaymentScheduleItem[] | null;
   payment_template_id: number | null;
+  dba: string | null;
   created_at: string;
   updated_at: string;
 }

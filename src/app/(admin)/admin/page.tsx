@@ -6764,6 +6764,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     });
   }, [editLineItemsState, editFilterVAValues, editFilterTaskValues, editFilterDelivValues, editFilterMemoValues, editFilterVANone, editFilterTaskNone, editFilterDelivNone, editFilterMemoNone]);
 
+  const editTotalHours = useMemo(() => editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0), [editLineItemsState]);
+  const editFilteredHours = useMemo(() => filteredEditLineItems.reduce((s, li) => s + Number(li.quantity), 0), [filteredEditLineItems]);
+  const isEditFiltered = filteredEditLineItems.length !== editLineItemsState.length;
+
+  // Keep editSubtotal in sync with filtered line items when a filter is active
+  useEffect(() => {
+    if (!editingInvoice) return;
+    const total = filteredEditLineItems.reduce((sum, li) => sum + (li.amount || 0), 0).toFixed(2);
+    setEditSubtotal(total);
+  }, [filteredEditLineItems, editingInvoice]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const editTaskDescOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.description))].sort(), [editLineItemsState]);
   const getEditDelivOptions = useCallback((taskDesc: string) => {
     const fromEditItems = [...new Set(editLineItemsState.filter(li => li.description === taskDesc).map(li => li.project || "").filter(Boolean))];
@@ -7311,6 +7322,39 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setEditAllowCustomAmount(invoice.allow_custom_amount ?? true);
     setEditTemplateId(invoice.payment_template_id ?? null);
     setEditSchedule((invoice.payment_schedule ?? []) as PaymentScheduleItem[]);
+    setEditPeriodStart(invoice.period_start ?? "");
+    setEditPeriodEnd(invoice.period_end ?? "");
+    setServiceType(invoice.service_type ?? "");
+    // For draft invoices with a linked client, auto-sync to-fields from current client data
+    if (invoice.status === "draft" && invoice.client_id) {
+      const client = clients.find(c => c.id === invoice.client_id);
+      if (client) {
+        setEditToName(client.name ?? "");
+        setEditToEmail(client.email ?? "");
+        setEditToPhone(client.phone ?? "");
+        const parts = [client.address, client.city, client.state, client.zip, client.country].filter(Boolean);
+        setEditToAddress(parts.join(", "));
+      } else {
+        setEditToName(invoice.to_name ?? "");
+        setEditToEmail(invoice.to_email ?? "");
+        setEditToPhone(invoice.to_phone ?? "");
+        setEditToAddress(invoice.to_address ?? "");
+      }
+    } else {
+      setEditToName(invoice.to_name ?? "");
+      setEditToEmail(invoice.to_email ?? "");
+      setEditToPhone(invoice.to_phone ?? "");
+      setEditToAddress(invoice.to_address ?? "");
+    }
+    setEditDba(invoice.dba ?? orgSettings?.dba ?? "");
+    if (invoice.invoice_type === "custom" && invoice.custom_line_items) {
+      try {
+        const parsed = JSON.parse(invoice.custom_line_items) as Array<{ description: string; amount: number }>;
+        setEditCustomItems(parsed.map((item, i) => ({ id: `eci-${i}`, description: item.description, amount: String(item.amount) })));
+      } catch { setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]); }
+    } else if (invoice.invoice_type === "custom") {
+      setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]);
+    }
 
     const [lineItemsRes, paymentsRes] = await Promise.all([
       supabase
@@ -7328,6 +7372,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     const items = (lineItemsRes.data ?? []) as InvoiceLineItem[];
     setSelectedLineItems(items);
     setEditLineItemsState(items);
+
+    // Auto-recalculate subtotal from line items to catch stale stored totals
+    if (invoice.invoice_type !== "custom" && items.length > 0) {
+      const computedSubtotal = items.reduce((sum, li) => sum + (li.amount || 0), 0).toFixed(2);
+      setEditSubtotal(computedSubtotal);
+    }
 
     // Fetch settled status for any expense line items
     const expIds = items.filter((li) => li.expense_id).map((li) => li.expense_id as number);
@@ -7482,6 +7532,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       to_email: editToEmail || null,
       to_phone: editToPhone || null,
       to_address: editToAddress || null,
+      dba: editDba || null,
       allow_custom_amount: editAllowCustomAmount,
       payment_schedule: editSchedule.length > 0 ? editSchedule : null,
       payment_template_id: editTemplateId,
@@ -7497,12 +7548,6 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
 
     await supabase.from("invoices").update(updateData).eq("id", selectedInvoice.id);
-
-    // Save DBA to org settings if present
-    if (orgSettings) {
-      await supabase.from("organization_settings").update({ dba: editDba || null }).eq("id", orgSettings.id);
-      setOrgSettings(prev => prev ? { ...prev, dba: editDba || null } : prev);
-    }
 
     // Save line item changes
     for (const li of editLineItemsState) {
@@ -9026,7 +9071,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setEditToEmail(inv.to_email ?? "");
                   setEditToPhone(inv.to_phone ?? "");
                   setEditToAddress(inv.to_address ?? "");
-                  setEditDba(orgSettings?.dba ?? "");
+                  setEditDba(inv.dba ?? orgSettings?.dba ?? "");
                   setEditPeriodStart(inv.period_start ?? "");
                   setEditPeriodEnd(inv.period_end ?? "");
                   // For custom invoices, populate editable line items from JSON
@@ -9577,7 +9622,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           <div className="mb-4 rounded-xl border border-sand bg-white p-5">
             <div className="mb-3 flex items-center justify-between">
               <h4 className="font-serif text-[14px] font-bold text-espresso">
-                Edit Time Entries ({editLineItemsState.length} entries · {editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0).toFixed(2)} hrs)
+                Edit Time Entries ({isEditFiltered ? `${filteredEditLineItems.length} of ` : ""}{editLineItemsState.length} entries · {isEditFiltered ? `${editFilteredHours.toFixed(2)} of ` : ""}{editTotalHours.toFixed(2)} hrs)
               </h4>
               {editUndoStack.length > 0 && (
                 <button
@@ -9983,8 +10028,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 {orgSettings?.registered_business_name && (
                   <div className="text-[11px] text-[#5a4000] mt-0.5">{orgSettings.registered_business_name}</div>
                 )}
-                {orgSettings?.dba && (
-                  <div className="text-[10px] text-[#5a4000] mt-0.5">DBA: {orgSettings.dba}</div>
+                {inv.dba && (
+                  <div className="text-[10px] text-[#5a4000] mt-0.5">DBA: {inv.dba}</div>
                 )}
                 {inv.from_phone && <div className="text-[11px] text-[#5a4000] mt-0.5">{inv.from_phone}</div>}
                 {inv.from_email && <div className="text-[11px] text-[#5a4000] mt-0.5">{inv.from_email}</div>}
