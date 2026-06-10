@@ -6453,6 +6453,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [sendToEmail, setSendToEmail] = useState("");
   const [sendCcEmail, setSendCcEmail] = useState("");
 
+  // Confirmation dialog for quick-send (list view paper-plane button)
+  const [confirmSendInvoice, setConfirmSendInvoice] = useState<Invoice | null>(null);
+
   // Holding cell for items removed from create view
   const [removedLineItems, setRemovedLineItems] = useState<LineItemDraft[]>([]);
 
@@ -10655,7 +10658,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         </button>
                         {(inv.status === "draft" || inv.status === "sent") && inv.to_email && (
                           <button
-                            onClick={() => handleSendInvoice(inv)}
+                            onClick={() => setConfirmSendInvoice(inv)}
                             title={inv.status === "sent" ? "Resend" : "Send"}
                             className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-sand text-bark transition-all hover:border-slate-blue hover:text-slate-blue cursor-pointer"
                           >
@@ -10764,6 +10767,47 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
           </div>
         )}
       </div>
+
+      {/* ── Quick-Send Confirmation Modal ─────────────────── */}
+      {confirmSendInvoice && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setConfirmSendInvoice(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-2 text-base font-bold text-espresso">Confirm Send</h3>
+            <p className="mb-1 text-sm text-bark">
+              This will send <span className="font-semibold">{confirmSendInvoice.invoice_number}</span> to:
+            </p>
+            <p className="mb-4 rounded-lg bg-parchment px-3 py-2 text-sm font-medium text-espresso break-all">
+              {confirmSendInvoice.to_email}
+            </p>
+            <p className="mb-4 text-xs text-stone">This email will be delivered immediately and cannot be recalled.</p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmSendInvoice(null)}
+                className="rounded-lg border border-sand px-4 py-2 text-sm font-medium text-bark transition-all hover:border-terracotta hover:text-terracotta"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const inv = confirmSendInvoice;
+                  setConfirmSendInvoice(null);
+                  handleSendInvoice(inv);
+                }}
+                disabled={sending}
+                className="rounded-lg bg-slate-blue px-4 py-2 text-sm font-semibold text-white transition-all hover:bg-[#4a6080] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {sending ? "Sending…" : "Send Invoice"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

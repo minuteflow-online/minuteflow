@@ -128,6 +128,17 @@ export async function POST(request: Request) {
     })
     .eq("id", invoice_id);
 
+  // Log every send: actual sent-to address + CC
+  await serviceClient
+    .from("invoice_send_log")
+    .insert({
+      invoice_id: invoice_id,
+      invoice_number: invoice.invoice_number,
+      sent_to: recipientEmails.join(", "),
+      cc_emails: ccEmails.length > 0 ? ccEmails.join(", ") : null,
+      resend_message_id: invoiceResendMessageId,
+    });
+
   return Response.json({ success: true });
 }
 

@@ -15,6 +15,7 @@ interface UnifiedEmail {
   label: string;
   sublabel?: string;
   recipient: string;
+  cc_emails?: string;
   sent_at: string;
   resend_message_id: string;
 }
@@ -70,11 +71,15 @@ export default function EmailStatusTab() {
     setLoading(true);
     const sb = createClient();
 
-    const [invoiceRes, paystubRes, broadcastRes, inviteRes, eventsRes, hiddenRes] = await Promise.all([
+    const [invoiceRes, sendLogRes, paystubRes, broadcastRes, inviteRes, eventsRes, hiddenRes] = await Promise.all([
       sb
         .from("invoices")
         .select("id, invoice_number, to_email, to_name, sent_at, resend_message_id")
         .not("sent_at", "is", null)
+        .order("sent_at", { ascending: false }),
+      sb
+        .from("invoice_send_log")
+        .select("id, invoice_id, invoice_number, sent_to, cc_emails, resend_message_id, sent_at")
         .order("sent_at", { ascending: false }),
       sb
         .from("paystub_snapshots")
@@ -108,6 +113,32 @@ export default function EmailStatusTab() {
     // Build unified records
     const unified: UnifiedEmail[] = [];
 
+    // Invoice send log entries (actual sent-to + CC for every send)
+    const loggedInvoiceIds = new Set<number>();
+    for (const log of (sendLogRes.data ?? []) as {
+      id: string;
+      invoice_id: number;
+      invoice_number: string;
+      sent_to: string;
+      cc_emails: string | null;
+      resend_message_id: string | null;
+      sent_at: string;
+    }[]) {
+      if (hidden.has(`invoice:${log.invoice_id}`)) continue;
+      loggedInvoiceIds.add(log.invoice_id);
+      unified.push({
+        id: log.id,
+        type: "invoice",
+        label: log.invoice_number,
+        sublabel: `Sent to: ${log.sent_to}`,
+        recipient: log.sent_to,
+        cc_emails: log.cc_emails ?? undefined,
+        sent_at: log.sent_at,
+        resend_message_id: log.resend_message_id ?? "",
+      });
+    }
+
+    // Legacy invoice entries (no send_log record — sent before logging was added)
     for (const inv of (invoiceRes.data ?? []) as {
       id: number;
       invoice_number: string;
@@ -118,6 +149,7 @@ export default function EmailStatusTab() {
     }[]) {
       if (!inv.sent_at) continue;
       if (hidden.has(`invoice:${inv.id}`)) continue;
+      if (loggedInvoiceIds.has(inv.id)) continue; // already shown via send_log
       unified.push({
         id: String(inv.id),
         type: "invoice",
@@ -541,7 +573,12 @@ export default function EmailStatusTab() {
                       )}
                     </td>
                     {/* Recipient */}
-                    <td style={{ padding: "12px 16px", fontSize: 12, color: "#6b5c4e" }}>{rec.recipient}</td>
+                    <td style={{ padding: "12px 16px", fontSize: 12, color: "#6b5c4e" }}>
+                      <div>{rec.recipient}</div>
+                      {rec.cc_emails && (
+                        <div style={{ fontSize: 10, color: "#9e9080", marginTop: 2 }}>CC: {rec.cc_emails}</div>
+                      )}
+                    </td>
                     {/* Sent */}
                     <td style={{ padding: "12px 16px", fontSize: 11, color: "#9e9080", whiteSpace: "nowrap" }}>
                       {formatDateTime(rec.sent_at)}
