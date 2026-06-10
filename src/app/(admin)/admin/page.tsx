@@ -7377,6 +7377,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (invoice.invoice_type !== "custom" && items.length > 0) {
       const computedSubtotal = items.reduce((sum, li) => sum + (li.amount || 0), 0).toFixed(2);
       setEditSubtotal(computedSubtotal);
+      // Also update selectedInvoice so detail view reflects the recomputed values, not the stale DB value
+      const adjustment = Number(invoice.adjustment_amount ?? 0);
+      const computedTotal = (parseFloat(computedSubtotal) - adjustment).toFixed(2);
+      setSelectedInvoice({ ...invoice, subtotal: parseFloat(computedSubtotal), total: parseFloat(computedTotal) });
     }
 
     // Fetch settled status for any expense line items
