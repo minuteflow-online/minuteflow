@@ -431,6 +431,10 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     if (match) {
       setProject(match.project_name);
       setProjectTagId(match.id);
+      // Auto-switch category for Organizing project (Virtual Concierge planning tasks)
+      if (match.account === "Virtual Concierge" && match.project_name === "Organizing") {
+        setCategory("Planning");
+      }
     }
   };
 
