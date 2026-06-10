@@ -577,6 +577,16 @@ export default function InvoicePayPage() {
             </div>
           )}
 
+          {/* View full invoice details */}
+          <div className="mt-2 mb-2 text-center">
+            <a
+              href={`/invoice/view/${token}`}
+              className="inline-block text-[12px] font-semibold text-[#5a4000] underline underline-offset-2 hover:text-[#2d1a00] transition-colors"
+            >
+              View Full Invoice Details →
+            </a>
+          </div>
+
           {/* Footer */}
           <div className="py-6 text-center">
             <div className="text-[11px] text-[#9e9080]">Powered by MinuteFlow · Secured by Square</div>

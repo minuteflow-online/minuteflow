@@ -7348,7 +7348,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setEditReminderEnabled(invoice.reminder_enabled ?? false);
     setEditAccountName(invoice.account_name ?? "");
     const clientEmail = invoice.to_email || clients.find((c) => c.id === invoice.client_id)?.email || "";
-    setSendToEmail(clientEmail);
+    setSendToEmail(""); // Leave blank — user must explicitly type override. Default (client email) shown as hint below.
     setRateAmount(invoice.rate_amount != null ? String(invoice.rate_amount) : "");
     setHoursNotBilled(invoice.hours_not_billed != null ? String(invoice.hours_not_billed) : "");
     setHoursNotBilledLabel(invoice.hours_not_billed_label || "Volunteer");
@@ -7472,7 +7472,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           invoice_id: invoice.id,
-          ...(sendToEmail && sendToEmail !== invoice.to_email ? { override_email: sendToEmail } : {}),
+          ...(sendToEmail.trim() ? { override_email: sendToEmail } : {}),
           ...(sendCcEmail.trim() ? { cc_emails: sendCcEmail } : {}),
         }),
       });
@@ -9354,7 +9354,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               <div className="flex justify-end">
                 <button
                   onClick={() => handleSendInvoice(inv)}
-                  disabled={sending || !sendToEmail}
+                  disabled={sending || (!sendToEmail.trim() && !inv.to_email)}
                   className="rounded-lg bg-slate-blue px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-slate-blue/80 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
                 >
                   {sending ? "Sending..." : inv.status === "sent" ? "Resend Email" : "Send via Email"}
@@ -9362,7 +9362,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               </div>
             </div>
             <p className="mt-1.5 text-[11px] text-stone">
-              {inv.to_email ? `Default: ${inv.to_email} — separate multiple addresses with commas` : "No client email on file — type any address above"}
+              {inv.to_email ? `Leave blank to send to ${inv.to_email} · Type a different address to override (sends only to what you type)` : "No client email on file — type an address above"}
             </p>
           </div>
         )}
