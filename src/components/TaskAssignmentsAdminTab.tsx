@@ -304,7 +304,7 @@ export default function TaskAssignmentsAdminTab({
       project: form.project.trim() || null,
       task_detail: form.task_detail.trim() || null,
       due_date: form.due_date || null,
-      assignee_ids: form.assignee_ids,
+      va_ids: form.assignee_ids,
     };
 
     try {
@@ -394,7 +394,7 @@ export default function TaskAssignmentsAdminTab({
         project: row.project || null,
         task_detail: row.task_detail || null,
         due_date: row.due_date || null,
-        assignee_ids,
+        va_ids: assignee_ids,
       };
 
       try {
