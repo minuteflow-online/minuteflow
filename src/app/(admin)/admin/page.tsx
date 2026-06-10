@@ -7608,8 +7608,31 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       .eq("invoice_id", selectedInvoice.id)
       .order("sort_order", { ascending: true });
     const refreshed = (refreshedItems ?? []) as InvoiceLineItem[];
-    setSelectedLineItems(refreshed);
-    setEditLineItemsState(refreshed);
+    // Re-apply computed amounts so editLineItemsState stays accurate for subsequent edits.
+    // Timelog line items are stored in the DB with amount=0 and unit_price=0.
+    // Without this, the useEffect that syncs editSubtotal will see amount=0 on every item
+    // and overwrite editSubtotal with "0.00" the next time the user enters edit mode.
+    let refreshedWithAmounts: InvoiceLineItem[] = refreshed;
+    if (selectedInvoice.invoice_type === "timelog" && refreshed.length > 0) {
+      const timeItems = refreshed.filter(li => li.unit_price === 0);
+      const totalTimeHours = timeItems.reduce((sum, li) => sum + li.quantity, 0);
+      const expenseTotal = refreshed
+        .filter(li => li.unit_price > 0)
+        .reduce((sum, li) => sum + li.quantity * li.unit_price, 0);
+      const timeSubtotal = subtotal - expenseTotal;
+      const effectiveRate = rateAmount
+        ? parseFloat(rateAmount)
+        : totalTimeHours > 0
+        ? timeSubtotal / totalTimeHours
+        : 0;
+      refreshedWithAmounts = refreshed.map(li =>
+        li.unit_price === 0
+          ? { ...li, amount: Math.round(li.quantity * effectiveRate * 100) / 100 }
+          : { ...li, amount: Math.round(li.quantity * li.unit_price * 100) / 100 }
+      );
+    }
+    setSelectedLineItems(refreshedWithAmounts);
+    setEditLineItemsState(refreshedWithAmounts);
     setRemovedEditItems([]);
     setRemovedEditOverrides(new Map());
 
