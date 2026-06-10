@@ -6764,8 +6764,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     });
   }, [editLineItemsState, editFilterVAValues, editFilterTaskValues, editFilterDelivValues, editFilterMemoValues, editFilterVANone, editFilterTaskNone, editFilterDelivNone, editFilterMemoNone]);
 
-  const editTotalHours = useMemo(() => editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0), [editLineItemsState]);
-  const editFilteredHours = useMemo(() => filteredEditLineItems.reduce((s, li) => s + Number(li.quantity), 0), [filteredEditLineItems]);
+  const editTotalHours = useMemo(() => Math.round(editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0) * 100) / 100, [editLineItemsState]);
+  const editFilteredHours = useMemo(() => Math.round(filteredEditLineItems.reduce((s, li) => s + Number(li.quantity), 0) * 100) / 100, [filteredEditLineItems]);
   const isEditFiltered = filteredEditLineItems.length !== editLineItemsState.length;
 
   // Keep editSubtotal in sync with filtered line items when a filter is active
@@ -7879,8 +7879,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     const manualTotalNum = parseFloat(invoiceTotal) || 0;
     const adjustmentNum = parseFloat(adjustmentAmount) || 0;
     const finalTotal = manualTotalNum - adjustmentNum;
-    const totalHours = lineItems.reduce((sum, li) => sum + li.quantity, 0);
-    const filteredHours = filteredLineItems.reduce((sum, li) => sum + li.quantity, 0);
+    const totalHours = Math.round(lineItems.reduce((sum, li) => sum + li.quantity, 0) * 100) / 100;
+    const filteredHours = Math.round(filteredLineItems.reduce((sum, li) => sum + li.quantity, 0) * 100) / 100;
     const isFiltered = filteredLineItems.length !== lineItems.length;
 
     return (
@@ -10078,7 +10078,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             {/* Invoice Summary Box — responsive grid, only filled fields */}
             <div className="mb-6 rounded-lg border border-sand bg-parchment/30 p-5">
               {(() => {
-                const grossHours = selectedLineItems.filter((li) => !li.expense_id).reduce((s, li) => s + Number(li.quantity), 0);
+                const grossHours = Math.round(selectedLineItems.filter((li) => !li.expense_id).reduce((s, li) => s + Number(li.quantity), 0) * 100) / 100;
                 const notBilled = Number(inv.hours_not_billed || 0);
                 const billedHours = grossHours - notBilled;
                 const hasAdj = Number(inv.adjustment_amount || 0) > 0;
