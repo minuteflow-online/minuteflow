@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import type {
   Profile,
   AssignedTaskWithAssignees,
@@ -192,6 +192,130 @@ function parseCsv(text: string, vaProfiles: Profile[]): CsvRow[] {
   return rows;
 }
 
+// ─── VA Multi-Select Dropdown ──────────────────────────────────────────────────
+
+interface VAMultiSelectProps {
+  vaProfiles: Profile[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+  selectedTask: AssignedTaskWithAssignees | null;
+}
+
+function VAMultiSelect({ vaProfiles, selectedIds, onChange, selectedTask }: VAMultiSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
+        buttonRef.current && !buttonRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const openDropdown = () => {
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setDropdownStyle({
+        position: "fixed",
+        top: rect.bottom + 2,
+        left: rect.left,
+        width: rect.width,
+        zIndex: 9999,
+      });
+    }
+    setOpen(true);
+  };
+
+  const toggle = (id: string) => {
+    if (selectedIds.includes(id)) {
+      onChange(selectedIds.filter((i) => i !== id));
+    } else {
+      onChange([...selectedIds, id]);
+    }
+  };
+
+  const selectedProfiles = vaProfiles.filter((p) => selectedIds.includes(p.id));
+
+  return (
+    <div className="relative">
+      {/* Trigger button */}
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => (open ? setOpen(false) : openDropdown())}
+        className="w-full flex items-center justify-between py-2 px-3 border border-sand rounded-lg text-[13px] bg-white outline-none focus:border-terracotta cursor-pointer hover:border-walnut/40 transition-colors"
+      >
+        <span className="flex-1 text-left">
+          {selectedProfiles.length === 0 ? (
+            <span className="text-stone/50">Select VAs...</span>
+          ) : (
+            <span className="flex flex-wrap gap-1">
+              {selectedProfiles.map((p) => {
+                const assignee = selectedTask?.assigned_task_assignees.find((a) => a.va_id === p.id);
+                return (
+                  <span
+                    key={p.id}
+                    className="inline-flex items-center gap-1 bg-parchment border border-sand rounded-full px-2 py-0.5 text-[11px] text-walnut"
+                  >
+                    {p.full_name || p.username}
+                    {assignee && <StatusBadge status={assignee.status} />}
+                  </span>
+                );
+              })}
+            </span>
+          )}
+        </span>
+        <svg
+          className={`h-4 w-4 text-stone ml-2 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      {/* Dropdown — fixed position to escape overflow:auto clipping */}
+      {open && (
+        <div
+          ref={dropdownRef}
+          style={dropdownStyle}
+          className="bg-white border border-sand rounded-lg shadow-xl overflow-hidden"
+        >
+          {vaProfiles.map((va) => {
+            const checked = selectedIds.includes(va.id);
+            const assignee = selectedTask?.assigned_task_assignees.find((a) => a.va_id === va.id);
+            return (
+              <label
+                key={va.id}
+                className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-parchment transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(va.id)}
+                  className="accent-terracotta"
+                />
+                <span className="text-[13px] text-walnut flex-1">{va.full_name || va.username}</span>
+                {assignee && <StatusBadge status={assignee.status} />}
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function TaskAssignmentsAdminTab({
@@ -223,6 +347,10 @@ export default function TaskAssignmentsAdminTab({
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
   const [inlineSaving, setInlineSaving] = useState(false);
 
+  // ── Status edit state ─────────────────────────────────────────────────────────
+  const [statusEdit, setStatusEdit] = useState<{ taskId: number; vaId: string } | null>(null);
+  const [statusSaving, setStatusSaving] = useState(false);
+
   // ── Delete state ─────────────────────────────────────────────────────────────
   const [deleting, setDeleting] = useState<Record<number, boolean>>({});
 
@@ -236,6 +364,9 @@ export default function TaskAssignmentsAdminTab({
   const [csvUploading, setCsvUploading] = useState(false);
   const [csvResult, setCsvResult] = useState<string | null>(null);
   const csvFileRef = useRef<HTMLInputElement>(null);
+
+  // ── Project tags map (account → project names) ────────────────────────────────
+  const [projectTagsMap, setProjectTagsMap] = useState<Record<string, string[]>>({});
 
   // ─── Fetch tasks ─────────────────────────────────────────────────────────────
 
@@ -257,6 +388,23 @@ export default function TaskAssignmentsAdminTab({
   useEffect(() => {
     fetchTasks();
   }, [fetchTasks]);
+
+  useEffect(() => {
+    fetch("/api/project-tags")
+      .then((r) => r.json())
+      .then((d) => {
+        const map: Record<string, string[]> = {};
+        for (const pt of d.projects ?? []) {
+          if (!pt.is_active) continue;
+          if (!map[pt.account]) map[pt.account] = [];
+          if (!map[pt.account].includes(pt.project_name)) {
+            map[pt.account].push(pt.project_name);
+          }
+        }
+        setProjectTagsMap(map);
+      })
+      .catch(() => {}); // silently fail
+  }, []);
 
   // ─── Panel helpers ────────────────────────────────────────────────────────────
 
@@ -375,6 +523,26 @@ export default function TaskAssignmentsAdminTab({
       }
     },
     [fetchTasks, selectedTask]
+  );
+
+  // ─── Status change ───────────────────────────────────────────────────────────
+
+  const handleStatusChange = useCallback(
+    async (taskId: number, vaId: string, newStatus: AssignedTaskStatus) => {
+      setStatusSaving(true);
+      try {
+        await fetch(`/api/assigned-tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ va_id: vaId, status: newStatus }),
+        });
+        await fetchTasks();
+      } finally {
+        setStatusSaving(false);
+        setStatusEdit(null);
+      }
+    },
+    [fetchTasks]
   );
 
   // ─── Inline edit ─────────────────────────────────────────────────────────────
@@ -680,7 +848,9 @@ export default function TaskAssignmentsAdminTab({
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Detail</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Status</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Due Date</th>
                 <th className="w-8"></th>
               </tr>
@@ -693,6 +863,8 @@ export default function TaskAssignmentsAdminTab({
                   <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-28" /></td>
                   <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-24" /></td>
                   <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-32" /></td>
+                  <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-32" /></td>
+                  <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-20" /></td>
                   <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-20" /></td>
                   <td className="px-3 py-3"></td>
                 </tr>
@@ -739,7 +911,9 @@ export default function TaskAssignmentsAdminTab({
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Detail</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Status</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Due Date</th>
                 <th className="w-8"></th>
               </tr>
@@ -791,18 +965,32 @@ export default function TaskAssignmentsAdminTab({
                       display={task.project || ""}
                     />
 
-                    {/* Assigned To */}
-                    <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
+                    {/* Detail preview */}
+                    <td
+                      className="px-3 py-3 text-[13px] max-w-[180px] cursor-pointer"
+                      onClick={() => openEdit(task)}
+                    >
+                      {task.task_detail ? (
+                        <span className="text-stone/70 block truncate" title={task.task_detail}>
+                          {task.task_detail.length > 45
+                            ? task.task_detail.slice(0, 45) + "…"
+                            : task.task_detail}
+                        </span>
+                      ) : (
+                        <span className="text-stone/30">—</span>
+                      )}
+                    </td>
+
+                    {/* Assigned To — click to open edit panel */}
+                    <td className="px-3 py-3 text-[13px] cursor-pointer" onClick={() => openEdit(task)}>
                       <div className="flex flex-wrap items-center gap-1.5">
                         {visibleAssignees.map((a) => {
                           const name = a.profiles?.full_name || a.profiles?.username || a.va_id;
-                          const dotCls = statusDotColor(a.status);
                           return (
                             <span
                               key={a.id}
                               className="inline-flex items-center gap-1 text-[12px] text-walnut"
                             >
-                              <span className={`text-[10px] leading-none ${dotCls}`}>●</span>
                               {name}
                             </span>
                           );
@@ -813,6 +1001,57 @@ export default function TaskAssignmentsAdminTab({
                         {assignees.length === 0 && (
                           <span className="text-[11px] text-stone/40">—</span>
                         )}
+                      </div>
+                    </td>
+
+                    {/* Status — clickable per-assignee badge */}
+                    <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-wrap gap-1">
+                        {assignees.length === 0 && (
+                          <span className="text-[11px] text-stone/40">—</span>
+                        )}
+                        {assignees.map((a) => {
+                          const isEditing =
+                            statusEdit?.taskId === task.id && statusEdit?.vaId === a.va_id;
+                          const vaName = a.profiles?.full_name || a.profiles?.username || "VA";
+                          if (isEditing) {
+                            return (
+                              <select
+                                key={a.id}
+                                autoFocus
+                                value={a.status}
+                                disabled={statusSaving}
+                                onChange={(e) =>
+                                  handleStatusChange(
+                                    task.id,
+                                    a.va_id,
+                                    e.target.value as AssignedTaskStatus
+                                  )
+                                }
+                                onBlur={() => setStatusEdit(null)}
+                                className="text-[11px] border border-sand rounded-lg px-2 py-1 outline-none focus:border-terracotta cursor-pointer bg-white"
+                              >
+                                <option value="pending">Pending</option>
+                                <option value="on_queue">On Queue</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                                <option value="cancelled">Cancelled</option>
+                              </select>
+                            );
+                          }
+                          return (
+                            <button
+                              key={a.id}
+                              type="button"
+                              title={`${vaName} — click to change`}
+                              onClick={() => setStatusEdit({ taskId: task.id, vaId: a.va_id })}
+                              disabled={statusSaving}
+                              className="cursor-pointer hover:opacity-75 transition-opacity disabled:opacity-40"
+                            >
+                              <StatusBadge status={a.status} />
+                            </button>
+                          );
+                        })}
                       </div>
                     </td>
 
@@ -918,7 +1157,15 @@ export default function TaskAssignmentsAdminTab({
                     type="text"
                     list="detail-accounts-list"
                     value={detailForm.account}
-                    onChange={(e) => setDetailForm((f) => ({ ...f, account: e.target.value }))}
+                    onChange={(e) => {
+                      const newAccount = e.target.value;
+                      setDetailForm((f) => ({
+                        ...f,
+                        account: newAccount,
+                        // Clear project if the new account doesn't have this project
+                        project: projectTagsMap[newAccount]?.includes(f.project) ? f.project : "",
+                      }));
+                    }}
                     placeholder="Account name"
                     className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
                   />
@@ -930,13 +1177,26 @@ export default function TaskAssignmentsAdminTab({
                   <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
                     Project
                   </label>
-                  <input
-                    type="text"
-                    value={detailForm.project}
-                    onChange={(e) => setDetailForm((f) => ({ ...f, project: e.target.value }))}
-                    placeholder="Project name"
-                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                  />
+                  {projectTagsMap[detailForm.account]?.length > 0 ? (
+                    <select
+                      value={detailForm.project}
+                      onChange={(e) => setDetailForm((f) => ({ ...f, project: e.target.value }))}
+                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
+                    >
+                      <option value="">— Select project —</option>
+                      {(projectTagsMap[detailForm.account] ?? []).map((p) => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={detailForm.project}
+                      onChange={(e) => setDetailForm((f) => ({ ...f, project: e.target.value }))}
+                      placeholder="Project name"
+                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                    />
+                  )}
                 </div>
               </div>
 
@@ -975,29 +1235,12 @@ export default function TaskAssignmentsAdminTab({
                 {vaProfiles.length === 0 ? (
                   <p className="text-[12px] text-stone">No VAs available</p>
                 ) : (
-                  <div className="space-y-2">
-                    {vaProfiles.map((va) => {
-                      const assignee = selectedTask?.assigned_task_assignees.find(
-                        (a) => a.va_id === va.id
-                      );
-                      return (
-                        <label key={va.id} className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={detailForm.assignee_ids.includes(va.id)}
-                            onChange={() => toggleDetailAssignee(va.id)}
-                            className="accent-terracotta"
-                          />
-                          <span className="text-[13px] text-walnut flex-1">
-                            {va.full_name || va.username}
-                          </span>
-                          {assignee && (
-                            <StatusBadge status={assignee.status} />
-                          )}
-                        </label>
-                      );
-                    })}
-                  </div>
+                  <VAMultiSelect
+                    vaProfiles={vaProfiles}
+                    selectedIds={detailForm.assignee_ids}
+                    onChange={(ids) => setDetailForm((f) => ({ ...f, assignee_ids: ids }))}
+                    selectedTask={selectedTask}
+                  />
                 )}
               </div>
 
