@@ -7620,6 +7620,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             to_email: editToEmail || null,
             to_phone: editToPhone || null,
             to_address: editToAddress || null,
+            dba: editDba || null,
             period_start: editPeriodStart || null,
             period_end: editPeriodEnd || null,
           }
