@@ -40,6 +40,7 @@ interface Invoice {
   allow_custom_amount?: boolean | null;
   payment_schedule?: Array<{ label: string; amount_type: "percentage" | "fixed"; value: number; due_date?: string }> | null;
   share_token?: string | null;
+  dba?: string | null;
 }
 
 interface LineItem {
@@ -227,7 +228,7 @@ export default function PublicInvoicePage() {
   const prevBalance = Number(invoice.previous_balance || 0);
   const timezone = orgSettings?.timezone || "UTC";
   const orgRegisteredName = orgSettings?.registered_business_name || null;
-  const orgDba = orgSettings?.dba || null;
+  const orgDba = invoice?.dba || orgSettings?.dba || null;
 
   // Smart display: only show Final Amount if there's an adjustment
   const hasAdjustment = adjustment > 0;

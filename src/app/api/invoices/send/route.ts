@@ -74,7 +74,7 @@ export async function POST(request: Request) {
     .single();
   const orgTimezone = orgSettings?.timezone || "UTC";
   const orgRegisteredName = orgSettings?.registered_business_name || null;
-  const orgDba = orgSettings?.dba || null;
+  const orgDba = invoice.dba || orgSettings?.dba || null;
 
   // Build HTML email
   const html = buildInvoiceEmail(invoice, items, orgTimezone, orgRegisteredName, orgDba);
@@ -169,6 +169,7 @@ interface InvoiceRow {
   period_start: string | null;
   period_end: string | null;
   payment_schedule?: Array<{ label: string; amount_type: string; value: number }> | null;
+  dba?: string | null;
 }
 
 interface LineItemRow {
