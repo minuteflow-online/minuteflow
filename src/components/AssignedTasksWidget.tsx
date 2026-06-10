@@ -99,7 +99,7 @@ export default function AssignedTasksWidget({
       setUpdatingIds((prev) => new Set(prev).add(id));
 
       try {
-        const res = await fetch(`/api/assigned-tasks/${id}`, {
+        const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: newStatus }),
@@ -243,6 +243,13 @@ export default function AssignedTasksWidget({
                     {/* Account · Project */}
                     {accountProject && (
                       <div className="text-[11px] text-bark">{accountProject}</div>
+                    )}
+
+                    {/* Task detail */}
+                    {detail.task_detail && (
+                      <div className="text-[11px] text-stone/80 leading-relaxed line-clamp-2">
+                        {detail.task_detail}
+                      </div>
                     )}
 
                     {/* Due date */}

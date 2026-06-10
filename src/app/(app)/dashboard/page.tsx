@@ -3020,8 +3020,8 @@ export default function DashboardPage() {
                 orgTimezone={orgTimezone}
               />
             )}
-            {/* Assigned Tasks Widget — visible for VAs when clocked in */}
-            {isVa && userId && sessionState !== "idle" && (
+            {/* Assigned Tasks Widget — visible for all VAs */}
+            {isVa && userId && (
               <AssignedTasksWidget
                 userId={userId}
                 sessionState={sessionState}
