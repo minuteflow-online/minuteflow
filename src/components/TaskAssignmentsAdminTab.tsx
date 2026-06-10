@@ -39,13 +39,19 @@ interface TaskAssignmentsAdminTabProps {
   orgTimezone?: string;
 }
 
-interface FormState {
+interface DetailFormState {
   task_name: string;
   account: string;
   project: string;
   task_detail: string;
   due_date: string;
   assignee_ids: string[];
+}
+
+interface InlineEditState {
+  taskId: number;
+  field: string;
+  value: string;
 }
 
 interface CsvRow {
@@ -78,7 +84,7 @@ function fmtDueDate(iso: string | null, tz?: string): string {
 function isDueSoon(iso: string | null): boolean {
   if (!iso) return false;
   const diff = new Date(iso).getTime() - Date.now();
-  return diff >= 0 && diff < 86400 * 3 * 1000; // within 3 days
+  return diff >= 0 && diff < 86400 * 3 * 1000;
 }
 
 function isPastDue(iso: string | null): boolean {
@@ -104,20 +110,17 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
   );
 }
 
-// ─── Empty skeleton rows ──────────────────────────────────────────────────────
+// ─── Status dot color helper ──────────────────────────────────────────────────
 
-function SkeletonRows() {
-  return (
-    <div className="space-y-4">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="rounded-xl border border-sand bg-white p-5 shadow-sm animate-pulse">
-          <div className="h-4 bg-sand rounded w-1/3 mb-3" />
-          <div className="h-3 bg-sand rounded w-1/2 mb-2" />
-          <div className="h-3 bg-sand rounded w-1/4" />
-        </div>
-      ))}
-    </div>
-  );
+function statusDotColor(status: AssignedTaskStatus): string {
+  switch (status) {
+    case "pending":     return "text-stone";
+    case "on_queue":    return "text-[#6366f1]";
+    case "in_progress": return "text-amber-500";
+    case "completed":   return "text-sage";
+    case "cancelled":   return "text-terracotta";
+    default:            return "text-stone";
+  }
 }
 
 // ─── CSV Parser ───────────────────────────────────────────────────────────────
@@ -126,14 +129,12 @@ function parseCsv(text: string, vaProfiles: Profile[]): CsvRow[] {
   const lines = text.trim().split("\n");
   if (lines.length < 2) return [];
 
-  // Skip header line
   const dataLines = lines.slice(1);
   const rows: CsvRow[] = [];
 
   for (const raw of dataLines) {
     if (!raw.trim()) continue;
 
-    // Simple CSV parse that handles quoted fields
     const fields: string[] = [];
     let current = "";
     let inQuotes = false;
@@ -204,19 +205,10 @@ export default function TaskAssignmentsAdminTab({
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // ── UI state ─────────────────────────────────────────────────────────────────
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [deleting, setDeleting] = useState<Record<number, boolean>>({});
-
-  // ── Filter state ─────────────────────────────────────────────────────────────
-  const [filterVaId, setFilterVaId] = useState("");
-  const [filterStatus, setFilterStatus] = useState<AssignedTaskStatus | "">("");
-
-  // ── Form state ───────────────────────────────────────────────────────────────
-  const emptyForm = (): FormState => ({
+  // ── Detail panel state ───────────────────────────────────────────────────────
+  const [selectedTask, setSelectedTask] = useState<AssignedTaskWithAssignees | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [detailForm, setDetailForm] = useState<DetailFormState>({
     task_name: "",
     account: "",
     project: "",
@@ -224,8 +216,19 @@ export default function TaskAssignmentsAdminTab({
     due_date: "",
     assignee_ids: [],
   });
+  const [detailSaving, setDetailSaving] = useState(false);
+  const [detailSaveMsg, setDetailSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
-  const [form, setForm] = useState<FormState>(emptyForm());
+  // ── Inline edit state ────────────────────────────────────────────────────────
+  const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
+  const [inlineSaving, setInlineSaving] = useState(false);
+
+  // ── Delete state ─────────────────────────────────────────────────────────────
+  const [deleting, setDeleting] = useState<Record<number, boolean>>({});
+
+  // ── Filter state ─────────────────────────────────────────────────────────────
+  const [filterVaId, setFilterVaId] = useState("");
+  const [filterStatus, setFilterStatus] = useState<AssignedTaskStatus | "">("");
 
   // ── CSV Upload state ─────────────────────────────────────────────────────────
   const [showCsvModal, setShowCsvModal] = useState(false);
@@ -255,22 +258,28 @@ export default function TaskAssignmentsAdminTab({
     fetchTasks();
   }, [fetchTasks]);
 
-  // ─── Form helpers ─────────────────────────────────────────────────────────────
+  // ─── Panel helpers ────────────────────────────────────────────────────────────
 
-  const resetForm = () => {
-    setForm(emptyForm());
-    setEditingId(null);
-    setSaveMsg(null);
-  };
+  const emptyDetailForm = (): DetailFormState => ({
+    task_name: "",
+    account: "",
+    project: "",
+    task_detail: "",
+    due_date: "",
+    assignee_ids: [],
+  });
 
   const openCreate = () => {
-    resetForm();
-    setShowForm(true);
+    setIsCreating(true);
+    setSelectedTask(null);
+    setDetailForm(emptyDetailForm());
+    setDetailSaveMsg(null);
   };
 
   const openEdit = (task: AssignedTaskWithAssignees) => {
-    setEditingId(task.id);
-    setForm({
+    setIsCreating(false);
+    setSelectedTask(task);
+    setDetailForm({
       task_name: task.task_name,
       account: task.account || "",
       project: task.project || "",
@@ -278,12 +287,19 @@ export default function TaskAssignmentsAdminTab({
       due_date: task.due_date ? task.due_date.slice(0, 10) : "",
       assignee_ids: task.assigned_task_assignees.map((a) => a.va_id),
     });
-    setShowForm(true);
-    setSaveMsg(null);
+    setDetailSaveMsg(null);
   };
 
-  const toggleAssignee = (id: string) => {
-    setForm((prev) => ({
+  const closePanel = () => {
+    setSelectedTask(null);
+    setIsCreating(false);
+    setDetailSaveMsg(null);
+  };
+
+  const isPanelOpen = isCreating || selectedTask !== null;
+
+  const toggleDetailAssignee = (id: string) => {
+    setDetailForm((prev) => ({
       ...prev,
       assignee_ids: prev.assignee_ids.includes(id)
         ? prev.assignee_ids.filter((i) => i !== id)
@@ -291,29 +307,29 @@ export default function TaskAssignmentsAdminTab({
     }));
   };
 
-  // ─── Save ─────────────────────────────────────────────────────────────────────
+  // ─── Detail panel save ────────────────────────────────────────────────────────
 
-  const handleSave = useCallback(async () => {
-    if (!form.task_name.trim()) return;
-    if (form.assignee_ids.length === 0) {
-      setSaveMsg({ type: "err", text: "Please select at least one VA to assign this task to." });
+  const handleDetailSave = useCallback(async () => {
+    if (!detailForm.task_name.trim()) return;
+    if (detailForm.assignee_ids.length === 0) {
+      setDetailSaveMsg({ type: "err", text: "Please select at least one VA to assign this task to." });
       return;
     }
-    setSaving(true);
-    setSaveMsg(null);
+    setDetailSaving(true);
+    setDetailSaveMsg(null);
 
     const payload = {
-      task_name: form.task_name.trim(),
-      account: form.account.trim() || null,
-      project: form.project.trim() || null,
-      task_detail: form.task_detail.trim() || null,
-      due_date: form.due_date || null,
-      va_ids: form.assignee_ids,
+      task_name: detailForm.task_name.trim(),
+      account: detailForm.account.trim() || null,
+      project: detailForm.project.trim() || null,
+      task_detail: detailForm.task_detail.trim() || null,
+      due_date: detailForm.due_date || null,
+      va_ids: detailForm.assignee_ids,
     };
 
     try {
-      const res = editingId
-        ? await fetch(`/api/assigned-tasks/${editingId}`, {
+      const res = selectedTask
+        ? await fetch(`/api/assigned-tasks/${selectedTask.id}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
@@ -325,24 +341,24 @@ export default function TaskAssignmentsAdminTab({
           });
 
       if (res.ok) {
-        setSaveMsg({
+        setDetailSaveMsg({
           type: "ok",
-          text: editingId ? "Task updated!" : "Task created!",
+          text: selectedTask ? "Task updated!" : "Task created!",
         });
-        setTimeout(() => setSaveMsg(null), 3000);
-        resetForm();
-        setShowForm(false);
+        setTimeout(() => {
+          closePanel();
+        }, 800);
         fetchTasks();
       } else {
         const e = await res.json();
-        setSaveMsg({ type: "err", text: e.error || "Failed to save" });
+        setDetailSaveMsg({ type: "err", text: e.error || "Failed to save" });
       }
     } catch {
-      setSaveMsg({ type: "err", text: "Network error — please try again" });
+      setDetailSaveMsg({ type: "err", text: "Network error — please try again" });
     } finally {
-      setSaving(false);
+      setDetailSaving(false);
     }
-  }, [form, editingId, fetchTasks]);
+  }, [detailForm, selectedTask, fetchTasks]);
 
   // ─── Delete ───────────────────────────────────────────────────────────────────
 
@@ -352,20 +368,81 @@ export default function TaskAssignmentsAdminTab({
       setDeleting((d) => ({ ...d, [id]: true }));
       try {
         await fetch(`/api/assigned-tasks/${id}`, { method: "DELETE" });
+        if (selectedTask?.id === id) closePanel();
         await fetchTasks();
       } finally {
         setDeleting((d) => ({ ...d, [id]: false }));
       }
     },
-    [fetchTasks]
+    [fetchTasks, selectedTask]
   );
+
+  // ─── Inline edit ─────────────────────────────────────────────────────────────
+
+  const startInlineEdit = (
+    e: React.MouseEvent,
+    taskId: number,
+    field: string,
+    value: string
+  ) => {
+    e.stopPropagation();
+    setInlineEdit({ taskId, field, value });
+  };
+
+  const commitInlineEdit = useCallback(async () => {
+    if (!inlineEdit || inlineSaving) return;
+    const task = tasks.find((t) => t.id === inlineEdit.taskId);
+    if (!task) {
+      setInlineEdit(null);
+      return;
+    }
+
+    // If value unchanged, just close
+    const currentValue = (() => {
+      switch (inlineEdit.field) {
+        case "task_name": return task.task_name;
+        case "account":   return task.account || "";
+        case "project":   return task.project || "";
+        case "due_date":  return task.due_date ? task.due_date.slice(0, 10) : "";
+        default:          return "";
+      }
+    })();
+
+    if (inlineEdit.value === currentValue) {
+      setInlineEdit(null);
+      return;
+    }
+
+    setInlineSaving(true);
+    const payload = {
+      task_name:  inlineEdit.field === "task_name" ? inlineEdit.value : task.task_name,
+      account:    inlineEdit.field === "account"   ? (inlineEdit.value || null) : (task.account || null),
+      project:    inlineEdit.field === "project"   ? (inlineEdit.value || null) : (task.project || null),
+      task_detail: task.task_detail || null,
+      due_date:   inlineEdit.field === "due_date"  ? (inlineEdit.value || null) : (task.due_date || null),
+      va_ids:     task.assigned_task_assignees.map((a) => a.va_id),
+    };
+
+    try {
+      await fetch(`/api/assigned-tasks/${task.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      await fetchTasks();
+    } finally {
+      setInlineSaving(false);
+      setInlineEdit(null);
+    }
+  }, [inlineEdit, inlineSaving, tasks, fetchTasks]);
+
+  const cancelInlineEdit = () => setInlineEdit(null);
 
   // ─── CSV Upload ───────────────────────────────────────────────────────────────
 
   const handleCsvFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
@@ -421,9 +498,7 @@ export default function TaskAssignmentsAdminTab({
     setCsvUploading(false);
 
     if (errors.length > 0) {
-      setCsvResult(
-        `Created ${created} task(s). Errors:\n${errors.join("\n")}`
-      );
+      setCsvResult(`Created ${created} task(s). Errors:\n${errors.join("\n")}`);
     } else {
       setCsvResult(`Created ${created} task(s) successfully.`);
       setTimeout(() => {
@@ -452,10 +527,85 @@ export default function TaskAssignmentsAdminTab({
     return true;
   });
 
+  // ─── Inline cell renderer ─────────────────────────────────────────────────────
+
+  function InlineCell({
+    task,
+    field,
+    display,
+    inputType = "text",
+  }: {
+    task: AssignedTaskWithAssignees;
+    field: string;
+    display: string;
+    inputType?: string;
+  }) {
+    const isEditing = inlineEdit?.taskId === task.id && inlineEdit?.field === field;
+
+    if (isEditing) {
+      return (
+        <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
+          {field === "account" ? (
+            <>
+              <input
+                autoFocus
+                type="text"
+                list={`accounts-list-${task.id}`}
+                value={inlineEdit.value}
+                onChange={(e) => setInlineEdit({ ...inlineEdit, value: e.target.value })}
+                onBlur={commitInlineEdit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitInlineEdit();
+                  if (e.key === "Escape") cancelInlineEdit();
+                }}
+                className="w-full bg-transparent border-b-2 border-terracotta outline-none text-[13px] text-ink py-0.5"
+              />
+              <datalist id={`accounts-list-${task.id}`}>
+                {KNOWN_ACCOUNTS.map((a) => <option key={a} value={a} />)}
+              </datalist>
+            </>
+          ) : (
+            <input
+              autoFocus
+              type={inputType}
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ ...inlineEdit, value: e.target.value })}
+              onBlur={commitInlineEdit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitInlineEdit();
+                if (e.key === "Escape") cancelInlineEdit();
+              }}
+              className="w-full bg-transparent border-b-2 border-terracotta outline-none text-[13px] text-ink py-0.5"
+            />
+          )}
+        </td>
+      );
+    }
+
+    const rawValue = (() => {
+      switch (field) {
+        case "task_name": return task.task_name;
+        case "account":   return task.account || "";
+        case "project":   return task.project || "";
+        case "due_date":  return task.due_date ? task.due_date.slice(0, 10) : "";
+        default:          return "";
+      }
+    })();
+
+    return (
+      <td
+        className="px-3 py-3 text-[13px] cursor-text"
+        onClick={(e) => startInlineEdit(e, task.id, field, rawValue)}
+      >
+        {display || <span className="text-stone/40">—</span>}
+      </td>
+    );
+  }
+
   // ─── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="max-w-4xl space-y-6">
+    <div className="w-full space-y-6">
       {/* ── Header row ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         {/* Filters */}
@@ -508,10 +658,7 @@ export default function TaskAssignmentsAdminTab({
           </button>
 
           <button
-            onClick={() => {
-              resetForm();
-              setShowForm(!showForm);
-            }}
+            onClick={openCreate}
             className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
           >
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -523,157 +670,37 @@ export default function TaskAssignmentsAdminTab({
         </div>
       </div>
 
-      {/* ── Create / Edit Form ──────────────────────────────────────────────────── */}
-      {showForm && (
-        <div className="rounded-xl border border-sand bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-bold text-espresso mb-4">
-            {editingId ? "Edit Task" : "New Assigned Task"}
-          </h3>
-
-          <div className="space-y-4">
-            {/* Task Name */}
-            <div>
-              <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                Task Name *
-              </label>
-              <input
-                type="text"
-                value={form.task_name}
-                onChange={(e) => setForm((f) => ({ ...f, task_name: e.target.value }))}
-                placeholder="What needs to be done?"
-                className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-              />
-            </div>
-
-            {/* Account + Project in a row */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                  Account
-                </label>
-                <input
-                  type="text"
-                  list="known-accounts-list"
-                  value={form.account}
-                  onChange={(e) => setForm((f) => ({ ...f, account: e.target.value }))}
-                  placeholder="Account name"
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                />
-                <datalist id="known-accounts-list">
-                  {KNOWN_ACCOUNTS.map((a) => (
-                    <option key={a} value={a} />
-                  ))}
-                </datalist>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                  Project
-                </label>
-                <input
-                  type="text"
-                  value={form.project}
-                  onChange={(e) => setForm((f) => ({ ...f, project: e.target.value }))}
-                  placeholder="Project name"
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                />
-              </div>
-            </div>
-
-            {/* Task Detail */}
-            <div>
-              <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                Task Detail
-              </label>
-              <textarea
-                value={form.task_detail}
-                onChange={(e) => setForm((f) => ({ ...f, task_detail: e.target.value }))}
-                rows={4}
-                placeholder="Instructions, notes, or context..."
-                className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
-              />
-            </div>
-
-            {/* Due Date */}
-            <div>
-              <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide">
-                Due Date
-              </label>
-              <input
-                type="date"
-                value={form.due_date}
-                onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))}
-                className="py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-              />
-            </div>
-
-            {/* Assign To */}
-            <div>
-              <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">
-                Assign To <span className="text-terracotta">*</span>
-              </label>
-              {vaProfiles.length === 0 ? (
-                <p className="text-[12px] text-stone">No VAs available</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {vaProfiles.map((va) => (
-                    <label key={va.id} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={form.assignee_ids.includes(va.id)}
-                        onChange={() => toggleAssignee(va.id)}
-                        className="accent-terracotta"
-                      />
-                      <span className="text-[13px] text-walnut">
-                        {va.full_name || va.username}
-                      </span>
-                      {va.position && (
-                        <span className="text-[11px] text-stone">
-                          {va.position}
-                        </span>
-                      )}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex items-center gap-3 mt-5 flex-wrap">
-            <button
-              onClick={handleSave}
-              disabled={saving || !form.task_name.trim() || form.assignee_ids.length === 0}
-              className="rounded-lg bg-terracotta px-5 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {saving ? "Saving..." : editingId ? "Save Changes" : "Create Task"}
-            </button>
-
-            <button
-              onClick={() => {
-                resetForm();
-                setShowForm(false);
-              }}
-              className="text-xs text-stone hover:text-espresso cursor-pointer"
-            >
-              Cancel
-            </button>
-
-            {saveMsg && (
-              <p
-                className={`text-xs font-medium ${
-                  saveMsg.type === "ok" ? "text-sage" : "text-red-500"
-                }`}
-              >
-                {saveMsg.text}
-              </p>
-            )}
-          </div>
+      {/* ── Loading skeleton ────────────────────────────────────────────────────── */}
+      {loading && (
+        <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-parchment border-b border-sand">
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left w-8"></th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Due Date</th>
+                <th className="w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {[1, 2, 3].map((i) => (
+                <tr key={i} className="border-b border-sand last:border-0">
+                  <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-4" /></td>
+                  <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-48" /></td>
+                  <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-28" /></td>
+                  <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-24" /></td>
+                  <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-32" /></td>
+                  <td className="px-3 py-3"><div className="animate-pulse bg-sand/50 rounded h-4 w-20" /></td>
+                  <td className="px-3 py-3"></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-
-      {/* ── Loading skeleton ────────────────────────────────────────────────────── */}
-      {loading && <SkeletonRows />}
 
       {/* ── Fetch error ─────────────────────────────────────────────────────────── */}
       {!loading && fetchError && (
@@ -702,19 +729,321 @@ export default function TaskAssignmentsAdminTab({
         </div>
       )}
 
-      {/* ── Task list ───────────────────────────────────────────────────────────── */}
+      {/* ── Task table ──────────────────────────────────────────────────────────── */}
       {!loading && !fetchError && filteredTasks.length > 0 && (
-        <div className="space-y-4">
-          {filteredTasks.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              orgTimezone={orgTimezone}
-              deleting={!!deleting[task.id]}
-              onEdit={openEdit}
-              onDelete={handleDelete}
-            />
-          ))}
+        <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-parchment border-b border-sand">
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left w-8">↗</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Due Date</th>
+                <th className="w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredTasks.map((task) => {
+                const dueSoon = isDueSoon(task.due_date);
+                const pastDue = isPastDue(task.due_date);
+                const dueDateDisplay = fmtDueDate(task.due_date, orgTimezone);
+                const assignees = task.assigned_task_assignees;
+                const visibleAssignees = assignees.slice(0, 2);
+                const extraCount = assignees.length - 2;
+
+                return (
+                  <tr
+                    key={task.id}
+                    className="border-b border-sand last:border-0 hover:bg-parchment/30 transition-colors cursor-pointer group"
+                    onClick={() => openEdit(task)}
+                  >
+                    {/* Expand icon */}
+                    <td className="px-3 py-3 w-8" onClick={(e) => { e.stopPropagation(); openEdit(task); }}>
+                      <button className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-walnut hover:bg-sand/50 transition-colors">
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                      </button>
+                    </td>
+
+                    {/* Task Name */}
+                    <InlineCell
+                      task={task}
+                      field="task_name"
+                      display={task.task_name}
+                    />
+
+                    {/* Account */}
+                    <InlineCell
+                      task={task}
+                      field="account"
+                      display={task.account || ""}
+                    />
+
+                    {/* Project */}
+                    <InlineCell
+                      task={task}
+                      field="project"
+                      display={task.project || ""}
+                    />
+
+                    {/* Assigned To */}
+                    <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {visibleAssignees.map((a) => {
+                          const name = a.profiles?.full_name || a.profiles?.username || a.va_id;
+                          const dotCls = statusDotColor(a.status);
+                          return (
+                            <span
+                              key={a.id}
+                              className="inline-flex items-center gap-1 text-[12px] text-walnut"
+                            >
+                              <span className={`text-[10px] leading-none ${dotCls}`}>●</span>
+                              {name}
+                            </span>
+                          );
+                        })}
+                        {extraCount > 0 && (
+                          <span className="text-[11px] text-stone">+{extraCount} more</span>
+                        )}
+                        {assignees.length === 0 && (
+                          <span className="text-[11px] text-stone/40">—</span>
+                        )}
+                      </div>
+                    </td>
+
+                    {/* Due Date */}
+                    <InlineCell
+                      task={task}
+                      field="due_date"
+                      display={
+                        task.due_date
+                          ? `${dueDateDisplay}${pastDue ? " · Past Due" : dueSoon ? " · Soon" : ""}`
+                          : ""
+                      }
+                      inputType="date"
+                    />
+
+                    {/* Overflow / delete */}
+                    <td
+                      className="px-2 py-3 w-8 text-right"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={() => handleDelete(task.id)}
+                        disabled={!!deleting[task.id]}
+                        className="opacity-0 group-hover:opacity-100 flex items-center justify-center w-6 h-6 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft transition-all disabled:opacity-30 cursor-pointer"
+                        title="Delete task"
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6M14 11v6" />
+                          <path d="M9 6V4h6v2" />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Detail Panel ────────────────────────────────────────────────────────── */}
+      {isPanelOpen && (
+        <div className="fixed inset-0 z-40 flex items-stretch">
+          {/* Backdrop */}
+          <div className="flex-1" onClick={closePanel} />
+
+          {/* Panel */}
+          <div className="w-[520px] max-w-full bg-white border-l border-sand shadow-2xl flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-sand">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={closePanel}
+                  className="flex items-center justify-center w-7 h-7 rounded text-stone hover:text-espresso hover:bg-sand/50 transition-colors cursor-pointer"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="19" y1="12" x2="5" y2="12" />
+                    <polyline points="12 19 5 12 12 5" />
+                  </svg>
+                </button>
+                <span className="text-[13px] font-semibold text-walnut">Task Detail</span>
+              </div>
+
+              {selectedTask && (
+                <button
+                  onClick={() => handleDelete(selectedTask.id)}
+                  disabled={!!deleting[selectedTask.id]}
+                  className="flex items-center justify-center w-7 h-7 rounded text-terracotta hover:bg-terracotta-soft transition-colors cursor-pointer disabled:opacity-40"
+                  title="Delete task"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                    <path d="M9 6V4h6v2" />
+                  </svg>
+                </button>
+              )}
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+              {/* Task name */}
+              <div>
+                <input
+                  type="text"
+                  value={detailForm.task_name}
+                  onChange={(e) => setDetailForm((f) => ({ ...f, task_name: e.target.value }))}
+                  placeholder="Task name..."
+                  className="w-full text-xl font-semibold text-espresso bg-transparent border-0 border-b border-transparent focus:border-sand outline-none py-1 transition-colors placeholder:text-stone/40"
+                />
+              </div>
+
+              {/* Account + Project */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                    Account
+                  </label>
+                  <input
+                    type="text"
+                    list="detail-accounts-list"
+                    value={detailForm.account}
+                    onChange={(e) => setDetailForm((f) => ({ ...f, account: e.target.value }))}
+                    placeholder="Account name"
+                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                  />
+                  <datalist id="detail-accounts-list">
+                    {KNOWN_ACCOUNTS.map((a) => <option key={a} value={a} />)}
+                  </datalist>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                    Project
+                  </label>
+                  <input
+                    type="text"
+                    value={detailForm.project}
+                    onChange={(e) => setDetailForm((f) => ({ ...f, project: e.target.value }))}
+                    placeholder="Project name"
+                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                  />
+                </div>
+              </div>
+
+              {/* Due date */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                  Due Date
+                </label>
+                <input
+                  type="date"
+                  value={detailForm.due_date}
+                  onChange={(e) => setDetailForm((f) => ({ ...f, due_date: e.target.value }))}
+                  className="py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
+                />
+              </div>
+
+              {/* Task detail */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                  Task Detail
+                </label>
+                <textarea
+                  value={detailForm.task_detail}
+                  onChange={(e) => setDetailForm((f) => ({ ...f, task_detail: e.target.value }))}
+                  rows={5}
+                  placeholder="Instructions, notes, or context..."
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
+                />
+              </div>
+
+              {/* Assignees */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide uppercase">
+                  Assigned To <span className="text-terracotta">*</span>
+                </label>
+                {vaProfiles.length === 0 ? (
+                  <p className="text-[12px] text-stone">No VAs available</p>
+                ) : (
+                  <div className="space-y-2">
+                    {vaProfiles.map((va) => {
+                      const assignee = selectedTask?.assigned_task_assignees.find(
+                        (a) => a.va_id === va.id
+                      );
+                      return (
+                        <label key={va.id} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={detailForm.assignee_ids.includes(va.id)}
+                            onChange={() => toggleDetailAssignee(va.id)}
+                            className="accent-terracotta"
+                          />
+                          <span className="text-[13px] text-walnut flex-1">
+                            {va.full_name || va.username}
+                          </span>
+                          {assignee && (
+                            <StatusBadge status={assignee.status} />
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Error */}
+              {detailSaveMsg?.type === "err" && (
+                <p className="text-xs text-red-500 font-medium">{detailSaveMsg.text}</p>
+              )}
+              {detailSaveMsg?.type === "ok" && (
+                <p className="text-xs text-sage font-medium">{detailSaveMsg.text}</p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="shrink-0 px-5 py-4 border-t border-sand flex items-center justify-between">
+              <div>
+                {selectedTask?.created_at && (
+                  <span className="text-[11px] text-stone">
+                    Created {new Date(selectedTask.created_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={closePanel}
+                  className="text-xs text-stone hover:text-espresso cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDetailSave}
+                  disabled={detailSaving || !detailForm.task_name.trim()}
+                  className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {detailSaving
+                    ? "Saving..."
+                    : isCreating
+                    ? "Create Task"
+                    : "Save Changes"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -734,125 +1063,6 @@ export default function TaskAssignmentsAdminTab({
             setCsvResult(null);
           }}
         />
-      )}
-    </div>
-  );
-}
-
-// ─── Task Card ────────────────────────────────────────────────────────────────
-
-interface TaskCardProps {
-  task: AssignedTaskWithAssignees;
-  orgTimezone?: string;
-  deleting: boolean;
-  onEdit: (task: AssignedTaskWithAssignees) => void;
-  onDelete: (id: number) => void;
-}
-
-function TaskCard({ task, orgTimezone, deleting, onEdit, onDelete }: TaskCardProps) {
-  const [expanded, setExpanded] = useState(false);
-
-  const dueDateStr = fmtDueDate(task.due_date, orgTimezone);
-  const dueSoon = isDueSoon(task.due_date);
-  const pastDue = isPastDue(task.due_date);
-
-  return (
-    <div className="rounded-xl border border-sand bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="flex-1 min-w-0">
-          {/* Task name + account/project */}
-          <h3 className="text-sm font-semibold text-espresso">{task.task_name}</h3>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
-            {task.account && (
-              <span className="text-[12px] text-walnut font-medium">{task.account}</span>
-            )}
-            {task.account && task.project && (
-              <span className="text-[11px] text-stone">/</span>
-            )}
-            {task.project && (
-              <span className="text-[12px] text-bark">{task.project}</span>
-            )}
-          </div>
-
-          {/* Due date */}
-          {task.due_date && (
-            <div className="mt-1.5">
-              <span
-                className={`text-[11px] font-medium ${
-                  pastDue
-                    ? "text-terracotta"
-                    : dueSoon
-                    ? "text-amber-600"
-                    : "text-stone"
-                }`}
-              >
-                Due {dueDateStr}
-                {pastDue && " · Past Due"}
-                {!pastDue && dueSoon && " · Soon"}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Edit / Delete */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => onEdit(task)}
-            className="text-[11px] text-walnut hover:text-espresso cursor-pointer px-2 py-1 rounded border border-sand hover:border-walnut transition-all"
-          >
-            Edit
-          </button>
-          <button
-            onClick={() => onDelete(task.id)}
-            disabled={deleting}
-            className="text-[11px] text-terracotta hover:text-red-600 cursor-pointer px-2 py-1 rounded border border-sand hover:border-terracotta transition-all disabled:opacity-50"
-          >
-            {deleting ? "..." : "Delete"}
-          </button>
-        </div>
-      </div>
-
-      {/* Task detail (collapsible) */}
-      {task.task_detail && (
-        <div className="mt-2 mb-3">
-          <div
-            className={`text-xs text-bark leading-relaxed whitespace-pre-wrap ${
-              !expanded && task.task_detail.length > 180 ? "line-clamp-2" : ""
-            }`}
-          >
-            {task.task_detail}
-          </div>
-          {task.task_detail.length > 180 && (
-            <button
-              onClick={() => setExpanded((v) => !v)}
-              className="mt-0.5 text-[11px] text-terracotta hover:underline cursor-pointer"
-            >
-              {expanded ? "Show less" : "Read more"}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Assignees */}
-      {task.assigned_task_assignees.length > 0 && (
-        <div className="flex flex-wrap gap-2 mt-2">
-          {task.assigned_task_assignees.map((a) => {
-            const name = a.profiles?.full_name || a.profiles?.username || a.va_id;
-            return (
-              <div
-                key={a.id}
-                className="flex items-center gap-1.5 rounded-full border border-sand px-2.5 py-0.5"
-              >
-                <span className="text-[12px] text-walnut font-medium">{name}</span>
-                <StatusBadge status={a.status} />
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {task.assigned_task_assignees.length === 0 && (
-        <p className="text-[11px] text-stone mt-2">No assignees</p>
       )}
     </div>
   );
