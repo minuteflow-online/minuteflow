@@ -894,6 +894,20 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
         </div>
       )}
 
+      {/* View As (admin only) */}
+      {isAdmin && (
+        <div className="px-5 pb-3">
+          <a
+            href={`/view-as/${profile.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block w-full py-1.5 text-center rounded-lg bg-parchment text-walnut border border-sand text-[11px] font-semibold transition-all hover:bg-espresso hover:text-white hover:border-espresso"
+          >
+            View As ↗
+          </a>
+        </div>
+      )}
+
       {/* Time Allocation (admin only) */}
       {isAdmin && member.todayHoursMs > 0 && (
         <TimeAllocationBar member={member} />
@@ -1290,6 +1304,16 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
             >
               Force Logout
             </button>
+          )}
+          {isAdmin && (
+            <a
+              href={`/view-as/${profile.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-lg px-3 py-1.5 text-[11px] font-semibold bg-espresso text-white hover:bg-espresso/80 transition-all"
+            >
+              View As ↗
+            </a>
           )}
           <button
             onClick={onDeselect}
