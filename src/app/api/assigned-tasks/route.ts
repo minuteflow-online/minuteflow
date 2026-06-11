@@ -176,20 +176,28 @@ export async function POST(request: Request) {
     .eq("id", user.id)
     .single();
 
-  if (profile?.role !== "admin" && profile?.role !== "manager") {
+  const isAdminOrManagerPost =
+    profile?.role === "admin" || profile?.role === "manager";
+  const isVaPost = profile?.role === "va";
+
+  // VAs can only self-assign; admins/managers can assign to anyone
+  if (!isAdminOrManagerPost && !isVaPost) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const body = await request.json();
-  const { account, project, task_name, task_detail, task_notes, due_date, va_ids } = body as {
+  const { account, project, task_name, task_detail, task_notes, due_date, va_ids: rawVaIds } = body as {
     account: string;
     project: string;
     task_name: string;
     task_detail?: string;
     task_notes?: string;
     due_date?: string;
-    va_ids: string[];
+    va_ids?: string[];
   };
+
+  // VAs always self-assign regardless of what va_ids was sent
+  const va_ids: string[] = isVaPost ? [user.id] : (rawVaIds ?? []);
 
   if (!task_name?.trim()) {
     return Response.json({ error: "task_name is required" }, { status: 400 });

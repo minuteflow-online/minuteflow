@@ -466,6 +466,7 @@ export interface AssignedTask {
   project: string | null;
   task_name: string;
   task_detail: string | null;
+  task_notes: string | null;
   due_date: string | null;
   created_by: string | null;
   created_at: string;

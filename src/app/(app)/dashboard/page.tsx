@@ -9,7 +9,6 @@ import TeamSidebar from "@/components/TeamSidebar";
 import ActivityLog from "@/components/ActivityLog";
 import LiveSessionPrompt from "@/components/LiveSessionPrompt";
 import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSidebar";
-import DailyTaskPlanner from "@/components/DailyTaskPlanner";
 import VaAssignmentsColumn from "@/components/VaAssignmentsColumn";
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
@@ -23,7 +22,6 @@ import type {
   TaskScreenshot,
   UserRole,
   Message,
-  PlannedTask,
   VAAssignedTask,
 } from "@/types/database";
 
@@ -2429,23 +2427,6 @@ export default function DashboardPage() {
     setCloseOldStep("screenshot");
   }, []);
 
-  // Called from DailyTaskPlanner when Start button is clicked on a planned task.
-  // Prefills the TaskEntryForm via the custom event and scrolls up.
-  const handleStartPlannedTask = useCallback((task: PlannedTask) => {
-    window.dispatchEvent(
-      new CustomEvent("minuteflow-prefill", {
-        detail: {
-          task_name: task.task_name,
-          account: task.account || "",
-          category: "Task",
-          client_memo: task.task_name,
-        },
-      })
-    );
-    // Scroll to top so user sees the form
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
-
   // Called from TaskEntryForm when Start Task is clicked
   const handleCheckAndStartTask = useCallback(
     async (formData: TaskFormData) => {
@@ -2526,7 +2507,7 @@ export default function DashboardPage() {
       };
       setLiveSessionData(taskAsLog);
       setPendingFormData(formData);
-      setCloseOldStep("screenshot");
+      setCloseOldStep("details");
     } else {
       handleCheckAndStartTask(formData);
     }
@@ -2997,9 +2978,7 @@ export default function DashboardPage() {
         // Grid: when VA is idle, always show 4 columns (locked panels fill the gaps)
         // When VA is clocked in, show 4 columns: form | plan | assigned tasks | quick pick
         const gridClass = isVa
-          ? sessionState === "idle"
-            ? "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
-            : "grid-cols-1 md:grid-cols-[1fr_260px_260px_260px]"
+          ? "grid-cols-1 md:grid-cols-[1fr_260px_260px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]";
 
         return (
@@ -3011,15 +2990,6 @@ export default function DashboardPage() {
               role={role}
               sessionState={sessionState}
             />
-            {userId && (
-              <DailyTaskPlanner
-                userId={userId}
-                role={role}
-                onStartPlannedTask={handleStartPlannedTask}
-                teamMembers={teamMembers.map((m) => m.profile)}
-                orgTimezone={orgTimezone}
-              />
-            )}
             {/* Assigned Tasks Widget — visible for all VAs */}
             {isVa && userId && (
               <AssignedTasksWidget
