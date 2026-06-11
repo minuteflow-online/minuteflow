@@ -894,16 +894,16 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
         </div>
       )}
 
-      {/* View As (admin only) */}
+      {/* Log In As (admin only) */}
       {isAdmin && (
         <div className="px-5 pb-3">
           <a
-            href={`/view-as/${profile.id}`}
+            href={`/login-as/${profile.id}`}
             target="_blank"
             rel="noopener noreferrer"
             className="block w-full py-1.5 text-center rounded-lg bg-parchment text-walnut border border-sand text-[11px] font-semibold transition-all hover:bg-espresso hover:text-white hover:border-espresso"
           >
-            View As ↗
+            Log In As ↗
           </a>
         </div>
       )}
@@ -1307,12 +1307,12 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
           )}
           {isAdmin && (
             <a
-              href={`/view-as/${profile.id}`}
+              href={`/login-as/${profile.id}`}
               target="_blank"
               rel="noopener noreferrer"
               className="rounded-lg px-3 py-1.5 text-[11px] font-semibold bg-espresso text-white hover:bg-espresso/80 transition-all"
             >
-              View As ↗
+              Log In As ↗
             </a>
           )}
           <button

@@ -76,11 +76,12 @@ interface TaskEntryFormProps {
   hasActiveTask?: boolean;
   role?: string;
   sessionState?: "idle" | "clocked-in" | "on-break";
+  previewMode?: boolean;
 }
 
 type WizardStep = "form" | "close-old" | "log-fixed";
 
-export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle" }: TaskEntryFormProps) {
+export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle", previewMode = false }: TaskEntryFormProps) {
   const isAdmin = role === "admin" || role === "manager";
 
   // ─── Form Fields ───
@@ -627,12 +628,18 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
           )}
 
           {/* ─── Row 4: Start Activity button ─── */}
-          <button
-            onClick={handleStartTask}
-            className="w-full flex items-center justify-center py-[11px] mt-2 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(194,105,79,0.25)]"
-          >
-            Start Activity
-          </button>
+          {previewMode ? (
+            <div className="w-full flex items-center justify-center py-[11px] mt-2 rounded-lg bg-parchment border border-sand text-[13px] font-semibold text-stone cursor-not-allowed select-none">
+              🔒 Admin Preview — Submit Disabled
+            </div>
+          ) : (
+            <button
+              onClick={handleStartTask}
+              className="w-full flex items-center justify-center py-[11px] mt-2 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(194,105,79,0.25)]"
+            >
+              Start Activity
+            </button>
+          )}
         </div>
       </div>
 
