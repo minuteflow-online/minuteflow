@@ -44,6 +44,7 @@ interface DetailFormState {
   account: string;
   project: string;
   task_detail: string;
+  task_notes: string;
   due_date: string;
   assignee_ids: string[];
 }
@@ -63,6 +64,29 @@ interface CsvRow {
   va_usernames: string[];
   _valid: boolean;
   _error?: string;
+}
+
+interface FormProject {
+  id: number;
+  account: string | null;
+  project_name: string;
+}
+
+interface FormTask {
+  id: number;
+  task_name: string;
+  billing_type?: string;
+}
+
+interface AttachmentRow {
+  id: number;
+  filename: string;
+  storage_path: string;
+  file_size: number | null;
+  mime_type: string | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+  url: string | null;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -90,6 +114,13 @@ function isDueSoon(iso: string | null): boolean {
 function isPastDue(iso: string | null): boolean {
   if (!iso) return false;
   return new Date(iso).getTime() < Date.now();
+}
+
+function formatFileSize(bytes: number | null): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
@@ -337,6 +368,7 @@ export default function TaskAssignmentsAdminTab({
     account: "",
     project: "",
     task_detail: "",
+    task_notes: "",
     due_date: "",
     assignee_ids: [],
   });
@@ -367,6 +399,17 @@ export default function TaskAssignmentsAdminTab({
 
   // ── Project tags map (account → project names) ────────────────────────────────
   const [projectTagsMap, setProjectTagsMap] = useState<Record<string, string[]>>({});
+
+  // ── Task form options (for cascading task name dropdown) ──────────────────────
+  const [formAccounts, setFormAccounts] = useState<string[]>([]);
+  const [formProjects, setFormProjects] = useState<FormProject[]>([]);
+  const [formTasksByProject, setFormTasksByProject] = useState<Record<number, FormTask[]>>({});
+
+  // ── Attachments ────────────────────────────────────────────────────────────────
+  const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
 
   // ─── Fetch tasks ─────────────────────────────────────────────────────────────
 
@@ -403,8 +446,93 @@ export default function TaskAssignmentsAdminTab({
         }
         setProjectTagsMap(map);
       })
-      .catch(() => {}); // silently fail
+      .catch(() => {});
   }, []);
+
+  // Fetch task form options for cascading dropdowns
+  useEffect(() => {
+    fetch("/api/task-form-options")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.accounts?.length > 0) setFormAccounts(d.accounts);
+        if (d.projects?.length > 0) setFormProjects(d.projects);
+        if (d.tasksByProject) setFormTasksByProject(d.tasksByProject);
+      })
+      .catch(() => {});
+  }, []);
+
+  // ── Computed cascading values for detail panel ────────────────────────────────
+  const accountsForPanel = formAccounts.length > 0 ? formAccounts : KNOWN_ACCOUNTS;
+  const detailProjectsForAccount = formProjects.filter((p) => p.account === detailForm.account);
+  const detailProjectTagId =
+    formProjects.find(
+      (p) => p.account === detailForm.account && p.project_name === detailForm.project
+    )?.id ?? null;
+  const detailTasksForProject = detailProjectTagId
+    ? (formTasksByProject[detailProjectTagId] ?? [])
+    : [];
+
+  // ─── Fetch attachments ────────────────────────────────────────────────────────
+
+  const fetchAttachments = useCallback(async (taskId: number) => {
+    setAttachmentsLoading(true);
+    try {
+      const res = await fetch(`/api/assigned-tasks/${taskId}/attachments`);
+      if (res.ok) {
+        const d = await res.json();
+        setAttachments(d.attachments || []);
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setAttachmentsLoading(false);
+    }
+  }, []);
+
+  // ─── File upload ──────────────────────────────────────────────────────────────
+
+  const handleFileUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!selectedTask) return;
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setUploadingFile(true);
+      const formData = new FormData();
+      formData.append("file", file);
+      try {
+        const res = await fetch(
+          `/api/assigned-tasks/${selectedTask.id}/attachments`,
+          { method: "POST", body: formData }
+        );
+        if (res.ok) await fetchAttachments(selectedTask.id);
+      } catch {
+        // silently fail
+      } finally {
+        setUploadingFile(false);
+        if (attachmentInputRef.current) attachmentInputRef.current.value = "";
+      }
+    },
+    [selectedTask, fetchAttachments]
+  );
+
+  // ─── Delete attachment ────────────────────────────────────────────────────────
+
+  const handleDeleteAttachment = useCallback(
+    async (attachmentId: number) => {
+      if (!selectedTask) return;
+      if (!confirm("Delete this attachment? This cannot be undone.")) return;
+      try {
+        await fetch(
+          `/api/assigned-tasks/${selectedTask.id}/attachments?attachmentId=${attachmentId}`,
+          { method: "DELETE" }
+        );
+        await fetchAttachments(selectedTask.id);
+      } catch {
+        // silently fail
+      }
+    },
+    [selectedTask, fetchAttachments]
+  );
 
   // ─── Panel helpers ────────────────────────────────────────────────────────────
 
@@ -413,6 +541,7 @@ export default function TaskAssignmentsAdminTab({
     account: "",
     project: "",
     task_detail: "",
+    task_notes: "",
     due_date: "",
     assignee_ids: [],
   });
@@ -422,6 +551,7 @@ export default function TaskAssignmentsAdminTab({
     setSelectedTask(null);
     setDetailForm(emptyDetailForm());
     setDetailSaveMsg(null);
+    setAttachments([]);
   };
 
   const openEdit = (task: AssignedTaskWithAssignees) => {
@@ -432,28 +562,23 @@ export default function TaskAssignmentsAdminTab({
       account: task.account || "",
       project: task.project || "",
       task_detail: task.task_detail || "",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      task_notes: (task as any).task_notes || "",
       due_date: task.due_date ? task.due_date.slice(0, 10) : "",
       assignee_ids: task.assigned_task_assignees.map((a) => a.va_id),
     });
     setDetailSaveMsg(null);
+    fetchAttachments(task.id);
   };
 
   const closePanel = () => {
     setSelectedTask(null);
     setIsCreating(false);
     setDetailSaveMsg(null);
+    setAttachments([]);
   };
 
   const isPanelOpen = isCreating || selectedTask !== null;
-
-  const toggleDetailAssignee = (id: string) => {
-    setDetailForm((prev) => ({
-      ...prev,
-      assignee_ids: prev.assignee_ids.includes(id)
-        ? prev.assignee_ids.filter((i) => i !== id)
-        : [...prev.assignee_ids, id],
-    }));
-  };
 
   // ─── Detail panel save ────────────────────────────────────────────────────────
 
@@ -471,6 +596,7 @@ export default function TaskAssignmentsAdminTab({
       account: detailForm.account.trim() || null,
       project: detailForm.project.trim() || null,
       task_detail: detailForm.task_detail.trim() || null,
+      task_notes: detailForm.task_notes.trim() || null,
       due_date: detailForm.due_date || null,
       va_ids: detailForm.assignee_ids,
     };
@@ -587,6 +713,8 @@ export default function TaskAssignmentsAdminTab({
       account:    inlineEdit.field === "account"   ? (inlineEdit.value || null) : (task.account || null),
       project:    inlineEdit.field === "project"   ? (inlineEdit.value || null) : (task.project || null),
       task_detail: task.task_detail || null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      task_notes: (task as any).task_notes || null,
       due_date:   inlineEdit.field === "due_date"  ? (inlineEdit.value || null) : (task.due_date || null),
       va_ids:     task.assigned_task_assignees.map((a) => a.va_id),
     };
@@ -1114,7 +1242,9 @@ export default function TaskAssignmentsAdminTab({
                     <polyline points="12 19 5 12 12 5" />
                   </svg>
                 </button>
-                <span className="text-[13px] font-semibold text-walnut">Task Detail</span>
+                <span className="text-[13px] font-semibold text-walnut">
+                  {isCreating ? "New Task" : "Task Detail"}
+                </span>
               </div>
 
               {selectedTask && (
@@ -1135,72 +1265,103 @@ export default function TaskAssignmentsAdminTab({
             </div>
 
             {/* Body */}
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
-              {/* Task name */}
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
+
+              {/* Account */}
               <div>
-                <input
-                  type="text"
-                  value={detailForm.task_name}
-                  onChange={(e) => setDetailForm((f) => ({ ...f, task_name: e.target.value }))}
-                  placeholder="Task name..."
-                  className="w-full text-xl font-semibold text-espresso bg-transparent border-0 border-b border-transparent focus:border-sand outline-none py-1 transition-colors placeholder:text-stone/40"
-                />
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                  Account
+                </label>
+                <select
+                  value={detailForm.account}
+                  onChange={(e) => {
+                    const newAccount = e.target.value;
+                    setDetailForm((f) => ({
+                      ...f,
+                      account: newAccount,
+                      project: "",
+                      task_name: "",
+                    }));
+                  }}
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
+                >
+                  <option value="">Select account...</option>
+                  {accountsForPanel.map((a) => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
               </div>
 
-              {/* Account + Project */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                    Account
-                  </label>
-                  <input
-                    type="text"
-                    list="detail-accounts-list"
-                    value={detailForm.account}
+              {/* Project */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                  Project
+                </label>
+                {detailProjectsForAccount.length > 0 ? (
+                  <select
+                    value={detailForm.project}
                     onChange={(e) => {
-                      const newAccount = e.target.value;
                       setDetailForm((f) => ({
                         ...f,
-                        account: newAccount,
-                        // Clear project if the new account doesn't have this project
-                        project: projectTagsMap[newAccount]?.includes(f.project) ? f.project : "",
+                        project: e.target.value,
+                        task_name: "",
                       }));
                     }}
-                    placeholder="Account name"
+                    disabled={!detailForm.account}
+                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer disabled:opacity-60 disabled:bg-parchment"
+                  >
+                    <option value="">
+                      {!detailForm.account ? "Select account first..." : "Select project..."}
+                    </option>
+                    {detailProjectsForAccount.map((p) => (
+                      <option key={p.id} value={p.project_name}>{p.project_name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={detailForm.project}
+                    onChange={(e) =>
+                      setDetailForm((f) => ({ ...f, project: e.target.value, task_name: "" }))
+                    }
+                    placeholder="Project name"
                     className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
                   />
-                  <datalist id="detail-accounts-list">
-                    {KNOWN_ACCOUNTS.map((a) => <option key={a} value={a} />)}
-                  </datalist>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                    Project
-                  </label>
-                  {projectTagsMap[detailForm.account]?.length > 0 ? (
-                    <select
-                      value={detailForm.project}
-                      onChange={(e) => setDetailForm((f) => ({ ...f, project: e.target.value }))}
-                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-                    >
-                      <option value="">— Select project —</option>
-                      {(projectTagsMap[detailForm.account] ?? []).map((p) => (
-                        <option key={p} value={p}>{p}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={detailForm.project}
-                      onChange={(e) => setDetailForm((f) => ({ ...f, project: e.target.value }))}
-                      placeholder="Project name"
-                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                    />
-                  )}
-                </div>
+                )}
               </div>
 
-              {/* Due date */}
+              {/* Task Name */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                  Task Name <span className="text-terracotta">*</span>
+                </label>
+                {detailTasksForProject.length > 0 ? (
+                  <select
+                    value={detailForm.task_name}
+                    onChange={(e) =>
+                      setDetailForm((f) => ({ ...f, task_name: e.target.value }))
+                    }
+                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
+                  >
+                    <option value="">Select task...</option>
+                    {detailTasksForProject.map((t) => (
+                      <option key={t.id} value={t.task_name}>{t.task_name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={detailForm.task_name}
+                    onChange={(e) =>
+                      setDetailForm((f) => ({ ...f, task_name: e.target.value }))
+                    }
+                    placeholder="Task name..."
+                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                  />
+                )}
+              </div>
+
+              {/* Due Date */}
               <div>
                 <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
                   Due Date
@@ -1213,16 +1374,30 @@ export default function TaskAssignmentsAdminTab({
                 />
               </div>
 
-              {/* Task detail */}
+              {/* Detail (small / single-line) */}
               <div>
                 <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Task Detail
+                  Detail
                 </label>
-                <textarea
+                <input
+                  type="text"
                   value={detailForm.task_detail}
                   onChange={(e) => setDetailForm((f) => ({ ...f, task_detail: e.target.value }))}
+                  placeholder="Short summary or reference..."
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                />
+              </div>
+
+              {/* Notes (larger) */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                  Notes
+                </label>
+                <textarea
+                  value={detailForm.task_notes}
+                  onChange={(e) => setDetailForm((f) => ({ ...f, task_notes: e.target.value }))}
                   rows={5}
-                  placeholder="Instructions, notes, or context..."
+                  placeholder="Detailed instructions, context, links, or anything the VA needs to know..."
                   className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
                 />
               </div>
@@ -1244,7 +1419,107 @@ export default function TaskAssignmentsAdminTab({
                 )}
               </div>
 
-              {/* Error */}
+              {/* Attachments — only visible when editing an existing task */}
+              {selectedTask && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-[11px] font-semibold text-walnut tracking-wide uppercase">
+                      Attachments
+                    </label>
+                    <label className={`inline-flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer rounded-lg px-3 py-1.5 transition-all ${
+                      uploadingFile
+                        ? "bg-parchment text-stone cursor-not-allowed"
+                        : "bg-parchment border border-sand text-walnut hover:border-walnut"
+                    }`}>
+                      {uploadingFile ? (
+                        <>
+                          <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                          </svg>
+                          Uploading...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="17 8 12 3 7 8" />
+                            <line x1="12" y1="3" x2="12" y2="15" />
+                          </svg>
+                          Upload File
+                        </>
+                      )}
+                      <input
+                        ref={attachmentInputRef}
+                        type="file"
+                        className="hidden"
+                        disabled={uploadingFile}
+                        onChange={handleFileUpload}
+                      />
+                    </label>
+                  </div>
+
+                  {attachmentsLoading ? (
+                    <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
+                      <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                      </svg>
+                      Loading attachments...
+                    </div>
+                  ) : attachments.length === 0 ? (
+                    <p className="text-[12px] text-stone/50 py-2">No attachments yet.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {attachments.map((att) => (
+                        <div
+                          key={att.id}
+                          className="flex items-center justify-between gap-2 rounded-lg border border-sand px-3 py-2 bg-parchment/40 group/att"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <svg className="h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <polyline points="14 2 14 8 20 8" />
+                            </svg>
+                            <div className="min-w-0">
+                              {att.url ? (
+                                <a
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[12px] text-terracotta hover:underline truncate block max-w-[280px]"
+                                  title={att.filename}
+                                >
+                                  {att.filename}
+                                </a>
+                              ) : (
+                                <span className="text-[12px] text-walnut truncate block max-w-[280px]">
+                                  {att.filename}
+                                </span>
+                              )}
+                              {att.file_size && (
+                                <span className="text-[10px] text-stone">
+                                  {formatFileSize(att.file_size)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteAttachment(att.id)}
+                            className="opacity-0 group-hover/att:opacity-100 flex items-center justify-center w-5 h-5 rounded text-stone hover:text-terracotta transition-all cursor-pointer shrink-0"
+                            title="Delete attachment"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Messages */}
               {detailSaveMsg?.type === "err" && (
                 <p className="text-xs text-red-500 font-medium">{detailSaveMsg.text}</p>
               )}
@@ -1369,7 +1644,7 @@ function CsvModal({
               <li><strong>task_name</strong> — required</li>
               <li><strong>account</strong> — optional (e.g. TAT Foundation)</li>
               <li><strong>project</strong> — optional</li>
-              <li><strong>task_detail</strong> — optional description/instructions</li>
+              <li><strong>task_detail</strong> — optional short description</li>
               <li><strong>due_date</strong> — optional, format YYYY-MM-DD</li>
               <li>
                 <strong>va_usernames</strong> — optional, comma-separated VA usernames

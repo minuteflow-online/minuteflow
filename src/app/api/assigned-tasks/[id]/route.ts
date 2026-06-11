@@ -48,11 +48,12 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, task_name, task_detail, due_date, va_ids } = body as {
+  const { account, project, task_name, task_detail, task_notes, due_date, va_ids } = body as {
     account?: string;
     project?: string;
     task_name?: string;
     task_detail?: string;
+    task_notes?: string;
     due_date?: string;
     va_ids?: string[];
   };
@@ -65,6 +66,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (project !== undefined) updatePayload.project = project;
   if (task_name !== undefined) updatePayload.task_name = task_name.trim();
   if (task_detail !== undefined) updatePayload.task_detail = task_detail;
+  if (task_notes !== undefined) updatePayload.task_notes = task_notes;
   if (due_date !== undefined) updatePayload.due_date = due_date;
 
   const { data: updatedTask, error: updateError } = await supabase

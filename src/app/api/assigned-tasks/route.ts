@@ -27,6 +27,7 @@ type TaskRow = {
   project: string | null;
   task_name: string;
   task_detail: string | null;
+  task_notes: string | null;
   due_date: string | null;
   created_by: string | null;
   created_at: string | null;
@@ -73,7 +74,7 @@ export async function GET(request: Request) {
     const query = supabase
       .from("assigned_tasks")
       .select(
-        `id, account, project, task_name, task_detail, due_date, created_by, created_at, updated_at,
+        `id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at,
          assigned_task_assignees(${assigneeSelect})`
       )
       .order("created_at", { ascending: false });
@@ -141,7 +142,7 @@ export async function GET(request: Request) {
     .from("assigned_task_assignees")
     .select(
       `id, va_id, status, log_id, notes, assigned_at, updated_at,
-       assigned_tasks(id, account, project, task_name, task_detail, due_date, created_by, created_at, updated_at)`
+       assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at)`
     )
     .eq("va_id", user.id)
     .order("assigned_at", { ascending: false });
@@ -180,11 +181,12 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { account, project, task_name, task_detail, due_date, va_ids } = body as {
+  const { account, project, task_name, task_detail, task_notes, due_date, va_ids } = body as {
     account: string;
     project: string;
     task_name: string;
     task_detail?: string;
+    task_notes?: string;
     due_date?: string;
     va_ids: string[];
   };
@@ -207,6 +209,7 @@ export async function POST(request: Request) {
       project: project ?? null,
       task_name: task_name.trim(),
       task_detail: task_detail ?? null,
+      task_notes: task_notes ?? null,
       due_date: due_date ?? null,
       created_by: user.id,
     })
