@@ -6833,19 +6833,21 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   /* ── Generate next invoice number ─────────────────────────── */
 
-  const generateInvoiceNumber = useCallback(() => {
+  const generateInvoiceNumber = useCallback(async () => {
     const year = new Date().getFullYear();
-    // Only count active invoices (exclude trash) so deleted invoices don't occupy numbers
-    const existingThisYear = invoices.filter((inv) =>
-      inv.invoice_number.startsWith(`MF-${year}-`) && inv.status !== "trash"
-    );
-    const maxNum = existingThisYear.reduce((max, inv) => {
+    // Query DB directly so we always get the true latest number, even if local state is stale
+    const { data } = await supabase
+      .from("invoices")
+      .select("invoice_number")
+      .like("invoice_number", `MF-${year}-%`)
+      .neq("status", "trash");
+    const maxNum = (data || []).reduce((max: number, inv: { invoice_number: string }) => {
       const parts = inv.invoice_number.split("-");
       const num = parseInt(parts[2] || "0", 10);
       return num > max ? num : max;
     }, 0);
     return `MF-${year}-${String(maxNum + 1).padStart(3, "0")}`;
-  }, [invoices]);
+  }, [supabase]);
 
   /* ── Fetch billable logs for selected filter + date range ── */
 
@@ -6959,7 +6961,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (invoiceType === "custom" && !customItems.some(i => i.description && parseFloat(i.amount) > 0)) return;
     setSaving(true);
 
-    const invoiceNumber = generateInvoiceNumber();
+    const invoiceNumber = await generateInvoiceNumber();
     const issueDate = new Date().toISOString().split("T")[0];
     const timeTotal = parseFloat(invoiceTotal) || 0;
     const expenseTotal = expenseItems.filter(e => !e.excluded).reduce((s, e) => s + e.amount, 0);
@@ -7155,7 +7157,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (!selectedClient || !manualAmount || !manualDescription) return;
     setSaving(true);
 
-    const invoiceNumber = generateInvoiceNumber();
+    const invoiceNumber = await generateInvoiceNumber();
     const amt = parseFloat(manualAmount) || 0;
 
     const invoiceData = {
@@ -7822,7 +7824,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (!selectedClientId && !selectedAccount) return;
     setSaving(true);
 
-    const invoiceNumber = generateInvoiceNumber();
+    const invoiceNumber = await generateInvoiceNumber();
     const issueDate = new Date().toISOString().split("T")[0];
     const manualTotal = parseFloat(invoiceTotal) || 0;
     const adjustment = parseFloat(adjustmentAmount) || 0;
