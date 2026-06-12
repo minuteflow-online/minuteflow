@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -64,7 +64,6 @@ function computeInstallmentAmount(item: { amount_type: "percentage" | "fixed"; v
 
 export default function InvoicePayPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const token = params?.token as string;
 
   const [invoice, setInvoice] = useState<InvoiceData | null>(null);
@@ -88,10 +87,7 @@ export default function InvoicePayPage() {
   const cardInstanceRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const paymentsRef = useRef<any>(null);
-  const [paymentMethodTab, setPaymentMethodTab] = useState<"card" | "ach">(searchParams?.get("method") === "ach" ? "ach" : "card");
-  const [achReady, setAchReady] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const achInstanceRef = useRef<any>(null);
+  const [paymentMethodTab] = useState<"card">("card");
 
   /* ── Load invoice data ─────────────────────────────────── */
 
@@ -169,15 +165,6 @@ export default function InvoicePayPage() {
       await card.attach(cardRef.current);
       cardInstanceRef.current = card;
       setCardReady(true);
-
-      // Initialize ACH
-      try {
-        const ach = await squarePayments.ach();
-        achInstanceRef.current = ach;
-        setAchReady(true);
-      } catch (achErr) {
-        console.error("Square ACH init error:", achErr);
-      }
     } catch (err) {
       console.error("Square SDK init error:", err);
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -218,12 +205,9 @@ export default function InvoicePayPage() {
 
   /* ── Handle payment submission ─────────────────────────── */
 
-  const handlePay = async (method: "card" | "ach") => {
+  const handlePay = async (method: "card") => {
     if (!invoice || !paymentsRef.current) return;
-    if (method === "card" && !cardInstanceRef.current) return;
-    if (method === "ach" && !achInstanceRef.current) return;
-
-    setPaymentMethodTab(method);
+    if (!cardInstanceRef.current) return;
 
     const payAmount = selectedAmount;
 
@@ -237,23 +221,16 @@ export default function InvoicePayPage() {
       return;
     }
 
-    const fee = method === "ach"
-      ? Math.max(1, Math.round(payAmount * 0.01 * 100) / 100)
-      : Math.round(payAmount * 0.03 * 100) / 100;
+    const fee = Math.round(payAmount * 0.03 * 100) / 100;
 
     setProcessing(true);
     setPaymentError("");
 
     try {
-      let tokenResult;
-      if (method === "ach") {
-        tokenResult = await achInstanceRef.current.tokenize({ accountHolderName: invoice.to_name || "" });
-      } else {
-        tokenResult = await cardInstanceRef.current.tokenize();
-      }
+      const tokenResult = await cardInstanceRef.current.tokenize();
 
       if (tokenResult.status !== "OK") {
-        const errorMessages = tokenResult.errors?.map((e: { message: string }) => e.message).join(", ") || (method === "ach" ? "Bank account connection failed." : "Card tokenization failed.");
+        const errorMessages = tokenResult.errors?.map((e: { message: string }) => e.message).join(", ") || "Card tokenization failed.";
         setPaymentError(errorMessages);
         setProcessing(false);
         return;
@@ -268,7 +245,7 @@ export default function InvoicePayPage() {
           sourceId: tokenResult.token,
           amount: payAmount,
           processingFee: fee,
-          paymentMethodLabel: method === "ach" ? "Square ACH" : "Square Card",
+          paymentMethodLabel: "Square Card",
           idempotencyKey,
         }),
       });
@@ -362,13 +339,10 @@ export default function InvoicePayPage() {
     });
   })();
 
-  // Processing fee: card = 3%, ACH = 1% (min $1.00)
+  // Processing fee: card = 3%
   const basePayAmount = selectedAmount ?? 0;
   const cardFee = basePayAmount > 0 ? Math.round(basePayAmount * 0.03 * 100) / 100 : 0;
-  const achFeeRaw = basePayAmount > 0 ? Math.round(basePayAmount * 0.01 * 100) / 100 : 0;
-  const achFee = basePayAmount > 0 ? Math.max(1, achFeeRaw) : 0;
   const cardTotalCharged = basePayAmount > 0 ? Math.round((basePayAmount + cardFee) * 100) / 100 : 0;
-  const achTotalCharged = basePayAmount > 0 ? Math.round((basePayAmount + achFee) * 100) / 100 : 0;
 
   /* ── Payment success screen ──────────────────────────── */
 
@@ -603,53 +577,6 @@ export default function InvoicePayPage() {
                   </p>
                 </div>
 
-                {/* Divider */}
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 border-t border-[#e8e0d4]" />
-                  <span className="text-[11px] text-[#9e9080]">or</span>
-                  <div className="flex-1 border-t border-[#e8e0d4]" />
-                </div>
-
-                {/* ACH section */}
-                <div>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-[#6b5e52] mb-2">🏦 Bank Transfer (ACH)</div>
-                  <div className="rounded-lg border border-[#e8e0d4] bg-[#faf6f0] px-4 py-3 text-[12px] text-[#6b5e52]">
-                    You'll be prompted to securely connect your bank account via Plaid when you click Pay.
-                  </div>
-                  {!achReady && (
-                    <div className="text-[12px] text-[#9e9080] mt-2 text-center">Loading bank transfer option…</div>
-                  )}
-                  {basePayAmount > 0 && (
-                    <div className="rounded-lg bg-[#faf6f0] border border-[#e8e0d4] px-4 py-3 space-y-1.5 mt-3">
-                      <div className="flex justify-between text-[12px] text-[#6b5e52]">
-                        <span>Amount</span>
-                        <span>{formatCurrency(basePayAmount, invoice.currency)}</span>
-                      </div>
-                      <div className="flex justify-between text-[12px] text-[#6b5e52]">
-                        <span>Bank transfer fee (1%, min $1.00)</span>
-                        <span>{formatCurrency(achFee, invoice.currency)}</span>
-                      </div>
-                      <div className="flex justify-between text-[13px] font-bold text-[#3d2b1f] border-t border-[#e8e0d4] pt-1.5">
-                        <span>Total charged</span>
-                        <span>{formatCurrency(achTotalCharged, invoice.currency)}</span>
-                      </div>
-                    </div>
-                  )}
-                  <button
-                    onClick={() => handlePay("ach")}
-                    disabled={processing || !achReady || !selectedAmount}
-                    className="w-full mt-3 rounded-lg bg-[#2d3a4a] text-white text-[15px] font-bold py-4 hover:bg-[#1a2535] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    {processing && paymentMethodTab === "ach"
-                      ? "Connecting bank…"
-                      : !achReady
-                      ? "Loading bank transfer…"
-                      : `Pay ${formatCurrency(achTotalCharged, invoice.currency)} with Bank Transfer`}
-                  </button>
-                  <p className="text-center text-[11px] text-[#9e9080] mt-2">
-                    Bank transfers are processed by Square via Plaid. Your bank credentials are never stored on our servers.
-                  </p>
-                </div>
               </div>
             </div>
           )}
