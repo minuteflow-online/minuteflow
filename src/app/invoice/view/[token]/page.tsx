@@ -352,7 +352,13 @@ export default function PublicInvoicePage() {
                     href={`/invoice/pay/${token}?mode=full`}
                     className="inline-block bg-[#2d6a4f] text-white text-[12px] font-bold px-4 py-1.5 rounded hover:opacity-90 transition-opacity"
                   >
-                    Pay in Full with Card
+                    Pay with Card
+                  </a>
+                  <a
+                    href={`/invoice/pay/${token}?method=ach`}
+                    className="inline-block bg-[#2d3a4a] text-white text-[12px] font-bold px-4 py-1.5 rounded hover:opacity-90 transition-opacity"
+                  >
+                    🏦 Pay with Bank Transfer
                   </a>
                   {invoice.payment_schedule && invoice.payment_schedule.length > 0 && (
                     <a
@@ -362,7 +368,7 @@ export default function PublicInvoicePage() {
                       Split Payment Option
                     </a>
                   )}
-                  <div className="text-[9px] text-[#5a4000]">Card processing fee applies · Secured by Square</div>
+                  <div className="text-[9px] text-[#5a4000]">Card 3% fee · Bank transfer 1% fee · Secured by Square</div>
                 </div>
               )}
               {/* Legacy manual payment link (shown if a manual payment link is set and invoice is unpaid) */}
