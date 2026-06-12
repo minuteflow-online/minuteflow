@@ -6836,12 +6836,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   const generateInvoiceNumber = useCallback(async () => {
     const year = new Date().getFullYear();
-    // Query DB directly so we always get the true latest number, even if local state is stale
+    // Query ALL invoices (including trash) — the unique constraint on invoice_number
+    // applies regardless of status, so we must count trash too or we'll collide.
     const { data } = await supabase
       .from("invoices")
       .select("invoice_number")
-      .like("invoice_number", `MF-${year}-%`)
-      .neq("status", "trash");
+      .like("invoice_number", `MF-${year}-%`);
     const maxNum = (data || []).reduce((max: number, inv: { invoice_number: string }) => {
       const parts = inv.invoice_number.split("-");
       const num = parseInt(parts[2] || "0", 10);
@@ -6964,7 +6964,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     invoiceSavingRef.current = true;
     setSaving(true);
 
-    const invoiceNumber = await generateInvoiceNumber();
+    let invoiceNumber = await generateInvoiceNumber();
     const issueDate = new Date().toISOString().split("T")[0];
     const timeTotal = parseFloat(invoiceTotal) || 0;
     const expenseTotal = expenseItems.filter(e => !e.excluded).reduce((s, e) => s + e.amount, 0);
@@ -7028,13 +7028,23 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       ach_enabled: true,
     };
 
-    const { data: newInvoice, error } = await supabase
-      .from("invoices")
-      .insert(invoiceData)
-      .select()
-      .single();
+    // Retry up to 5 times on duplicate invoice number (race condition guard)
+    let newInvoice: Record<string, unknown> | null = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { data, error } = await supabase
+        .from("invoices")
+        .insert({ ...invoiceData, invoice_number: invoiceNumber })
+        .select()
+        .single();
+      if (!error && data) { newInvoice = data as Record<string, unknown>; break; }
+      if (error?.code === "23505") {
+        invoiceNumber = await generateInvoiceNumber();
+        continue;
+      }
+      break;
+    }
 
-    if (error || !newInvoice) {
+    if (!newInvoice) {
       invoiceSavingRef.current = false;
       setSaving(false);
       alert("Failed to save invoice. Please try again.");
@@ -7044,7 +7054,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     // Only insert time log line items for timelog invoices
     if (invoiceType === "timelog") {
       const lineItemsData = lineItems.map((li, idx) => ({
-        invoice_id: newInvoice.id,
+        invoice_id: newInvoice!.id as number,
         log_id: li.log_id,
         description: li.description,
         va_name: li.va_name,
@@ -7079,7 +7089,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (includedExpenses.length > 0) {
       const sortOffset = lineItems.length;
       const expenseLineItemsData = includedExpenses.map((exp, idx) => ({
-        invoice_id: newInvoice.id,
+        invoice_id: newInvoice!.id as number,
         log_id: null,
         expense_id: exp.expense_id,
         description: exp.description,
@@ -7104,7 +7114,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         await fetch("/api/invoices/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ invoice_id: newInvoice.id }),
+          body: JSON.stringify({ invoice_id: newInvoice!.id as number }),
         });
       } catch {
         // Email failed but invoice saved
@@ -7163,7 +7173,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (!selectedClient || !manualAmount || !manualDescription) return;
     setSaving(true);
 
-    const invoiceNumber = await generateInvoiceNumber();
+    let invoiceNumber = await generateInvoiceNumber();
     const amt = parseFloat(manualAmount) || 0;
 
     const invoiceData = {
@@ -7197,20 +7207,30 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       payment_template_id: createTemplateId,
     };
 
-    const { data: newInvoice, error } = await supabase
-      .from("invoices")
-      .insert(invoiceData)
-      .select()
-      .single();
+    // Retry up to 5 times on duplicate invoice number (race condition guard)
+    let newInvoice: Record<string, unknown> | null = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { data, error } = await supabase
+        .from("invoices")
+        .insert({ ...invoiceData, invoice_number: invoiceNumber })
+        .select()
+        .single();
+      if (!error && data) { newInvoice = data as Record<string, unknown>; break; }
+      if (error?.code === "23505") {
+        invoiceNumber = await generateInvoiceNumber();
+        continue;
+      }
+      break;
+    }
 
-    if (error || !newInvoice) {
+    if (!newInvoice) {
       setSaving(false);
       return;
     }
 
     // Insert a single line item for the manual invoice
     await supabase.from("invoice_line_items").insert({
-      invoice_id: newInvoice.id,
+      invoice_id: newInvoice!.id as number,
       log_id: null,
       description: manualDescription,
       va_name: null,
@@ -7832,7 +7852,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     invoiceSavingRef.current = true;
     setSaving(true);
 
-    const invoiceNumber = await generateInvoiceNumber();
+    let invoiceNumber = await generateInvoiceNumber();
     const issueDate = new Date().toISOString().split("T")[0];
     const manualTotal = parseFloat(invoiceTotal) || 0;
     const adjustment = parseFloat(adjustmentAmount) || 0;
@@ -7887,13 +7907,23 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       payment_template_id: createTemplateId,
     };
 
-    const { data: newInvoice, error } = await supabase
-      .from("invoices")
-      .insert(invoiceData)
-      .select()
-      .single();
+    // Retry up to 5 times on duplicate invoice number (race condition guard)
+    let newInvoice: Record<string, unknown> | null = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { data, error } = await supabase
+        .from("invoices")
+        .insert({ ...invoiceData, invoice_number: invoiceNumber })
+        .select()
+        .single();
+      if (!error && data) { newInvoice = data as Record<string, unknown>; break; }
+      if (error?.code === "23505") {
+        invoiceNumber = await generateInvoiceNumber();
+        continue;
+      }
+      break;
+    }
 
-    if (error || !newInvoice) {
+    if (!newInvoice) {
       invoiceSavingRef.current = false;
       setSaving(false);
       alert("Failed to save draft. Please try again.");
@@ -7903,7 +7933,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     // Save line items if any exist
     if (lineItems.length > 0) {
       const lineItemsData = lineItems.map((li, idx) => ({
-        invoice_id: newInvoice.id,
+        invoice_id: newInvoice!.id as number,
         log_id: li.log_id,
         description: li.description,
         va_name: li.va_name,
