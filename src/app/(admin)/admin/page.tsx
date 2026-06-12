@@ -6360,6 +6360,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [taxRate, setTaxRate] = useState(0);
   const [invoiceNotes, setInvoiceNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const invoiceSavingRef = useRef(false);
 
   // Generate-by mode
   const [generateBy, setGenerateBy] = useState<"client" | "account">("client");
@@ -6959,6 +6960,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const handleSaveInvoice = async (sendNow: boolean) => {
     if (invoiceType === "timelog" && lineItems.length === 0) return;
     if (invoiceType === "custom" && !customItems.some(i => i.description && parseFloat(i.amount) > 0)) return;
+    if (invoiceSavingRef.current) return;
+    invoiceSavingRef.current = true;
     setSaving(true);
 
     const invoiceNumber = await generateInvoiceNumber();
@@ -7032,7 +7035,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       .single();
 
     if (error || !newInvoice) {
+      invoiceSavingRef.current = false;
       setSaving(false);
+      alert("Failed to save invoice. Please try again.");
       return;
     }
 
@@ -7106,6 +7111,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       }
     }
 
+    invoiceSavingRef.current = false;
     setSaving(false);
 
     // Reset create form
@@ -7822,6 +7828,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   const handleSaveDraft = async () => {
     if (!selectedClientId && !selectedAccount) return;
+    if (invoiceSavingRef.current) return;
+    invoiceSavingRef.current = true;
     setSaving(true);
 
     const invoiceNumber = await generateInvoiceNumber();
@@ -7886,7 +7894,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       .single();
 
     if (error || !newInvoice) {
+      invoiceSavingRef.current = false;
       setSaving(false);
+      alert("Failed to save draft. Please try again.");
       return;
     }
 
@@ -7911,6 +7921,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
 
     setRemovedLineItems([]);
+    invoiceSavingRef.current = false;
     setSaving(false);
     await fetchInvoices();
     await openInvoiceDetail(newInvoice as unknown as Invoice);
