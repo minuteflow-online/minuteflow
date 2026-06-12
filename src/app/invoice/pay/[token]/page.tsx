@@ -17,6 +17,7 @@ interface InvoiceData {
   balance_due: number;
   allow_custom_amount: boolean;
   show_all_installments: boolean;
+  ach_enabled: boolean;
   payment_schedule: Array<{
     label: string;
     amount_type: "percentage" | "fixed";
@@ -86,6 +87,10 @@ export default function InvoicePayPage() {
   const cardInstanceRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const paymentsRef = useRef<any>(null);
+  const [paymentMethodTab, setPaymentMethodTab] = useState<"card" | "ach">("card");
+  const [achReady, setAchReady] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const achInstanceRef = useRef<any>(null);
 
   /* ── Load invoice data ─────────────────────────────────── */
 
@@ -163,6 +168,15 @@ export default function InvoicePayPage() {
       await card.attach(cardRef.current);
       cardInstanceRef.current = card;
       setCardReady(true);
+
+      // Initialize ACH
+      try {
+        const ach = await squarePayments.ach();
+        achInstanceRef.current = ach;
+        setAchReady(true);
+      } catch (achErr) {
+        console.error("Square ACH init error:", achErr);
+      }
     } catch (err) {
       console.error("Square SDK init error:", err);
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -204,7 +218,9 @@ export default function InvoicePayPage() {
   /* ── Handle payment submission ─────────────────────────── */
 
   const handlePay = async () => {
-    if (!invoice || !cardInstanceRef.current || !paymentsRef.current) return;
+    if (!invoice || !paymentsRef.current) return;
+    if (paymentMethodTab === "card" && !cardInstanceRef.current) return;
+    if (paymentMethodTab === "ach" && !achInstanceRef.current) return;
 
     const payAmount = selectedAmount;
 
@@ -218,16 +234,23 @@ export default function InvoicePayPage() {
       return;
     }
 
-    const fee = Math.round(payAmount * 0.03 * 100) / 100;
+    const fee = paymentMethodTab === "ach"
+      ? Math.max(1, Math.round(payAmount * 0.01 * 100) / 100)
+      : Math.round(payAmount * 0.03 * 100) / 100;
 
     setProcessing(true);
     setPaymentError("");
 
     try {
-      const result = await cardInstanceRef.current.tokenize();
+      let tokenResult;
+      if (paymentMethodTab === "ach") {
+        tokenResult = await achInstanceRef.current.tokenize({ accountHolderName: invoice.to_name || "" });
+      } else {
+        tokenResult = await cardInstanceRef.current.tokenize();
+      }
 
-      if (result.status !== "OK") {
-        const errorMessages = result.errors?.map((e: { message: string }) => e.message).join(", ") || "Card tokenization failed.";
+      if (tokenResult.status !== "OK") {
+        const errorMessages = tokenResult.errors?.map((e: { message: string }) => e.message).join(", ") || (paymentMethodTab === "ach" ? "Bank account connection failed." : "Card tokenization failed.");
         setPaymentError(errorMessages);
         setProcessing(false);
         return;
@@ -239,9 +262,10 @@ export default function InvoicePayPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sourceId: result.token,
+          sourceId: tokenResult.token,
           amount: payAmount,
           processingFee: fee,
+          paymentMethodLabel: paymentMethodTab === "ach" ? "Square ACH" : "Square Card",
           idempotencyKey,
         }),
       });
@@ -335,9 +359,12 @@ export default function InvoicePayPage() {
     });
   })();
 
-  // 3% processing fee
+  // Processing fee: card = 3%, ACH = 1% (min $1.00)
   const basePayAmount = selectedAmount ?? 0;
-  const processingFee = basePayAmount > 0 ? Math.round(basePayAmount * 0.03 * 100) / 100 : 0;
+  const cardFee = basePayAmount > 0 ? Math.round(basePayAmount * 0.03 * 100) / 100 : 0;
+  const achFeeRaw = basePayAmount > 0 ? Math.round(basePayAmount * 0.01 * 100) / 100 : 0;
+  const achFee = basePayAmount > 0 ? Math.max(1, achFeeRaw) : 0;
+  const processingFee = paymentMethodTab === "ach" ? achFee : cardFee;
   const totalCharged = basePayAmount > 0 ? Math.round((basePayAmount + processingFee) * 100) / 100 : 0;
 
   /* ── Payment success screen ──────────────────────────── */
@@ -528,13 +555,37 @@ export default function InvoicePayPage() {
                 </div>
 
                 {/* Square card form */}
-                <div>
+                <div className={paymentMethodTab === "ach" ? "opacity-40 pointer-events-none select-none" : ""}>
                   <div className="text-[11px] font-bold uppercase tracking-wider text-[#6b5e52] mb-2">Card Details</div>
                   <div ref={cardRef} className="min-h-[100px]" />
                   {!cardReady && (
                     <div className="text-[12px] text-[#9e9080] mt-2 text-center">Loading card form…</div>
                   )}
                 </div>
+
+                {/* ACH Bank Transfer — only shown when invoice.ach_enabled is true */}
+                {invoice.ach_enabled && (
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#6b5e52] mb-2">Or Pay with Bank Transfer</div>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethodTab(paymentMethodTab === "ach" ? "card" : "ach")}
+                      className={`w-full flex items-center gap-3 rounded-lg border-2 px-4 py-3 transition-colors text-left cursor-pointer ${paymentMethodTab === "ach" ? "border-[#c0704e] bg-[#fff8f5]" : "border-[#e8e0d4] bg-[#faf6f0] hover:border-[#d4b8a0]"}`}
+                    >
+                      <span className="text-xl">🏦</span>
+                      <div className="flex-1">
+                        <div className="text-[13px] font-semibold text-[#3d2b1f]">ACH Bank Transfer</div>
+                        <div className="text-[11px] text-[#6b5e52] mt-0.5">Securely connect your bank via Plaid · 1% fee (min $1.00) · 3–5 business days</div>
+                      </div>
+                      {paymentMethodTab === "ach" && (
+                        <span className="text-[10px] font-bold text-[#c0704e] bg-[#ffe8dc] px-2 py-0.5 rounded">Selected</span>
+                      )}
+                    </button>
+                    {paymentMethodTab === "ach" && !achReady && (
+                      <div className="text-[12px] text-[#9e9080] mt-2 text-center">Loading bank transfer option…</div>
+                    )}
+                  </div>
+                )}
 
                 {/* Error message */}
                 {paymentError && (
@@ -551,7 +602,7 @@ export default function InvoicePayPage() {
                       <span>{formatCurrency(basePayAmount, invoice.currency)}</span>
                     </div>
                     <div className="flex justify-between text-[12px] text-[#6b5e52]">
-                      <span>Card processing fee (3%)</span>
+                      <span>{paymentMethodTab === "ach" ? "Bank transfer fee (1%, min $1.00)" : "Card processing fee (3%)"}</span>
                       <span>{formatCurrency(processingFee, invoice.currency)}</span>
                     </div>
                     <div className="flex justify-between text-[13px] font-bold text-[#3d2b1f] border-t border-[#e8e0d4] pt-1.5">
@@ -564,14 +615,22 @@ export default function InvoicePayPage() {
                 {/* Pay button */}
                 <button
                   onClick={handlePay}
-                  disabled={processing || !cardReady || !selectedAmount}
+                  disabled={processing || (paymentMethodTab === "card" && !cardReady) || (paymentMethodTab === "ach" && !achReady) || !selectedAmount}
                   className="w-full rounded-lg bg-[#2d6a4f] text-white text-[15px] font-bold py-4 hover:bg-[#1f4d38] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  {processing ? "Processing…" : !cardReady ? "Loading payment form…" : `Pay ${formatCurrency(totalCharged, invoice.currency)}`}
+                  {processing
+                    ? (paymentMethodTab === "ach" ? "Connecting bank…" : "Processing…")
+                    : paymentMethodTab === "card" && !cardReady
+                    ? "Loading payment form…"
+                    : paymentMethodTab === "ach" && !achReady
+                    ? "Loading bank transfer…"
+                    : `Pay ${formatCurrency(totalCharged, invoice.currency)}`}
                 </button>
 
                 <p className="text-center text-[11px] text-[#9e9080]">
-                  Payments are securely processed by Square. Your card details are never stored on our servers.
+                  {paymentMethodTab === "ach"
+                    ? "Bank transfers are processed by Square via Plaid. Your bank credentials are never stored on our servers."
+                    : "Payments are securely processed by Square. Your card details are never stored on our servers."}
                 </p>
               </div>
             </div>

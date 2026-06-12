@@ -7020,6 +7020,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       allow_custom_amount: createAllowCustomAmount,
       payment_schedule: createSchedule.length > 0 ? createSchedule : null,
       payment_template_id: createTemplateId,
+      ach_enabled: true,
     };
 
     const { data: newInvoice, error } = await supabase

@@ -19,7 +19,7 @@ export async function GET(
 
   const { data: invoice, error } = await serviceClient
     .from("invoices")
-    .select("id, invoice_number, to_name, to_email, total, previous_balance, currency, status, amount_paid, allow_custom_amount, show_all_installments, payment_schedule")
+    .select("id, invoice_number, to_name, to_email, total, previous_balance, currency, status, amount_paid, allow_custom_amount, show_all_installments, payment_schedule, ach_enabled")
     .eq("share_token", token)
     .single();
 
@@ -74,7 +74,7 @@ export async function POST(
   const token = rawToken.replace(/[^0-9a-f-]/gi, "");
 
   const body = await request.json();
-  const { sourceId, amount, processingFee, idempotencyKey } = body;
+  const { sourceId, amount, processingFee, idempotencyKey, paymentMethodLabel } = body;
 
   if (!sourceId) return Response.json({ error: "sourceId (card nonce) is required" }, { status: 400 });
   if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
@@ -185,7 +185,7 @@ export async function POST(
       invoice_id: invoice.id,
       amount: payAmount,
       payment_date: new Date().toISOString().split("T")[0],
-      payment_method: "Square",
+      payment_method: paymentMethodLabel || "Square Card",
       reference_number: squarePayment?.id ?? null,
       notes: `Paid online via Square — Invoice ${invoice.invoice_number}`,
       square_payment_id: squarePayment?.id ?? null,
