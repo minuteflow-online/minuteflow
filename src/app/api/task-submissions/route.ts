@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("task_submissions")
     .select(
-      "id, va_task_assignment_id, user_id, message_type, content, submission_link, submission_comment, created_at, profiles!task_submissions_user_id_profiles_fkey(id, full_name, username, role)"
+      "id, va_task_assignment_id, user_id, message_type, content, submission_link, submission_comment, submission_screenshot_drive_id, submission_screenshot_url, created_at, profiles!task_submissions_user_id_profiles_fkey(id, full_name, username, role)"
     )
     .order("created_at", { ascending: true });
 
@@ -99,7 +99,7 @@ export async function POST(request: Request) {
 
   const isAdmin = profile?.role === "admin";
   const body = await request.json();
-  const { va_task_assignment_id, message_type, content, submission_link, submission_comment } = body;
+  const { va_task_assignment_id, message_type, content, submission_link, submission_comment, submission_screenshot_drive_id, submission_screenshot_url } = body;
 
   if (!va_task_assignment_id || !message_type || !content) {
     return Response.json(
@@ -142,9 +142,11 @@ export async function POST(request: Request) {
       content,
       submission_link: submission_link || null,
       submission_comment: submission_comment || null,
+      submission_screenshot_drive_id: submission_screenshot_drive_id || null,
+      submission_screenshot_url: submission_screenshot_url || null,
     })
     .select(
-      "id, va_task_assignment_id, user_id, message_type, content, submission_link, submission_comment, created_at"
+      "id, va_task_assignment_id, user_id, message_type, content, submission_link, submission_comment, submission_screenshot_drive_id, submission_screenshot_url, created_at"
     )
     .single();
 

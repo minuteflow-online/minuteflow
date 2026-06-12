@@ -14,6 +14,7 @@ type NavItem = {
 const allNavItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Time Log", href: "/timelog" },
+  { label: "Task List", href: "/task-list" },
   { label: "Team", href: "/team" },
   { label: "Reports", href: "/reports" },
   { label: "Portal", href: "/portal" },
@@ -89,14 +90,6 @@ export default function TopNav({ user }: TopNavProps) {
   const pathname = usePathname();
   const supabase = createClient();
 
-  // Change password modal
-  const [showChangePassword, setShowChangePassword] = useState(false);
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [passwordError, setPasswordError] = useState("");
-  const [passwordSuccess, setPasswordSuccess] = useState(false);
-  const [changingPassword, setChangingPassword] = useState(false);
-
   // Close-task-before-logout modal state
   const [showCloseTaskModal, setShowCloseTaskModal] = useState(false);
   const [activeTaskName, setActiveTaskName] = useState("");
@@ -111,46 +104,15 @@ export default function TopNav({ user }: TopNavProps) {
   const [logoutMood, setLogoutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
 
   // Filter nav items based on role
-  // VAs see: Dashboard, Time Log, Reports, Portal (no Team)
-  // Admins see: Dashboard, Time Log, Team, Reports, Portal
+  // VAs see: Dashboard, Time Log, Task List, Reports, Portal (no Team)
+  // Admins see: Dashboard, Time Log, Team, Reports, Portal (no Task List)
   const navItems = allNavItems.filter((item) => {
     if (user.role === "va") {
       return item.href !== "/team";
     }
-    // admin / manager: see all links including Portal
-    return true;
+    // admin / manager: hide Task List (it's VA-only)
+    return item.href !== "/task-list";
   });
-
-  const handleChangePassword = useCallback(async () => {
-    setPasswordError("");
-    setPasswordSuccess(false);
-
-    if (newPassword.length < 6) {
-      setPasswordError("Password must be at least 6 characters.");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPasswordError("Passwords do not match.");
-      return;
-    }
-
-    setChangingPassword(true);
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    setChangingPassword(false);
-
-    if (error) {
-      setPasswordError(error.message);
-      return;
-    }
-
-    setPasswordSuccess(true);
-    setNewPassword("");
-    setConfirmPassword("");
-    setTimeout(() => {
-      setShowChangePassword(false);
-      setPasswordSuccess(false);
-    }, 2000);
-  }, [supabase, newPassword, confirmPassword]);
 
   const handleLogoutClick = useCallback(async () => {
     // Check if user has an active task by reading their session from Supabase
@@ -398,14 +360,6 @@ export default function TopNav({ user }: TopNavProps) {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowChangePassword(true)}
-              className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso cursor-pointer"
-            >
-              Password
-            </button>
-
             {user.role === "admin" && (
               <Link
                 href="/admin"
@@ -425,75 +379,6 @@ export default function TopNav({ user }: TopNavProps) {
           </div>
         </div>
       </header>
-
-      {/* ─── Change Password Modal ─── */}
-      {showChangePassword && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60]">
-          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-sm mx-4">
-            <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
-              <h3 className="text-sm font-bold text-espresso">Change Password</h3>
-              <button
-                onClick={() => {
-                  setShowChangePassword(false);
-                  setNewPassword("");
-                  setConfirmPassword("");
-                  setPasswordError("");
-                  setPasswordSuccess(false);
-                }}
-                className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-            <div className="p-5">
-              {passwordSuccess ? (
-                <div className="p-3 rounded-lg bg-sage-soft border border-sage text-xs text-sage font-medium text-center">
-                  Password updated successfully!
-                </div>
-              ) : (
-                <>
-                  <div className="mb-3">
-                    <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
-                      New Password
-                    </label>
-                    <input
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Min. 6 characters"
-                      className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone"
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="block text-[11px] font-semibold text-walnut mb-[5px] tracking-wide">
-                      Confirm Password
-                    </label>
-                    <input
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Repeat new password"
-                      className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone"
-                    />
-                  </div>
-                  {passwordError && (
-                    <div className="mb-3 p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600">
-                      {passwordError}
-                    </div>
-                  )}
-                  <button
-                    onClick={handleChangePassword}
-                    disabled={changingPassword || !newPassword || !confirmPassword}
-                    className="w-full py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {changingPassword ? "Updating..." : "Update Password"}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ─── Close Task Before Logout Modal ─── */}
       {showCloseTaskModal && (

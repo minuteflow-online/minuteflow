@@ -87,6 +87,8 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
   const [submitting, setSubmitting] = useState<number | null>(null);
   const [submissionLinks, setSubmissionLinks] = useState<Record<number, string>>({});
   const [submissionComments, setSubmissionComments] = useState<Record<number, string>>({});
+  const [submissionScreenshots, setSubmissionScreenshots] = useState<Record<number, File | null>>({});
+  const [uploadingScreenshot, setUploadingScreenshot] = useState<number | null>(null);
   const [revisionMessages, setRevisionMessages] = useState<Record<number, string>>({});
 
   /* ── Fetch revision messages for a specific assignment ── */
@@ -156,11 +158,34 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
     setSubmitting(assignmentId);
     const link = submissionLinks[assignmentId] || "";
     const comment = submissionComments[assignmentId] || "";
+    const screenshotFile = submissionScreenshots[assignmentId] || null;
+
+    // Upload screenshot to Drive first if provided
+    let screenshotDriveId: string | null = null;
+    let screenshotUrl: string | null = null;
+    if (screenshotFile) {
+      setUploadingScreenshot(assignmentId);
+      try {
+        const fd = new FormData();
+        fd.append("file", screenshotFile);
+        const upRes = await fetch("/api/upload-submission-screenshot", { method: "POST", body: fd });
+        if (upRes.ok) {
+          const upData = await upRes.json();
+          screenshotDriveId = upData.drive_file_id || null;
+          screenshotUrl = upData.url || null;
+        }
+      } catch {
+        // non-fatal — submit without screenshot
+      } finally {
+        setUploadingScreenshot(null);
+      }
+    }
 
     // Build content with link and comment
     const parts: string[] = [];
     if (link.trim()) parts.push(`Link: ${link.trim()}`);
     if (comment.trim()) parts.push(comment.trim());
+    if (screenshotUrl) parts.push(`Screenshot attached`);
     const content = parts.length > 0 ? parts.join("\n") : "Submitted for review";
 
     try {
@@ -173,6 +198,8 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
           content,
           submission_link: link.trim() || null,
           submission_comment: comment.trim() || null,
+          submission_screenshot_drive_id: screenshotDriveId,
+          submission_screenshot_url: screenshotUrl,
         }),
       });
       if (!res.ok) {
@@ -183,6 +210,7 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
       // Clear form fields
       setSubmissionLinks((prev) => ({ ...prev, [assignmentId]: "" }));
       setSubmissionComments((prev) => ({ ...prev, [assignmentId]: "" }));
+      setSubmissionScreenshots((prev) => ({ ...prev, [assignmentId]: null }));
       fetchAssignments();
     } catch (err) {
       console.error("Failed to submit:", err);
@@ -421,13 +449,53 @@ export default function VaAssignmentsColumn({ userId }: { userId: string }) {
                           rows={2}
                           className="w-full px-2.5 py-1.5 rounded-lg border border-sand text-xs text-espresso placeholder:text-stone/50 focus:outline-none focus:ring-1 focus:ring-sage/50 resize-none"
                         />
+                        {/* Screenshot upload */}
+                        <div>
+                          <label className="block text-[10px] font-semibold text-stone uppercase mb-1">
+                            Screenshot (optional)
+                          </label>
+                          <label className={`inline-flex items-center gap-1.5 cursor-pointer rounded-lg border border-sand px-2.5 py-1.5 text-[11px] text-walnut hover:border-walnut transition-all ${uploadingScreenshot === a.id ? "opacity-50 cursor-not-allowed" : ""}`}>
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                              <polyline points="17 8 12 3 7 8" />
+                              <line x1="12" y1="3" x2="12" y2="15" />
+                            </svg>
+                            {submissionScreenshots[a.id]
+                              ? submissionScreenshots[a.id]!.name
+                              : "Choose screenshot"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              disabled={uploadingScreenshot === a.id}
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0] || null;
+                                setSubmissionScreenshots((prev) => ({ ...prev, [a.id]: f }));
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                          {submissionScreenshots[a.id] && (
+                            <button
+                              type="button"
+                              onClick={() => setSubmissionScreenshots((prev) => ({ ...prev, [a.id]: null }))}
+                              className="ml-2 text-[10px] text-terracotta hover:underline cursor-pointer"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
                         {/* Submit button */}
                         <button
                           onClick={() => handleSubmit(a.id)}
-                          disabled={submitting === a.id}
+                          disabled={submitting === a.id || uploadingScreenshot === a.id}
                           className="w-full px-3 py-2 rounded-lg bg-sage text-white text-xs font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
                         >
-                          {submitting === a.id ? "Submitting..." : "Submit for Review"}
+                          {uploadingScreenshot === a.id
+                            ? "Uploading screenshot..."
+                            : submitting === a.id
+                            ? "Submitting..."
+                            : "Submit for Review"}
                         </button>
                       </div>
                     )}

@@ -14,6 +14,8 @@ interface Submission {
   content: string;
   submission_link: string | null;
   submission_comment: string | null;
+  submission_screenshot_drive_id: string | null;
+  submission_screenshot_url: string | null;
   created_at: string;
   profiles: { full_name: string } | null;
 }
@@ -1252,7 +1254,22 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                                   {s.submission_comment}
                                 </div>
                               )}
-                              {!s.submission_link && !s.submission_comment && (
+                              {s.submission_screenshot_url && (
+                                <div className="mt-1">
+                                  <a
+                                    href={`https://drive.google.com/file/d/${s.submission_screenshot_drive_id}/view`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <img
+                                      src={s.submission_screenshot_url}
+                                      alt="Submission screenshot"
+                                      className="max-w-full max-h-40 rounded border border-sand object-contain hover:opacity-90 transition-opacity cursor-pointer"
+                                    />
+                                  </a>
+                                </div>
+                              )}
+                              {!s.submission_link && !s.submission_comment && !s.submission_screenshot_url && (
                                 <div className="text-xs text-stone italic">{s.content}</div>
                               )}
                             </div>

@@ -1582,20 +1582,52 @@ interface PaystubRecord {
   paystub_link: string | null;
 }
 
+interface PerTaskEarning {
+  id: number;
+  rate: number | null;
+  status: string;
+  assigned_at: string;
+  project_task_assignments: {
+    id: number;
+    custom_task_name: string | null;
+    task_library: { id: number; task_name: string } | null;
+    project_tags: { id: number; account: string; project_name: string } | null;
+  } | null;
+}
+
+const PER_TASK_STATUS_MAP: Record<string, { label: string; cls: string }> = {
+  approved: { label: "Approved", cls: "bg-emerald-100 text-emerald-700" },
+  completed: { label: "Completed", cls: "bg-green-100 text-green-800" },
+  paid: { label: "Paid", cls: "bg-purple-100 text-purple-700" },
+};
+
 function PaystubsTab({ currentUserId }: { currentUserId: string }) {
   const supabase = createClient();
   const [paystubs, setPaystubs] = useState<PaystubRecord[]>([]);
+  const [perTaskEarnings, setPerTaskEarnings] = useState<PerTaskEarning[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const { data } = await supabase
-          .from("paystub_snapshots")
-          .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link")
-          .eq("user_id", currentUserId)
-          .order("sent_at", { ascending: false });
-        setPaystubs((data as PaystubRecord[]) || []);
+        const [paystubRes, perTaskRes] = await Promise.all([
+          supabase
+            .from("paystub_snapshots")
+            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link")
+            .eq("user_id", currentUserId)
+            .order("sent_at", { ascending: false }),
+          supabase
+            .from("va_task_assignments")
+            .select(
+              "id, rate, status, assigned_at, project_task_assignments(id, custom_task_name, task_library(id, task_name), project_tags(id, account, project_name))"
+            )
+            .eq("va_id", currentUserId)
+            .eq("billing_type", "fixed")
+            .in("status", ["approved", "completed", "paid"])
+            .order("assigned_at", { ascending: false }),
+        ]);
+        setPaystubs((paystubRes.data as PaystubRecord[]) || []);
+        setPerTaskEarnings(((perTaskRes.data ?? []) as unknown) as PerTaskEarning[]);
       } catch {
         // non-fatal
       } finally {
@@ -1609,56 +1641,129 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
     return (
       <div className="flex items-center gap-2 py-10 text-sm text-stone">
         <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
-        Loading paystubs...
+        Loading...
       </div>
     );
   }
 
-  if (paystubs.length === 0) {
-    return <EmptyState label="paystubs" />;
-  }
+  const pendingPayout = perTaskEarnings
+    .filter((e) => e.status === "approved" || e.status === "completed")
+    .reduce((sum, e) => sum + (e.rate ?? 0), 0);
 
   return (
-    <div className="max-w-2xl space-y-3">
-      {paystubs.map((p) => (
-        <div key={p.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-espresso truncate">{p.pay_period_label}</p>
-            <div className="flex items-center gap-3 mt-1">
-              <span className="text-xs text-stone">
-                {new Date(p.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-              </span>
-              {p.payment_method && (
-                <span className="text-[11px] capitalize rounded-full bg-parchment px-2 py-0.5 text-walnut font-medium">
-                  {p.payment_method.replace(/_/g, " ")}
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <span className="text-sm font-bold text-terracotta">
-              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(p.amount_paid)}
+    <div className="max-w-2xl space-y-8">
+
+      {/* ── Per-Task Earnings ── */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h3 className="text-sm font-bold text-espresso">Per-Task Earnings</h3>
+          {pendingPayout > 0 && (
+            <span className="text-xs font-semibold text-sage bg-sage-soft px-3 py-1 rounded-full">
+              {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(pendingPayout)} pending payout
             </span>
-            {p.paystub_link ? (
-              <a
-                href={p.paystub_link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-lg bg-terracotta px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a85840] transition-colors"
-              >
-                <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                  <polyline points="15 3 21 3 21 9" />
-                  <line x1="10" y1="14" x2="21" y2="3" />
-                </svg>
-                View
-              </a>
-            ) : (
-              <span className="text-[11px] text-stone italic">No link yet</span>
-            )}
-          </div>
+          )}
         </div>
-      ))}
+        {perTaskEarnings.length === 0 ? (
+          <p className="text-sm text-stone italic py-2">No approved per-task earnings yet.</p>
+        ) : (
+          <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-parchment border-b border-sand">
+                  <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Task</th>
+                  <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Account</th>
+                  <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-right">Rate</th>
+                  <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {perTaskEarnings.map((e) => {
+                  const taskName =
+                    e.project_task_assignments?.custom_task_name ??
+                    e.project_task_assignments?.task_library?.task_name ??
+                    "Task";
+                  const account = e.project_task_assignments?.project_tags?.account ?? "";
+                  const project = e.project_task_assignments?.project_tags?.project_name ?? "";
+                  const { label, cls } = PER_TASK_STATUS_MAP[e.status] ?? {
+                    label: e.status,
+                    cls: "bg-stone/10 text-stone",
+                  };
+                  return (
+                    <tr key={e.id} className="border-b border-sand last:border-0">
+                      <td className="px-4 py-3 text-sm font-medium text-espresso">{taskName}</td>
+                      <td className="px-4 py-3 text-sm text-stone">
+                        {account || "—"}
+                        {project ? <span className="text-stone/60"> / {project}</span> : ""}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-semibold text-sage text-right">
+                        {e.rate != null
+                          ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(e.rate)
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>
+                          {label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Paystubs ── */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-bold text-espresso">Paystubs</h3>
+        {paystubs.length === 0 ? (
+          <p className="text-sm text-stone italic py-2">No paystubs yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {paystubs.map((p) => (
+              <div key={p.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-espresso truncate">{p.pay_period_label}</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <span className="text-xs text-stone">
+                      {new Date(p.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    </span>
+                    {p.payment_method && (
+                      <span className="text-[11px] capitalize rounded-full bg-parchment px-2 py-0.5 text-walnut font-medium">
+                        {p.payment_method.replace(/_/g, " ")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-sm font-bold text-terracotta">
+                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(p.amount_paid)}
+                  </span>
+                  {p.paystub_link ? (
+                    <a
+                      href={p.paystub_link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-terracotta px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a85840] transition-colors"
+                    >
+                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                        <polyline points="15 3 21 3 21 9" />
+                        <line x1="10" y1="14" x2="21" y2="3" />
+                      </svg>
+                      View
+                    </a>
+                  ) : (
+                    <span className="text-[11px] text-stone italic">No link yet</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }
