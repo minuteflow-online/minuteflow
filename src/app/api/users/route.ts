@@ -72,6 +72,7 @@ export async function POST(request: Request) {
         role: role || "va",
         pay_rate: pay_rate || 0,
         pay_rate_type: pay_rate_type || "hourly",
+        visible_for_collaboration: false,
       })
       .eq("id", newUser.user.id);
   }
@@ -231,6 +232,7 @@ export async function PATCH(request: Request) {
     "pay_rate_type",
     "is_active",
     "can_see_available_tasks",
+    "visible_for_collaboration",
     "payment_accounts",
     "employment_type",
     "requires_extension",

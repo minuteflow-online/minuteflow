@@ -630,7 +630,7 @@ export default function TaskListPage() {
                   <tr className="bg-parchment border-b border-sand">
                     <th className="w-8"></th>
                     <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Task</th>
-                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Account / Project</th>
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Account / Objective</th>
                     <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Rate</th>
                     <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Status</th>
                     <th className="w-8"></th>
@@ -725,7 +725,7 @@ export default function TaskListPage() {
                   <tr className="bg-parchment border-b border-sand">
                     <th className="w-8"></th>
                     <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Task</th>
-                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Account / Project</th>
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Account / Objective</th>
                     <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Rate</th>
                     <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-4 py-3 text-left">Type</th>
                     <th className="w-8"></th>

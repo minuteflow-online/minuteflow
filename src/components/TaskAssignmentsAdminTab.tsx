@@ -66,7 +66,7 @@ interface CsvRow {
   _error?: string;
 }
 
-interface FormProject {
+interface FormObjective {
   id: number;
   account: string | null;
   project_name: string;
@@ -397,13 +397,13 @@ export default function TaskAssignmentsAdminTab({
   const [csvResult, setCsvResult] = useState<string | null>(null);
   const csvFileRef = useRef<HTMLInputElement>(null);
 
-  // ── Project tags map (account → project names) ────────────────────────────────
-  const [projectTagsMap, setProjectTagsMap] = useState<Record<string, string[]>>({});
+  // ── Objective tags map (account → project names) ────────────────────────────────
+  const [projectTagsMap, setObjectiveTagsMap] = useState<Record<string, string[]>>({});
 
   // ── Task form options (for cascading task name dropdown) ──────────────────────
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
-  const [formProjects, setFormProjects] = useState<FormProject[]>([]);
-  const [formTasksByProject, setFormTasksByProject] = useState<Record<number, FormTask[]>>({});
+  const [formObjectives, setFormObjectives] = useState<FormObjective[]>([]);
+  const [formTasksByObjective, setFormTasksByObjective] = useState<Record<number, FormTask[]>>({});
 
   // ── Attachments ────────────────────────────────────────────────────────────────
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
@@ -444,7 +444,7 @@ export default function TaskAssignmentsAdminTab({
             map[pt.account].push(pt.project_name);
           }
         }
-        setProjectTagsMap(map);
+        setObjectiveTagsMap(map);
       })
       .catch(() => {});
   }, []);
@@ -455,21 +455,21 @@ export default function TaskAssignmentsAdminTab({
       .then((r) => r.json())
       .then((d) => {
         if (d.accounts?.length > 0) setFormAccounts(d.accounts);
-        if (d.projects?.length > 0) setFormProjects(d.projects);
-        if (d.tasksByProject) setFormTasksByProject(d.tasksByProject);
+        if (d.projects?.length > 0) setFormObjectives(d.projects);
+        if (d.tasksByProject) setFormTasksByObjective(d.tasksByProject);
       })
       .catch(() => {});
   }, []);
 
   // ── Computed cascading values for detail panel ────────────────────────────────
   const accountsForPanel = formAccounts.length > 0 ? formAccounts : KNOWN_ACCOUNTS;
-  const detailProjectsForAccount = formProjects.filter((p) => p.account === detailForm.account);
-  const detailProjectTagId =
-    formProjects.find(
+  const detailObjectivesForAccount = formObjectives.filter((p) => p.account === detailForm.account);
+  const detailObjectiveTagId =
+    formObjectives.find(
       (p) => p.account === detailForm.account && p.project_name === detailForm.project
     )?.id ?? null;
-  const detailTasksForProject = detailProjectTagId
-    ? (formTasksByProject[detailProjectTagId] ?? [])
+  const detailTasksForObjective = detailObjectiveTagId
+    ? (formTasksByObjective[detailObjectiveTagId] ?? [])
     : [];
 
   // ─── Fetch attachments ────────────────────────────────────────────────────────
@@ -975,7 +975,7 @@ export default function TaskAssignmentsAdminTab({
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left w-8"></th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Objective</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Detail</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Status</th>
@@ -1038,7 +1038,7 @@ export default function TaskAssignmentsAdminTab({
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left w-8">↗</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Objective</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Detail</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Status</th>
@@ -1086,7 +1086,7 @@ export default function TaskAssignmentsAdminTab({
                       display={task.account || ""}
                     />
 
-                    {/* Project */}
+                    {/* Objective */}
                     <InlineCell
                       task={task}
                       field="project"
@@ -1292,12 +1292,12 @@ export default function TaskAssignmentsAdminTab({
                 </select>
               </div>
 
-              {/* Project */}
+              {/* Objective */}
               <div>
                 <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Project
+                  Objective
                 </label>
-                {detailProjectsForAccount.length > 0 ? (
+                {detailObjectivesForAccount.length > 0 ? (
                   <select
                     value={detailForm.project}
                     onChange={(e) => {
@@ -1311,9 +1311,9 @@ export default function TaskAssignmentsAdminTab({
                     className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer disabled:opacity-60 disabled:bg-parchment"
                   >
                     <option value="">
-                      {!detailForm.account ? "Select account first..." : "Select project..."}
+                      {!detailForm.account ? "Select account first..." : "Select objective..."}
                     </option>
-                    {detailProjectsForAccount.map((p) => (
+                    {detailObjectivesForAccount.map((p) => (
                       <option key={p.id} value={p.project_name}>{p.project_name}</option>
                     ))}
                   </select>
@@ -1324,7 +1324,7 @@ export default function TaskAssignmentsAdminTab({
                     onChange={(e) =>
                       setDetailForm((f) => ({ ...f, project: e.target.value, task_name: "" }))
                     }
-                    placeholder="Project name"
+                    placeholder="Objective name"
                     className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
                   />
                 )}
@@ -1335,7 +1335,7 @@ export default function TaskAssignmentsAdminTab({
                 <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
                   Task Name <span className="text-terracotta">*</span>
                 </label>
-                {detailTasksForProject.length > 0 ? (
+                {detailTasksForObjective.length > 0 ? (
                   <select
                     value={detailForm.task_name}
                     onChange={(e) =>
@@ -1344,7 +1344,7 @@ export default function TaskAssignmentsAdminTab({
                     className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
                   >
                     <option value="">Select task...</option>
-                    {detailTasksForProject.map((t) => (
+                    {detailTasksForObjective.map((t) => (
                       <option key={t.id} value={t.task_name}>{t.task_name}</option>
                     ))}
                   </select>

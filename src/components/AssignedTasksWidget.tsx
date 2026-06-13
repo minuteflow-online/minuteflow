@@ -74,9 +74,7 @@ export default function AssignedTasksWidget({
           ...row,
           assigned_tasks: (row.assigned_tasks as unknown as VAAssignedTask["assigned_tasks"]),
         }));
-        const visible = data
-          .filter((t) => t.status !== "cancelled" && t.status !== "completed")
-          .sort(
+        const visible = data.sort(
             (a, b) =>
               (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
           );
@@ -223,6 +221,18 @@ export default function AssignedTasksWidget({
             In Progress
           </span>
         );
+      case "completed":
+        return (
+          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-sage-soft text-sage border border-sage/20">
+            Completed
+          </span>
+        );
+      case "cancelled":
+        return (
+          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-terracotta-soft text-terracotta border border-terracotta/20">
+            Cancelled
+          </span>
+        );
       default:
         return null;
     }
@@ -262,7 +272,7 @@ export default function AssignedTasksWidget({
             )}
             <button
               onClick={() => setShowAddModal(true)}
-              title="Add a task for yourself"
+              title="New Task"
               className="w-6 h-6 rounded-full flex items-center justify-center bg-parchment hover:bg-sand text-bark hover:text-espresso transition-colors cursor-pointer"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -330,7 +340,7 @@ export default function AssignedTasksWidget({
                         {statusBadge(task.status)}
                       </div>
 
-                      {/* Account · Project */}
+                      {/* Account · Objective */}
                       {accountProject && (
                         <div className="text-[11px] text-bark pl-[18px]">{accountProject}</div>
                       )}
@@ -431,7 +441,7 @@ export default function AssignedTasksWidget({
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md mx-4">
             <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
-              <h3 className="text-sm font-bold text-espresso">Add Task for Yourself</h3>
+              <h3 className="text-sm font-bold text-espresso">New Task</h3>
               <button
                 onClick={() => {
                   setShowAddModal(false);
@@ -469,7 +479,7 @@ export default function AssignedTasksWidget({
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-walnut tracking-wide block mb-1">Project</label>
+                  <label className="text-[11px] font-semibold text-walnut tracking-wide block mb-1">Objective</label>
                   <input
                     type="text"
                     value={addProject}
