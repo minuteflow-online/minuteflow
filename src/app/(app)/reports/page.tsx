@@ -117,8 +117,8 @@ export default function ReportsPage() {
       const label = `Week of ${new Date(s).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: orgTimezone })} \u2013 ${new Date(e).toLocaleDateString("en-US", { day: "numeric", year: "numeric", timeZone: orgTimezone })}`;
       return { startISO: s, endISO: e, start: new Date(s), end: new Date(e), periodLabel: label };
     } else if (dateRange === "custom" && appliedStart && appliedEnd) {
-      const s = new Date(appliedStart + "T00:00:00Z");
-      const e = new Date(appliedEnd + "T23:59:59Z");
+      const s = new Date(appliedStart + "T12:00:00");
+      const e = new Date(appliedEnd + "T12:00:00");
       const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone })} \u2013 ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}`;
       return { startISO: s.toISOString(), endISO: e.toISOString(), start: s, end: e, periodLabel: label };
     } else if (dateRange === "custom") {
@@ -415,10 +415,13 @@ export default function ReportsPage() {
   const dailyData: DailyData[] = useMemo(() => {
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-    const buildDay = (d: Date, label: string): DailyData => {
-      const dateStr = d.toISOString().slice(0, 10);
+    const buildDay = (dateStr: string, label: string): DailyData => {
       const dayLogs = filteredLogs.filter(
-        (l) => (l.session_date || (l.start_time && l.start_time.slice(0, 10))) === dateStr
+        (l) =>
+          (l.session_date ||
+            (l.start_time
+              ? new Date(l.start_time).toLocaleDateString("en-CA", { timeZone: orgTimezone })
+              : "")) === dateStr
       );
       return {
         label,
@@ -434,48 +437,50 @@ export default function ReportsPage() {
     };
 
     if (dateRange === "today") {
-      const now = new Date();
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      return [buildDay(d, dayNames[d.getDay()])];
+      const dateStr = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
+      const label = new Date().toLocaleDateString("en-US", { weekday: "short", timeZone: orgTimezone });
+      return [buildDay(dateStr, label)];
     } else if (dateRange === "week") {
       const days: DailyData[] = [];
       const ws = new Date(getWeekBoundsInTimezone(orgTimezone).start);
       for (let i = 0; i < 7; i++) {
-        const d = new Date(ws);
-        d.setDate(d.getDate() + i);
-        days.push(buildDay(d, dayNames[d.getDay()]));
+        const d = new Date(ws.getTime() + i * 86400000);
+        const dateStr = d.toLocaleDateString("en-CA", { timeZone: orgTimezone });
+        const label = d.toLocaleDateString("en-US", { weekday: "short", timeZone: orgTimezone });
+        days.push(buildDay(dateStr, label));
       }
       return days;
     } else if (dateRange === "custom" && appliedStart && appliedEnd) {
       const days: DailyData[] = [];
-      const s = new Date(appliedStart + "T00:00:00Z");
-      const e = new Date(appliedEnd + "T23:59:59Z");
+      const s = new Date(appliedStart + "T12:00:00");
+      const e = new Date(appliedEnd + "T12:00:00");
       const diffDays = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
       for (let i = 0; i < diffDays && i < 90; i++) {
-        const d = new Date(s);
-        d.setDate(d.getDate() + i);
+        const d = new Date(s.getTime() + i * 86400000);
+        const dateStr = d.toLocaleDateString("en-CA", { timeZone: orgTimezone });
         // For short ranges show day names, for longer ranges show date
         const label =
           diffDays <= 14
             ? `${dayNames[d.getDay()]} ${d.getDate()}`
             : d.getDate().toString();
-        days.push(buildDay(d, label));
+        days.push(buildDay(dateStr, label));
       }
       return days;
     } else {
       const days: DailyData[] = [];
-      const daysInMonth = new Date(
-        start.getFullYear(),
-        start.getMonth() + 1,
-        0
-      ).getDate();
+      const monthStr = new Date(startISO).toLocaleDateString("en-CA", { timeZone: orgTimezone }).slice(0, 7);
+      const [yearStr, monthNumStr] = monthStr.split("-");
+      const year = Number(yearStr);
+      const monthNum = Number(monthNumStr);
+      const daysInMonth = new Date(year, monthNum, 0).getDate();
       for (let i = 1; i <= daysInMonth; i++) {
-        const d = new Date(start.getFullYear(), start.getMonth(), i);
-        days.push(buildDay(d, i.toString()));
+        const d = new Date(`${monthStr}-${String(i).padStart(2, "0")}T12:00:00`);
+        const dateStr = d.toLocaleDateString("en-CA", { timeZone: orgTimezone });
+        days.push(buildDay(dateStr, i.toString()));
       }
       return days;
     }
-  }, [filteredLogs, dateRange, start, appliedStart, appliedEnd, orgTimezone]);
+  }, [filteredLogs, dateRange, startISO, appliedStart, appliedEnd, orgTimezone]);
 
   const maxDayMs = useMemo(
     () => Math.max(...dailyData.map((d) => d.totalMs), 1),
