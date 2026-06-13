@@ -3042,14 +3042,15 @@ export default function DashboardPage() {
               role={role}
               sessionState={sessionState}
             />
-            {/* Assigned Tasks Widget — visible for all VAs */}
-            {isVa && userId && (
+            {/* Assigned Tasks Widget — visible for all users */}
+            {userId && (
               <AssignedTasksWidget
                 userId={userId}
                 sessionState={sessionState}
                 hasActiveTask={!!activeTask}
                 onPlayAssignedTask={handlePlayAssignedTask}
                 orgTimezone={orgTimezone}
+                isAdmin={role === "admin" || role === "manager"}
               />
             )}
             {/* VA Assignments — visible BEFORE clock-in, based on position rules */}
