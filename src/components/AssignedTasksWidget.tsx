@@ -98,7 +98,6 @@ export default function AssignedTasksWidget({
       setTasks((prev) =>
         prev
           .map((t) => (t.id === id ? { ...t, status: newStatus } : t))
-          .filter((t) => t.status !== "cancelled" && t.status !== "completed")
           .sort(
             (a, b) =>
               (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
@@ -117,7 +116,6 @@ export default function AssignedTasksWidget({
           setTasks((prev) =>
             prev
               .map((t) => (t.id === id ? { ...t, status: task.status } : t))
-              .filter((t) => t.status !== "cancelled" && t.status !== "completed")
               .sort(
                 (a, b) =>
                   (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
@@ -128,7 +126,6 @@ export default function AssignedTasksWidget({
         setTasks((prev) =>
           prev
             .map((t) => (t.id === id ? { ...t, status: task.status } : t))
-            .filter((t) => t.status !== "cancelled" && t.status !== "completed")
             .sort(
               (a, b) =>
                 (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
