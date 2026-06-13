@@ -107,13 +107,13 @@ export async function POST(request: Request) {
     pay_period_label ||
     `${formatDate(start_date)} – ${formatDate(end_date)}`;
 
-  // Fetch previous payments for this VA in the period (by payment_date)
+  // Fetch previous payments for this VA in the period (by period_start/period_end)
   const { data: prevPaymentsRaw } = await adminClient
     .from("va_payments")
     .select("id, amount, payment_date, payment_method, notes, confirmation_number")
     .eq("va_id", user_id)
-    .gte("payment_date", start_date)
-    .lte("payment_date", end_date)
+    .gte("period_start", start_date)
+    .lte("period_end", end_date)
     .order("payment_date", { ascending: true });
 
   const previousPayments = (prevPaymentsRaw ?? []).map((p) => ({
