@@ -25,11 +25,14 @@ const KNOWN_ACCOUNTS = [
 
 const STATUS_OPTIONS: { value: AssignedTaskStatus | ""; label: string }[] = [
   { value: "", label: "All Statuses" },
-  { value: "pending", label: "Pending" },
-  { value: "on_queue", label: "On Queue" },
+  { value: "not_started", label: "Not Started" },
   { value: "in_progress", label: "In Progress" },
+  { value: "submitted", label: "Submitted" },
+  { value: "reviewing", label: "Reviewing" },
+  { value: "revision_needed", label: "Revision Needed" },
+  { value: "approved", label: "Approved" },
   { value: "completed", label: "Completed" },
-  { value: "cancelled", label: "Cancelled" },
+  { value: "paid", label: "Paid" },
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -127,13 +130,16 @@ function formatFileSize(bytes: number | null): string {
 
 function StatusBadge({ status }: { status: AssignedTaskStatus }) {
   const map: Record<AssignedTaskStatus, { cls: string; label: string }> = {
-    pending: { cls: "bg-stone/10 text-stone", label: "Pending" },
-    on_queue: { cls: "bg-slate-blue-soft text-slate-blue", label: "On Queue" },
-    in_progress: { cls: "bg-amber-100 text-amber-700", label: "In Progress" },
-    completed: { cls: "bg-sage-soft text-sage", label: "Completed" },
-    cancelled: { cls: "bg-terracotta-soft text-terracotta", label: "Cancelled" },
+    not_started:    { cls: "bg-stone/10 text-stone", label: "Not Started" },
+    in_progress:    { cls: "bg-amber-100 text-amber-700", label: "In Progress" },
+    submitted:      { cls: "bg-sky-100 text-sky-700", label: "Submitted" },
+    reviewing:      { cls: "bg-violet-100 text-violet-700", label: "Reviewing" },
+    revision_needed:{ cls: "bg-amber-100 text-amber-600", label: "Revision Needed" },
+    approved:       { cls: "bg-emerald-100 text-emerald-700", label: "Approved" },
+    completed:      { cls: "bg-sage-soft text-sage", label: "Completed" },
+    paid:           { cls: "bg-purple-100 text-purple-700", label: "Paid" },
   };
-  const { cls, label } = map[status] ?? map.pending;
+  const { cls, label } = map[status] ?? map.not_started;
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
       {label}
@@ -145,12 +151,15 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
 
 function statusDotColor(status: AssignedTaskStatus): string {
   switch (status) {
-    case "pending":     return "text-stone";
-    case "on_queue":    return "text-[#6366f1]";
-    case "in_progress": return "text-amber-500";
-    case "completed":   return "text-sage";
-    case "cancelled":   return "text-terracotta";
-    default:            return "text-stone";
+    case "not_started":     return "text-stone";
+    case "in_progress":     return "text-amber-500";
+    case "submitted":       return "text-sky-600";
+    case "reviewing":       return "text-violet-600";
+    case "revision_needed": return "text-amber-600";
+    case "approved":        return "text-emerald-600";
+    case "completed":       return "text-sage";
+    case "paid":            return "text-purple-600";
+    default:                return "text-stone";
   }
 }
 
@@ -1159,11 +1168,14 @@ export default function TaskAssignmentsAdminTab({
                                 onBlur={() => setStatusEdit(null)}
                                 className="text-[11px] border border-sand rounded-lg px-2 py-1 outline-none focus:border-terracotta cursor-pointer bg-white"
                               >
-                                <option value="pending">Pending</option>
-                                <option value="on_queue">On Queue</option>
+                                <option value="not_started">Not Started</option>
                                 <option value="in_progress">In Progress</option>
+                                <option value="submitted">Submitted</option>
+                                <option value="reviewing">Reviewing</option>
+                                <option value="revision_needed">Revision Needed</option>
+                                <option value="approved">Approved</option>
                                 <option value="completed">Completed</option>
-                                <option value="cancelled">Cancelled</option>
+                                <option value="paid">Paid</option>
                               </select>
                             );
                           }

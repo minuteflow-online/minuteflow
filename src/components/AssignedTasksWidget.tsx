@@ -34,11 +34,14 @@ function formatDueDate(dueDateStr: string, orgTimezone: string): { label: string
 }
 
 const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
-  on_queue: 0,
+  not_started: 0,
   in_progress: 1,
-  pending: 2,
-  completed: 3,
-  cancelled: 4,
+  submitted: 2,
+  reviewing: 3,
+  revision_needed: 4,
+  approved: 5,
+  completed: 6,
+  paid: 7,
 };
 
 export default function AssignedTasksWidget({
@@ -200,16 +203,10 @@ export default function AssignedTasksWidget({
 
   const statusBadge = (status: AssignedTaskStatus) => {
     switch (status) {
-      case "pending":
+      case "not_started":
         return (
           <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-stone/10 text-stone border border-stone/20">
-            Pending
-          </span>
-        );
-      case "on_queue":
-        return (
-          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-slate-blue/10 text-slate-blue border border-slate-blue/20">
-            On Queue
+            Not Started
           </span>
         );
       case "in_progress":
@@ -218,16 +215,40 @@ export default function AssignedTasksWidget({
             In Progress
           </span>
         );
+      case "submitted":
+        return (
+          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-sky-50 text-sky-600 border border-sky-200">
+            Submitted
+          </span>
+        );
+      case "reviewing":
+        return (
+          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-violet-50 text-violet-600 border border-violet-200">
+            Reviewing
+          </span>
+        );
+      case "revision_needed":
+        return (
+          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+            Revision Needed
+          </span>
+        );
+      case "approved":
+        return (
+          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">
+            Approved
+          </span>
+        );
       case "completed":
         return (
           <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-sage-soft text-sage border border-sage/20">
             Completed
           </span>
         );
-      case "cancelled":
+      case "paid":
         return (
-          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-terracotta-soft text-terracotta border border-terracotta/20">
-            Cancelled
+          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-purple-50 text-purple-600 border border-purple-200">
+            Paid
           </span>
         );
       default:
@@ -386,36 +407,17 @@ export default function AssignedTasksWidget({
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-2 mt-0.5 pl-[18px]">
-                        {task.status === "pending" && (
+                        {task.status === "not_started" && (
                           <button
-                            onClick={() => updateStatus(task, "on_queue")}
+                            onClick={() => handlePlay(task)}
                             disabled={isUpdating}
-                            className="text-[11px] font-semibold py-1 px-3 rounded-lg bg-slate-blue/10 text-slate-blue border border-slate-blue/20 hover:bg-slate-blue/20 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sage text-white hover:bg-sage/90 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {isUpdating ? "Queuing..." : "Queue It"}
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                              <polygon points="5,3 19,12 5,21" />
+                            </svg>
+                            {isUpdating ? "Starting..." : "Play"}
                           </button>
-                        )}
-
-                        {task.status === "on_queue" && (
-                          <>
-                            <button
-                              onClick={() => handlePlay(task)}
-                              disabled={isUpdating}
-                              className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sage text-white hover:bg-sage/90 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
-                                <polygon points="5,3 19,12 5,21" />
-                              </svg>
-                              Play
-                            </button>
-                            <button
-                              onClick={() => updateStatus(task, "pending")}
-                              disabled={isUpdating}
-                              className="text-[11px] text-stone hover:text-terracotta cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              Remove from Queue
-                            </button>
-                          </>
                         )}
 
                         {task.status === "in_progress" && (
