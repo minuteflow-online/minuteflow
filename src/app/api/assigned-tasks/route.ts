@@ -3,14 +3,15 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 type AssignedTaskStatus =
-  | "not_started"
+  | "on_queue"
   | "in_progress"
   | "submitted"
   | "reviewing"
   | "revision_needed"
   | "approved"
   | "completed"
-  | "paid";
+  | "paid"
+  | "cancelled";
 
 type AssigneeRow = {
   id: string;
@@ -235,7 +236,7 @@ export async function POST(request: Request) {
   const assigneeRows = va_ids.map((va_id) => ({
     assigned_task_id: task.id,
     va_id,
-    status: "not_started" as AssignedTaskStatus,
+    status: "on_queue" as AssignedTaskStatus,
   }));
 
   const { data: assignees, error: assigneeError } = await supabase

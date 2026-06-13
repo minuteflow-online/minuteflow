@@ -25,7 +25,7 @@ const KNOWN_ACCOUNTS = [
 
 const STATUS_OPTIONS: { value: AssignedTaskStatus | ""; label: string }[] = [
   { value: "", label: "All Statuses" },
-  { value: "not_started", label: "Not Started" },
+  { value: "on_queue", label: "On Queue" },
   { value: "in_progress", label: "In Progress" },
   { value: "submitted", label: "Submitted" },
   { value: "reviewing", label: "Reviewing" },
@@ -33,6 +33,7 @@ const STATUS_OPTIONS: { value: AssignedTaskStatus | ""; label: string }[] = [
   { value: "approved", label: "Approved" },
   { value: "completed", label: "Completed" },
   { value: "paid", label: "Paid" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -130,7 +131,7 @@ function formatFileSize(bytes: number | null): string {
 
 function StatusBadge({ status }: { status: AssignedTaskStatus }) {
   const map: Record<AssignedTaskStatus, { cls: string; label: string }> = {
-    not_started:    { cls: "bg-stone/10 text-stone", label: "Not Started" },
+    on_queue:       { cls: "bg-stone/10 text-stone", label: "On Queue" },
     in_progress:    { cls: "bg-amber-100 text-amber-700", label: "In Progress" },
     submitted:      { cls: "bg-sky-100 text-sky-700", label: "Submitted" },
     reviewing:      { cls: "bg-violet-100 text-violet-700", label: "Reviewing" },
@@ -138,8 +139,9 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
     approved:       { cls: "bg-emerald-100 text-emerald-700", label: "Approved" },
     completed:      { cls: "bg-sage-soft text-sage", label: "Completed" },
     paid:           { cls: "bg-purple-100 text-purple-700", label: "Paid" },
+    cancelled:      { cls: "bg-red-100 text-red-500", label: "Cancelled" },
   };
-  const { cls, label } = map[status] ?? map.not_started;
+  const { cls, label } = map[status] ?? map.on_queue;
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
       {label}
@@ -151,7 +153,7 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
 
 function statusDotColor(status: AssignedTaskStatus): string {
   switch (status) {
-    case "not_started":     return "text-stone";
+    case "on_queue":        return "text-stone";
     case "in_progress":     return "text-amber-500";
     case "submitted":       return "text-sky-600";
     case "reviewing":       return "text-violet-600";
@@ -159,6 +161,7 @@ function statusDotColor(status: AssignedTaskStatus): string {
     case "approved":        return "text-emerald-600";
     case "completed":       return "text-sage";
     case "paid":            return "text-purple-600";
+    case "cancelled":       return "text-red-500";
     default:                return "text-stone";
   }
 }
@@ -1168,7 +1171,7 @@ export default function TaskAssignmentsAdminTab({
                                 onBlur={() => setStatusEdit(null)}
                                 className="text-[11px] border border-sand rounded-lg px-2 py-1 outline-none focus:border-terracotta cursor-pointer bg-white"
                               >
-                                <option value="not_started">Not Started</option>
+                                <option value="on_queue">On Queue</option>
                                 <option value="in_progress">In Progress</option>
                                 <option value="submitted">Submitted</option>
                                 <option value="reviewing">Reviewing</option>
@@ -1176,6 +1179,7 @@ export default function TaskAssignmentsAdminTab({
                                 <option value="approved">Approved</option>
                                 <option value="completed">Completed</option>
                                 <option value="paid">Paid</option>
+                                <option value="cancelled">Cancelled</option>
                               </select>
                             );
                           }

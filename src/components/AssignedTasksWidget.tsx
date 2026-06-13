@@ -34,7 +34,7 @@ function formatDueDate(dueDateStr: string, orgTimezone: string): { label: string
 }
 
 const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
-  not_started: 0,
+  on_queue: 0,
   in_progress: 1,
   submitted: 2,
   reviewing: 3,
@@ -42,6 +42,7 @@ const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
   approved: 5,
   completed: 6,
   paid: 7,
+  cancelled: 8,
 };
 
 export default function AssignedTasksWidget({
@@ -203,10 +204,10 @@ export default function AssignedTasksWidget({
 
   const statusBadge = (status: AssignedTaskStatus) => {
     switch (status) {
-      case "not_started":
+      case "on_queue":
         return (
           <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-stone/10 text-stone border border-stone/20">
-            Not Started
+            On Queue
           </span>
         );
       case "in_progress":
@@ -249,6 +250,12 @@ export default function AssignedTasksWidget({
         return (
           <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-purple-50 text-purple-600 border border-purple-200">
             Paid
+          </span>
+        );
+      case "cancelled":
+        return (
+          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-red-50 text-red-500 border border-red-200">
+            Cancelled
           </span>
         );
       default:
@@ -407,7 +414,7 @@ export default function AssignedTasksWidget({
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-2 mt-0.5 pl-[18px]">
-                        {task.status === "not_started" && (
+                        {task.status === "on_queue" && (
                           <button
                             onClick={() => handlePlay(task)}
                             disabled={isUpdating}
