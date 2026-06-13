@@ -7,7 +7,7 @@ import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 
 // ─── Types ───────────────────────────────────────────────────
 
-type PortalTab = "profile" | "onboarding" | "sops" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "coaching_notes" | "reviews" | "tokens" | "change_password";
+type PortalTab = "profile" | "onboarding" | "sops" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "coaching_notes" | "reviews" | "tokens";
 
 type RequestType = "time_off" | "schedule_change" | "pay_question" | "general";
 type RequestStatus = "pending" | "approved" | "denied" | "noted";
@@ -162,16 +162,6 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <circle cx="12" cy="12" r="10" />
         <path d="M12 6v6l4 2" />
-      </svg>
-    ),
-  },
-  {
-    id: "change_password",
-    label: "Change Password",
-    icon: (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-        <path d="M7 11V7a5 5 0 0110 0v4" />
       </svg>
     ),
   },
@@ -1710,91 +1700,6 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
   );
 }
 
-// ─── Change Password Tab ──────────────────────────────────────
-
-function PortalChangePasswordTab() {
-  const supabase = createClient();
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [pwSaving, setPwSaving] = useState(false);
-  const [pwMsg, setPwMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-
-  const handlePasswordChange = useCallback(async () => {
-    if (!newPassword || newPassword.length < 6) {
-      setPwMsg({ type: "err", text: "Password must be at least 6 characters." });
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPwMsg({ type: "err", text: "Passwords don't match." });
-      return;
-    }
-
-    setPwSaving(true);
-    setPwMsg(null);
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    setPwSaving(false);
-
-    if (error) {
-      setPwMsg({ type: "err", text: error.message });
-      return;
-    }
-
-    setNewPassword("");
-    setConfirmPassword("");
-    setPwMsg({ type: "ok", text: "Password updated!" });
-    setTimeout(() => setPwMsg(null), 3000);
-  }, [supabase, newPassword, confirmPassword]);
-
-  return (
-    <div className="max-w-sm rounded-xl border border-sand bg-white p-6 shadow-sm">
-      {pwMsg?.type === "ok" && (
-        <div className="mb-4 rounded-lg border border-sage bg-sage-soft px-4 py-2.5 text-xs font-medium text-sage">
-          {pwMsg.text}
-        </div>
-      )}
-      {pwMsg?.type === "err" && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-600">
-          {pwMsg.text}
-        </div>
-      )}
-
-      <div className="mb-4">
-        <label className="mb-1.5 block text-[11px] font-semibold tracking-wide text-walnut">
-          New Password
-        </label>
-        <input
-          type="password"
-          value={newPassword}
-          onChange={(e) => setNewPassword(e.target.value)}
-          placeholder="Min. 6 characters"
-          className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
-        />
-      </div>
-
-      <div className="mb-4">
-        <label className="mb-1.5 block text-[11px] font-semibold tracking-wide text-walnut">
-          Confirm Password
-        </label>
-        <input
-          type="password"
-          value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
-          placeholder="Repeat new password"
-          className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
-        />
-      </div>
-
-      <button
-        onClick={handlePasswordChange}
-        disabled={pwSaving || !newPassword || !confirmPassword}
-        className="rounded-lg bg-terracotta px-6 py-2.5 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {pwSaving ? "Updating..." : "Update Password"}
-      </button>
-    </div>
-  );
-}
-
 // ─── Main Portal Page ────────────────────────────────────────
 
 export default function VaPortalPage() {
@@ -1835,7 +1740,6 @@ export default function VaPortalPage() {
     coaching_notes: "Coaching Notes",
     reviews: "Reviews",
     tokens: "Tokens & Ratings",
-    change_password: "Change Password",
   };
 
   const tabSubtitle: Record<PortalTab, string> = {
@@ -1851,7 +1755,6 @@ export default function VaPortalPage() {
     coaching_notes: "Coaching and performance notes from your supervisor",
     reviews: isAdmin ? "Manage performance reviews" : "Your performance reviews",
     tokens: isAdmin ? "Award tokens and rate performance" : "Your tokens and performance ratings",
-    change_password: "Update your account password",
   };
 
   if (loading) {
@@ -1941,9 +1844,6 @@ export default function VaPortalPage() {
         )}
         {activeTab === "tokens" && currentUserId && (
           <TokensTab currentUserId={currentUserId} isAdmin={isAdmin} />
-        )}
-        {activeTab === "change_password" && (
-          <PortalChangePasswordTab />
         )}
       </main>
     </div>
