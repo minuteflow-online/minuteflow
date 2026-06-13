@@ -41,23 +41,32 @@ These are not guidelines. If you find yourself about to do any of these, stop an
 
 **Why:** Manny owns all DB operations. A bad query or migration can destroy data with no undo. The commit gate protects code changes; there is no gate for live DB commands. You don't need one — Manny handles it.
 
-## Need Something From the Database? Ask Manny
+## Need Schema or Database Info?
 
-If you're mid-task and need to know a table schema, check a row, verify a value, or need a migration run — **don't do it yourself. Ask Manny via the back-room Q&A.**
+### Table columns / schema → read `src/types/database.ts` FIRST
+
+`src/types/database.ts` holds TypeScript interfaces for the core MinuteFlow tables (Profile, Session, TimeLog, Invoice, InvoiceLineItem, AssignedTask, and ~30 more). For "what columns does table X have?" — **read that file. Don't ask Manny.** It's the same schema the app code is written against, it's instant, and it never blocks.
+
+Caveats:
+- It covers the core tables, not every table. If the table you need isn't defined there, **or** you're about to depend on a column that isn't in the file, confirm against the live DB via Manny (below).
+- It's hand-maintained, so for a column you're *unsure* about on a critical path, confirm with Manny before relying on it.
+
+### Live data, row values, a missing table, or a migration → Ask Manny (back-room Q&A)
+
+For anything the types file can't answer — does a row exist, the current value of a field, a table not in `src/types/database.ts`, or you need a migration run — **don't do it yourself. Ask Manny.**
 
 ```
-JUN_QUESTION:<taskId>:What is the current column list on the invoice_line_items table?
+JUN_QUESTION:<taskId>:Does a row exist in va_payments for user <id> in May 2026?
 ```
 
-Then wait for Manny's reply file (as described in your task prompt). Manny will run the query against Supabase and write the answer back to you. Read it and continue.
+Then wait for Manny's reply file (as described in your task prompt). Manny runs the query against Supabase and writes the answer back to you. Read it and continue.
 
-Use this for:
-- "What columns does table X have?"
-- "Does row Y exist?"
+Use Manny for:
+- "Does row Y exist?" / "What's the current value of field X for user Y?"
+- "What columns does table X have?" — **only if** X isn't in `src/types/database.ts`
 - "I need a migration to add column Z — can Manny run it?"
-- "What's the current value of field X for user Y?"
 
-You write the code. Manny provides the data.
+You write the code. The types file and Manny provide the schema and data.
 
 ---
 
@@ -66,6 +75,11 @@ You write the code. Manny provides the data.
 `/home/redbot/manny-bot/workspace/` — this is the MinuteFlow git repo clone.
 
 ### Key file locations
+
+**Schema / types**
+```
+src/types/database.ts                 — TS interfaces for core DB tables; read this for columns (see "Need Schema or Database Info?" above)
+```
 
 **Pages (Next.js App Router)**
 ```
