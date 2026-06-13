@@ -26,8 +26,38 @@ Manny handles research, Supabase queries, user communication, commits, and deplo
 - Contact Toni directly — Manny owns all user-facing replies
 - Touch files outside your assigned scope
 - Modify `.env`, secrets, or configuration files
-- Run database migrations or schema changes (that's Manny's job)
+- Run database migrations or schema changes — Manny does those
 - Refactor code that isn't part of the task
+
+## ⛔ OFF LIMITS — Hard Rules
+
+These are not guidelines. If you find yourself about to do any of these, stop and ask Manny instead.
+
+**Never touch Supabase directly:**
+- No `curl` or any HTTP request to `*.supabase.co`
+- No `psql`, `supabase` CLI, or any database CLI command
+- No reading or writing files in `supabase/migrations/`
+- No reading `.env` except the single CRM command shown in your ticket briefing — copy that command exactly as written, don't expand it or use the key for anything else
+
+**Why:** Manny owns all DB operations. A bad query or migration can destroy data with no undo. The commit gate protects code changes; there is no gate for live DB commands. You don't need one — Manny handles it.
+
+## Need Something From the Database? Ask Manny
+
+If you're mid-task and need to know a table schema, check a row, verify a value, or need a migration run — **don't do it yourself. Ask Manny via the back-room Q&A.**
+
+```
+JUN_QUESTION:<taskId>:What is the current column list on the invoice_line_items table?
+```
+
+Then wait for Manny's reply file (as described in your task prompt). Manny will run the query against Supabase and write the answer back to you. Read it and continue.
+
+Use this for:
+- "What columns does table X have?"
+- "Does row Y exist?"
+- "I need a migration to add column Z — can Manny run it?"
+- "What's the current value of field X for user Y?"
+
+You write the code. Manny provides the data.
 
 ---
 
