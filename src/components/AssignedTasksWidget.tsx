@@ -5,6 +5,7 @@ import type { VAAssignedTask, AssignedTaskStatus } from "@/types/database";
 
 interface AssignedTasksWidgetProps {
   userId: string;
+  isAdmin?: boolean;
   sessionState: string; // "idle" | "clocked-in" | "on-break" | "clocked-out"
   hasActiveTask: boolean;
   onPlayAssignedTask: (task: VAAssignedTask) => void;
@@ -42,6 +43,7 @@ const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
 
 export default function AssignedTasksWidget({
   userId,
+  isAdmin = false,
   onPlayAssignedTask,
   orgTimezone = "UTC",
 }: AssignedTasksWidgetProps) {
@@ -64,7 +66,7 @@ export default function AssignedTasksWidget({
     if (!userId) return;
     setLoading(true);
     try {
-      const res = await fetch("/api/assigned-tasks");
+      const res = await fetch(isAdmin ? "/api/assigned-tasks?selfOnly=true" : "/api/assigned-tasks");
       if (res.ok) {
         const json = await res.json();
         const raw: VAAssignedTask[] = json.tasks || json || [];
@@ -85,7 +87,7 @@ export default function AssignedTasksWidget({
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, isAdmin]);
 
   useEffect(() => {
     fetchTasks();

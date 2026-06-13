@@ -63,11 +63,12 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const vaIdParam = searchParams.get("vaId");
   const statusParam = searchParams.get("status") as AssignedTaskStatus | null;
+  const selfOnly = searchParams.get("selfOnly") === "true";
 
   const isAdminOrManager =
     profile?.role === "admin" || profile?.role === "manager";
 
-  if (isAdminOrManager) {
+  if (isAdminOrManager && !selfOnly) {
     const assigneeSelect =
       "id, va_id, status, log_id, notes, assigned_at, updated_at";
 

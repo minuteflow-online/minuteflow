@@ -42,6 +42,7 @@ import VaTokensAdminTab from "@/components/VaTokensAdminTab";
 import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
 import EmailStatusTab from "@/components/EmailStatusTab";
 import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
+import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -101,7 +102,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "email_log";
+type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "email_log" | "reset_va_password";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -308,6 +309,17 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: "reset_va_password",
+    label: "Reset VA Password",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M15 7a3 3 0 10-5.24 2H9a2 2 0 00-2 2v2h10v-2a2 2 0 00-2-2h-.76A2.99 2.99 0 0015 7z" />
+        <path d="M12 13v4" />
+        <path d="M10.5 15h3" />
+      </svg>
+    ),
+  },
+  {
     id: "password",
     label: "Change Password",
     icon: (
@@ -353,7 +365,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "team",
     label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log", "reset_va_password"] as AdminTab[]).includes(t.id)),
   },
 ];
 
@@ -361,7 +373,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
 const SIDEBAR_GROUPS: SidebarGroup[] = [...ADMIN_SIDEBAR_GROUPS, ...TEAM_SIDEBAR_GROUPS];
 
 // Tab IDs that belong to the TEAM section
-const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log"];
+const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log", "reset_va_password"];
 
 /* ── Main Admin Page ─────────────────────────────────────── */
 
@@ -628,6 +640,25 @@ export default function AdminPage() {
     profiles.forEach((p) => map.set(p.id, p));
     return map;
   }, [profiles]);
+
+  const currentUserProfile = useMemo(
+    () => (currentUserId ? profileMap.get(currentUserId) ?? null : null),
+    [currentUserId, profileMap]
+  );
+
+  const currentUserSession = useMemo(
+    () => (currentUserId ? sessions.find((s) => s.user_id === currentUserId) ?? null : null),
+    [currentUserId, sessions]
+  );
+
+  const currentUserSessionState = currentUserSession?.clocked_in
+    ? currentUserSession.active_task?.isBreak
+      ? "on-break"
+      : "clocked-in"
+    : "idle";
+
+  const currentUserHasActiveTask =
+    !!currentUserSession?.active_task && !currentUserSession.active_task.isBreak;
 
   const logMap = useMemo(() => {
     const map = new Map<number, TimeLog>();
@@ -1292,6 +1323,7 @@ export default function AdminPage() {
                 {activeTab === "va_tokens" && "Award tokens and track daily ratings"}
                 {activeTab === "va_broadcasts" && "Send broadcasts, memos, and announcements to your team"}
                 {activeTab === "email_log" && "Track opens and clicks for all outgoing emails"}
+                {activeTab === "reset_va_password" && "Reset the password for any team member"}
                 {activeTab === "task_assignments" && "Assign tasks to VAs and track their progress"}
               </p>
             </div>
@@ -1320,6 +1352,9 @@ export default function AdminPage() {
               onRefresh={fetchData}
               orgTimezone={orgTimezone}
               extensionUploadStatus={extensionUploadStatus}
+              currentUserProfile={currentUserProfile}
+              currentUserSessionState={currentUserSessionState}
+              currentUserHasActiveTask={currentUserHasActiveTask}
             />
           )}
 
@@ -1443,6 +1478,10 @@ export default function AdminPage() {
             <EmailStatusTab />
           )}
 
+          {activeTab === "reset_va_password" && (
+            <ResetVaPasswordTab profiles={profiles} />
+          )}
+
           {activeTab === "password" && (
             <ChangePasswordTab />
           )}
@@ -1530,6 +1569,9 @@ function OverviewTab({
   onRefresh,
   orgTimezone,
   extensionUploadStatus,
+  currentUserProfile,
+  currentUserSessionState,
+  currentUserHasActiveTask,
 }: {
   stats: { activeCount: number; todayHoursMs: number; todayScreenshots: number; todayTasks: number; wizardTimeMs: number };
   profiles: Profile[];
@@ -1559,6 +1601,9 @@ function OverviewTab({
   onRefresh: () => void;
   orgTimezone: string;
   extensionUploadStatus: ExtensionUploadStatus[];
+  currentUserProfile: Profile | null;
+  currentUserSessionState: string;
+  currentUserHasActiveTask: boolean;
 }) {
   return (
     <>
@@ -1570,6 +1615,19 @@ function OverviewTab({
         <StatCard value={stats.todayTasks} label="Tasks Completed" sub="today" color="amber" />
         <StatCard value={formatDuration(stats.wizardTimeMs)} label="Wizard Time" sub="task entry form time" color="walnut" />
       </div>
+
+      {currentUserProfile?.role === "admin" && (
+        <div className="mb-6">
+          <AssignedTasksWidget
+            userId={currentUserProfile.id}
+            isAdmin
+            sessionState={currentUserSessionState}
+            hasActiveTask={currentUserHasActiveTask}
+            onPlayAssignedTask={() => {}}
+            orgTimezone={orgTimezone}
+          />
+        </div>
+      )}
 
       {/* Live Team Monitor */}
       <div className="mb-6 rounded-xl border border-sand bg-white">
@@ -5859,6 +5917,138 @@ function SortingReviewTab({
 }
 
 /* ── Change Password Tab ───────────────────────────────────── */
+
+function ResetVaPasswordTab({ profiles }: { profiles: Profile[] }) {
+  const vaProfiles = profiles.filter((profile) => profile.role !== "admin");
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    if (!vaProfiles.length) {
+      setSelectedUserId("");
+      return;
+    }
+    if (!selectedUserId || !vaProfiles.some((profile) => profile.id === selectedUserId)) {
+      setSelectedUserId(vaProfiles[0].id);
+    }
+  }, [vaProfiles, selectedUserId]);
+
+  const selectedProfile = vaProfiles.find((profile) => profile.id === selectedUserId) || null;
+
+  const handleResetPassword = async () => {
+    setError("");
+    setSuccess("");
+
+    if (!selectedUserId) {
+      setError("Please select a VA.");
+      return;
+    }
+    if (newPassword.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const response = await fetch("/api/users", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: selectedUserId, newPassword }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to reset password");
+      }
+
+      setNewPassword("");
+      setConfirmPassword("");
+      setSuccess(`Password updated for ${selectedProfile?.full_name || selectedProfile?.username || "selected VA"}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset password");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="max-w-sm rounded-xl border border-sand bg-white p-6 shadow-sm">
+      {success && (
+        <div className="mb-4 rounded-lg border border-sage bg-sage-soft px-4 py-2.5 text-xs font-medium text-sage">
+          {success}
+        </div>
+      )}
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-600">
+          {error}
+        </div>
+      )}
+
+      <div className="mb-4">
+        <label className="mb-1.5 block text-[11px] font-semibold tracking-wide text-walnut">
+          Select VA
+        </label>
+        <select
+          value={selectedUserId}
+          onChange={(e) => setSelectedUserId(e.target.value)}
+          className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
+        >
+          {vaProfiles.length === 0 ? (
+            <option value="">No VAs available</option>
+          ) : (
+            vaProfiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.full_name || profile.username || profile.id}
+              </option>
+            ))
+          )}
+        </select>
+      </div>
+
+      <div className="mb-4">
+        <label className="mb-1.5 block text-[11px] font-semibold tracking-wide text-walnut">
+          New Password
+        </label>
+        <input
+          type="password"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          placeholder="Min. 6 characters"
+          className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
+        />
+      </div>
+
+      <div className="mb-4">
+        <label className="mb-1.5 block text-[11px] font-semibold tracking-wide text-walnut">
+          Confirm Password
+        </label>
+        <input
+          type="password"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          placeholder="Repeat new password"
+          className="w-full rounded-lg border border-sand px-3.5 py-2.5 text-[13px] text-espresso outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)]"
+        />
+      </div>
+
+      <button
+        onClick={handleResetPassword}
+        disabled={saving || !selectedUserId || !newPassword || !confirmPassword}
+        className="rounded-lg bg-terracotta px-6 py-2.5 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {saving ? "Updating..." : "Reset Password"}
+      </button>
+    </div>
+  );
+}
 
 function ChangePasswordTab() {
   const supabase = createClient();
