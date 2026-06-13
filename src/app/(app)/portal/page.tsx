@@ -7,7 +7,7 @@ import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 
 // ─── Types ───────────────────────────────────────────────────
 
-type PortalTab = "profile" | "onboarding" | "sops" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "coaching_notes" | "reviews" | "tokens" | "change_password";
+type PortalTab = "profile" | "onboarding" | "sops" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "coaching_notes" | "reviews" | "tokens";
 
 type RequestType = "time_off" | "schedule_change" | "pay_question" | "general";
 type RequestStatus = "pending" | "approved" | "denied" | "noted";
@@ -165,16 +165,6 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
       </svg>
     ),
   },
-  {
-    id: "change_password",
-    label: "Change Password",
-    icon: (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-        <path d="M7 11V7a5 5 0 0110 0v4" />
-      </svg>
-    ),
-  },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -274,11 +264,6 @@ function ProfileTab({ profile, onSaved }: { profile: Profile; onSaved: (p: Profi
   const [department, setDepartment] = useState(profile.department || "");
   const [position, setPosition] = useState(profile.position || "");
 
-  // ── Password change state ──
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [pwSaving, setPwSaving] = useState(false);
-  const [pwMsg, setPwMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const pa = profile.payment_accounts || {};
   const [gcashNumber, setGcashNumber] = useState(pa.gcash?.number || "");
@@ -1901,7 +1886,6 @@ export default function VaPortalPage() {
     coaching_notes: "Coaching Notes",
     reviews: "Reviews",
     tokens: "Tokens & Ratings",
-    change_password: "Change Password",
   };
 
   const tabSubtitle: Record<PortalTab, string> = {
@@ -1917,7 +1901,6 @@ export default function VaPortalPage() {
     coaching_notes: "Coaching and performance notes from your supervisor",
     reviews: isAdmin ? "Manage performance reviews" : "Your performance reviews",
     tokens: isAdmin ? "Award tokens and rate performance" : "Your tokens and performance ratings",
-    change_password: "Update your account password",
   };
 
   if (loading) {
@@ -2007,9 +1990,6 @@ export default function VaPortalPage() {
         )}
         {activeTab === "tokens" && currentUserId && (
           <TokensTab currentUserId={currentUserId} isAdmin={isAdmin} />
-        )}
-        {activeTab === "change_password" && (
-          <PortalChangePasswordTab />
         )}
       </main>
     </div>
