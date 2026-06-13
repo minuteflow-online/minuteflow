@@ -263,8 +263,8 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to calculate.");
       setPreview(data);
-      // Default amount = total gross pay (hourly + fixed) minus any previous payments
-      const net = (data.totalGrossPay || data.grossPay) - (data.previousTotal || 0);
+      // Default amount = total gross pay (hourly + fixed)
+      const net = data.totalGrossPay || data.grossPay;
       setCustomAmount(net.toFixed(2));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
@@ -692,9 +692,9 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                     className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-terracotta bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                   />
                 </div>
-                {customAmount !== "" && parseFloat(customAmount) !== (preview.totalGrossPay ?? preview.grossPay) - preview.previousTotal && (
+                {customAmount !== "" && parseFloat(customAmount) !== (preview.totalGrossPay ?? preview.grossPay) && (
                   <p className="text-xs text-bark/40 mt-1">
-                    Default: {formatCurrency((preview.totalGrossPay ?? preview.grossPay) - preview.previousTotal)} · You entered: {formatCurrency(parseFloat(customAmount) || 0)}
+                    Default: {formatCurrency(preview.totalGrossPay ?? preview.grossPay)} · You entered: {formatCurrency(parseFloat(customAmount) || 0)}
                   </p>
                 )}
               </div>

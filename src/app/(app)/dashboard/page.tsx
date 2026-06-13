@@ -783,12 +783,59 @@ export default function DashboardPage() {
     setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
   }, [activeTask, taskElapsed, userId, supabase, session]);
 
+  const closeOpenNonBreakLogs = useCallback(
+    async (now: string) => {
+      if (!userId) return;
+
+      const { data: openLogs } = await supabase
+        .from("time_logs")
+        .select("id, start_time")
+        .eq("user_id", userId)
+        .is("end_time", null)
+        .neq("category", "Break")
+        .neq("category", "Clock Out");
+
+      if (openLogs && openLogs.length > 0) {
+        for (const openLog of openLogs) {
+          const logStartMs = openLog.start_time
+            ? new Date(openLog.start_time).getTime()
+            : Date.now();
+          const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+          await supabase
+            .from("time_logs")
+            .update({ end_time: now, duration_ms: logDurationMs })
+            .eq("id", openLog.id);
+        }
+
+        setTimeLogs((prev) =>
+          prev.map((log) => {
+            const match = openLogs.find((o) => o.id === log.id);
+            if (match && !log.end_time) {
+              const logStartMs = match.start_time
+                ? new Date(match.start_time).getTime()
+                : Date.now();
+              return {
+                ...log,
+                end_time: now,
+                duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
+              } as TimeLog;
+            }
+            return log;
+          })
+        );
+      }
+    },
+    [supabase, userId]
+  );
+
   // ─── Actions ──────────────────────────────────────────────
 
   const clockIn = useCallback(async () => {
     if (!userId || !profile || sessionActionPending) return;
     setSessionActionPending(true);
     const now = new Date().toISOString();
+
+    await closeOpenNonBreakLogs(now);
 
     // Create a "Planning" time_log entry so clock-in registers in activity log
     const clockInSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
@@ -1885,6 +1932,11 @@ export default function DashboardPage() {
 
       // ─── Fixed Task Log: instant insert, no timer, no screenshots ───
       if (formData._isFixedTaskLog) {
+        if (activeTask?.logId) {
+          await stopCurrentTask();
+        }
+        await closeOpenNonBreakLogs(now);
+
         const progressValue = formData.task_status
           ? formData.task_status.toLowerCase().replace(" ", "_")
           : "in_progress";

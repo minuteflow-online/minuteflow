@@ -222,7 +222,7 @@ export async function POST(request: Request) {
     const paymentAccounts = (vaProfile.payment_accounts ?? {}) as Record<string, Record<string, string>>;
     const accountDetails = payment_method ? (paymentAccounts[payment_method] ?? null) : null;
 
-    const remainingBalance = totalGrossPay - previousTotal - paymentAmount;
+    const remainingBalance = totalGrossPay - paymentAmount;
 
     const html = buildPaystubEmail({
       vaName: vaProfile.full_name,
