@@ -51,6 +51,22 @@ Caveats:
 - It covers the core tables, not every table. If the table you need isn't defined there, **or** you're about to depend on a column that isn't in the file, confirm against the live DB via Manny (below).
 - It's hand-maintained, so for a column you're *unsure* about on a critical path, confirm with Manny before relying on it.
 
+### Live data you need RIGHT NOW → query the DB directly
+
+Jun now has **read-only live DB access** via a local helper:
+
+```bash
+python3 /home/redbot/manny-bot/jun-db.py "SELECT count(*) FROM profiles"
+```
+
+Use this when you need to check live row values, verify a field exists, or confirm counts — no need to ask Manny for simple read queries.
+
+**Rules for using the helper:**
+- Only `SELECT`, `WITH`, and `EXPLAIN` queries are accepted — the helper refuses anything else at the guard level, and the `jun_ro` DB role has SELECT-only grants enforced at the database level.
+- Always get schema (column names, types) from `src/types/database.ts` first — the helper is for live data, not schema discovery.
+- Do **NOT** `curl *.supabase.co` or run `psql`/`supabase` CLI directly. The helper is the only sanctioned DB path.
+- Writes, migrations, and anything involving a table not in `src/types/database.ts` → still go through Manny (see below).
+
 ### Live data, row values, a missing table, or a migration → Ask Manny (back-room Q&A)
 
 For anything the types file can't answer — does a row exist, the current value of a field, a table not in `src/types/database.ts`, or you need a migration run — **don't do it yourself. Ask Manny.**
