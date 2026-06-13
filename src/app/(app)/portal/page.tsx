@@ -276,29 +276,6 @@ function ProfileTab({ profile, onSaved }: { profile: Profile; onSaved: (p: Profi
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
-  const handlePasswordChange = useCallback(async () => {
-    if (!newPassword || newPassword.length < 6) {
-      setPwMsg({ type: "err", text: "Password must be at least 6 characters." });
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPwMsg({ type: "err", text: "Passwords don't match." });
-      return;
-    }
-    setPwSaving(true);
-    setPwMsg(null);
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    setPwSaving(false);
-    if (error) {
-      setPwMsg({ type: "err", text: error.message });
-      return;
-    }
-    setNewPassword("");
-    setConfirmPassword("");
-    setPwMsg({ type: "ok", text: "Password updated!" });
-    setTimeout(() => setPwMsg(null), 3000);
-  }, [supabase, newPassword, confirmPassword]);
-
   const handleSave = useCallback(async () => {
     setSaving(true);
     setSaveMsg(null);
@@ -492,46 +469,6 @@ function ProfileTab({ profile, onSaved }: { profile: Profile; onSaved: (p: Profi
         )}
       </div>
 
-      {/* Change Password */}
-      <div className="rounded-xl border border-sand bg-white p-5 shadow-sm">
-        <h3 className="mb-4 text-sm font-bold text-espresso">Change Password</h3>
-        <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <div>
-            <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">New Password</label>
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="Min. 6 characters"
-              className="w-full py-2.5 px-3.5 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Confirm Password</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter new password"
-              className="w-full py-2.5 px-3.5 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone"
-            />
-          </div>
-        </div>
-        <div className="flex items-center gap-4 mt-4">
-          <button
-            onClick={handlePasswordChange}
-            disabled={pwSaving || !newPassword || !confirmPassword}
-            className="rounded-lg bg-terracotta px-5 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {pwSaving ? "Saving..." : "Update Password"}
-          </button>
-          {pwMsg && (
-            <p className={`text-xs font-medium ${pwMsg.type === "ok" ? "text-sage" : "text-red-500"}`}>
-              {pwMsg.text}
-            </p>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
