@@ -188,7 +188,7 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
  * VA: must be assigned to the task. Can update their assignee row and task metadata.
  * Admin/manager: may target an assignee row with va_id; metadata-only updates do not require va_id.
  *
- * Body: { va_id?: string, status?: AssignedTaskStatus, log_id?: number, notes?: string, account?: string | null, project?: string | null, task_name?: string }
+ * Body: { va_id?: string, status?: AssignedTaskStatus, log_id?: number, notes?: string, account?: string | null, project?: string | null, task_name?: string, task_detail?: string | null, task_notes?: string | null, due_date?: string | null }
  */
 export async function PATCH(request: Request, { params }: RouteContext) {
   const supabase = await createClient();
@@ -205,7 +205,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const { id } = await params;
   const body = await request.json();
-  const { va_id: bodyVaId, status, log_id, notes, account, project, task_name } = body as {
+  const { va_id: bodyVaId, status, log_id, notes, account, project, task_name, task_detail, task_notes, due_date } = body as {
     va_id?: string;
     status?: AssignedTaskStatus;
     log_id?: number;
@@ -213,10 +213,19 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     account?: string | null;
     project?: string | null;
     task_name?: string;
+    task_detail?: string | null;
+    task_notes?: string | null;
+    due_date?: string | null;
   };
 
   const hasAssigneeUpdate = status !== undefined || log_id !== undefined || notes !== undefined;
-  const hasMetadataUpdate = account !== undefined || project !== undefined || task_name !== undefined;
+  const hasMetadataUpdate =
+    account !== undefined ||
+    project !== undefined ||
+    task_name !== undefined ||
+    task_detail !== undefined ||
+    task_notes !== undefined ||
+    due_date !== undefined;
 
   if (!hasAssigneeUpdate && !hasMetadataUpdate) {
     return Response.json({ error: "At least one field is required" }, { status: 400 });
@@ -309,6 +318,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (account !== undefined) updatePayload.account = account;
     if (project !== undefined) updatePayload.project = project;
     if (task_name !== undefined) updatePayload.task_name = task_name.trim();
+    if (task_detail !== undefined) updatePayload.task_detail = task_detail;
+    if (task_notes !== undefined) updatePayload.task_notes = task_notes;
+    if (due_date !== undefined) updatePayload.due_date = due_date;
 
     const { error: taskError } = await supabase
       .from("assigned_tasks")

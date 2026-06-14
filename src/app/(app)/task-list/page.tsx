@@ -129,6 +129,15 @@ function formatDueDate(dueDate: string | null) {
   };
 }
 
+function formatDateInputValue(dueDate: string | null) {
+  if (!dueDate) return "";
+
+  const date = new Date(dueDate);
+  if (Number.isNaN(date.getTime())) return dueDate;
+
+  return date.toISOString().slice(0, 10);
+}
+
 function formatFileSize(bytes: number | null): string {
   if (!bytes) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -179,6 +188,9 @@ export default function TaskListPage() {
   const [panelAccount, setPanelAccount] = useState("");
   const [panelProject, setPanelProject] = useState("");
   const [panelTaskName, setPanelTaskName] = useState("");
+  const [panelDueDate, setPanelDueDate] = useState("");
+  const [panelDetail, setPanelDetail] = useState("");
+  const [panelTaskNotes, setPanelTaskNotes] = useState("");
   const [panelNotes, setPanelNotes] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
   const [panelUploadSaving, setPanelUploadSaving] = useState(false);
@@ -335,6 +347,9 @@ export default function TaskListPage() {
       setPanelAccount(task.assigned_tasks.account ?? "");
       setPanelProject(task.assigned_tasks.project ?? "");
       setPanelTaskName(task.assigned_tasks.task_name ?? "");
+      setPanelDueDate(task.assigned_tasks.due_date ?? "");
+      setPanelDetail(task.assigned_tasks.task_detail ?? "");
+      setPanelTaskNotes(task.assigned_tasks.task_notes ?? "");
       setPanelNotes(task.notes ?? "");
       setPanelUploadSaving(false);
       setPanelMsg(null);
@@ -351,6 +366,9 @@ export default function TaskListPage() {
     setPanelAccount("");
     setPanelProject("");
     setPanelTaskName("");
+    setPanelDueDate("");
+    setPanelDetail("");
+    setPanelTaskNotes("");
     setPanelNotes("");
     setPanelSaving(false);
     setPanelUploadSaving(false);
@@ -411,12 +429,18 @@ export default function TaskListPage() {
     const nextAccount = panelAccount.trim();
     const nextProject = panelProject.trim();
     const nextTaskName = panelTaskName.trim();
+    const nextDueDate = panelDueDate.trim();
+    const nextDetail = panelDetail;
+    const nextTaskNotes = panelTaskNotes;
     const nextNotes = panelNotes;
     const notesChanged = !sameText(nextNotes, previousNotes);
     const metadataChanged =
       !sameText(nextAccount, selectedTask.assigned_tasks.account) ||
       !sameText(nextProject, selectedTask.assigned_tasks.project) ||
-      !sameText(nextTaskName, selectedTask.assigned_tasks.task_name);
+      !sameText(nextTaskName, selectedTask.assigned_tasks.task_name) ||
+      !sameText(nextDueDate, selectedTask.assigned_tasks.due_date) ||
+      !sameText(nextDetail, selectedTask.assigned_tasks.task_detail) ||
+      !sameText(nextTaskNotes, selectedTask.assigned_tasks.task_notes);
 
     if (selectedTask.is_collaborative || (!statusChanged && !metadataChanged && !notesChanged)) {
       closePanel();
@@ -434,6 +458,9 @@ export default function TaskListPage() {
         body.account = nextAccount || null;
         body.project = nextProject || null;
         body.task_name = nextTaskName;
+        body.due_date = nextDueDate || null;
+        body.task_detail = nextDetail || null;
+        body.task_notes = nextTaskNotes || null;
       }
 
       const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
@@ -446,23 +473,26 @@ export default function TaskListPage() {
       const updatedAt = new Date().toISOString();
       setTasks((prev) =>
         sortTasks(
-          prev.map((row) =>
-            row.id === selectedTask.id
-              ? {
-                  ...row,
-                  status: statusChanged ? nextStatus : row.status,
-                  notes: notesChanged ? nextNotes : row.notes,
-                  updated_at: statusChanged || notesChanged ? updatedAt : row.updated_at,
-                  assigned_tasks: {
-                    ...row.assigned_tasks,
-                    account: metadataChanged ? (nextAccount || null) : row.assigned_tasks.account,
-                    project: metadataChanged ? (nextProject || null) : row.assigned_tasks.project,
-                    task_name: metadataChanged ? nextTaskName : row.assigned_tasks.task_name,
-                    updated_at: metadataChanged ? updatedAt : row.assigned_tasks.updated_at,
-                  },
-                }
-              : row
-          )
+          prev.map((row) => {
+            if (row.id !== selectedTask.id) return row;
+
+            return {
+              ...row,
+              status: statusChanged ? nextStatus : row.status,
+              notes: notesChanged ? nextNotes : row.notes,
+              updated_at: statusChanged || notesChanged ? updatedAt : row.updated_at,
+              assigned_tasks: {
+                ...row.assigned_tasks,
+                account: metadataChanged ? (nextAccount || null) : row.assigned_tasks.account,
+                project: metadataChanged ? (nextProject || null) : row.assigned_tasks.project,
+                task_name: metadataChanged ? nextTaskName : row.assigned_tasks.task_name,
+                due_date: metadataChanged ? (nextDueDate || null) : row.assigned_tasks.due_date,
+                task_detail: metadataChanged ? (nextDetail || null) : row.assigned_tasks.task_detail,
+                task_notes: metadataChanged ? (nextTaskNotes || null) : row.assigned_tasks.task_notes,
+                updated_at: metadataChanged ? updatedAt : row.assigned_tasks.updated_at,
+              },
+            };
+          })
         )
       );
       setSelectedTask((current) =>
@@ -477,6 +507,9 @@ export default function TaskListPage() {
                 account: metadataChanged ? (nextAccount || null) : current.assigned_tasks.account,
                 project: metadataChanged ? (nextProject || null) : current.assigned_tasks.project,
                 task_name: metadataChanged ? nextTaskName : current.assigned_tasks.task_name,
+                due_date: metadataChanged ? (nextDueDate || null) : current.assigned_tasks.due_date,
+                task_detail: metadataChanged ? (nextDetail || null) : current.assigned_tasks.task_detail,
+                task_notes: metadataChanged ? (nextTaskNotes || null) : current.assigned_tasks.task_notes,
                 updated_at: metadataChanged ? updatedAt : current.assigned_tasks.updated_at,
               },
             }
@@ -489,7 +522,18 @@ export default function TaskListPage() {
     } finally {
       setPanelSaving(false);
     }
-  }, [closePanel, panelAccount, panelNotes, panelProject, panelStatus, panelTaskName, selectedTask]);
+  }, [
+    closePanel,
+    panelAccount,
+    panelDetail,
+    panelDueDate,
+    panelNotes,
+    panelProject,
+    panelStatus,
+    panelTaskName,
+    panelTaskNotes,
+    selectedTask,
+  ]);
 
   const handleAttachmentUpload = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -918,33 +962,62 @@ export default function TaskListPage() {
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                {(() => {
-                  const due = formatDueDate(selectedTask.assigned_tasks.due_date);
-                  return (
-                    <div
-                      className={`rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] ${
-                        due.isOverdue ? "text-terracotta" : "text-espresso"
-                      }`}
-                    >
-                      {due.label}
-                      {due.isOverdue && selectedTask.assigned_tasks.due_date ? " · Overdue" : ""}
-                    </div>
-                  );
-                })()}
+                {panelCanEditFields ? (
+                  <input
+                    type="date"
+                    value={formatDateInputValue(panelDueDate)}
+                    onChange={(e) => setPanelDueDate(e.target.value)}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                ) : (
+                  (() => {
+                    const due = formatDueDate(selectedTask.assigned_tasks.due_date);
+                    return (
+                      <div
+                        className={`rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] ${
+                          due.isOverdue ? "text-terracotta" : "text-espresso"
+                        }`}
+                      >
+                        {due.label}
+                        {due.isOverdue && selectedTask.assigned_tasks.due_date ? " · Overdue" : ""}
+                      </div>
+                    );
+                  })()
+                )}
               </div>
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Detail</label>
-                <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                  {selectedTask.assigned_tasks.task_detail || <span className="text-stone/60">No detail provided.</span>}
-                </div>
+                {panelCanEditFields ? (
+                  <textarea
+                    value={panelDetail}
+                    onChange={(e) => setPanelDetail(e.target.value)}
+                    rows={4}
+                    placeholder="Add task detail..."
+                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                ) : (
+                  <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.task_detail || <span className="text-stone/60">No detail provided.</span>}
+                  </div>
+                )}
               </div>
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
-                <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                  {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
-                </div>
+                {panelCanEditFields ? (
+                  <textarea
+                    value={panelTaskNotes}
+                    onChange={(e) => setPanelTaskNotes(e.target.value)}
+                    rows={5}
+                    placeholder="Add task notes..."
+                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                ) : (
+                  <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
+                  </div>
+                )}
               </div>
 
               {!selectedTask.is_collaborative && (
