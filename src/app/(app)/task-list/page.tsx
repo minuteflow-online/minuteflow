@@ -185,7 +185,7 @@ export default function TaskListPage() {
     task_notes: "",
   });
 
-  const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
+  const [selectedTask, setSelectedTask] = useState<VATaskRow | null>(null);
   const [panelStatus, setPanelStatus] = useState<AssignedTaskStatus>("pending");
   const [panelAccount, setPanelAccount] = useState("");
   const [panelProject, setPanelProject] = useState("");
@@ -306,8 +306,31 @@ export default function TaskListPage() {
     [addProjectId, formTasksByProject]
   );
 
+  const panelCanEditFields = Boolean(selectedTask && !selectedTask.is_collaborative);
+
+  const panelProjectsForAccount = useMemo(
+    () => formProjects.filter((project) => project.account === panelAccount),
+    [formProjects, panelAccount]
+  );
+  const panelProjectId = useMemo(
+    () =>
+      formProjects.find(
+        (project) => project.account === panelAccount && project.project_name === panelProject
+      )?.id ?? null,
+    [formProjects, panelAccount, panelProject]
+  );
+  const panelTasksForProject = useMemo(
+    () => (panelProjectId ? formTasksByProject[panelProjectId] ?? [] : []),
+    [panelProjectId, formTasksByProject]
+  );
+
+  const filteredTasks = useMemo(
+    () => (statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter)),
+    [tasks, statusFilter]
+  );
+
   const openCreate = useCallback(() => {
-    setExpandedTaskId(null);
+    setSelectedTask(null);
     setPanelStatus("pending");
     setPanelAccount("");
     setPanelProject("");
@@ -348,49 +371,10 @@ export default function TaskListPage() {
     });
   }, []);
 
-  const filteredTasks = useMemo(
-    () => (statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter)),
-    [tasks, statusFilter]
-  );
-
-  const panelProjectsForAccount = useMemo(
-    () => formProjects.filter((project) => project.account === panelAccount),
-    [formProjects, panelAccount]
-  );
-  const panelProjectId = useMemo(
-    () =>
-      formProjects.find((project) => project.account === panelAccount && project.project_name === panelProject)?.id ??
-      null,
-    [formProjects, panelAccount, panelProject]
-  );
-  const panelTasksForProject = useMemo(
-    () => (panelProjectId ? formTasksByProject[panelProjectId] ?? [] : []),
-    [panelProjectId, formTasksByProject]
-  );
-
-  const expandedTask = useMemo(() => tasks.find((task) => task.id === expandedTaskId) ?? null, [tasks, expandedTaskId]);
-  const panelCanEditFields = Boolean(expandedTask && !expandedTask.is_collaborative);
-
-  const resetTaskEditor = useCallback(() => {
-    setPanelStatus("pending");
-    setPanelAccount("");
-    setPanelProject("");
-    setPanelTaskName("");
-    setPanelDueDate("");
-    setPanelDetail("");
-    setPanelTaskNotes("");
-    setPanelNotes("");
-    setPanelSaving(false);
-    setPanelUploadSaving(false);
-    setPanelMsg(null);
-    setAttachments([]);
-    setAttachmentsLoading(false);
-  }, []);
-
-  const openTask = useCallback(
+  const openPanel = useCallback(
     async (task: VATaskRow) => {
       closeCreate();
-      setExpandedTaskId(task.id);
+      setSelectedTask(task);
       setPanelStatus(task.status);
       setPanelAccount(task.assigned_tasks.account ?? "");
       setPanelProject(task.assigned_tasks.project ?? "");
@@ -408,43 +392,22 @@ export default function TaskListPage() {
     [closeCreate, fetchAttachments]
   );
 
-  const closeTask = useCallback(() => {
-    setExpandedTaskId(null);
-    resetTaskEditor();
-  }, [resetTaskEditor]);
-
-  const toggleTask = useCallback(
-    (task: VATaskRow) => {
-      if (expandedTaskId === task.id) {
-        closeTask();
-        return;
-      }
-
-      void openTask(task);
-    },
-    [closeTask, expandedTaskId, openTask]
-  );
-
-  const handleQuickStatusChange = useCallback(
-    async (task: VATaskRow, nextStatus: AssignedTaskStatus) => {
-      try {
-        const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: nextStatus }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        await fetchTasks();
-        if (expandedTaskId === task.id) {
-          setPanelStatus(nextStatus);
-        }
-      } catch {
-        setError("Unable to update task status right now.");
-      }
-    },
-    [expandedTaskId, fetchTasks]
-  );
+  const closePanel = useCallback(() => {
+    setSelectedTask(null);
+    setPanelStatus("pending");
+    setPanelAccount("");
+    setPanelProject("");
+    setPanelTaskName("");
+    setPanelDueDate("");
+    setPanelDetail("");
+    setPanelTaskNotes("");
+    setPanelNotes("");
+    setPanelSaving(false);
+    setPanelUploadSaving(false);
+    setPanelMsg(null);
+    setAttachments([]);
+    setAttachmentsLoading(false);
+  }, []);
 
   const handleAddTask = useCallback(async () => {
     if (!addForm.task_name.trim()) {
@@ -489,12 +452,12 @@ export default function TaskListPage() {
     }
   }, [addForm.account, addForm.due_date, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, fetchTasks]);
 
-  const handleSaveTask = useCallback(async () => {
-    if (!expandedTask) return;
+  const handleSavePanel = useCallback(async () => {
+    if (!selectedTask) return;
 
-    const taskId = expandedTask.assigned_tasks.id;
-    const previousStatus = expandedTask.status;
-    const previousNotes = expandedTask.notes ?? "";
+    const taskId = selectedTask.assigned_tasks.id;
+    const previousStatus = selectedTask.status;
+    const previousNotes = selectedTask.notes ?? "";
     const nextStatus = panelStatus;
     const statusChanged = nextStatus !== previousStatus;
     const nextAccount = panelAccount.trim();
@@ -506,15 +469,15 @@ export default function TaskListPage() {
     const nextNotes = panelNotes;
     const notesChanged = !sameText(nextNotes, previousNotes);
     const metadataChanged =
-      !sameText(nextAccount, expandedTask.assigned_tasks.account) ||
-      !sameText(nextProject, expandedTask.assigned_tasks.project) ||
-      !sameText(nextTaskName, expandedTask.assigned_tasks.task_name) ||
-      !sameText(nextDueDate, expandedTask.assigned_tasks.due_date) ||
-      !sameText(nextDetail, expandedTask.assigned_tasks.task_detail) ||
-      !sameText(nextTaskNotes, expandedTask.assigned_tasks.task_notes);
+      !sameText(nextAccount, selectedTask.assigned_tasks.account) ||
+      !sameText(nextProject, selectedTask.assigned_tasks.project) ||
+      !sameText(nextTaskName, selectedTask.assigned_tasks.task_name) ||
+      !sameText(nextDueDate, selectedTask.assigned_tasks.due_date) ||
+      !sameText(nextDetail, selectedTask.assigned_tasks.task_detail) ||
+      !sameText(nextTaskNotes, selectedTask.assigned_tasks.task_notes);
 
-    if (expandedTask.is_collaborative || (!statusChanged && !metadataChanged && !notesChanged)) {
-      closeTask();
+    if (selectedTask.is_collaborative || (!statusChanged && !metadataChanged && !notesChanged)) {
+      closePanel();
       return;
     }
 
@@ -541,18 +504,60 @@ export default function TaskListPage() {
       });
       if (!saveRes.ok) throw new Error(`HTTP ${saveRes.status}`);
 
-      await fetchTasks();
+      const updatedAt = new Date().toISOString();
+      setTasks((prev) =>
+        sortTasks(
+          prev.map((row) => {
+            if (row.id !== selectedTask.id) return row;
+
+            return {
+              ...row,
+              status: statusChanged ? nextStatus : row.status,
+              notes: notesChanged ? nextNotes : row.notes,
+              updated_at: statusChanged || notesChanged ? updatedAt : row.updated_at,
+              assigned_tasks: {
+                ...row.assigned_tasks,
+                account: metadataChanged ? (nextAccount || null) : row.assigned_tasks.account,
+                project: metadataChanged ? (nextProject || null) : row.assigned_tasks.project,
+                task_name: metadataChanged ? nextTaskName : row.assigned_tasks.task_name,
+                due_date: metadataChanged ? (nextDueDate || null) : row.assigned_tasks.due_date,
+                task_detail: metadataChanged ? (nextDetail || null) : row.assigned_tasks.task_detail,
+                task_notes: metadataChanged ? (nextTaskNotes || null) : row.assigned_tasks.task_notes,
+                updated_at: metadataChanged ? updatedAt : row.assigned_tasks.updated_at,
+              },
+            };
+          })
+        )
+      );
+      setSelectedTask((current) =>
+        current
+          ? {
+              ...current,
+              status: statusChanged ? nextStatus : current.status,
+              notes: notesChanged ? nextNotes : current.notes,
+              updated_at: statusChanged || notesChanged ? updatedAt : current.updated_at,
+              assigned_tasks: {
+                ...current.assigned_tasks,
+                account: metadataChanged ? (nextAccount || null) : current.assigned_tasks.account,
+                project: metadataChanged ? (nextProject || null) : current.assigned_tasks.project,
+                task_name: metadataChanged ? nextTaskName : current.assigned_tasks.task_name,
+                due_date: metadataChanged ? (nextDueDate || null) : current.assigned_tasks.due_date,
+                task_detail: metadataChanged ? (nextDetail || null) : current.assigned_tasks.task_detail,
+                task_notes: metadataChanged ? (nextTaskNotes || null) : current.assigned_tasks.task_notes,
+                updated_at: metadataChanged ? updatedAt : current.assigned_tasks.updated_at,
+              },
+            }
+          : current
+      );
       setPanelMsg({ type: "ok", text: "Changes saved." });
-      window.setTimeout(() => closeTask(), 600);
+      window.setTimeout(() => closePanel(), 800);
     } catch {
       setPanelMsg({ type: "err", text: "Unable to save changes right now." });
     } finally {
       setPanelSaving(false);
     }
   }, [
-    closeTask,
-    expandedTask,
-    fetchTasks,
+    closePanel,
     panelAccount,
     panelDetail,
     panelDueDate,
@@ -561,13 +566,14 @@ export default function TaskListPage() {
     panelStatus,
     panelTaskName,
     panelTaskNotes,
+    selectedTask,
   ]);
 
   const handleAttachmentUpload = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
       event.target.value = "";
-      if (!file || !expandedTask) return;
+      if (!file || !selectedTask) return;
 
       setPanelUploadSaving(true);
       setPanelMsg(null);
@@ -576,7 +582,7 @@ export default function TaskListPage() {
         const formData = new FormData();
         formData.append("file", file);
 
-        const res = await fetch(`/api/assigned-tasks/${expandedTask.assigned_tasks.id}/attachments`, {
+        const res = await fetch(`/api/assigned-tasks/${selectedTask.assigned_tasks.id}/attachments`, {
           method: "POST",
           body: formData,
         });
@@ -592,7 +598,7 @@ export default function TaskListPage() {
           throw new Error(message);
         }
 
-        await fetchAttachments(expandedTask.assigned_tasks.id);
+        await fetchAttachments(selectedTask.assigned_tasks.id);
         setPanelMsg({ type: "ok", text: "Attachment uploaded." });
       } catch (err) {
         setPanelMsg({ type: "err", text: err instanceof Error ? err.message : "Unable to upload file right now." });
@@ -600,7 +606,7 @@ export default function TaskListPage() {
         setPanelUploadSaving(false);
       }
     },
-    [fetchAttachments, expandedTask]
+    [fetchAttachments, selectedTask]
   );
 
   return (
@@ -664,358 +670,93 @@ export default function TaskListPage() {
               No assigned tasks found.
             </div>
           ) : (
-            <div className="space-y-3">
-              {filteredTasks.map((task) => {
-                const detail = task.assigned_tasks;
-                const due = formatDueDate(detail.due_date);
-                const isExpanded = expandedTaskId === task.id;
-                const dueTextClass = due.isOverdue ? "text-terracotta" : "text-walnut";
-                const canPlay = ["pending", "on_queue", "revision_needed"].includes(task.status);
-                const canSubmit =
-                  !task.is_collaborative &&
-                  !["submitted", "approved", "completed", "paid", "cancelled"].includes(task.status);
+            <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-sand bg-parchment">
+                    <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut" />
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Task Name</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Objective</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Detail</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Due Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTasks.map((task) => {
+                    const detail = task.assigned_tasks;
+                    const due = formatDueDate(detail.due_date);
+                    const isSelected = selectedTask?.id === task.id;
+                    const dueTextClass = due.isOverdue ? "text-terracotta" : "text-walnut";
 
-                return (
-                  <article key={task.id} className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-                    <button
-                      type="button"
-                      onClick={() => void toggleTask(task)}
-                      className="flex w-full items-start justify-between gap-4 px-4 py-4 text-left transition-colors hover:bg-parchment/30"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate font-semibold text-walnut">{detail.task_name}</span>
-                          {task.is_collaborative && (
-                            <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
-                              Collaborative
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-stone">
-                          <span className="truncate">{detail.account || "—"}</span>
-                          <span className={dueTextClass}>{due.isOverdue ? "Overdue · " : ""}{due.label}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-shrink-0 flex-wrap items-center justify-end gap-2">
-                        {canPlay && (
+                    return (
+                      <tr
+                        key={task.id}
+                        className={`group cursor-pointer border-b border-sand last:border-0 transition-colors hover:bg-parchment/30 ${
+                          isSelected ? "bg-parchment/50" : ""
+                        }`}
+                        onClick={() => void openPanel(task)}
+                      >
+                        <td className="w-8 px-3 py-3" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleQuickStatusChange(task, "in_progress");
-                            }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-sand bg-white text-walnut transition-colors hover:bg-parchment"
-                            aria-label={`Mark ${detail.task_name} in progress`}
+                            onClick={() => void openPanel(task)}
+                            className="flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-walnut"
+                            aria-label={`Open ${detail.task_name}`}
                           >
-                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                              <path d="M8 5v14l11-7z" />
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M9 18l6-6-6-6" />
                             </svg>
                           </button>
-                        )}
-                        {canSubmit && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleQuickStatusChange(task, "submitted");
-                            }}
-                            className="rounded-lg bg-sage px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90"
-                          >
-                            Submit
-                          </button>
-                        )}
-                        <StatusBadge status={task.status} />
-                        <svg
-                          className={`h-4 w-4 shrink-0 text-stone transition-transform ${isExpanded ? "rotate-90" : ""}`}
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          aria-hidden="true"
-                        >
-                          <path d="M9 18l6-6-6-6" />
-                        </svg>
-                      </div>
-                    </button>
+                        </td>
 
-                    {isExpanded && (
-                      <div className="border-t border-sand px-4 py-4">
-                        <div className="grid gap-4 lg:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                            {panelCanEditFields ? (
-                              <select
-                                value={panelAccount}
-                                onChange={(e) => {
-                                  const nextAccount = e.target.value;
-                                  setPanelAccount(nextAccount);
-                                  setPanelProject("");
-                                  setPanelTaskName("");
-                                }}
-                                className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                              >
-                                <option value="">Select account...</option>
-                                {accountOptions.map((account) => (
-                                  <option key={account} value={account}>
-                                    {account}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                                {expandedTask?.assigned_tasks.account || <span className="text-stone/60">—</span>}
-                              </div>
+                        <td className="px-3 py-3 text-[13px]">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium text-walnut">{detail.task_name}</span>
+                            {task.is_collaborative && (
+                              <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
+                                Collaborative
+                              </span>
                             )}
                           </div>
+                        </td>
 
-                          <div>
-                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Objective</label>
-                            {panelCanEditFields ? (
-                              <select
-                                value={panelProject}
-                                onChange={(e) => {
-                                  setPanelProject(e.target.value);
-                                  setPanelTaskName("");
-                                }}
-                                disabled={!panelAccount}
-                                className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                              >
-                                <option value="">{panelAccount ? "Select objective..." : "Select account first..."}</option>
-                                {panelProjectsForAccount.map((project) => (
-                                  <option key={project.id} value={project.project_name}>
-                                    {project.project_name}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                                {expandedTask?.assigned_tasks.project || <span className="text-stone/60">—</span>}
-                              </div>
-                            )}
-                          </div>
+                        <td className="px-3 py-3 text-[13px] text-walnut">
+                          {detail.account || <span className="text-stone/60">—</span>}
+                        </td>
 
-                          <div>
-                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                            {panelCanEditFields ? (
-                              panelTasksForProject.length > 0 ? (
-                                <select
-                                  value={panelTaskName}
-                                  onChange={(e) => setPanelTaskName(e.target.value)}
-                                  disabled={!panelProject}
-                                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                                >
-                                  <option value="">{panelProject ? "Select task..." : "Select objective first..."}</option>
-                                  {panelTasksForProject.map((taskOption) => (
-                                    <option key={taskOption.id} value={taskOption.task_name}>
-                                      {taskOption.task_name}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <input
-                                  type="text"
-                                  value={panelTaskName}
-                                  onChange={(e) => setPanelTaskName(e.target.value)}
-                                  placeholder="Task name"
-                                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                                />
-                              )
-                            ) : (
-                              <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] font-medium text-espresso">
-                                {expandedTask?.assigned_tasks.task_name}
-                              </div>
-                            )}
-                          </div>
+                        <td className="px-3 py-3 text-[13px] text-walnut">
+                          {detail.project || <span className="text-stone/60">—</span>}
+                        </td>
 
-                          <div>
-                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                            {panelCanEditFields ? (
-                              <input
-                                type="date"
-                                value={formatDateInputValue(panelDueDate)}
-                                onChange={(e) => setPanelDueDate(e.target.value)}
-                                className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                              />
-                            ) : (
-                              <div
-                                className={`rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] ${
-                                  due.isOverdue ? "text-terracotta" : "text-espresso"
-                                }`}
-                              >
-                                {due.label}
-                                {due.isOverdue && detail.due_date ? " · Overdue" : ""}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Detail</label>
-                            {panelCanEditFields ? (
-                              <textarea
-                                value={panelDetail}
-                                onChange={(e) => setPanelDetail(e.target.value)}
-                                rows={4}
-                                placeholder="Add task detail..."
-                                className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                              />
-                            ) : (
-                              <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                                {detail.task_detail || <span className="text-stone/60">No detail provided.</span>}
-                              </div>
-                            )}
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
-                            {panelCanEditFields ? (
-                              <textarea
-                                value={panelTaskNotes}
-                                onChange={(e) => setPanelTaskNotes(e.target.value)}
-                                rows={4}
-                                placeholder="Add task notes..."
-                                className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                              />
-                            ) : (
-                              <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                                {detail.task_notes || <span className="text-stone/60">No notes provided.</span>}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {!task.is_collaborative && (
-                          <div className="mt-4">
-                            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">My Notes</label>
-                            <textarea
-                              value={panelNotes}
-                              onChange={(e) => setPanelNotes(e.target.value)}
-                              rows={4}
-                              placeholder="Add your private notes for this task..."
-                              className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                            />
-                          </div>
-                        )}
-
-                        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                          <div>
-                            <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
-                            {task.is_collaborative ? (
-                              <div className="space-y-3 rounded-xl border border-slate-blue/20 bg-slate-blue-soft px-3 py-3 text-sm text-slate-blue">
-                                <StatusBadge status={task.status} />
-                                <p>Collaborative task — status is read only here.</p>
-                              </div>
-                            ) : (
-                              <div className="space-y-3">
-                                <StatusBadge status={task.status} />
-                                <select
-                                  value={panelStatus}
-                                  onChange={(e) => setPanelStatus(e.target.value as AssignedTaskStatus)}
-                                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                                >
-                                  {STATUS_FILTERS.filter(
-                                    (option): option is { value: AssignedTaskStatus; label: string } => option.value !== "all"
-                                  ).map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            )}
-                          </div>
-
-                          <div>
-                            <div className="mb-2 flex items-center justify-between gap-3">
-                              <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
-                              <button
-                                type="button"
-                                onClick={() => panelAttachmentInputRef.current?.click()}
-                                disabled={panelUploadSaving}
-                                className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {panelUploadSaving ? "Uploading..." : "Attach File"}
-                              </button>
-                            </div>
-                            <input
-                              ref={panelAttachmentInputRef}
-                              type="file"
-                              className="hidden"
-                              onChange={(e) => void handleAttachmentUpload(e)}
-                            />
-                            {attachmentsLoading ? (
-                              <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
-                                <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                                </svg>
-                                Loading attachments...
-                              </div>
-                            ) : attachments.length === 0 ? (
-                              <p className="py-2 text-[12px] text-stone/50">No attachments.</p>
-                            ) : (
-                              <div className="space-y-1.5">
-                                {attachments.map((att) => (
-                                  <div key={att.id} className="flex items-start gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
-                                    <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                      <polyline points="14 2 14 8 20 8" />
-                                    </svg>
-                                    <div className="min-w-0 flex-1">
-                                      {att.url ? (
-                                        <a
-                                          href={att.url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="block truncate text-[12px] text-terracotta hover:underline"
-                                          title={att.filename}
-                                        >
-                                          {att.filename}
-                                        </a>
-                                      ) : (
-                                        <span className="block truncate text-[12px] text-walnut" title={att.filename}>
-                                          {att.filename}
-                                        </span>
-                                      )}
-                                      <div className="mt-0.5 text-[10px] text-stone">
-                                        {formatFileSize(att.file_size)}
-                                        {att.mime_type ? ` · ${att.mime_type}` : ""}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {panelMsg?.type === "err" && <p className="mt-4 text-xs font-medium text-red-500">{panelMsg.text}</p>}
-                        {panelMsg?.type === "ok" && <p className="mt-4 text-xs font-medium text-sage">{panelMsg.text}</p>}
-
-                        <div className="mt-4 flex items-center justify-end gap-3 border-t border-sand pt-4">
-                          <button type="button" onClick={closeTask} className="text-xs text-stone hover:text-espresso">
-                            Cancel
-                          </button>
-                          {!task.is_collaborative && (
-                            <button
-                              type="button"
-                              onClick={() => void handleSaveTask()}
-                              disabled={panelSaving}
-                              className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {panelSaving ? "Saving..." : "Save Changes"}
-                            </button>
+                        <td className="max-w-[220px] px-3 py-3 text-[13px] text-walnut">
+                          {detail.task_detail ? (
+                            <span className="block truncate text-stone/70" title={detail.task_detail}>
+                              {detail.task_detail.length > 45 ? `${detail.task_detail.slice(0, 45)}…` : detail.task_detail}
+                            </span>
+                          ) : (
+                            <span className="text-stone/30">—</span>
                           )}
-                        </div>
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
+                        </td>
+
+                        <td className="px-3 py-3 text-[13px]">
+                          <StatusBadge status={task.status} />
+                        </td>
+
+                        <td className={`px-3 py-3 text-[13px] font-medium ${dueTextClass}`}>
+                          {due.isOverdue ? "Overdue · " : ""}
+                          {due.label}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
+      </div>
 
       {isCreating && (
         <div className="fixed inset-0 z-40 flex items-stretch">
@@ -1163,7 +904,321 @@ export default function TaskListPage() {
           </div>
         </div>
       )}
-      </div>
+
+      {selectedTask && (
+        <div className="fixed inset-0 z-40 flex items-stretch">
+          <div className="flex-1 bg-black/20" onClick={closePanel} />
+
+          <div className="flex w-[520px] max-w-full flex-col overflow-hidden border-l border-sand bg-white shadow-2xl">
+            <div className="shrink-0 flex items-center justify-between border-b border-sand px-5 py-4">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={closePanel}
+                  className="flex h-7 w-7 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-espresso"
+                  aria-label="Close task detail panel"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="19" y1="12" x2="5" y2="12" />
+                    <polyline points="12 19 5 12 12 5" />
+                  </svg>
+                </button>
+                <span className="text-[13px] font-semibold text-walnut">Task Detail</span>
+              </div>
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
+                {panelCanEditFields ? (
+                  <select
+                    value={panelAccount}
+                    onChange={(e) => {
+                      const nextAccount = e.target.value;
+                      setPanelAccount(nextAccount);
+                      setPanelProject("");
+                      setPanelTaskName("");
+                    }}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  >
+                    <option value="">Select account...</option>
+                    {accountOptions.map((account) => (
+                      <option key={account} value={account}>
+                        {account}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.account || <span className="text-stone/60">—</span>}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Objective</label>
+                {panelCanEditFields ? (
+                  <select
+                    value={panelProject}
+                    onChange={(e) => {
+                      setPanelProject(e.target.value);
+                      setPanelTaskName("");
+                    }}
+                    disabled={!panelAccount}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
+                  >
+                    <option value="">{panelAccount ? "Select objective..." : "Select account first..."}</option>
+                    {panelProjectsForAccount.map((project) => (
+                      <option key={project.id} value={project.project_name}>
+                        {project.project_name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.project || <span className="text-stone/60">—</span>}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
+                {panelCanEditFields ? (
+                  panelTasksForProject.length > 0 ? (
+                    <select
+                      value={panelTaskName}
+                      onChange={(e) => setPanelTaskName(e.target.value)}
+                      disabled={!panelProject}
+                      className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
+                    >
+                      <option value="">{panelProject ? "Select task..." : "Select objective first..."}</option>
+                      {panelTasksForProject.map((task) => (
+                        <option key={task.id} value={task.task_name}>
+                          {task.task_name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={panelTaskName}
+                      onChange={(e) => setPanelTaskName(e.target.value)}
+                      placeholder="Task name"
+                      className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                    />
+                  )
+                ) : (
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] font-medium text-espresso">
+                    {selectedTask.assigned_tasks.task_name}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
+                {panelCanEditFields ? (
+                  <input
+                    type="date"
+                    value={formatDateInputValue(panelDueDate)}
+                    onChange={(e) => setPanelDueDate(e.target.value)}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                ) : (
+                  (() => {
+                    const due = formatDueDate(selectedTask.assigned_tasks.due_date);
+                    return (
+                      <div
+                        className={`rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] ${
+                          due.isOverdue ? "text-terracotta" : "text-espresso"
+                        }`}
+                      >
+                        {due.label}
+                        {due.isOverdue && selectedTask.assigned_tasks.due_date ? " · Overdue" : ""}
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Detail</label>
+                {panelCanEditFields ? (
+                  <textarea
+                    value={panelDetail}
+                    onChange={(e) => setPanelDetail(e.target.value)}
+                    rows={4}
+                    placeholder="Add task detail..."
+                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                ) : (
+                  <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.task_detail || <span className="text-stone/60">No detail provided.</span>}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
+                {panelCanEditFields ? (
+                  <textarea
+                    value={panelTaskNotes}
+                    onChange={(e) => setPanelTaskNotes(e.target.value)}
+                    rows={5}
+                    placeholder="Add task notes..."
+                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                ) : (
+                  <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
+                  </div>
+                )}
+              </div>
+
+              {!selectedTask.is_collaborative && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">My Notes</label>
+                  <textarea
+                    value={panelNotes}
+                    onChange={(e) => setPanelNotes(e.target.value)}
+                    rows={5}
+                    placeholder="Add your private notes for this task..."
+                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned To</label>
+                {selectedTask.is_collaborative ? (
+                  <div className="space-y-3 rounded-xl border border-slate-blue/20 bg-slate-blue-soft px-3 py-3 text-sm text-slate-blue">
+                    <StatusBadge status={selectedTask.status} />
+                    <p>Collaborative task — status is read only here.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <StatusBadge status={selectedTask.status} />
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">
+                        Update Status
+                      </label>
+                      <select
+                        value={panelStatus}
+                        onChange={(e) => setPanelStatus(e.target.value as AssignedTaskStatus)}
+                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                      >
+                        {STATUS_FILTERS.filter(
+                          (option): option is { value: AssignedTaskStatus; label: string } => option.value !== "all"
+                        ).map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => panelAttachmentInputRef.current?.click()}
+                      disabled={panelUploadSaving}
+                      className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {panelUploadSaving ? "Uploading..." : "Attach File"}
+                    </button>
+                    <input
+                      ref={panelAttachmentInputRef}
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => void handleAttachmentUpload(e)}
+                    />
+                  </div>
+                </div>
+                {attachmentsLoading ? (
+                  <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
+                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                    Loading attachments...
+                  </div>
+                ) : attachments.length === 0 ? (
+                  <p className="py-2 text-[12px] text-stone/50">No attachments.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {attachments.map((att) => (
+                      <div key={att.id} className="flex items-start gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
+                        <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                        </svg>
+                        <div className="min-w-0 flex-1">
+                          {att.url ? (
+                            <a
+                              href={att.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block truncate text-[12px] text-terracotta hover:underline"
+                              title={att.filename}
+                            >
+                              {att.filename}
+                            </a>
+                          ) : (
+                            <span className="block truncate text-[12px] text-walnut" title={att.filename}>
+                              {att.filename}
+                            </span>
+                          )}
+                          <div className="mt-0.5 text-[10px] text-stone">
+                            {formatFileSize(att.file_size)}
+                            {att.mime_type ? ` · ${att.mime_type}` : ""}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {panelMsg?.type === "err" && <p className="text-xs font-medium text-red-500">{panelMsg.text}</p>}
+              {panelMsg?.type === "ok" && <p className="text-xs font-medium text-sage">{panelMsg.text}</p>}
+            </div>
+
+            <div className="shrink-0 flex items-center justify-between border-t border-sand px-5 py-4">
+              <div>
+                {selectedTask.assigned_tasks.created_at && (
+                  <span className="text-[11px] text-stone">
+                    Created {new Date(selectedTask.assigned_tasks.created_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={closePanel} className="cursor-pointer text-xs text-stone hover:text-espresso">
+                  Cancel
+                </button>
+                {!selectedTask.is_collaborative && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSavePanel()}
+                    disabled={panelSaving}
+                    className="cursor-pointer rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {panelSaving ? "Saving..." : "Save Changes"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
