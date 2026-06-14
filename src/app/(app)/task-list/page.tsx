@@ -173,13 +173,15 @@ export default function TaskListPage() {
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
   const [formTasksByProject, setFormTasksByProject] = useState<Record<number, FormTask[]>>({});
 
-  const [addOpen, setAddOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addForm, setAddForm] = useState({
     account: "",
     project: "",
     task_name: "",
+    task_detail: "",
+    due_date: "",
     task_notes: "",
   });
 
@@ -327,21 +329,51 @@ export default function TaskListPage() {
     [tasks, statusFilter]
   );
 
-  const openAddModal = useCallback(() => {
-    setAddOpen(true);
-    setAddError(null);
-    setAddForm({ account: "", project: "", task_name: "", task_notes: "" });
-  }, []);
-
-  const closeAddModal = useCallback(() => {
-    setAddOpen(false);
+  const openCreate = useCallback(() => {
+    setSelectedTask(null);
+    setPanelStatus("pending");
+    setPanelAccount("");
+    setPanelProject("");
+    setPanelTaskName("");
+    setPanelDueDate("");
+    setPanelDetail("");
+    setPanelTaskNotes("");
+    setPanelNotes("");
+    setPanelSaving(false);
+    setPanelUploadSaving(false);
+    setPanelMsg(null);
+    setAttachments([]);
+    setAttachmentsLoading(false);
+    setIsCreating(true);
     setAddError(null);
     setAddSaving(false);
-    setAddForm({ account: "", project: "", task_name: "", task_notes: "" });
+    setAddForm({
+      account: "",
+      project: "",
+      task_name: "",
+      task_detail: "",
+      due_date: "",
+      task_notes: "",
+    });
+  }, []);
+
+  const closeCreate = useCallback(() => {
+    setIsCreating(false);
+    setAddError(null);
+    setAddSaving(false);
+    setAddForm({
+      account: "",
+      project: "",
+      task_name: "",
+      task_detail: "",
+      due_date: "",
+      task_notes: "",
+    });
   }, []);
 
   const openPanel = useCallback(
     async (task: VATaskRow) => {
+      closeCreate();
       setSelectedTask(task);
       setPanelStatus(task.status);
       setPanelAccount(task.assigned_tasks.account ?? "");
@@ -357,7 +389,7 @@ export default function TaskListPage() {
       setAttachmentsLoading(true);
       await fetchAttachments(task.assigned_tasks.id);
     },
-    [fetchAttachments]
+    [closeCreate, fetchAttachments]
   );
 
   const closePanel = useCallback(() => {
@@ -394,6 +426,8 @@ export default function TaskListPage() {
           account: addForm.account || null,
           project: addForm.project || null,
           task_name: addForm.task_name.trim(),
+          task_detail: addForm.task_detail.trim() || null,
+          due_date: addForm.due_date || null,
           task_notes: addForm.task_notes.trim() || null,
         }),
       });
@@ -410,13 +444,13 @@ export default function TaskListPage() {
       }
 
       await fetchTasks();
-      closeAddModal();
+      closeCreate();
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Unable to add task right now.");
     } finally {
       setAddSaving(false);
     }
-  }, [addForm.account, addForm.project, addForm.task_name, addForm.task_notes, closeAddModal, fetchTasks]);
+  }, [addForm.account, addForm.due_date, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, fetchTasks]);
 
   const handleSavePanel = useCallback(async () => {
     if (!selectedTask) return;
@@ -587,10 +621,10 @@ export default function TaskListPage() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={openAddModal}
+              onClick={openCreate}
               className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
             >
-              Add Task
+              + Create Task
             </button>
             <select
               value={statusFilter}
@@ -724,29 +758,28 @@ export default function TaskListPage() {
         </div>
       </div>
 
-      {addOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center px-4">
-          <div className="absolute inset-0 bg-black/30" onClick={closeAddModal} />
-          <div className="relative z-10 w-full max-w-2xl overflow-hidden rounded-2xl border border-sand bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-sand px-5 py-4">
-              <div>
-                <h2 className="text-[13px] font-semibold text-walnut">Add Task</h2>
-                <p className="text-[11px] text-stone">Create a task for yourself using admin-managed options.</p>
+      {isCreating && (
+        <div className="fixed inset-0 z-40 flex items-stretch">
+          <div className="flex-1 bg-black/20" onClick={closeCreate} />
+
+          <div className="flex w-[520px] max-w-full flex-col overflow-hidden border-l border-sand bg-white shadow-2xl">
+            <div className="shrink-0 flex items-center justify-between border-b border-sand px-5 py-4">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={closeCreate}
+                  className="flex h-7 w-7 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-espresso"
+                  aria-label="Close create task panel"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="15 18 9 12 15 6" />
+                  </svg>
+                </button>
+                <span className="text-[13px] font-semibold text-walnut">New Task</span>
               </div>
-              <button
-                type="button"
-                onClick={closeAddModal}
-                className="flex h-7 w-7 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-espresso"
-                aria-label="Close add task dialog"
-              >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
             </div>
 
-            <div className="space-y-4 px-5 py-5">
+            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
                 <select
@@ -821,6 +854,27 @@ export default function TaskListPage() {
               </div>
 
               <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
+                <input
+                  type="date"
+                  value={addForm.due_date}
+                  onChange={(e) => setAddForm((form) => ({ ...form, due_date: e.target.value }))}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Detail</label>
+                <input
+                  type="text"
+                  value={addForm.task_detail}
+                  onChange={(e) => setAddForm((form) => ({ ...form, task_detail: e.target.value }))}
+                  placeholder="Short summary or reference..."
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                />
+              </div>
+
+              <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Notes</label>
                 <textarea
                   value={addForm.task_notes}
@@ -834,8 +888,8 @@ export default function TaskListPage() {
               {addError && <p className="text-xs font-medium text-red-500">{addError}</p>}
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t border-sand px-5 py-4">
-              <button type="button" onClick={closeAddModal} className="text-xs text-stone hover:text-espresso">
+            <div className="shrink-0 flex items-center justify-end gap-3 border-t border-sand px-5 py-4">
+              <button type="button" onClick={closeCreate} className="text-xs text-stone hover:text-espresso">
                 Cancel
               </button>
               <button
