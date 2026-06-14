@@ -28,6 +28,121 @@ Manny handles research, Supabase queries, user communication, commits, and deplo
 - Modify `.env`, secrets, or configuration files
 - Run database migrations or schema changes — Manny does those
 - Refactor code that isn't part of the task
+- **Invent design** — Manny is the designer. You are the implementer. Follow Manny's design spec exactly.
+
+---
+
+## Design — Manny Owns It, You Execute It
+
+**Manny is the designer. You are the implementer.** Manny decides what the UI looks like, which component to match, what changes. Your job is to build exactly what he specified — nothing more.
+
+### Your design rules
+1. **Follow Manny's spec exactly.** If Manny says "match `AssignedTasksWidget`," read that file and copy its card structure, spacing, and color usage. Don't improvise.
+2. **Never introduce new colors.** MinuteFlow has a fixed custom palette (see below). Use only what's already in the codebase. If you're not sure which color fits, look at the nearest similar component and match it.
+3. **Never introduce new UI patterns.** Cards, badges, buttons, modals — copy the pattern from an existing component. Don't invent a new one.
+4. **No design decision? Ask.** If Manny's ticket is silent on what a UI element should look like and you can't derive it from an existing component, send `JUN_QUESTION:<taskId>:How should X look? Which component should I match?` rather than guessing.
+
+### MinuteFlow Color Palette (from `src/app/globals.css`)
+
+**Neutrals — use for text, borders, backgrounds:**
+| Token | Hex | Use for |
+|-------|-----|---------|
+| `cream` | #faf7f2 | Page background |
+| `parchment` | #f3ede4 | Section dividers, subtle backgrounds |
+| `sand` | #e8dfd3 | Borders (cards, inputs, tables) |
+| `clay` | #d4c8b8 | Inactive/disabled borders |
+| `stone` | #b5a898 | Secondary text, placeholder |
+| `bark` | #8b7b6b | Icons, chevrons, tertiary text |
+| `walnut` | #6b5b4b | Section labels (uppercase), strong secondary |
+| `espresso` | #3d3229 | Primary text, headings |
+| `ink` | #2a221a | Darkest text (rare, high emphasis) |
+| `white` | #fffdf9 | Card backgrounds |
+
+**Accents — use for status, actions, highlights:**
+| Token | Hex | Soft version | Use for |
+|-------|-----|-------------|---------|
+| `terracotta` | #c2694f | `terracotta-soft` #f0ddd5 | Errors, warnings, count badges |
+| `sage` | #6b8f71 | `sage-soft` #dce8dd | Primary buttons, approved/completed states |
+| `amber` | #b8860b | `amber-soft` #f5ecd0 | In-progress, caution states |
+| `clay-rose` | #b07d6a | `clay-rose-soft` #f0e0d8 | Accent (rare) |
+| `slate-blue` | #697a8a | `slate-blue-soft` #dfe5ea | Neutral accents |
+| `plum` | #8b6fa8 | `plum-soft` #ede8f5 | Paid status |
+
+### Status Badge Pattern
+
+All status badges follow this exact shape:
+```tsx
+// rounded pill, tiny text, soft bg + matching border
+<span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-{color}-50 text-{color}-600 border border-{color}-200">
+  Label
+</span>
+```
+
+**assigned_tasks status colors** (from `AssignedTasksWidget.tsx`):
+| Status | Classes |
+|--------|---------|
+| on_queue | `bg-stone/10 text-stone border-stone/20` |
+| in_progress | `bg-amber-50 text-amber-500 border-amber-200` |
+| submitted | `bg-sky-50 text-sky-600 border-sky-200` |
+| reviewing | `bg-violet-50 text-violet-600 border-violet-200` |
+| revision_needed | `bg-amber-50 text-amber-600 border-amber-200` |
+| approved | `bg-emerald-50 text-emerald-600 border-emerald-200` |
+| completed | `bg-sage-soft text-sage border-sage/20` |
+| paid | `bg-purple-50 text-purple-600 border-purple-200` |
+| cancelled | `bg-red-50 text-red-500 border-red-200` |
+
+### Card & Layout Patterns
+
+**Section card** (wraps a content block):
+```tsx
+<div className="rounded-xl border border-sand bg-white p-4 space-y-3">
+  <div className="flex items-center justify-between">
+    <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Title</h3>
+  </div>
+  {/* content */}
+</div>
+```
+
+**Task list item** (clickable row inside a card):
+```tsx
+<div className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
+  <div className="flex items-start justify-between gap-2">
+    <span className="text-[13px] font-semibold text-espresso leading-tight">{title}</span>
+    {/* status badge */}
+  </div>
+  <div className="text-[11px] text-stone/80">{meta}</div>
+</div>
+```
+
+**Section label** (above a group of items):
+```tsx
+<p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Label</p>
+```
+
+### Button Patterns
+
+```tsx
+// Primary action
+<button className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50">
+  Action
+</button>
+
+// Secondary / toggle off
+<button className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
+  Option
+</button>
+```
+
+### Form Input Pattern
+
+```tsx
+<input className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white" />
+<select className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white" />
+```
+
+### Where to Look When Manny Names a Component
+
+When Manny says "match X" — read `src/components/X.tsx` or `src/app/.../page.tsx` for that component. Extract its `className` strings and replicate the pattern. Don't guess from memory.
 
 ## ⛔ OFF LIMITS — Hard Rules
 

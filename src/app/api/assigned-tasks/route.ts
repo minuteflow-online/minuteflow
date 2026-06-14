@@ -22,7 +22,7 @@ type AssigneeRow = {
   assigned_at: string | null;
   updated_at: string | null;
   // Supabase returns the joined relation as an array even for a single row
-  profiles: { id: string; full_name: string; username: string }[] | null;
+  profiles?: { id: string; full_name: string; username: string }[] | null;
 };
 
 type TaskRow = {
@@ -141,8 +141,8 @@ export async function GET(request: Request) {
     return Response.json({ tasks: result });
   }
 
-  // VA: return only rows from assigned_task_assignees for this user,
-  // joined with the parent task data
+  // VA: return own rows plus collaborative rows from profiles marked visible
+  // for collaboration.
   let assigneeQuery = supabase
     .from("assigned_task_assignees")
     .select(
@@ -157,10 +157,61 @@ export async function GET(request: Request) {
   }
 
   const { data: assigneeData, error: assigneeError } = await assigneeQuery;
-  if (assigneeError)
+  if (assigneeError) {
     return Response.json({ error: assigneeError.message }, { status: 500 });
+  }
 
-  return Response.json({ tasks: assigneeData ?? [] });
+  const { data: collabProfiles, error: collabProfileError } = await supabase
+    .from("profiles")
+    .select("id, full_name")
+    .eq("visible_for_collaboration", true)
+    .neq("id", user.id);
+
+  if (collabProfileError) {
+    return Response.json({ error: collabProfileError.message }, { status: 500 });
+  }
+
+  const collabVaIds = (collabProfiles ?? []).map((profile) => profile.id);
+  const profileNameMap = Object.fromEntries(
+    (collabProfiles ?? []).map((profile) => [profile.id, profile.full_name])
+  );
+
+  let collabData: AssigneeRow[] = [];
+  if (collabVaIds.length > 0) {
+    let collabQuery = supabase
+      .from("assigned_task_assignees")
+      .select(
+        `id, va_id, status, log_id, notes, assigned_at, updated_at,
+         assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at)`
+      )
+      .in("va_id", collabVaIds)
+      .order("assigned_at", { ascending: false });
+
+    if (statusParam) {
+      collabQuery = collabQuery.eq("status", statusParam);
+    }
+
+    const { data, error } = await collabQuery;
+    if (error) {
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+    collabData = data ?? [];
+  }
+
+  const combined = [
+    ...((assigneeData ?? []).map((task) => ({
+      ...task,
+      is_collaborative: false,
+      collaborator_name: null,
+    })) as Array<AssigneeRow & { is_collaborative: false; collaborator_name: null }>),
+    ...(collabData.map((task) => ({
+      ...task,
+      is_collaborative: true,
+      collaborator_name: profileNameMap[task.va_id] ?? null,
+    })) as Array<AssigneeRow & { is_collaborative: true; collaborator_name: string | null }>),
+  ];
+
+  return Response.json({ tasks: combined });
 }
 
 /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Fragment, useState, useEffect, useCallback } from "react";
 import type { VAAssignedTask, AssignedTaskStatus } from "@/types/database";
 
 interface AssignedTasksWidgetProps {
@@ -57,14 +57,6 @@ export default function AssignedTasksWidget({
   const [updatingIds, setUpdatingIds] = useState<Set<number>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
-  // Add task modal
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [addTaskName, setAddTaskName] = useState("");
-  const [addAccount, setAddAccount] = useState("");
-  const [addProject, setAddProject] = useState("");
-  const [addNotes, setAddNotes] = useState("");
-  const [addSubmitting, setAddSubmitting] = useState(false);
-  const [addError, setAddError] = useState("");
 
   const fetchTasks = useCallback(async () => {
     if (!userId) return;
@@ -165,42 +157,6 @@ export default function AssignedTasksWidget({
     [onPlayAssignedTask]
   );
 
-  const handleAddTask = useCallback(async () => {
-    if (!addTaskName.trim()) {
-      setAddError("Task name is required.");
-      return;
-    }
-    setAddError("");
-    setAddSubmitting(true);
-    try {
-      const res = await fetch("/api/assigned-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task_name: addTaskName.trim(),
-          account: addAccount.trim() || null,
-          project: addProject.trim() || null,
-          task_notes: addNotes.trim() || null,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        setAddError(err.error || "Something went wrong.");
-        return;
-      }
-      // Reset and close
-      setAddTaskName("");
-      setAddAccount("");
-      setAddProject("");
-      setAddNotes("");
-      setShowAddModal(false);
-      fetchTasks();
-    } catch {
-      setAddError("Network error. Please try again.");
-    } finally {
-      setAddSubmitting(false);
-    }
-  }, [addTaskName, addAccount, addProject, addNotes, fetchTasks]);
 
   const statusBadge = (status: AssignedTaskStatus) => {
     switch (status) {
@@ -264,77 +220,67 @@ export default function AssignedTasksWidget({
   };
 
   return (
-    <>
-      <div className="bg-white border border-sand rounded-xl">
-        {/* Header */}
-        <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
-          <button
-            onClick={() => setCollapsed(!collapsed)}
-            className="flex items-center gap-2 cursor-pointer"
+    <div className="bg-white border border-sand rounded-xl">
+      {/* Header */}
+      <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="flex items-center gap-2 cursor-pointer"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            className={`text-bark transition-transform ${collapsed ? "" : "rotate-90"}`}
           >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
-              className={`text-bark transition-transform ${collapsed ? "" : "rotate-90"}`}
-            >
-              <path
-                d="M4 2l4 4-4 4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <h3 className="text-sm font-bold text-espresso">Assigned Tasks</h3>
-          </button>
-          <div className="flex items-center gap-2">
-            {tasks.length > 0 && (
-              <span className="text-[10px] font-semibold py-[2px] px-2 rounded-full bg-terracotta-soft text-terracotta">
-                {tasks.length} task{tasks.length !== 1 ? "s" : ""}
-              </span>
-            )}
-            <button
-              onClick={() => setShowAddModal(true)}
-              title="New Task"
-              className="w-6 h-6 rounded-full flex items-center justify-center bg-parchment hover:bg-sand text-bark hover:text-espresso transition-colors cursor-pointer"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M6 1v10M1 6h10" />
-              </svg>
-            </button>
-          </div>
+            <path
+              d="M4 2l4 4-4 4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <h3 className="text-sm font-bold text-espresso">Assigned Tasks</h3>
+        </button>
+        <div className="flex items-center gap-2">
+          {tasks.length > 0 && (
+            <span className="text-[10px] font-semibold py-[2px] px-2 rounded-full bg-terracotta-soft text-terracotta">
+              {tasks.length} task{tasks.length !== 1 ? "s" : ""}
+            </span>
+          )}
         </div>
+      </div>
 
-        {!collapsed && (
-          <div className="p-[18px_20px]">
-            {loading ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="animate-pulse h-12 w-full bg-parchment rounded-lg" />
-                ))}
-              </div>
-            ) : tasks.length === 0 ? (
-              <p className="text-xs text-stone py-3 text-center">No assigned tasks.</p>
-            ) : (
-              <div className="space-y-1.5">
-                {tasks.map((task) => {
-                  const detail = task.assigned_tasks;
-                  const isUpdating = updatingIds.has(task.id);
-                  const isExpanded = expandedIds.has(task.id);
-                  const due =
-                    detail.due_date
-                      ? formatDueDate(detail.due_date, orgTimezone)
-                      : null;
+      {!collapsed && (
+        <div className="p-[18px_20px]">
+          {loading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="animate-pulse h-12 w-full bg-parchment rounded-lg" />
+              ))}
+            </div>
+          ) : tasks.length === 0 ? (
+            <p className="text-xs text-stone py-3 text-center">No assigned tasks.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {tasks.map((task) => {
+                const detail = task.assigned_tasks;
+                const isUpdating = updatingIds.has(task.id);
+                const isExpanded = expandedIds.has(task.id);
+                const due =
+                  detail.due_date
+                    ? formatDueDate(detail.due_date, orgTimezone)
+                    : null;
 
-                  const accountProject = [detail.account, detail.project]
-                    .filter(Boolean)
-                    .join(" · ");
+                const accountProject = [detail.account, detail.project]
+                  .filter(Boolean)
+                  .join(" · ");
 
-                  return (
+                return (
+                  <Fragment key={task.id}>
                     <div
-                      key={task.id}
                       className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors"
                     >
                       {/* Top row: task name + expand toggle + status badge */}
@@ -434,106 +380,17 @@ export default function AssignedTasksWidget({
                         )}
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
 
-      {/* Add Task Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md mx-4">
-            <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
-              <h3 className="text-sm font-bold text-espresso">New Task</h3>
-              <button
-                onClick={() => {
-                  setShowAddModal(false);
-                  setAddError("");
-                  setAddTaskName("");
-                  setAddAccount("");
-                  setAddProject("");
-                  setAddNotes("");
-                }}
-                className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
-              >
-                &times;
-              </button>
+                    {isExpanded && (
+                      <div className="h-1" />
+                    )}
+                  </Fragment>
+                );
+              })}
             </div>
-            <div className="p-5 space-y-4">
-              <div>
-                <label className="text-[11px] font-semibold text-walnut tracking-wide block mb-1">Task Name <span className="text-terracotta">*</span></label>
-                <input
-                  type="text"
-                  value={addTaskName}
-                  onChange={(e) => setAddTaskName(e.target.value)}
-                  placeholder="What needs to be done?"
-                  className="w-full border border-sand rounded-lg px-3 py-2 text-[13px] text-espresso placeholder:text-stone/50 focus:outline-none focus:ring-1 focus:ring-terracotta/40"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-walnut tracking-wide block mb-1">Account</label>
-                  <input
-                    type="text"
-                    value={addAccount}
-                    onChange={(e) => setAddAccount(e.target.value)}
-                    placeholder="Optional"
-                    className="w-full border border-sand rounded-lg px-3 py-2 text-[13px] text-espresso placeholder:text-stone/50 focus:outline-none focus:ring-1 focus:ring-terracotta/40"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-walnut tracking-wide block mb-1">Objective</label>
-                  <input
-                    type="text"
-                    value={addProject}
-                    onChange={(e) => setAddProject(e.target.value)}
-                    placeholder="Optional"
-                    className="w-full border border-sand rounded-lg px-3 py-2 text-[13px] text-espresso placeholder:text-stone/50 focus:outline-none focus:ring-1 focus:ring-terracotta/40"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold text-walnut tracking-wide block mb-1">Notes</label>
-                <textarea
-                  value={addNotes}
-                  onChange={(e) => setAddNotes(e.target.value)}
-                  placeholder="Any details or context..."
-                  rows={3}
-                  className="w-full border border-sand rounded-lg px-3 py-2 text-[13px] text-espresso placeholder:text-stone/50 focus:outline-none focus:ring-1 focus:ring-terracotta/40 resize-none"
-                />
-              </div>
-              {addError && (
-                <p className="text-[12px] text-terracotta">{addError}</p>
-              )}
-              <div className="flex gap-3 pt-1">
-                <button
-                  onClick={() => {
-                    setShowAddModal(false);
-                    setAddError("");
-                    setAddTaskName("");
-                    setAddAccount("");
-                    setAddProject("");
-                    setAddNotes("");
-                  }}
-                  className="flex-1 py-2.5 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAddTask}
-                  disabled={addSubmitting || !addTaskName.trim()}
-                  className="flex-1 py-2.5 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {addSubmitting ? "Adding..." : "Add Task"}
-                </button>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       )}
-    </>
+    </div>
   );
 }
