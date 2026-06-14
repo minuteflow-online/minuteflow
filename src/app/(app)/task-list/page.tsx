@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTaskStatus } from "@/types/database";
 
@@ -178,10 +178,13 @@ export default function TaskListPage() {
   const [panelAccount, setPanelAccount] = useState("");
   const [panelProject, setPanelProject] = useState("");
   const [panelTaskName, setPanelTaskName] = useState("");
+  const [panelNotes, setPanelNotes] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
+  const [panelUploadSaving, setPanelUploadSaving] = useState(false);
   const [panelMsg, setPanelMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -324,6 +327,8 @@ export default function TaskListPage() {
       setPanelAccount(task.assigned_tasks.account ?? "");
       setPanelProject(task.assigned_tasks.project ?? "");
       setPanelTaskName(task.assigned_tasks.task_name ?? "");
+      setPanelNotes(task.notes ?? "");
+      setPanelUploadSaving(false);
       setPanelMsg(null);
       setAttachments([]);
       setAttachmentsLoading(true);
@@ -338,7 +343,9 @@ export default function TaskListPage() {
     setPanelAccount("");
     setPanelProject("");
     setPanelTaskName("");
+    setPanelNotes("");
     setPanelSaving(false);
+    setPanelUploadSaving(false);
     setPanelMsg(null);
     setAttachments([]);
     setAttachmentsLoading(false);
@@ -390,19 +397,22 @@ export default function TaskListPage() {
 
     const taskId = selectedTask.assigned_tasks.id;
     const previousStatus = selectedTask.status;
+    const previousNotes = selectedTask.notes ?? "";
     const nextStatus = panelStatus;
     const statusChanged = nextStatus !== previousStatus;
     const canEditMetadata = panelIsSelfOwned;
     const nextAccount = panelAccount.trim();
     const nextProject = panelProject.trim();
     const nextTaskName = panelTaskName.trim();
+    const nextNotes = panelNotes;
+    const notesChanged = !sameText(nextNotes, previousNotes);
     const metadataChanged =
       canEditMetadata &&
       (!sameText(nextAccount, selectedTask.assigned_tasks.account) ||
         !sameText(nextProject, selectedTask.assigned_tasks.project) ||
         !sameText(nextTaskName, selectedTask.assigned_tasks.task_name));
 
-    if (selectedTask.is_collaborative || (!statusChanged && !metadataChanged)) {
+    if (selectedTask.is_collaborative || (!statusChanged && !metadataChanged && !notesChanged)) {
       closePanel();
       return;
     }
@@ -410,13 +420,14 @@ export default function TaskListPage() {
     setPanelSaving(true);
     setPanelMsg(null);
 
+    const patchUpdated = statusChanged || notesChanged;
     let statusUpdated = false;
     try {
-      if (statusChanged) {
+      if (patchUpdated) {
         const statusRes = await fetch(`/api/assigned-tasks/${taskId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: nextStatus }),
+          body: JSON.stringify({ status: nextStatus, notes: nextNotes }),
         });
         if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
         statusUpdated = true;
@@ -476,18 +487,58 @@ export default function TaskListPage() {
       setPanelMsg({ type: "ok", text: "Changes saved." });
       window.setTimeout(() => closePanel(), 800);
     } catch {
-      if (statusUpdated && statusChanged) {
+      if (statusUpdated && patchUpdated) {
         await fetch(`/api/assigned-tasks/${taskId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: previousStatus }),
+          body: JSON.stringify({ status: previousStatus, notes: previousNotes }),
         }).catch(() => {});
       }
       setPanelMsg({ type: "err", text: "Unable to save changes right now." });
     } finally {
       setPanelSaving(false);
     }
-  }, [closePanel, currentUserId, panelAccount, panelIsSelfOwned, panelProject, panelStatus, panelTaskName, selectedTask, supabase]);
+  }, [closePanel, currentUserId, panelAccount, panelIsSelfOwned, panelNotes, panelProject, panelStatus, panelTaskName, selectedTask, supabase]);
+
+  const handleAttachmentUpload = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file || !selectedTask) return;
+
+      setPanelUploadSaving(true);
+      setPanelMsg(null);
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const res = await fetch(`/api/assigned-tasks/${selectedTask.assigned_tasks.id}/attachments`, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) {
+          let message = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            if (data?.error) message = data.error;
+          } catch {
+            // ignore JSON parsing errors
+          }
+          throw new Error(message);
+        }
+
+        await fetchAttachments(selectedTask.assigned_tasks.id);
+        setPanelMsg({ type: "ok", text: "Attachment uploaded." });
+      } catch (err) {
+        setPanelMsg({ type: "err", text: err instanceof Error ? err.message : "Unable to upload file right now." });
+      } finally {
+        setPanelUploadSaving(false);
+      }
+    },
+    [fetchAttachments, selectedTask]
+  );
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -899,11 +950,24 @@ export default function TaskListPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Notes</label>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
                 <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
                   {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
                 </div>
               </div>
+
+              {!selectedTask.is_collaborative && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">My Notes</label>
+                  <textarea
+                    value={panelNotes}
+                    onChange={(e) => setPanelNotes(e.target.value)}
+                    rows={5}
+                    placeholder="Add your private notes for this task..."
+                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned To</label>
@@ -938,7 +1002,25 @@ export default function TaskListPage() {
               </div>
 
               <div>
-                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => panelAttachmentInputRef.current?.click()}
+                      disabled={panelUploadSaving}
+                      className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {panelUploadSaving ? "Uploading..." : "Attach File"}
+                    </button>
+                    <input
+                      ref={panelAttachmentInputRef}
+                      type="file"
+                      className="hidden"
+                      onChange={(e) => void handleAttachmentUpload(e)}
+                    />
+                  </div>
+                </div>
                 {attachmentsLoading ? (
                   <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
                     <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

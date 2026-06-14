@@ -4,15 +4,31 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+async function canAccessAttachments(supabase: Awaited<ReturnType<typeof createClient>>, taskId: string, userId: string, role?: string | null) {
+  if (role === "admin" || role === "manager") return true;
+
+  const { data, error } = await supabase
+    .from("assigned_task_assignees")
+    .select("id")
+    .eq("assigned_task_id", taskId)
+    .eq("va_id", userId)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    throw error;
+  }
+
+  return Boolean(data);
+}
+
 /**
  * GET /api/assigned-tasks/[id]/attachments
- * Returns all attachments for a task. Admin/manager only (VAs see tasks via VA view, not this endpoint).
+ * Returns all attachments for a task. Admin/manager can view any task; VAs can view tasks assigned to them.
  */
 export async function GET(_request: Request, { params }: RouteContext) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await supabase.auth.getUser();
+  const user = auth.data.user;
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data: profile } = await supabase
@@ -21,11 +37,16 @@ export async function GET(_request: Request, { params }: RouteContext) {
     .eq("id", user.id)
     .single();
 
-  if (!["admin", "manager"].includes(profile?.role ?? "")) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-
   const { id } = await params;
+
+  try {
+    const allowed = await canAccessAttachments(supabase, id, user.id, profile?.role ?? null);
+    if (!allowed) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Unable to verify access" }, { status: 500 });
+  }
 
   const { data, error } = await supabase
     .from("assigned_task_attachments")
@@ -53,14 +74,13 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
 /**
  * POST /api/assigned-tasks/[id]/attachments
- * Upload a file attachment for a task. Admin/manager only.
+ * Upload a file attachment for a task. Admin/manager can upload any task; VAs can upload to tasks assigned to them.
  * Accepts multipart/form-data with a "file" field.
  */
 export async function POST(request: Request, { params }: RouteContext) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const auth = await supabase.auth.getUser();
+  const user = auth.data.user;
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data: profile } = await supabase
@@ -69,11 +89,16 @@ export async function POST(request: Request, { params }: RouteContext) {
     .eq("id", user.id)
     .single();
 
-  if (!["admin", "manager"].includes(profile?.role ?? "")) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-
   const { id } = await params;
+
+  try {
+    const allowed = await canAccessAttachments(supabase, id, user.id, profile?.role ?? null);
+    if (!allowed) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Unable to verify access" }, { status: 500 });
+  }
 
   // Verify task exists
   const { data: task, error: taskError } = await supabase
