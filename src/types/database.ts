@@ -474,7 +474,7 @@ export interface AssignedTask {
   updated_at: string;
 }
 
-export type AssignedTaskStatus = 'on_queue' | 'in_progress' | 'submitted' | 'reviewing' | 'revision_needed' | 'approved' | 'completed' | 'paid' | 'cancelled';
+export type AssignedTaskStatus = 'pending' | 'on_queue' | 'in_progress' | 'submitted' | 'reviewing' | 'revision_needed' | 'approved' | 'completed' | 'paid' | 'cancelled';
 
 export interface AssignedTaskAssignee {
   id: number;

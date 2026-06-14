@@ -30,6 +30,7 @@ type VATaskRow = {
 
 const STATUS_FILTERS: Array<{ value: AssignedTaskStatus | "all"; label: string }> = [
   { value: "all", label: "All Statuses" },
+  { value: "pending", label: "Pending" },
   { value: "on_queue", label: "On Queue" },
   { value: "in_progress", label: "In Progress" },
   { value: "submitted", label: "Submitted" },
@@ -42,6 +43,7 @@ const STATUS_FILTERS: Array<{ value: AssignedTaskStatus | "all"; label: string }
 ];
 
 const STATUS_ORDER: Record<AssignedTaskStatus, number> = {
+  pending: -1,
   on_queue: 0,
   in_progress: 1,
   submitted: 2,
@@ -54,6 +56,7 @@ const STATUS_ORDER: Record<AssignedTaskStatus, number> = {
 };
 
 const STATUS_LABELS: Record<AssignedTaskStatus, string> = {
+  pending: "Pending",
   on_queue: "On Queue",
   in_progress: "In Progress",
   submitted: "Submitted",
@@ -66,6 +69,7 @@ const STATUS_LABELS: Record<AssignedTaskStatus, string> = {
 };
 
 const STATUS_CLASSES: Record<AssignedTaskStatus, string> = {
+  pending: "bg-slate-blue-soft text-slate-blue",
   on_queue: "bg-stone/10 text-stone",
   in_progress: "bg-amber-100 text-amber-700",
   submitted: "bg-sky-100 text-sky-700",

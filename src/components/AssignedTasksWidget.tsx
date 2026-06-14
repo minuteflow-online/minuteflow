@@ -34,6 +34,7 @@ function formatDueDate(dueDateStr: string, orgTimezone: string): { label: string
 }
 
 const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
+  pending: -1,
   on_queue: 0,
   in_progress: 1,
   submitted: 2,
@@ -162,6 +163,12 @@ export default function AssignedTasksWidget({
 
   const statusBadge = (status: AssignedTaskStatus) => {
     switch (status) {
+      case "pending":
+        return (
+          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-slate-blue-soft text-slate-blue border border-slate-blue/20">
+            Pending
+          </span>
+        );
       case "on_queue":
         return (
           <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-stone/10 text-stone border border-stone/20">

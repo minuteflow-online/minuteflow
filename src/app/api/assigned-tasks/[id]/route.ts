@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 type AssignedTaskStatus =
+  | "pending"
   | "on_queue"
   | "in_progress"
   | "submitted"
@@ -121,7 +122,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
       const newRows = toInsert.map((va_id) => ({
         assigned_task_id: id,
         va_id,
-        status: "on_queue" as AssignedTaskStatus,
+        status: "pending" as AssignedTaskStatus,
       }));
 
       const { error: insertError } = await supabase
@@ -217,6 +218,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   }
 
   const validStatuses: AssignedTaskStatus[] = [
+    "pending",
     "on_queue",
     "in_progress",
     "submitted",

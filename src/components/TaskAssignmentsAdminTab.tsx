@@ -25,6 +25,7 @@ const KNOWN_ACCOUNTS = [
 
 const STATUS_OPTIONS: { value: AssignedTaskStatus | ""; label: string }[] = [
   { value: "", label: "All Statuses" },
+  { value: "pending", label: "Pending" },
   { value: "on_queue", label: "On Queue" },
   { value: "in_progress", label: "In Progress" },
   { value: "submitted", label: "Submitted" },
@@ -131,6 +132,7 @@ function formatFileSize(bytes: number | null): string {
 
 function StatusBadge({ status }: { status: AssignedTaskStatus }) {
   const map: Record<AssignedTaskStatus, { cls: string; label: string }> = {
+    pending:        { cls: "bg-slate-blue-soft text-slate-blue", label: "Pending" },
     on_queue:       { cls: "bg-stone/10 text-stone", label: "On Queue" },
     in_progress:    { cls: "bg-amber-100 text-amber-700", label: "In Progress" },
     submitted:      { cls: "bg-sky-100 text-sky-700", label: "Submitted" },
@@ -153,6 +155,7 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
 
 function statusDotColor(status: AssignedTaskStatus): string {
   switch (status) {
+    case "pending":         return "text-slate-blue";
     case "on_queue":        return "text-stone";
     case "in_progress":     return "text-amber-500";
     case "submitted":       return "text-sky-600";
@@ -1171,6 +1174,7 @@ export default function TaskAssignmentsAdminTab({
                                 onBlur={() => setStatusEdit(null)}
                                 className="text-[11px] border border-sand rounded-lg px-2 py-1 outline-none focus:border-terracotta cursor-pointer bg-white"
                               >
+                                <option value="pending">Pending</option>
                                 <option value="on_queue">On Queue</option>
                                 <option value="in_progress">In Progress</option>
                                 <option value="submitted">Submitted</option>
