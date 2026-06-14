@@ -637,13 +637,16 @@ export default function TaskAssignmentsAdminTab({
           });
 
       if (res.ok) {
+        const result = await res.json();
+        const newTask = result?.task as AssignedTaskWithAssignees | undefined;
         setDetailSaveMsg({
           type: "ok",
           text: selectedTask ? "Task updated!" : "Task created!",
         });
-        setTimeout(() => {
-          closePanel();
-        }, 800);
+        if (!selectedTask && newTask) {
+          setIsCreating(false);
+          setSelectedTask(newTask);
+        }
         fetchTasks();
       } else {
         const e = await res.json();
@@ -1546,13 +1549,6 @@ export default function TaskAssignmentsAdminTab({
                 </div>
               )}
 
-              {/* Messages */}
-              {detailSaveMsg?.type === "err" && (
-                <p className="text-xs text-red-500 font-medium">{detailSaveMsg.text}</p>
-              )}
-              {detailSaveMsg?.type === "ok" && (
-                <p className="text-xs text-sage font-medium">{detailSaveMsg.text}</p>
-              )}
             </div>
 
             {/* Footer */}
@@ -1568,24 +1564,35 @@ export default function TaskAssignmentsAdminTab({
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={closePanel}
-                  className="text-xs text-stone hover:text-espresso cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleDetailSave}
-                  disabled={detailSaving || !detailForm.task_name.trim()}
-                  className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {detailSaving
-                    ? "Saving..."
-                    : isCreating
-                    ? "Create Task"
-                    : "Save Changes"}
-                </button>
+              <div className="flex flex-col items-end gap-2">
+                {detailSaveMsg && (
+                  <p
+                    className={`text-xs font-medium ${
+                      detailSaveMsg.type === "err" ? "text-red-500" : "text-sage"
+                    }`}
+                  >
+                    {detailSaveMsg.text}
+                  </p>
+                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={closePanel}
+                    className="text-xs text-stone hover:text-espresso cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleDetailSave}
+                    disabled={detailSaving || !detailForm.task_name.trim()}
+                    className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {detailSaving
+                      ? "Saving..."
+                      : isCreating
+                      ? "Create Task"
+                      : "Save Changes"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
