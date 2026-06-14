@@ -272,11 +272,18 @@ function VAMultiSelect({ vaProfiles, selectedIds, onChange, selectedTask }: VAMu
   const openDropdown = () => {
     if (buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+      const maxH = Math.min(240, Math.max(spaceBelow, spaceAbove));
+      const showAbove = spaceBelow < 120 && spaceAbove > spaceBelow;
       setDropdownStyle({
         position: "fixed",
-        top: rect.bottom + 2,
+        ...(showAbove
+          ? { bottom: window.innerHeight - rect.top + 2 }
+          : { top: rect.bottom + 2 }),
         left: rect.left,
         width: rect.width,
+        maxHeight: maxH,
         zIndex: 9999,
       });
     }
@@ -335,7 +342,7 @@ function VAMultiSelect({ vaProfiles, selectedIds, onChange, selectedTask }: VAMu
         <div
           ref={dropdownRef}
           style={dropdownStyle}
-          className="bg-white border border-sand rounded-lg shadow-xl overflow-hidden"
+          className="bg-white border border-sand rounded-lg shadow-xl overflow-y-auto"
         >
           {vaProfiles.map((va) => {
             const checked = selectedIds.includes(va.id);
