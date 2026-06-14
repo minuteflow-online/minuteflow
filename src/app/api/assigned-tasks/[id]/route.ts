@@ -183,12 +183,12 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
 
 /**
  * PATCH /api/assigned-tasks/[id]
- * Update status of an assignee row.
+ * Update an assignee row and/or task metadata.
  *
- * VA: updates their own row (va_id = auth.uid()).
- * Admin/manager: must supply body.va_id to specify which assignee to update.
+ * VA: must be assigned to the task. Can update their assignee row and task metadata.
+ * Admin/manager: may target an assignee row with va_id; metadata-only updates do not require va_id.
  *
- * Body: { va_id?: string, status: AssignedTaskStatus, log_id?: number, notes?: string }
+ * Body: { va_id?: string, status?: AssignedTaskStatus, log_id?: number, notes?: string, account?: string | null, project?: string | null, task_name?: string }
  */
 export async function PATCH(request: Request, { params }: RouteContext) {
   const supabase = await createClient();
@@ -204,17 +204,22 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     .single();
 
   const { id } = await params;
-
   const body = await request.json();
-  const { va_id: bodyVaId, status, log_id, notes } = body as {
+  const { va_id: bodyVaId, status, log_id, notes, account, project, task_name } = body as {
     va_id?: string;
-    status: AssignedTaskStatus;
+    status?: AssignedTaskStatus;
     log_id?: number;
     notes?: string;
+    account?: string | null;
+    project?: string | null;
+    task_name?: string;
   };
 
-  if (!status) {
-    return Response.json({ error: "status is required" }, { status: 400 });
+  const hasAssigneeUpdate = status !== undefined || log_id !== undefined || notes !== undefined;
+  const hasMetadataUpdate = account !== undefined || project !== undefined || task_name !== undefined;
+
+  if (!hasAssigneeUpdate && !hasMetadataUpdate) {
+    return Response.json({ error: "At least one field is required" }, { status: 400 });
   }
 
   const validStatuses: AssignedTaskStatus[] = [
@@ -229,50 +234,91 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     "paid",
     "cancelled",
   ];
-  if (!validStatuses.includes(status)) {
+  if (status !== undefined && !validStatuses.includes(status)) {
     return Response.json({ error: "Invalid status value" }, { status: 400 });
   }
 
-  const isAdminOrManager =
-    profile?.role === "admin" || profile?.role === "manager";
-
-  // Determine which va_id to target
-  let targetVaId: string;
-  if (isAdminOrManager) {
-    if (!bodyVaId) {
-      return Response.json(
-        { error: "va_id is required for admin/manager PATCH" },
-        { status: 400 }
-      );
-    }
-    targetVaId = bodyVaId;
-  } else {
-    // VA can only update their own assignee row
-    targetVaId = user.id;
+  if (task_name !== undefined && task_name.trim().length === 0) {
+    return Response.json({ error: "task_name cannot be empty" }, { status: 400 });
   }
 
-  const updatePayload: Record<string, unknown> = {
-    status,
-    updated_at: new Date().toISOString(),
-  };
-  if (log_id !== undefined) updatePayload.log_id = log_id;
-  if (notes !== undefined) updatePayload.notes = notes;
+  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
+  const now = new Date().toISOString();
 
-  const { data: updated, error } = await supabase
-    .from("assigned_task_assignees")
-    .update(updatePayload)
-    .eq("assigned_task_id", id)
-    .eq("va_id", targetVaId)
-    .select()
-    .single();
+  if (!isAdminOrManager) {
+    const { data: assignedTask, error: assignedTaskError } = await supabase
+      .from("assigned_task_assignees")
+      .select("id")
+      .eq("assigned_task_id", id)
+      .eq("va_id", user.id)
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
-    // PGRST116 = no rows matched
-    if (error.code === "PGRST116") {
+    if (assignedTaskError) {
+      return Response.json({ error: assignedTaskError.message }, { status: 500 });
+    }
+
+    if (!assignedTask) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
+  if (hasAssigneeUpdate) {
+    let targetVaId: string;
+    if (isAdminOrManager) {
+      if (!bodyVaId) {
+        return Response.json(
+          { error: "va_id is required for admin/manager assignee updates" },
+          { status: 400 }
+        );
+      }
+      targetVaId = bodyVaId;
+    } else {
+      targetVaId = user.id;
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      updated_at: now,
+    };
+    if (status !== undefined) updatePayload.status = status;
+    if (log_id !== undefined) updatePayload.log_id = log_id;
+    if (notes !== undefined) updatePayload.notes = notes;
+
+    const { data: updatedAssignee, error: assigneeError } = await supabase
+      .from("assigned_task_assignees")
+      .update(updatePayload)
+      .eq("assigned_task_id", id)
+      .eq("va_id", targetVaId)
+      .select("id")
+      .single();
+
+    if (assigneeError) {
+      if (assigneeError.code === "PGRST116") {
+        return Response.json({ error: "Assignee row not found" }, { status: 404 });
+      }
+      return Response.json({ error: assigneeError.message }, { status: 500 });
+    }
+
+    if (!updatedAssignee) {
       return Response.json({ error: "Assignee row not found" }, { status: 404 });
     }
-    return Response.json({ error: error.message }, { status: 500 });
   }
 
-  return Response.json({ assignee: updated });
+  if (hasMetadataUpdate) {
+    const updatePayload: Record<string, unknown> = { updated_at: now };
+    if (account !== undefined) updatePayload.account = account;
+    if (project !== undefined) updatePayload.project = project;
+    if (task_name !== undefined) updatePayload.task_name = task_name.trim();
+
+    const { error: taskError } = await supabase
+      .from("assigned_tasks")
+      .update(updatePayload)
+      .eq("id", id);
+
+    if (taskError) {
+      return Response.json({ error: taskError.message }, { status: 500 });
+    }
+  }
+
+  return Response.json({ ok: true });
 }

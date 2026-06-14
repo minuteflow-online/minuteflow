@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTaskStatus } from "@/types/database";
 
@@ -152,12 +153,12 @@ function sameText(a: string | null | undefined, b: string | null | undefined) {
 
 export default function TaskListPage() {
   const supabase = useMemo(() => createClient(), []);
+  const router = useRouter();
 
   const [tasks, setTasks] = useState<VATaskRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<AssignedTaskStatus | "all">("all");
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
@@ -223,11 +224,21 @@ export default function TaskListPage() {
   const fetchCurrentUser = useCallback(async () => {
     try {
       const { data } = await supabase.auth.getUser();
-      setCurrentUserId(data.user?.id ?? null);
+      if (!data.user) return;
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", data.user.id)
+        .single();
+
+      if (profile?.role === "admin" || profile?.role === "manager") {
+        router.replace("/admin");
+      }
     } catch {
-      setCurrentUserId(null);
+      // leave the task list usable for VAs if profile lookup fails
     }
-  }, [supabase]);
+  }, [router, supabase]);
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -281,10 +292,7 @@ export default function TaskListPage() {
     [addProjectId, formTasksByProject]
   );
 
-  const panelIsSelfOwned = Boolean(
-    selectedTask && currentUserId && selectedTask.assigned_tasks.created_by === currentUserId && !selectedTask.is_collaborative
-  );
-  const panelCanEditFields = panelIsSelfOwned;
+  const panelCanEditFields = Boolean(selectedTask && !selectedTask.is_collaborative);
 
   const panelProjectsForAccount = useMemo(
     () => formProjects.filter((project) => project.account === panelAccount),
@@ -400,17 +408,15 @@ export default function TaskListPage() {
     const previousNotes = selectedTask.notes ?? "";
     const nextStatus = panelStatus;
     const statusChanged = nextStatus !== previousStatus;
-    const canEditMetadata = panelIsSelfOwned;
     const nextAccount = panelAccount.trim();
     const nextProject = panelProject.trim();
     const nextTaskName = panelTaskName.trim();
     const nextNotes = panelNotes;
     const notesChanged = !sameText(nextNotes, previousNotes);
     const metadataChanged =
-      canEditMetadata &&
-      (!sameText(nextAccount, selectedTask.assigned_tasks.account) ||
-        !sameText(nextProject, selectedTask.assigned_tasks.project) ||
-        !sameText(nextTaskName, selectedTask.assigned_tasks.task_name));
+      !sameText(nextAccount, selectedTask.assigned_tasks.account) ||
+      !sameText(nextProject, selectedTask.assigned_tasks.project) ||
+      !sameText(nextTaskName, selectedTask.assigned_tasks.task_name);
 
     if (selectedTask.is_collaborative || (!statusChanged && !metadataChanged && !notesChanged)) {
       closePanel();
@@ -420,34 +426,22 @@ export default function TaskListPage() {
     setPanelSaving(true);
     setPanelMsg(null);
 
-    const patchUpdated = statusChanged || notesChanged;
-    let statusUpdated = false;
     try {
-      if (patchUpdated) {
-        const statusRes = await fetch(`/api/assigned-tasks/${taskId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: nextStatus, notes: nextNotes }),
-        });
-        if (!statusRes.ok) throw new Error(`HTTP ${statusRes.status}`);
-        statusUpdated = true;
-      }
-
+      const body: Record<string, unknown> = {};
+      if (statusChanged) body.status = nextStatus;
+      if (notesChanged) body.notes = nextNotes;
       if (metadataChanged) {
-        if (!currentUserId) throw new Error("Current user not loaded.");
-        const { error: updateError } = await supabase
-          .from("assigned_tasks")
-          .update({
-            account: nextAccount || null,
-            project: nextProject || null,
-            task_name: nextTaskName,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", taskId)
-          .eq("created_by", currentUserId);
-
-        if (updateError) throw updateError;
+        body.account = nextAccount || null;
+        body.project = nextProject || null;
+        body.task_name = nextTaskName;
       }
+
+      const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!saveRes.ok) throw new Error(`HTTP ${saveRes.status}`);
 
       const updatedAt = new Date().toISOString();
       setTasks((prev) =>
@@ -456,7 +450,9 @@ export default function TaskListPage() {
             row.id === selectedTask.id
               ? {
                   ...row,
-                  status: nextStatus,
+                  status: statusChanged ? nextStatus : row.status,
+                  notes: notesChanged ? nextNotes : row.notes,
+                  updated_at: statusChanged || notesChanged ? updatedAt : row.updated_at,
                   assigned_tasks: {
                     ...row.assigned_tasks,
                     account: metadataChanged ? (nextAccount || null) : row.assigned_tasks.account,
@@ -473,7 +469,9 @@ export default function TaskListPage() {
         current
           ? {
               ...current,
-              status: nextStatus,
+              status: statusChanged ? nextStatus : current.status,
+              notes: notesChanged ? nextNotes : current.notes,
+              updated_at: statusChanged || notesChanged ? updatedAt : current.updated_at,
               assigned_tasks: {
                 ...current.assigned_tasks,
                 account: metadataChanged ? (nextAccount || null) : current.assigned_tasks.account,
@@ -487,18 +485,11 @@ export default function TaskListPage() {
       setPanelMsg({ type: "ok", text: "Changes saved." });
       window.setTimeout(() => closePanel(), 800);
     } catch {
-      if (statusUpdated && patchUpdated) {
-        await fetch(`/api/assigned-tasks/${taskId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: previousStatus, notes: previousNotes }),
-        }).catch(() => {});
-      }
       setPanelMsg({ type: "err", text: "Unable to save changes right now." });
     } finally {
       setPanelSaving(false);
     }
-  }, [closePanel, currentUserId, panelAccount, panelIsSelfOwned, panelNotes, panelProject, panelStatus, panelTaskName, selectedTask, supabase]);
+  }, [closePanel, panelAccount, panelNotes, panelProject, panelStatus, panelTaskName, selectedTask]);
 
   const handleAttachmentUpload = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
