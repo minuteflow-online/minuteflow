@@ -378,7 +378,7 @@ export default function AssignedTasksWidget({
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
                               <polygon points="5,3 19,12 5,21" />
                             </svg>
-                            {isUpdating ? "Starting..." : "Play"}
+                            {isUpdating ? "Starting..." : "Start"}
                           </button>
                         )}
 
