@@ -155,6 +155,16 @@ export default function AssignedTasksWidget({
 
   const handlePlay = useCallback(
     (task: VAAssignedTask) => {
+      setTasks((prev) =>
+        prev
+          .map((t): VAAssignedTask =>
+            t.id === task.id ? { ...t, status: "in_progress" as AssignedTaskStatus } : t
+          )
+          .sort(
+            (a, b) =>
+              (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
+          )
+      );
       onPlayAssignedTask(task);
     },
     [onPlayAssignedTask]
@@ -320,51 +330,41 @@ export default function AssignedTasksWidget({
                         {statusBadge(task.status)}
                       </div>
 
-                      {/* Account · Objective */}
-                      {accountProject && (
-                        <div className="text-[11px] text-bark pl-[18px]">{accountProject}</div>
-                      )}
-
-                      {/* Collapsed: show short detail preview */}
-                      {!isExpanded && detail.task_detail && (
-                        <div className="text-[11px] text-stone/80 leading-relaxed line-clamp-2 pl-[18px]">
-                          {detail.task_detail}
-                        </div>
-                      )}
-
-                      {/* Expanded: show full detail + notes */}
                       {isExpanded && (
-                        <div className="pl-[18px] space-y-2 mt-0.5">
-                          {detail.task_detail && (
-                            <div>
-                              <p className="text-[10px] font-semibold text-walnut mb-0.5 tracking-wide uppercase">Detail</p>
-                              <p className="text-[11px] text-stone/80 leading-relaxed">{detail.task_detail}</p>
-                            </div>
+                        <>
+                          {accountProject && (
+                            <div className="text-[11px] text-bark pl-[18px]">{accountProject}</div>
                           )}
-                          {detail.task_notes && (
-                            <div>
-                              <p className="text-[10px] font-semibold text-walnut mb-0.5 tracking-wide uppercase">Notes</p>
-                              <p className="text-[11px] text-stone/80 leading-relaxed whitespace-pre-wrap">{detail.task_notes}</p>
-                            </div>
-                          )}
-                          {!detail.task_detail && !detail.task_notes && (
-                            <p className="text-[11px] text-stone/50 italic">No additional details.</p>
-                          )}
-                        </div>
-                      )}
 
-                      {/* Due date */}
-                      {due && (
-                        <div
-                          className={`text-[11px] font-medium pl-[18px] ${
-                            due.isOverdue ? "text-terracotta" : "text-stone"
-                          }`}
-                        >
-                          {due.isOverdue && (
-                            <span className="mr-1">!</span>
+                          <div className="pl-[18px] space-y-2 mt-0.5">
+                            {detail.task_detail && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-walnut mb-0.5 tracking-wide uppercase">Detail</p>
+                                <p className="text-[11px] text-stone/80 leading-relaxed">{detail.task_detail}</p>
+                              </div>
+                            )}
+                            {detail.task_notes && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-walnut mb-0.5 tracking-wide uppercase">Notes</p>
+                                <p className="text-[11px] text-stone/80 leading-relaxed whitespace-pre-wrap">{detail.task_notes}</p>
+                              </div>
+                            )}
+                            {!detail.task_detail && !detail.task_notes && (
+                              <p className="text-[11px] text-stone/50 italic">No additional details.</p>
+                            )}
+                          </div>
+
+                          {due && (
+                            <div
+                              className={`text-[11px] font-medium pl-[18px] ${
+                                due.isOverdue ? "text-terracotta" : "text-stone"
+                              }`}
+                            >
+                              {due.isOverdue && <span className="mr-1">!</span>}
+                              {due.label}
+                            </div>
                           )}
-                          {due.label}
-                        </div>
+                        </>
                       )}
 
                       {/* Action buttons */}
