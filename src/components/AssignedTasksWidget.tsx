@@ -70,7 +70,9 @@ export default function AssignedTasksWidget({
           ...row,
           assigned_tasks: (row.assigned_tasks as unknown as VAAssignedTask["assigned_tasks"]),
         }));
-        const visible = data.sort(
+        const visible = data
+          .filter((t) => t.status === 'on_queue')
+          .sort(
             (a, b) =>
               (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
           );
