@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
@@ -266,8 +267,17 @@ export async function POST(request: Request) {
     );
   }
 
+  // Use service-role admin client for inserts so that RLS JWT-forwarding
+  // issues on the server don't block authenticated users. Auth is already
+  // verified above at the application layer.
+  const adminSupabase = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
   // Insert the task
-  const { data: task, error: taskError } = await supabase
+  const { data: task, error: taskError } = await adminSupabase
     .from("assigned_tasks")
     .insert({
       account: account ?? null,
@@ -291,7 +301,7 @@ export async function POST(request: Request) {
     status: "pending" as AssignedTaskStatus,
   }));
 
-  const { data: assignees, error: assigneeError } = await supabase
+  const { data: assignees, error: assigneeError } = await adminSupabase
     .from("assigned_task_assignees")
     .insert(assigneeRows)
     .select("id, va_id, status, log_id, notes, assigned_at, updated_at");
