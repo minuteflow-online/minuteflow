@@ -2079,7 +2079,7 @@ export default function DashboardPage() {
           form_fill_ms: formData.form_fill_ms || 0,
           billing_type: formData.billing_type || "hourly",
           task_rate: formData.task_rate ?? null,
-          session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+          session_date: new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
         })
         .select()
         .single();
@@ -2107,7 +2107,7 @@ export default function DashboardPage() {
       // Auto-clock in if idle
       const clockInTime =
         sessionState === "idle" ? now : session?.clock_in_time || now;
-      const taskSessionDate = session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
+      const taskSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
 
       await supabase.from("sessions").upsert(
         {
@@ -2524,7 +2524,7 @@ export default function DashboardPage() {
       internal_memo: detail.task_detail || "",
     };
 
-    setPendingAssignedTaskId(task.id);
+    setPendingAssignedTaskId(task.assigned_tasks.id);
 
     if (activeTask) {
       // Build a TimeLog shape from the current active task so the wizard can
