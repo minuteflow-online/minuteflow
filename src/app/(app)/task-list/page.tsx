@@ -160,11 +160,6 @@ export default function TaskListPage() {
     [tasks, statusFilter]
   );
 
-  const refreshAndCloseDetail = useCallback(async () => {
-    setExpandedId((prev) => prev);
-    await fetchTasks();
-  }, [fetchTasks]);
-
   const handleStatusChange = useCallback(
     async (task: VATaskRow, nextStatus: AssignedTaskStatus) => {
       if (task.is_collaborative) return;
@@ -307,74 +302,89 @@ export default function TaskListPage() {
               No assigned tasks found.
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-sand">
-              <table className="min-w-full divide-y divide-parchment bg-white">
-                <thead className="bg-cream/70">
-                  <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-stone">
-                    <th className="px-4 py-3">Task</th>
-                    <th className="px-4 py-3">Account / Project</th>
-                    <th className="px-4 py-3">Due</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Actions</th>
+            <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-parchment border-b border-sand">
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left w-8" />
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Objective</th>
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Detail</th>
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Status</th>
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Due Date</th>
+                    <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left w-8" />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-parchment">
+                <tbody>
                   {filteredTasks.map((task) => {
                     const detail = task.assigned_tasks;
                     const isExpanded = expandedId === task.id;
                     const due = formatDueDate(detail.due_date);
-                    const accountProject = [detail.account, detail.project].filter(Boolean).join(" · ");
                     const isSaving = savingStatusId === task.id;
+                    const dueTextClass = due.isOverdue ? "text-terracotta" : "text-walnut";
 
                     return (
                       <Fragment key={task.id}>
-                        <tr key={task.id} className="align-top hover:bg-cream/30">
-                          <td className="px-4 py-4">
-                            <button
-                              type="button"
-                              onClick={() => toggleExpanded(task.id)}
-                              className="flex items-start gap-2 text-left"
-                            >
-                              <span className={`mt-0.5 inline-block transition-transform ${isExpanded ? "rotate-90" : ""}`}>
-                                ›
-                              </span>
-                              <div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="text-sm font-semibold text-espresso">{detail.task_name}</span>
-                                  {task.is_collaborative && task.collaborator_name && (
-                                    <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
-                                      Collaborative with {task.collaborator_name}
-                                    </span>
-                                  )}
-                                </div>
-                                {detail.task_detail && !isExpanded && (
-                                  <p className="mt-1 max-w-xl line-clamp-2 text-xs text-stone">
-                                    {detail.task_detail}
-                                  </p>
-                                )}
-                              </div>
+                        <tr
+                          className="border-b border-sand last:border-0 hover:bg-parchment/30 transition-colors cursor-pointer group"
+                          onClick={() => toggleExpanded(task.id)}
+                        >
+                          <td className="px-3 py-3 w-8" onClick={(e) => { e.stopPropagation(); toggleExpanded(task.id); }}>
+                            <button type="button" className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-walnut hover:bg-sand/50 transition-colors">
+                              <svg className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                <polyline points="15 3 21 3 21 9" />
+                                <line x1="10" y1="14" x2="21" y2="3" />
+                              </svg>
                             </button>
                           </td>
-                          <td className="px-4 py-4 text-xs text-walnut">
-                            {accountProject || <span className="text-stone/60">—</span>}
+
+                          <td className="px-3 py-3 text-[13px] cursor-pointer">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-medium text-walnut">{detail.task_name}</span>
+                              {task.is_collaborative && task.collaborator_name && (
+                                <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
+                                  Collaborative with {task.collaborator_name}
+                                </span>
+                              )}
+                            </div>
                           </td>
-                          <td className={`px-4 py-4 text-xs font-medium ${due.isOverdue ? "text-terracotta" : "text-walnut"}`}>
-                            {due.isOverdue ? "Overdue · " : ""}
-                            {due.label}
+
+                          <td className="px-3 py-3 text-[13px] text-walnut cursor-pointer">
+                            {detail.account || <span className="text-stone/60">—</span>}
                           </td>
-                          <td className="px-4 py-4">
+
+                          <td className="px-3 py-3 text-[13px] text-walnut cursor-pointer">
+                            {detail.project || <span className="text-stone/60">—</span>}
+                          </td>
+
+                          <td className="px-3 py-3 text-[13px] text-walnut cursor-pointer max-w-[220px]">
+                            {detail.task_detail ? (
+                              <span className="block truncate text-stone/70" title={detail.task_detail}>
+                                {detail.task_detail.length > 45 ? `${detail.task_detail.slice(0, 45)}…` : detail.task_detail}
+                              </span>
+                            ) : (
+                              <span className="text-stone/30">—</span>
+                            )}
+                          </td>
+
+                          <td className="px-3 py-3 text-[13px] cursor-pointer">
                             <StatusBadge status={task.status} />
                           </td>
-                          <td className="px-4 py-4">
-                            {task.is_collaborative && (
-                              <span className="text-[11px] text-stone">Read only</span>
-                            )}
+
+                          <td className={`px-3 py-3 text-[13px] font-medium cursor-pointer ${dueTextClass}`}>
+                            {due.isOverdue ? "Overdue · " : ""}{due.label}
+                          </td>
+
+                          <td className="px-3 py-3 text-[13px] text-walnut cursor-pointer">
+                            {task.is_collaborative && <span>Read only</span>}
                           </td>
                         </tr>
 
                         {isExpanded && (
                           <tr key={`detail-${task.id}`}>
-                            <td colSpan={5} className="bg-parchment/20 px-4 py-4">
+                            <td colSpan={8} className="bg-parchment/20 px-4 py-4">
                               <div className="grid gap-4 md:grid-cols-2">
                                 <div className="space-y-3">
                                   <div>
