@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 
 import type { AssignedTaskStatus } from "@/types/database";
 
@@ -114,8 +113,6 @@ function sortTasks(tasks: VATaskRow[]) {
 }
 
 export default function TaskListPage() {
-  const router = useRouter();
-
   const [tasks, setTasks] = useState<VATaskRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -202,19 +199,6 @@ export default function TaskListPage() {
       }
     },
     []
-  );
-
-  const handlePlay = useCallback(
-    (task: VATaskRow) => {
-      const detail = {
-        task_name: task.assigned_tasks.task_name,
-        account: task.assigned_tasks.account ?? "",
-        project: task.assigned_tasks.project ?? "",
-      };
-      window.dispatchEvent(new CustomEvent("minuteflow-prefill", { detail }));
-      router.push("/dashboard");
-    },
-    [router]
   );
 
   const handleAddTask = useCallback(async () => {
@@ -341,7 +325,6 @@ export default function TaskListPage() {
                     const due = formatDueDate(detail.due_date);
                     const accountProject = [detail.account, detail.project].filter(Boolean).join(" · ");
                     const isSaving = savingStatusId === task.id;
-                    const canPlay = !task.is_collaborative && task.status === "on_queue";
 
                     return (
                       <Fragment key={task.id}>
@@ -383,19 +366,8 @@ export default function TaskListPage() {
                             <StatusBadge status={task.status} />
                           </td>
                           <td className="px-4 py-4">
-                            {canPlay ? (
-                              <button
-                                type="button"
-                                onClick={() => handlePlay(task)}
-                                className="inline-flex items-center gap-1 rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90"
-                              >
-                                <span>▶</span>
-                                Play
-                              </button>
-                            ) : (
-                              <span className="text-[11px] text-stone">
-                                {task.is_collaborative ? "Read only" : ""}
-                              </span>
+                            {task.is_collaborative && (
+                              <span className="text-[11px] text-stone">Read only</span>
                             )}
                           </td>
                         </tr>
