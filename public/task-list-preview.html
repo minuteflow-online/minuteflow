@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>MinuteFlow — Task List Preview</title>
+  <style>
+    /* ── MinuteFlow Design Tokens ── */
+    :root {
+      --cream:           #faf7f2;
+      --parchment:       #f3ede4;
+      --sand:            #e8dfd3;
+      --clay:            #d4c8b8;
+      --stone:           #b5a898;
+      --bark:            #8b7b6b;
+      --walnut:          #6b5b4b;
+      --espresso:        #3d3229;
+      --ink:             #2a221a;
+      --white:           #fffdf9;
+
+      --terracotta:      #c2694f;
+      --terracotta-soft: #f0ddd5;
+      --sage:            #6b8f71;
+      --sage-soft:       #dce8dd;
+      --amber:           #b8860b;
+      --amber-soft:      #f5ecd0;
+      --slate-blue:      #697a8a;
+      --slate-blue-soft: #dfe5ea;
+      --plum:            #8b6fa8;
+      --plum-soft:       #ede8f5;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--cream);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--espresso);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Preview Banner ── */
+    .preview-banner {
+      background: var(--slate-blue);
+      color: #fff;
+      text-align: center;
+      padding: 8px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+    }
+
+    /* ── Top Nav (simplified) ── */
+    .topnav {
+      background: var(--white);
+      border-bottom: 1px solid var(--sand);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 0 24px;
+      height: 52px;
+    }
+    .topnav .logo {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--terracotta);
+      letter-spacing: -0.02em;
+    }
+    .topnav .nav-links {
+      display: flex;
+      gap: 4px;
+    }
+    .topnav .nav-link {
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--stone);
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+    .topnav .nav-link:hover { background: var(--parchment); color: var(--walnut); }
+    .topnav .nav-link.active { background: var(--parchment); color: var(--espresso); }
+
+    /* ── Page Wrapper ── */
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 16px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--white);
+      border: 1px solid var(--sand);
+      border-radius: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+      overflow: hidden;
+    }
+
+    /* ── Card Header ── */
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      border-bottom: 1px solid var(--parchment);
+      padding: 16px 20px;
+    }
+    .card-header h1 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--espresso);
+      line-height: 1.2;
+    }
+    .card-header .subtitle {
+      margin: 2px 0 0;
+      font-size: 11px;
+      color: var(--stone);
+    }
+    .card-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ── Select ── */
+    select {
+      border: 1px solid var(--sand);
+      background: var(--white);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 11px;
+      color: var(--espresso);
+      outline: none;
+      cursor: pointer;
+    }
+    select:focus { border-color: var(--terracotta); }
+
+    /* ── Button ── */
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--terracotta);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #a85840; }
+
+    /* ── Card Body ── */
+    .card-body { padding: 16px 20px; }
+
+    /* ── Count chip ── */
+    .count-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--stone);
+      margin-bottom: 12px;
+    }
+    .count-chip {
+      background: var(--parchment);
+      color: var(--walnut);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .filter-chip {
+      background: var(--slate-blue-soft);
+      color: var(--slate-blue);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    /* ── Table ── */
+    .task-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--sand);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .task-table thead tr {
+      background: var(--parchment);
+      border-bottom: 1px solid var(--sand);
+    }
+    .task-table th {
+      text-align: left;
+      padding: 10px 12px;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--walnut);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      white-space: nowrap;
+    }
+    .task-table td {
+      padding: 11px 12px;
+      font-size: 12px;
+      color: var(--walnut);
+      border-bottom: 1px solid var(--sand);
+      vertical-align: middle;
+    }
+    .task-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .task-table tbody tr:hover td {
+      background: rgba(243,237,228,0.35);
+    }
+
+    .task-name {
+      font-weight: 600;
+      color: var(--walnut);
+    }
+    .task-name-cell {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .muted { color: rgba(181,168,152,0.55); }
+
+    /* ── Expand button ── */
+    .expand-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border: none;
+      background: none;
+      border-radius: 6px;
+      color: var(--stone);
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .expand-btn:hover {
+      background: rgba(232,223,211,0.6);
+      color: var(--walnut);
+    }
+    .expand-btn svg {
+      width: 13px;
+      height: 13px;
+      transition: transform 0.18s;
+    }
+    .expand-btn.open svg {
+      transform: rotate(90deg);
+    }
+
+    /* ── Expanded row ── */
+    .expanded-row td {
+      background: rgba(243,237,228,0.18) !important;
+      padding: 14px 16px !important;
+    }
+    .expanded-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 640px) {
+      .expanded-grid { grid-template-columns: 1fr; }
+    }
+    .detail-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--stone);
+      margin-bottom: 4px;
+    }
+    .detail-value {
+      font-size: 13px;
+      color: var(--espresso);
+      white-space: pre-wrap;
+    }
+    .detail-card {
+      background: var(--white);
+      border: 1px solid var(--sand);
+      border-radius: 12px;
+      padding: 14px;
+      space-y: 10px;
+    }
+    .detail-card > * + * { margin-top: 10px; }
+
+    /* ── Status Badges ── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .badge-pending        { background: var(--slate-blue-soft); color: var(--slate-blue); border-color: rgba(105,122,138,0.2); }
+    .badge-on_queue       { background: rgba(181,168,152,0.12); color: var(--stone);      border-color: rgba(181,168,152,0.25); }
+    .badge-in_progress    { background: #fef3c7;                color: #d97706;            border-color: #fde68a; }
+    .badge-submitted      { background: #e0f2fe;                color: #0284c7;            border-color: #bae6fd; }
+    .badge-reviewing      { background: #f3e8ff;                color: #7c3aed;            border-color: #e9d5ff; }
+    .badge-revision_needed{ background: #fef3c7;                color: #d97706;            border-color: #fde68a; }
+    .badge-approved       { background: #d1fae5;                color: #059669;            border-color: #a7f3d0; }
+    .badge-completed      { background: var(--sage-soft);       color: var(--sage);        border-color: rgba(107,143,113,0.2); }
+    .badge-paid           { background: #f3e8ff;                color: #7c3aed;            border-color: #e9d5ff; }
+    .badge-cancelled      { background: #fee2e2;                color: #ef4444;            border-color: #fecaca; }
+    .badge-collab         { background: var(--slate-blue-soft); color: var(--slate-blue);  border-color: rgba(105,122,138,0.15); }
+
+    /* ── Overdue ── */
+    .overdue { color: var(--terracotta); }
+
+    /* ── Status selector in expanded ── */
+    .status-select {
+      width: 100%;
+      border: 1px solid var(--sand);
+      background: var(--white);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      color: var(--espresso);
+      outline: none;
+      cursor: pointer;
+    }
+    .status-select:focus { border-color: var(--terracotta); }
+
+    /* ── Collab notice ── */
+    .collab-notice {
+      background: var(--slate-blue-soft);
+      border: 1px solid rgba(105,122,138,0.2);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--slate-blue);
+    }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.28);
+      z-index: 50;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      width: 100%;
+      max-width: 440px;
+      background: var(--white);
+      border: 1px solid var(--sand);
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--parchment);
+      padding: 16px 20px;
+    }
+    .modal-header h2 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--espresso);
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 20px;
+      line-height: 1;
+      color: var(--stone);
+      cursor: pointer;
+      transition: color 0.12s;
+    }
+    .modal-close:hover { color: var(--terracotta); }
+    .modal-body { padding: 16px 20px; }
+    .modal-body > * + * { margin-top: 14px; }
+    .modal-footer {
+      display: flex;
+      gap: 10px;
+      border-top: 1px solid var(--parchment);
+      padding: 16px 20px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--stone);
+      margin-bottom: 4px;
+    }
+    .form-input, .form-textarea {
+      width: 100%;
+      border: 1px solid var(--sand);
+      background: var(--white);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      color: var(--espresso);
+      outline: none;
+      font-family: inherit;
+      transition: border-color 0.12s;
+    }
+    .form-input:focus, .form-textarea:focus { border-color: var(--terracotta); }
+    .form-textarea { min-height: 80px; resize: vertical; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .btn-cancel {
+      flex: 1;
+      border: 1px solid var(--sand);
+      background: var(--parchment);
+      color: var(--walnut);
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .btn-cancel:hover { background: var(--sand); }
+
+    .btn-submit {
+      flex: 1;
+      border: none;
+      background: var(--terracotta);
+      color: #fff;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .btn-submit:hover { background: #a85840; }
+
+    /* ── Expand Toggle ── */
+    tr.expanded-body { display: none; }
+    tr.expanded-body.open { display: table-row; }
+  </style>
+</head>
+<body>
+
+  <div class="preview-banner">
+    ⚙️ DESIGN PREVIEW — Static mockup of the Task List page (no login required)
+  </div>
+
+  <!-- Simplified top nav -->
+  <nav class="topnav">
+    <div class="logo">MinuteFlow</div>
+    <div class="nav-links">
+      <a href="#" class="nav-link">Dashboard</a>
+      <a href="#" class="nav-link">Time Log</a>
+      <a href="#" class="nav-link active">Tasks</a>
+      <a href="#" class="nav-link">Reports</a>
+    </div>
+  </nav>
+
+  <div class="page">
+    <div class="card">
+
+      <!-- Header -->
+      <div class="card-header">
+        <div>
+          <h1>Tasks</h1>
+          <p class="subtitle">Assigned work and collaborative tasks visible to you.</p>
+        </div>
+        <div class="card-header-actions">
+          <select>
+            <option>All Statuses</option>
+            <option>Pending</option>
+            <option>On Queue</option>
+            <option>In Progress</option>
+            <option>Submitted</option>
+            <option>Reviewing</option>
+            <option>Revision Needed</option>
+            <option>Approved</option>
+            <option>Completed</option>
+            <option>Paid</option>
+            <option>Cancelled</option>
+          </select>
+          <button class="btn-primary" onclick="document.getElementById('addModal').classList.add('open')">
+            <span style="font-size:15px;line-height:1">+</span> Add Task
+          </button>
+        </div>
+      </div>
+
+      <!-- Body -->
+      <div class="card-body">
+        <div class="count-row">
+          <span class="count-chip">8</span>
+          <span>tasks</span>
+        </div>
+
+        <table class="task-table">
+          <thead>
+            <tr>
+              <th style="width:36px"></th>
+              <th>Task Name</th>
+              <th>Account</th>
+              <th>Objective</th>
+              <th>Detail</th>
+              <th>Status</th>
+              <th>Due Date</th>
+              <th style="width:36px"></th>
+            </tr>
+          </thead>
+          <tbody>
+
+            <!-- Row 1: Pending (new status) -->
+            <tr onclick="toggle('r1')">
+              <td>
+                <button class="expand-btn" id="btn-r1">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </td>
+              <td><div class="task-name-cell"><span class="task-name">Update Client Welcome Packet</span></div></td>
+              <td>TAT Foundation</td>
+              <td>Onboarding</td>
+              <td><span class="muted">—</span></td>
+              <td><span class="badge badge-pending">Pending</span></td>
+              <td>Jun 20, 2026</td>
+              <td></td>
+            </tr>
+            <tr class="expanded-body" id="r1">
+              <td colspan="8">
+                <div class="expanded-grid">
+                  <div style="display:flex;flex-direction:column;gap:14px">
+                    <div>
+                      <div class="detail-label">Task detail</div>
+                      <div class="detail-value muted">No detail provided.</div>
+                    </div>
+                    <div>
+                      <div class="detail-label">Task notes</div>
+                      <div class="detail-value muted">No notes provided.</div>
+                    </div>
+                  </div>
+                  <div class="detail-card">
+                    <div>
+                      <div class="detail-label">Due date</div>
+                      <div style="font-size:13px;font-weight:600;color:var(--espresso);margin-top:2px">Jun 20, 2026</div>
+                    </div>
+                    <div style="margin-top:10px">
+                      <div class="detail-label">Update status</div>
+                      <select class="status-select" style="margin-top:4px">
+                        <option selected>Pending</option>
+                        <option>On Queue</option>
+                        <option>In Progress</option>
+                        <option>Submitted</option>
+                        <option>Reviewing</option>
+                        <option>Revision Needed</option>
+                        <option>Approved</option>
+                        <option>Completed</option>
+                        <option>Paid</option>
+                        <option>Cancelled</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 2: On Queue -->
+            <tr onclick="toggle('r2')">
+              <td>
+                <button class="expand-btn" id="btn-r2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </td>
+              <td><div class="task-name-cell"><span class="task-name">Organize Email Inbox — Q2</span></div></td>
+              <td>Virtual Concierge</td>
+              <td>Admin Support</td>
+              <td><span style="color:var(--stone);font-size:11px">Sort and archive Q2 emails by…</span></td>
+              <td><span class="badge badge-on_queue">On Queue</span></td>
+              <td>Jun 18, 2026</td>
+              <td></td>
+            </tr>
+            <tr class="expanded-body" id="r2">
+              <td colspan="8">
+                <div class="expanded-grid">
+                  <div style="display:flex;flex-direction:column;gap:14px">
+                    <div>
+                      <div class="detail-label">Task detail</div>
+                      <div class="detail-value">Sort and archive Q2 emails by client, flag unread follow-ups, and export a summary sheet.</div>
+                    </div>
+                    <div>
+                      <div class="detail-label">Task notes</div>
+                      <div class="detail-value muted">No notes provided.</div>
+                    </div>
+                  </div>
+                  <div class="detail-card">
+                    <div>
+                      <div class="detail-label">Due date</div>
+                      <div style="font-size:13px;font-weight:600;color:var(--espresso);margin-top:2px">Jun 18, 2026</div>
+                    </div>
+                    <div style="margin-top:10px">
+                      <div class="detail-label">Update status</div>
+                      <select class="status-select" style="margin-top:4px">
+                        <option>Pending</option>
+                        <option selected>On Queue</option>
+                        <option>In Progress</option>
+                        <option>Submitted</option>
+                        <option>Reviewing</option>
+                        <option>Revision Needed</option>
+                        <option>Approved</option>
+                        <option>Completed</option>
+                        <option>Paid</option>
+                        <option>Cancelled</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 3: In Progress -->
+            <tr onclick="toggle('r3')">
+              <td>
+                <button class="expand-btn" id="btn-r3">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </td>
+              <td><div class="task-name-cell"><span class="task-name">Social Media Content Calendar</span></div></td>
+              <td>Colina Portrait</td>
+              <td>Marketing</td>
+              <td><span style="color:var(--stone);font-size:11px">Prepare June & July posts for Ins…</span></td>
+              <td><span class="badge badge-in_progress">In Progress</span></td>
+              <td>Jun 15, 2026</td>
+              <td></td>
+            </tr>
+            <tr class="expanded-body" id="r3">
+              <td colspan="8">
+                <div class="expanded-grid">
+                  <div style="display:flex;flex-direction:column;gap:14px">
+                    <div>
+                      <div class="detail-label">Task detail</div>
+                      <div class="detail-value">Prepare June &amp; July posts for Instagram and Facebook. 3 posts per week, coordinate with King on graphics.</div>
+                    </div>
+                    <div>
+                      <div class="detail-label">Task notes</div>
+                      <div class="detail-value">King is providing raw photos this week. Reach out if no delivery by Thursday.</div>
+                    </div>
+                  </div>
+                  <div class="detail-card">
+                    <div>
+                      <div class="detail-label">Due date</div>
+                      <div style="font-size:13px;font-weight:600;color:var(--espresso);margin-top:2px">Jun 15, 2026</div>
+                    </div>
+                    <div style="margin-top:10px">
+                      <div class="detail-label">Update status</div>
+                      <select class="status-select" style="margin-top:4px">
+                        <option>Pending</option>
+                        <option>On Queue</option>
+                        <option selected>In Progress</option>
+                        <option>Submitted</option>
+                        <option>Reviewing</option>
+                        <option>Revision Needed</option>
+                        <option>Approved</option>
+                        <option>Completed</option>
+                        <option>Paid</option>
+                        <option>Cancelled</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 4: Revision Needed (overdue) -->
+            <tr onclick="toggle('r4')">
+              <td>
+                <button class="expand-btn" id="btn-r4">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </td>
+              <td><div class="task-name-cell"><span class="task-name">Invoice PDF Template</span></div></td>
+              <td>SNAPS Sublimation</td>
+              <td><span class="muted">—</span></td>
+              <td><span style="color:var(--stone);font-size:11px">Redesign the invoice PDF to match…</span></td>
+              <td><span class="badge badge-revision_needed">Revision Needed</span></td>
+              <td class="overdue">Overdue · Jun 10, 2026</td>
+              <td></td>
+            </tr>
+            <tr class="expanded-body" id="r4">
+              <td colspan="8">
+                <div class="expanded-grid">
+                  <div style="display:flex;flex-direction:column;gap:14px">
+                    <div>
+                      <div class="detail-label">Task detail</div>
+                      <div class="detail-value">Redesign the invoice PDF to match the new brand colors. Header font needs to be Montserrat Bold.</div>
+                    </div>
+                    <div>
+                      <div class="detail-label">Task notes</div>
+                      <div class="detail-value">Toni flagged the logo placement on Jun 8. Needs to move to top-right.</div>
+                    </div>
+                  </div>
+                  <div class="detail-card">
+                    <div>
+                      <div class="detail-label">Due date</div>
+                      <div style="font-size:13px;font-weight:600;color:var(--terracotta);margin-top:2px">Jun 10, 2026 · Overdue</div>
+                    </div>
+                    <div style="margin-top:10px">
+                      <div class="detail-label">Update status</div>
+                      <select class="status-select" style="margin-top:4px">
+                        <option>Pending</option>
+                        <option>On Queue</option>
+                        <option>In Progress</option>
+                        <option>Submitted</option>
+                        <option>Reviewing</option>
+                        <option selected>Revision Needed</option>
+                        <option>Approved</option>
+                        <option>Completed</option>
+                        <option>Paid</option>
+                        <option>Cancelled</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 5: Submitted -->
+            <tr onclick="toggle('r5')">
+              <td>
+                <button class="expand-btn" id="btn-r5">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </td>
+              <td><div class="task-name-cell"><span class="task-name">Team Availability Report</span></div></td>
+              <td>WSB Awesome Team</td>
+              <td>HR</td>
+              <td><span class="muted">—</span></td>
+              <td><span class="badge badge-submitted">Submitted</span></td>
+              <td>Jun 14, 2026</td>
+              <td></td>
+            </tr>
+            <tr class="expanded-body" id="r5">
+              <td colspan="8">
+                <div class="expanded-grid">
+                  <div style="display:flex;flex-direction:column;gap:14px">
+                    <div>
+                      <div class="detail-label">Task detail</div>
+                      <div class="detail-value muted">No detail provided.</div>
+                    </div>
+                    <div>
+                      <div class="detail-label">Task notes</div>
+                      <div class="detail-value muted">No notes provided.</div>
+                    </div>
+                  </div>
+                  <div class="detail-card">
+                    <div>
+                      <div class="detail-label">Due date</div>
+                      <div style="font-size:13px;font-weight:600;color:var(--espresso);margin-top:2px">Jun 14, 2026</div>
+                    </div>
+                    <div style="margin-top:10px">
+                      <div class="detail-label">Update status</div>
+                      <select class="status-select" style="margin-top:4px">
+                        <option>Pending</option>
+                        <option>On Queue</option>
+                        <option>In Progress</option>
+                        <option selected>Submitted</option>
+                        <option>Reviewing</option>
+                        <option>Revision Needed</option>
+                        <option>Approved</option>
+                        <option>Completed</option>
+                        <option>Paid</option>
+                        <option>Cancelled</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 6: Collaborative task -->
+            <tr onclick="toggle('r6')">
+              <td>
+                <button class="expand-btn" id="btn-r6">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </td>
+              <td>
+                <div class="task-name-cell">
+                  <span class="task-name">Client Data Migration</span>
+                  <span class="badge badge-collab">Collaborative with Arianne</span>
+                </div>
+              </td>
+              <td>Right Path Agency</td>
+              <td>Data</td>
+              <td><span style="color:var(--stone);font-size:11px">Migrate 300+ client records to ne…</span></td>
+              <td><span class="badge badge-in_progress">In Progress</span></td>
+              <td>Jun 22, 2026</td>
+              <td><span style="font-size:11px;color:var(--stone)">Read only</span></td>
+            </tr>
+            <tr class="expanded-body" id="r6">
+              <td colspan="8">
+                <div class="expanded-grid">
+                  <div style="display:flex;flex-direction:column;gap:14px">
+                    <div>
+                      <div class="detail-label">Task detail</div>
+                      <div class="detail-value">Migrate 300+ client records to new CRM. Verify each record has a valid email and phone.</div>
+                    </div>
+                    <div>
+                      <div class="detail-label">Task notes</div>
+                      <div class="detail-value">Arianne is handling rows 1–150. You handle 151–300.</div>
+                    </div>
+                  </div>
+                  <div class="detail-card">
+                    <div>
+                      <div class="detail-label">Due date</div>
+                      <div style="font-size:13px;font-weight:600;color:var(--espresso);margin-top:2px">Jun 22, 2026</div>
+                    </div>
+                    <div style="margin-top:10px">
+                      <div class="collab-notice">
+                        Collaborative task from Arianne. Status changes are read only here.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 7: Completed -->
+            <tr onclick="toggle('r7')">
+              <td>
+                <button class="expand-btn" id="btn-r7">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </td>
+              <td><div class="task-name-cell"><span class="task-name">Weekly Activity Summary</span></div></td>
+              <td>Thess Personal</td>
+              <td>Reporting</td>
+              <td><span class="muted">—</span></td>
+              <td><span class="badge badge-completed">Completed</span></td>
+              <td>Jun 7, 2026</td>
+              <td></td>
+            </tr>
+            <tr class="expanded-body" id="r7">
+              <td colspan="8">
+                <div class="expanded-grid">
+                  <div style="display:flex;flex-direction:column;gap:14px">
+                    <div>
+                      <div class="detail-label">Task detail</div>
+                      <div class="detail-value muted">No detail provided.</div>
+                    </div>
+                    <div>
+                      <div class="detail-label">Task notes</div>
+                      <div class="detail-value muted">No notes provided.</div>
+                    </div>
+                  </div>
+                  <div class="detail-card">
+                    <div>
+                      <div class="detail-label">Due date</div>
+                      <div style="font-size:13px;font-weight:600;color:var(--espresso);margin-top:2px">Jun 7, 2026</div>
+                    </div>
+                    <div style="margin-top:10px">
+                      <div class="detail-label">Update status</div>
+                      <select class="status-select" style="margin-top:4px">
+                        <option>Pending</option>
+                        <option>On Queue</option>
+                        <option>In Progress</option>
+                        <option>Submitted</option>
+                        <option>Reviewing</option>
+                        <option>Revision Needed</option>
+                        <option>Approved</option>
+                        <option selected>Completed</option>
+                        <option>Paid</option>
+                        <option>Cancelled</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 8: Cancelled -->
+            <tr onclick="toggle('r8')">
+              <td>
+                <button class="expand-btn" id="btn-r8">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </button>
+              </td>
+              <td><div class="task-name-cell"><span class="task-name">Newsletter Draft — May</span></div></td>
+              <td>Personal</td>
+              <td><span class="muted">—</span></td>
+              <td><span class="muted">—</span></td>
+              <td><span class="badge badge-cancelled">Cancelled</span></td>
+              <td><span class="muted">—</span></td>
+              <td></td>
+            </tr>
+            <tr class="expanded-body" id="r8">
+              <td colspan="8">
+                <div class="expanded-grid">
+                  <div style="display:flex;flex-direction:column;gap:14px">
+                    <div>
+                      <div class="detail-label">Task detail</div>
+                      <div class="detail-value muted">No detail provided.</div>
+                    </div>
+                    <div>
+                      <div class="detail-label">Task notes</div>
+                      <div class="detail-value muted">No notes provided.</div>
+                    </div>
+                  </div>
+                  <div class="detail-card">
+                    <div>
+                      <div class="detail-label">Due date</div>
+                      <div style="font-size:13px;font-weight:600;color:var(--espresso);margin-top:2px">—</div>
+                    </div>
+                    <div style="margin-top:10px">
+                      <div class="detail-label">Update status</div>
+                      <select class="status-select" style="margin-top:4px">
+                        <option>Pending</option>
+                        <option>On Queue</option>
+                        <option>In Progress</option>
+                        <option>Submitted</option>
+                        <option>Reviewing</option>
+                        <option>Revision Needed</option>
+                        <option>Approved</option>
+                        <option>Completed</option>
+                        <option>Paid</option>
+                        <option selected>Cancelled</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+          </tbody>
+        </table>
+      </div><!-- /.card-body -->
+    </div><!-- /.card -->
+  </div><!-- /.page -->
+
+  <!-- Add Task Modal -->
+  <div class="modal-overlay" id="addModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Add Task</h2>
+        <button class="modal-close" onclick="document.getElementById('addModal').classList.remove('open')">×</button>
+      </div>
+      <div class="modal-body">
+        <div>
+          <label class="form-label">Task name</label>
+          <input class="form-input" placeholder="What needs to be done?" />
+        </div>
+        <div class="form-grid">
+          <div>
+            <label class="form-label">Account</label>
+            <input class="form-input" placeholder="Optional" />
+          </div>
+          <div>
+            <label class="form-label">Project / Objective</label>
+            <input class="form-input" placeholder="Optional" />
+          </div>
+        </div>
+        <div>
+          <label class="form-label">Task notes</label>
+          <textarea class="form-textarea" placeholder="Optional notes"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="document.getElementById('addModal').classList.remove('open')">Cancel</button>
+        <button class="btn-submit">Add Task</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toggle(id) {
+      const row = document.getElementById(id);
+      const btn = document.getElementById('btn-' + id);
+      if (!row) return;
+      const isOpen = row.classList.contains('open');
+      // Close all
+      document.querySelectorAll('.expanded-body').forEach(r => r.classList.remove('open'));
+      document.querySelectorAll('.expand-btn').forEach(b => b.classList.remove('open'));
+      // Toggle the clicked one
+      if (!isOpen) {
+        row.classList.add('open');
+        if (btn) btn.classList.add('open');
+      }
+    }
+  </script>
+
+</body>
+</html>
