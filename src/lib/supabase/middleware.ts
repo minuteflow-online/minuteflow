@@ -51,7 +51,8 @@ export async function updateSession(request: NextRequest) {
     !request.nextUrl.pathname.endsWith(".zip") &&
     !request.nextUrl.pathname.endsWith(".exe") &&
     !request.nextUrl.pathname.startsWith("/MinuteFlow") &&
-    !request.nextUrl.pathname.startsWith("/api/")
+    !request.nextUrl.pathname.startsWith("/api/") &&
+    !request.nextUrl.pathname.startsWith("/task-list-preview")
   ) {
     // Redirect unauthenticated users to login
     const url = request.nextUrl.clone();
