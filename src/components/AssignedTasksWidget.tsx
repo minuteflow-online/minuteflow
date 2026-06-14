@@ -72,7 +72,7 @@ export default function AssignedTasksWidget({
           assigned_tasks: (row.assigned_tasks as unknown as VAAssignedTask["assigned_tasks"]),
         }));
         const visible = data
-          .filter((t) => t.status === 'on_queue')
+          .filter((t) => t.status === 'on_queue' || t.status === 'in_progress')
           .sort(
             (a, b) =>
               (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
@@ -383,9 +383,13 @@ export default function AssignedTasksWidget({
                         )}
 
                         {task.status === "in_progress" && (
-                          <span className="text-[11px] text-stone italic">
-                            Already in progress
-                          </span>
+                          <button
+                            onClick={() => updateStatus(task, "submitted")}
+                            disabled={isUpdating}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sky-500 text-white hover:bg-sky-600 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isUpdating ? "Submitting..." : "Submit"}
+                          </button>
                         )}
                       </div>
                     </div>
