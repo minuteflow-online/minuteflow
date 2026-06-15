@@ -53,6 +53,14 @@ type FormTask = {
   billing_type?: string;
 };
 
+type InlineEditField = "task_name" | "account" | "project" | "status" | "due_date";
+
+type InlineEditState = {
+  taskId: number;
+  field: InlineEditField;
+  value: string;
+};
+
 const STATUS_FILTERS: Array<{ value: AssignedTaskStatus | "all"; label: string }> = [
   { value: "all", label: "All Statuses" },
   { value: "pending", label: "Pending" },
@@ -174,7 +182,10 @@ export default function TaskListPage() {
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
   const [formTasksByProject, setFormTasksByProject] = useState<Record<number, FormTask[]>>({});
   const [currentPosition, setCurrentPosition] = useState<string | null>(null);
+  const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
   const [activeView, setActiveView] = useState<"my_tasks" | "available_tasks">("my_tasks");
+  const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
+  const [inlineSaving, setInlineSaving] = useState(false);
 
   const [isCreating, setIsCreating] = useState(false);
   const [addSaving, setAddSaving] = useState(false);
@@ -245,11 +256,12 @@ export default function TaskListPage() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role, position")
+        .select("role, position, can_see_available_tasks")
         .eq("id", data.user.id)
         .single();
 
       setCurrentPosition(profile?.position ?? null);
+      setCanSeeAvailableTasks(Boolean(profile?.can_see_available_tasks));
 
       if (profile?.role === "admin" || profile?.role === "manager") {
         router.replace("/admin");
@@ -261,6 +273,7 @@ export default function TaskListPage() {
   }, [router, supabase]);
 
   const isPerTaskVa = currentPosition === "Per Task VA";
+  const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -293,10 +306,10 @@ export default function TaskListPage() {
   }, [fetchCurrentUser, fetchFormOptions, fetchTasks]);
 
   useEffect(() => {
-    if (!isPerTaskVa) {
+    if (!canShowAvailableTasks) {
       setActiveView("my_tasks");
     }
-  }, [isPerTaskVa]);
+  }, [canShowAvailableTasks]);
 
   const accountOptions = useMemo(() => {
     if (formAccounts.length > 0) return formAccounts;
@@ -304,6 +317,19 @@ export default function TaskListPage() {
       new Set(tasks.map((task) => task.assigned_tasks.account).filter((v): v is string => Boolean(v)))
     ).sort();
   }, [formAccounts, tasks]);
+
+  const taskNameOptions = useMemo(() => {
+    const options = new Set<string>();
+    for (const taskList of Object.values(formTasksByProject)) {
+      for (const task of taskList) {
+        if (task.task_name) options.add(task.task_name);
+      }
+    }
+    for (const task of tasks) {
+      if (task.assigned_tasks.task_name) options.add(task.assigned_tasks.task_name);
+    }
+    return Array.from(options).sort();
+  }, [formTasksByProject, tasks]);
 
   const addProjectsForAccount = useMemo(
     () => formProjects.filter((project) => project.account === addForm.account),
@@ -342,6 +368,222 @@ export default function TaskListPage() {
     () => (statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter)),
     [tasks, statusFilter]
   );
+
+  const startInlineEdit = useCallback(
+    (e: React.MouseEvent, taskId: number, field: InlineEditField, value: string) => {
+      e.stopPropagation();
+      if (inlineSaving) return;
+      setInlineEdit({ taskId, field, value });
+    },
+    [inlineSaving]
+  );
+
+  const commitInlineEdit = useCallback(
+    async (nextValue?: string) => {
+      if (!inlineEdit || inlineSaving) return;
+
+      const task = tasks.find((item) => item.id === inlineEdit.taskId);
+      if (!task) {
+        setInlineEdit(null);
+        return;
+      }
+
+      const value = nextValue ?? inlineEdit.value;
+      const currentValue = (() => {
+        switch (inlineEdit.field) {
+          case "task_name":
+            return task.assigned_tasks.task_name;
+          case "account":
+            return task.assigned_tasks.account ?? "";
+          case "project":
+            return task.assigned_tasks.project ?? "";
+          case "status":
+            return task.status;
+          case "due_date":
+            return formatDateInputValue(task.assigned_tasks.due_date);
+          default:
+            return "";
+        }
+      })();
+
+      if (value === currentValue) {
+        setInlineEdit(null);
+        return;
+      }
+
+      if (inlineEdit.field === "task_name" && !value.trim()) {
+        setInlineEdit(null);
+        return;
+      }
+
+      setInlineSaving(true);
+      try {
+        const payloadValue = inlineEdit.field === "due_date" && value === "" ? null : value || null;
+        const res = await fetch(`/api/assigned-tasks/${task.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [inlineEdit.field]: payloadValue }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await fetchTasks();
+      } catch (error) {
+        console.error("Failed to save inline task edit", error);
+      } finally {
+        setInlineSaving(false);
+        setInlineEdit(null);
+      }
+    },
+    [fetchTasks, inlineEdit, inlineSaving, tasks]
+  );
+
+  const cancelInlineEdit = useCallback(() => {
+    setInlineEdit(null);
+  }, []);
+
+  function InlineCell({
+    task,
+    field,
+    display,
+    className,
+  }: {
+    task: VATaskRow;
+    field: InlineEditField;
+    display: React.ReactNode;
+    className?: string;
+  }) {
+    const isEditing = inlineEdit?.taskId === task.id && inlineEdit?.field === field;
+
+    if (isEditing) {
+      return (
+        <td className={className ?? "px-3 py-3 text-[13px]"} onClick={(e) => e.stopPropagation()}>
+          {field === "task_name" ? (
+            <select
+              autoFocus
+              disabled={inlineSaving}
+              value={inlineEdit.value}
+              onChange={(e) => void commitInlineEdit(e.target.value)}
+              onBlur={() => cancelInlineEdit()}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") cancelInlineEdit();
+              }}
+              className="w-full rounded-lg border border-terracotta bg-white px-2 py-1 text-[13px] outline-none"
+            >
+              <option value="">Select task...</option>
+              {taskNameOptions.map((taskName) => (
+                <option key={taskName} value={taskName}>
+                  {taskName}
+                </option>
+              ))}
+            </select>
+          ) : field === "account" ? (
+            <select
+              autoFocus
+              disabled={inlineSaving}
+              value={inlineEdit.value}
+              onChange={(e) => void commitInlineEdit(e.target.value)}
+              onBlur={() => cancelInlineEdit()}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") cancelInlineEdit();
+              }}
+              className="w-full rounded-lg border border-terracotta bg-white px-2 py-1 text-[13px] outline-none"
+            >
+              <option value="">Select account...</option>
+              {accountOptions.map((account) => (
+                <option key={account} value={account}>
+                  {account}
+                </option>
+              ))}
+            </select>
+          ) : field === "project" ? (
+            <select
+              autoFocus
+              disabled={inlineSaving}
+              value={inlineEdit.value}
+              onChange={(e) => void commitInlineEdit(e.target.value)}
+              onBlur={() => cancelInlineEdit()}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") cancelInlineEdit();
+              }}
+              className="w-full rounded-lg border border-terracotta bg-white px-2 py-1 text-[13px] outline-none"
+            >
+              <option value="">Select objective...</option>
+              {formProjects
+                .filter((project) => project.account === task.assigned_tasks.account)
+                .map((project) => project.project_name)
+                .filter((value, index, arr) => arr.indexOf(value) === index)
+                .map((projectName) => (
+                  <option key={projectName} value={projectName}>
+                    {projectName}
+                  </option>
+                ))}
+              {task.assigned_tasks.project &&
+                !formProjects.some(
+                  (project) =>
+                    project.account === task.assigned_tasks.account &&
+                    project.project_name === task.assigned_tasks.project
+                ) && (
+                  <option value={task.assigned_tasks.project}>{task.assigned_tasks.project}</option>
+                )}
+            </select>
+          ) : field === "status" ? (
+            <select
+              autoFocus
+              disabled={inlineSaving}
+              value={inlineEdit.value}
+              onChange={(e) => void commitInlineEdit(e.target.value)}
+              onBlur={() => cancelInlineEdit()}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") cancelInlineEdit();
+              }}
+              className="w-full rounded-lg border border-terracotta bg-white px-2 py-1 text-[13px] outline-none"
+            >
+              {STATUS_FILTERS.filter((option) => option.value !== "all").map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              autoFocus
+              disabled={inlineSaving}
+              type="date"
+              value={inlineEdit.value}
+              onChange={(e) => setInlineEdit({ ...inlineEdit, value: e.target.value })}
+              onBlur={() => void commitInlineEdit()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void commitInlineEdit();
+                if (e.key === "Escape") cancelInlineEdit();
+              }}
+              className="w-full rounded-lg border border-terracotta bg-white px-2 py-1 text-[13px] outline-none"
+            />
+          )}
+        </td>
+      );
+    }
+
+    return (
+      <td
+        className={`${className ?? "px-3 py-3 text-[13px]"} cursor-pointer`}
+        onClick={(e) => startInlineEdit(e, task.id, field, (() => {
+          switch (field) {
+            case "task_name":
+              return task.assigned_tasks.task_name;
+            case "account":
+              return task.assigned_tasks.account ?? "";
+            case "project":
+              return task.assigned_tasks.project ?? "";
+            case "status":
+              return task.status;
+            case "due_date":
+              return formatDateInputValue(task.assigned_tasks.due_date);
+          }
+        })())}
+      >
+        {display || <span className="text-stone/40">—</span>}
+      </td>
+    );
+  }
 
   const openCreate = useCallback(() => {
     setSelectedTask(null);
@@ -637,7 +879,7 @@ export default function TaskListPage() {
             <p className="text-xs text-stone">Assigned work and collaborative tasks visible to you.</p>
           </div>
 
-          {isPerTaskVa && (
+          {canShowAvailableTasks && (
             <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
               <button
                 type="button"
@@ -656,7 +898,7 @@ export default function TaskListPage() {
             </div>
           )}
 
-          {(!isPerTaskVa || activeView === "my_tasks") && (
+          {(!canShowAvailableTasks || activeView === "my_tasks") && (
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -681,7 +923,7 @@ export default function TaskListPage() {
         </div>
 
         <div className="px-5 py-4">
-          {isPerTaskVa && activeView === "available_tasks" ? (
+          {canShowAvailableTasks && activeView === "available_tasks" ? (
             <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} />
           ) : (
             <>
@@ -755,26 +997,37 @@ export default function TaskListPage() {
                               </button>
                             </td>
 
-                            <td className="px-3 py-3 text-[13px]">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-medium text-walnut">{detail.task_name}</span>
-                                {task.is_collaborative && (
-                                  <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
-                                    Collaborative
-                                  </span>
-                                )}
-                              </div>
-                            </td>
+                            <InlineCell
+                              task={task}
+                              field="task_name"
+                              className="px-3 py-3 text-[13px]"
+                              display={
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium text-walnut">{detail.task_name}</span>
+                                  {task.is_collaborative && (
+                                    <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
+                                      Collaborative
+                                    </span>
+                                  )}
+                                </div>
+                              }
+                            />
 
-                            <td className="px-3 py-3 text-[13px] text-walnut">
-                              {detail.account || <span className="text-stone/60">—</span>}
-                            </td>
+                            <InlineCell
+                              task={task}
+                              field="account"
+                              className="px-3 py-3 text-[13px] text-walnut"
+                              display={detail.account || <span className="text-stone/60">—</span>}
+                            />
 
-                            <td className="px-3 py-3 text-[13px] text-walnut">
-                              {detail.project || <span className="text-stone/60">—</span>}
-                            </td>
+                            <InlineCell
+                              task={task}
+                              field="project"
+                              className="px-3 py-3 text-[13px] text-walnut"
+                              display={detail.project || <span className="text-stone/60">—</span>}
+                            />
 
-                            <td className="max-w-[220px] px-3 py-3 text-[13px] text-walnut">
+                            <td className="max-w-[220px] px-3 py-3 text-[13px] text-walnut" onClick={(e) => e.stopPropagation()}>
                               {detail.task_detail ? (
                                 <span className="block truncate text-stone/70" title={detail.task_detail}>
                                   {detail.task_detail.length > 45 ? `${detail.task_detail.slice(0, 45)}…` : detail.task_detail}
@@ -784,14 +1037,28 @@ export default function TaskListPage() {
                               )}
                             </td>
 
-                            <td className="px-3 py-3 text-[13px]">
-                              <StatusBadge status={task.status} />
-                            </td>
+                            <InlineCell
+                              task={task}
+                              field="status"
+                              className="px-3 py-3 text-[13px]"
+                              display={<StatusBadge status={task.status} />}
+                            />
 
-                            <td className={`px-3 py-3 text-[13px] font-medium ${dueTextClass}`}>
-                              {due.isOverdue ? "Overdue · " : ""}
-                              {due.label}
-                            </td>
+                            <InlineCell
+                              task={task}
+                              field="due_date"
+                              className={`px-3 py-3 text-[13px] font-medium ${dueTextClass}`}
+                              display={
+                                detail.due_date ? (
+                                  <>
+                                    {due.isOverdue ? "Overdue · " : ""}
+                                    {due.label}
+                                  </>
+                                ) : (
+                                  <span className="text-stone/30">—</span>
+                                )
+                              }
+                            />
                           </tr>
                         );
                       })}

@@ -405,6 +405,9 @@ export default function TaskAssignmentsAdminTab({
   const [statusEdit, setStatusEdit] = useState<{ taskId: number; vaId: string } | null>(null);
   const [statusSaving, setStatusSaving] = useState(false);
 
+  const [assignedToEdit, setAssignedToEdit] = useState<{ taskId: number } | null>(null);
+  const assignedToEditRef = useRef<HTMLTableCellElement | null>(null);
+
   // ── Delete state ─────────────────────────────────────────────────────────────
   const [deleting, setDeleting] = useState<Record<number, boolean>>({});
 
@@ -577,6 +580,7 @@ export default function TaskAssignmentsAdminTab({
   const openCreate = () => {
     setIsCreating(true);
     setSelectedTask(null);
+    setAssignedToEdit(null);
     setDetailForm(emptyDetailForm());
     setDetailSaveMsg(null);
     setAttachments([]);
@@ -584,6 +588,7 @@ export default function TaskAssignmentsAdminTab({
 
   const openEdit = (task: AssignedTaskWithAssignees) => {
     setIsCreating(false);
+    setAssignedToEdit(null);
     setSelectedTask(task);
     setDetailForm({
       task_name: task.task_name,
@@ -602,11 +607,25 @@ export default function TaskAssignmentsAdminTab({
   const closePanel = () => {
     setSelectedTask(null);
     setIsCreating(false);
+    setAssignedToEdit(null);
     setDetailSaveMsg(null);
     setAttachments([]);
   };
 
   const isPanelOpen = isCreating || selectedTask !== null;
+
+  useEffect(() => {
+    if (!assignedToEdit) return;
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (assignedToEditRef.current && !assignedToEditRef.current.contains(event.target as Node)) {
+        setAssignedToEdit(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [assignedToEdit]);
 
   // ─── Detail panel save ────────────────────────────────────────────────────────
 
@@ -697,6 +716,24 @@ export default function TaskAssignmentsAdminTab({
       } finally {
         setStatusSaving(false);
         setStatusEdit(null);
+      }
+    },
+    [fetchTasks]
+  );
+
+  const handleAssignedToChange = useCallback(
+    async (taskId: number, selectedIds: string[]) => {
+      setInlineSaving(true);
+      try {
+        await fetch(`/api/assigned-tasks/${taskId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ va_ids: selectedIds }),
+        });
+        await fetchTasks();
+      } finally {
+        setInlineSaving(false);
+        setAssignedToEdit(null);
       }
     },
     [fetchTasks]
@@ -1167,27 +1204,43 @@ export default function TaskAssignmentsAdminTab({
                       )}
                     </td>
 
-                    {/* Assigned To — click to open edit panel */}
-                    <td className="px-3 py-3 text-[13px] cursor-pointer" onClick={() => openEdit(task)}>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {visibleAssignees.map((a) => {
-                          const name = a.profiles?.full_name || a.profiles?.username || a.va_id;
-                          return (
-                            <span
-                              key={a.id}
-                              className="inline-flex items-center gap-1 text-[12px] text-walnut"
-                            >
-                              {name}
-                            </span>
-                          );
-                        })}
-                        {extraCount > 0 && (
-                          <span className="text-[11px] text-stone">+{extraCount} more</span>
-                        )}
-                        {assignees.length === 0 && (
-                          <span className="text-[11px] text-stone/40">—</span>
-                        )}
-                      </div>
+                    {/* Assigned To — inline multi-select */}
+                    <td
+                      ref={assignedToEdit?.taskId === task.id ? assignedToEditRef : null}
+                      className="px-3 py-3 text-[13px] cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAssignedToEdit({ taskId: task.id });
+                      }}
+                    >
+                      {assignedToEdit?.taskId === task.id ? (
+                        <VAMultiSelect
+                          vaProfiles={vaProfiles}
+                          selectedIds={assignees.map((a) => a.va_id)}
+                          onChange={(ids) => void handleAssignedToChange(task.id, ids)}
+                          selectedTask={task}
+                        />
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {visibleAssignees.map((a) => {
+                            const name = a.profiles?.full_name || a.profiles?.username || a.va_id;
+                            return (
+                              <span
+                                key={a.id}
+                                className="inline-flex items-center gap-1 text-[12px] text-walnut"
+                              >
+                                {name}
+                              </span>
+                            );
+                          })}
+                          {extraCount > 0 && (
+                            <span className="text-[11px] text-stone">+{extraCount} more</span>
+                          )}
+                          {assignees.length === 0 && (
+                            <span className="text-[11px] text-stone/40">—</span>
+                          )}
+                        </div>
+                      )}
                     </td>
 
                     {/* Status — clickable per-assignee badge */}
