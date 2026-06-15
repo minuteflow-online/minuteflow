@@ -107,7 +107,7 @@ export default function FixedPayTasksTab() {
 
   const [accounts, setAccounts] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
-  const [vaProfiles, setVaProfiles] = useState<ProfileSummary[]>([]);
+  const [activeProfiles, setActiveProfiles] = useState<ProfileSummary[]>([]);
 
   const [attachments, setAttachments] = useState<FixedPayTaskAttachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
@@ -137,7 +137,7 @@ export default function FixedPayTasksTab() {
       const [accountsRes, categoriesRes, profilesRes] = await Promise.all([
         fetch("/api/task-form-options", { cache: "no-store" }),
         fetch("/api/task-categories", { cache: "no-store" }),
-        fetch("/api/profiles?role=va&active=true", { cache: "no-store" }),
+        fetch("/api/profiles?active=true", { cache: "no-store" }),
       ]);
 
       if (accountsRes.ok) {
@@ -152,7 +152,7 @@ export default function FixedPayTasksTab() {
 
       if (profilesRes.ok) {
         const data = (await profilesRes.json()) as { profiles?: ProfileSummary[] };
-        setVaProfiles(data.profiles ?? []);
+        setActiveProfiles(data.profiles ?? []);
       }
     } catch {
       // Keep the form usable with values already present on tasks.
@@ -200,8 +200,8 @@ export default function FixedPayTasksTab() {
   const categoryOptions = useMemo(() => mergeTextOptions(categories, form.category), [categories, form.category]);
   const selectedAssignedProfile = selectedTask?.assigned_to_profile ?? null;
   const vaOptions = useMemo(
-    () => mergeProfiles(vaProfiles, selectedAssignedProfile),
-    [selectedAssignedProfile, vaProfiles]
+    () => mergeProfiles(activeProfiles, selectedAssignedProfile),
+    [selectedAssignedProfile, activeProfiles]
   );
 
   const openCreatePanel = useCallback(() => {

@@ -53,13 +53,16 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, task_name, task_detail, task_notes, due_date, va_ids } = body as {
+  const { account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, va_ids } = body as {
     account?: string;
     project?: string;
     task_name?: string;
     task_detail?: string;
     task_notes?: string;
     due_date?: string;
+    assigned_by?: string | null;
+    instructions?: string | null;
+    instructions_locked?: boolean;
     va_ids?: string[];
   };
 
@@ -73,6 +76,9 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (task_detail !== undefined) updatePayload.task_detail = task_detail;
   if (task_notes !== undefined) updatePayload.task_notes = task_notes;
   if (due_date !== undefined) updatePayload.due_date = due_date;
+  if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
+  if (instructions !== undefined) updatePayload.instructions = instructions;
+  if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
 
   const { data: updatedTask, error: updateError } = await supabase
     .from("assigned_tasks")
@@ -137,7 +143,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   // Return updated task with current assignees
   const { data: finalAssignees, error: finalError } = await supabase
     .from("assigned_task_assignees")
-    .select("id, va_id, status, log_id, notes, assigned_at, updated_at")
+    .select("id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked")
     .eq("assigned_task_id", id);
 
   if (finalError)
@@ -205,7 +211,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const { id } = await params;
   const body = await request.json();
-  const { va_id: bodyVaId, status, log_id, notes, account, project, task_name, task_detail, task_notes, due_date } = body as {
+  const { va_id: bodyVaId, status, log_id, notes, account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked } = body as {
     va_id?: string;
     status?: AssignedTaskStatus;
     log_id?: number;
@@ -216,6 +222,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_detail?: string | null;
     task_notes?: string | null;
     due_date?: string | null;
+    assigned_by?: string | null;
+    instructions?: string | null;
+    instructions_locked?: boolean;
   };
 
   const hasAssigneeUpdate = status !== undefined || log_id !== undefined || notes !== undefined;
@@ -225,7 +234,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_name !== undefined ||
     task_detail !== undefined ||
     task_notes !== undefined ||
-    due_date !== undefined;
+    due_date !== undefined ||
+    assigned_by !== undefined ||
+    instructions !== undefined ||
+    instructions_locked !== undefined;
 
   if (!hasAssigneeUpdate && !hasMetadataUpdate) {
     return Response.json({ error: "At least one field is required" }, { status: 400 });
@@ -321,6 +333,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (task_detail !== undefined) updatePayload.task_detail = task_detail;
     if (task_notes !== undefined) updatePayload.task_notes = task_notes;
     if (due_date !== undefined) updatePayload.due_date = due_date;
+    if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
+    if (instructions !== undefined) updatePayload.instructions = instructions;
+    if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
 
     const { error: taskError } = await supabase
       .from("assigned_tasks")

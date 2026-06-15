@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import type {
   Profile,
   AssignedTaskWithAssignees,
@@ -51,6 +51,7 @@ interface DetailFormState {
   task_detail: string;
   task_notes: string;
   due_date: string;
+  assigned_by_id: string;
   assignee_ids: string[];
 }
 
@@ -128,6 +129,18 @@ function formatFileSize(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function mergeProfiles(
+  options: Pick<Profile, "id" | "full_name" | "username">[],
+  current: Pick<Profile, "id" | "full_name" | "username"> | null | undefined
+) {
+  const map = new Map<string, Pick<Profile, "id" | "full_name" | "username">>();
+  for (const option of options) map.set(option.id, option);
+  if (current) map.set(current.id, current);
+  return Array.from(map.values()).sort((a, b) =>
+    (a.full_name || a.username).localeCompare(b.full_name || b.username)
+  );
+}
+
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: AssignedTaskStatus }) {
@@ -171,7 +184,7 @@ function statusDotColor(status: AssignedTaskStatus): string {
 
 // ─── CSV Parser ───────────────────────────────────────────────────────────────
 
-function parseCsv(text: string, vaProfiles: Profile[]): CsvRow[] {
+function parseCsv(text: string, activeProfiles: Profile[]): CsvRow[] {
   const lines = text.trim().split("\n");
   if (lines.length < 2) return [];
 
@@ -211,7 +224,7 @@ function parseCsv(text: string, vaProfiles: Profile[]): CsvRow[] {
       .filter(Boolean);
 
     const unknownVas = va_usernames.filter(
-      (u) => !vaProfiles.some((p) => p.username === u)
+      (u) => !activeProfiles.some((p) => p.username === u)
     );
 
     const valid = !!task_name.trim();
@@ -241,13 +254,13 @@ function parseCsv(text: string, vaProfiles: Profile[]): CsvRow[] {
 // ─── VA Multi-Select Dropdown ──────────────────────────────────────────────────
 
 interface VAMultiSelectProps {
-  vaProfiles: Profile[];
+  activeProfiles: Profile[];
   selectedIds: string[];
   onChange: (ids: string[]) => void;
   selectedTask: AssignedTaskWithAssignees | null;
 }
 
-function VAMultiSelect({ vaProfiles, selectedIds, onChange, selectedTask }: VAMultiSelectProps) {
+function VAMultiSelect({ activeProfiles, selectedIds, onChange, selectedTask }: VAMultiSelectProps) {
   const [open, setOpen] = useState(false);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -298,7 +311,7 @@ function VAMultiSelect({ vaProfiles, selectedIds, onChange, selectedTask }: VAMu
     }
   };
 
-  const selectedProfiles = vaProfiles.filter((p) => selectedIds.includes(p.id));
+  const selectedProfiles = activeProfiles.filter((p) => selectedIds.includes(p.id));
 
   return (
     <div className="relative">
@@ -311,7 +324,7 @@ function VAMultiSelect({ vaProfiles, selectedIds, onChange, selectedTask }: VAMu
       >
         <span className="flex-1 text-left">
           {selectedProfiles.length === 0 ? (
-            <span className="text-stone/50">Select VAs...</span>
+            <span className="text-stone/50">Select team members...</span>
           ) : (
             <span className="flex flex-wrap gap-1">
               {selectedProfiles.map((p) => {
@@ -344,7 +357,7 @@ function VAMultiSelect({ vaProfiles, selectedIds, onChange, selectedTask }: VAMu
           style={dropdownStyle}
           className="bg-white border border-sand rounded-lg shadow-xl overflow-y-auto"
         >
-          {vaProfiles.map((va) => {
+          {activeProfiles.map((va) => {
             const checked = selectedIds.includes(va.id);
             const assignee = selectedTask?.assigned_task_assignees.find((a) => a.va_id === va.id);
             return (
@@ -375,7 +388,7 @@ export default function TaskAssignmentsAdminTab({
   profiles,
   orgTimezone,
 }: TaskAssignmentsAdminTabProps) {
-  const vaProfiles = profiles.filter((p) => p.role === "va");
+  const activeProfiles = profiles.filter((p) => p.is_active !== false);
 
   // ── Data state ───────────────────────────────────────────────────────────────
   const [tasks, setTasks] = useState<AssignedTaskWithAssignees[]>([]);
@@ -392,6 +405,7 @@ export default function TaskAssignmentsAdminTab({
     task_detail: "",
     task_notes: "",
     due_date: "",
+    assigned_by_id: "",
     assignee_ids: [],
   });
   const [detailSaving, setDetailSaving] = useState(false);
@@ -496,6 +510,10 @@ export default function TaskAssignmentsAdminTab({
   const detailTasksForObjective = detailObjectiveTagId
     ? (formTasksByObjective[detailObjectiveTagId] ?? [])
     : [];
+  const assignedByOptions = useMemo(
+    () => mergeProfiles(activeProfiles, selectedTask?.assigned_by_profile ?? null),
+    [activeProfiles, selectedTask?.assigned_by_profile]
+  );
   const allTaskNameOptions = Array.from(
     new Set([
       ...Object.values(formTasksByObjective).flatMap((tasks) => tasks.map((task) => task.task_name)),
@@ -574,6 +592,7 @@ export default function TaskAssignmentsAdminTab({
     task_detail: "",
     task_notes: "",
     due_date: "",
+    assigned_by_id: "",
     assignee_ids: [],
   });
 
@@ -598,6 +617,7 @@ export default function TaskAssignmentsAdminTab({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       task_notes: (task as any).task_notes || "",
       due_date: task.due_date ? task.due_date.slice(0, 10) : "",
+      assigned_by_id: task.assigned_by || "",
       assignee_ids: task.assigned_task_assignees.map((a) => a.va_id),
     });
     setDetailSaveMsg(null);
@@ -645,6 +665,7 @@ export default function TaskAssignmentsAdminTab({
       task_detail: detailForm.task_detail.trim() || null,
       task_notes: detailForm.task_notes.trim() || null,
       due_date: detailForm.due_date || null,
+      assigned_by: detailForm.assigned_by_id || null,
       va_ids: detailForm.assignee_ids,
     };
 
@@ -805,7 +826,7 @@ export default function TaskAssignmentsAdminTab({
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
-      const parsed = parseCsv(text, vaProfiles);
+      const parsed = parseCsv(text, activeProfiles);
       setCsvRows(parsed);
       setCsvResult(null);
     };
@@ -825,7 +846,7 @@ export default function TaskAssignmentsAdminTab({
 
     for (const row of valid) {
       const assignee_ids = row.va_usernames
-        .map((u) => vaProfiles.find((p) => p.username === u)?.id)
+        .map((u) => activeProfiles.find((p) => p.username === u)?.id)
         .filter((id): id is string => !!id);
 
       const payload = {
@@ -868,7 +889,7 @@ export default function TaskAssignmentsAdminTab({
     }
 
     if (created > 0) fetchTasks();
-  }, [csvRows, vaProfiles, fetchTasks]);
+  }, [csvRows, activeProfiles, fetchTasks]);
 
   // ─── Filtered tasks ───────────────────────────────────────────────────────────
 
@@ -1006,8 +1027,8 @@ export default function TaskAssignmentsAdminTab({
             onChange={(e) => setFilterVaId(e.target.value)}
             className="py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
           >
-            <option value="">All VAs</option>
-            {vaProfiles.map((p) => (
+            <option value="">All Members</option>
+            {activeProfiles.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.full_name || p.username}
               </option>
@@ -1215,7 +1236,7 @@ export default function TaskAssignmentsAdminTab({
                     >
                       {assignedToEdit?.taskId === task.id ? (
                         <VAMultiSelect
-                          vaProfiles={vaProfiles}
+                          activeProfiles={activeProfiles}
                           selectedIds={assignees.map((a) => a.va_id)}
                           onChange={(ids) => void handleAssignedToChange(task.id, ids)}
                           selectedTask={task}
@@ -1479,6 +1500,25 @@ export default function TaskAssignmentsAdminTab({
                 />
               </div>
 
+              {/* Assigned By */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                  Assigned By
+                </label>
+                <select
+                  value={detailForm.assigned_by_id}
+                  onChange={(e) => setDetailForm((f) => ({ ...f, assigned_by_id: e.target.value }))}
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
+                >
+                  <option value="">Select assigned by...</option>
+                  {assignedByOptions.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.full_name || profile.username}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* Detail (small / single-line) */}
               <div>
                 <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
@@ -1512,11 +1552,11 @@ export default function TaskAssignmentsAdminTab({
                 <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide uppercase">
                   Assigned To <span className="text-terracotta">*</span>
                 </label>
-                {vaProfiles.length === 0 ? (
-                  <p className="text-[12px] text-stone">No VAs available</p>
+                {activeProfiles.length === 0 ? (
+                  <p className="text-[12px] text-stone">No active members available</p>
                 ) : (
                   <VAMultiSelect
-                    vaProfiles={vaProfiles}
+                    activeProfiles={activeProfiles}
                     selectedIds={detailForm.assignee_ids}
                     onChange={(ids) => setDetailForm((f) => ({ ...f, assignee_ids: ids }))}
                     selectedTask={selectedTask}
@@ -1677,7 +1717,7 @@ export default function TaskAssignmentsAdminTab({
       {/* ── CSV Modal ───────────────────────────────────────────────────────────── */}
       {showCsvModal && (
         <CsvModal
-          vaProfiles={vaProfiles}
+          activeProfiles={activeProfiles}
           csvRows={csvRows}
           csvUploading={csvUploading}
           csvResult={csvResult}
@@ -1698,7 +1738,7 @@ export default function TaskAssignmentsAdminTab({
 // ─── CSV Modal ────────────────────────────────────────────────────────────────
 
 interface CsvModalProps {
-  vaProfiles: Profile[];
+  activeProfiles: Profile[];
   csvRows: CsvRow[];
   csvUploading: boolean;
   csvResult: string | null;
@@ -1709,7 +1749,7 @@ interface CsvModalProps {
 }
 
 function CsvModal({
-  vaProfiles: _vaProfiles,
+  activeProfiles,
   csvRows,
   csvUploading,
   csvResult,
@@ -1718,6 +1758,7 @@ function CsvModal({
   onUpload,
   onClose,
 }: CsvModalProps) {
+  void activeProfiles;
   const validCount = csvRows.filter((r) => r._valid).length;
   const invalidCount = csvRows.filter((r) => !r._valid).length;
 

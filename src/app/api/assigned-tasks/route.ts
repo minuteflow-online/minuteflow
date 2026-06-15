@@ -76,12 +76,12 @@ export async function GET(request: Request) {
 
   if (isAdminOrManager && !selfOnly) {
     const assigneeSelect =
-      "id, va_id, status, log_id, notes, assigned_at, updated_at";
+      "id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked";
 
     const query = supabase
       .from("assigned_tasks")
       .select(
-        `id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at,
+        `id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
          assigned_task_assignees(${assigneeSelect})`
       )
       .order("created_at", { ascending: false });
@@ -149,7 +149,7 @@ export async function GET(request: Request) {
     .from("assigned_task_assignees")
     .select(
       `id, va_id, status, log_id, notes, assigned_at, updated_at,
-       assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at)`
+       assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
     )
     .eq("va_id", user.id)
     .order("assigned_at", { ascending: false });
@@ -184,7 +184,7 @@ export async function GET(request: Request) {
       .from("assigned_task_assignees")
       .select(
         `id, va_id, status, log_id, notes, assigned_at, updated_at,
-         assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at)`
+         assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
       )
       .in("va_id", collabVaIds)
       .order("assigned_at", { ascending: false });
@@ -244,13 +244,17 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { account, project, task_name, task_detail, task_notes, due_date, va_ids: rawVaIds } = body as {
+  const { account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, fixed_pay_task_id, va_ids: rawVaIds } = body as {
     account: string;
     project: string;
     task_name: string;
     task_detail?: string;
     task_notes?: string;
     due_date?: string;
+    assigned_by?: string | null;
+    instructions?: string | null;
+    instructions_locked?: boolean;
+    fixed_pay_task_id?: number | null;
     va_ids?: string[];
   };
 
@@ -286,6 +290,10 @@ export async function POST(request: Request) {
       task_detail: task_detail ?? null,
       task_notes: task_notes ?? null,
       due_date: due_date ?? null,
+      assigned_by: (assigned_by ?? user.id) as string,
+      instructions: instructions ?? null,
+      instructions_locked: Boolean(instructions_locked),
+      fixed_pay_task_id: fixed_pay_task_id ?? null,
       created_by: user.id,
     })
     .select()
@@ -304,7 +312,7 @@ export async function POST(request: Request) {
   const { data: assignees, error: assigneeError } = await adminSupabase
     .from("assigned_task_assignees")
     .insert(assigneeRows)
-    .select("id, va_id, status, log_id, notes, assigned_at, updated_at");
+    .select("id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked");
 
   if (assigneeError)
     return Response.json({ error: assigneeError.message }, { status: 500 });

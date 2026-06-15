@@ -23,6 +23,12 @@ type VATaskRow = {
     task_detail: string | null;
     task_notes: string | null;
     due_date: string | null;
+    assigned_by: string | null;
+    assigned_by_profile?: { id: string; full_name: string; username: string } | null;
+    instructions: string | null;
+    instructions_locked: boolean;
+    fixed_pay_task_id: number | null;
+    fixed_pay_tasks?: { rate: number } | null;
     created_by: string | null;
     created_at: string;
     updated_at: string;
@@ -50,6 +56,12 @@ type FormTask = {
   id: number;
   task_name: string;
   billing_type?: string;
+};
+
+type ProfileOption = {
+  id: string;
+  full_name: string;
+  username: string;
 };
 
 type InlineEditField = "task_name" | "account" | "project" | "status" | "due_date";
@@ -168,6 +180,34 @@ function sameText(a: string | null | undefined, b: string | null | undefined) {
   return (a ?? "") === (b ?? "");
 }
 
+function renderTextWithLinks(text: string) {
+  const parts: JSX.Element[] = [];
+  const urlRegex = /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+|www\.[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = urlRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(<span key={`text-${lastIndex}`}>{text.slice(lastIndex, match.index)}</span>);
+    }
+
+    const rawUrl = match[0];
+    const href = rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`;
+    parts.push(
+      <a key={`link-${match.index}`} href={href} target="_blank" rel="noreferrer" className="text-terracotta hover:underline">
+        {rawUrl}
+      </a>
+    );
+    lastIndex = match.index + rawUrl.length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(<span key={`text-${lastIndex}`}>{text.slice(lastIndex)}</span>);
+  }
+
+  return parts.length > 0 ? parts : [<span key="empty">{text}</span>];
+}
+
 export default function TaskListPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -179,8 +219,11 @@ export default function TaskListPage() {
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
   const [formTasksByProject, setFormTasksByProject] = useState<Record<number, FormTask[]>>({});
+  const [currentRole, setCurrentRole] = useState<string | null>(null);
   const [currentPosition, setCurrentPosition] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserProfile, setCurrentUserProfile] = useState<ProfileOption | null>(null);
+  const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
   const [activeView, setActiveView] = useState<"my_tasks" | "available_tasks">("my_tasks");
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -196,6 +239,9 @@ export default function TaskListPage() {
     task_detail: "",
     due_date: "",
     task_notes: "",
+    assigned_by: "",
+    instructions: "",
+    instructions_locked: false,
   });
 
   const [selectedTask, setSelectedTask] = useState<VATaskRow | null>(null);
@@ -206,6 +252,9 @@ export default function TaskListPage() {
   const [panelDueDate, setPanelDueDate] = useState("");
   const [panelDetail, setPanelDetail] = useState("");
   const [panelTaskNotes, setPanelTaskNotes] = useState("");
+  const [panelAssignedBy, setPanelAssignedBy] = useState("");
+  const [panelInstructions, setPanelInstructions] = useState("");
+  const [panelInstructionsLocked, setPanelInstructionsLocked] = useState(false);
   const [panelNotes, setPanelNotes] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
   const [panelUploadSaving, setPanelUploadSaving] = useState(false);
@@ -257,11 +306,17 @@ export default function TaskListPage() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role, position, can_see_available_tasks")
+        .select("id, role, position, can_see_available_tasks, full_name, username")
         .eq("id", data.user.id)
         .single();
 
+      setCurrentRole(profile?.role ?? null);
       setCurrentPosition(profile?.position ?? null);
+      setCurrentUserProfile(
+        profile?.id
+          ? { id: profile.id, full_name: profile.full_name ?? "", username: profile.username ?? "" }
+          : null
+      );
       setCanSeeAvailableTasks(Boolean(profile?.can_see_available_tasks));
     } catch {
       // leave the task list usable for all users if profile lookup fails
@@ -300,6 +355,34 @@ export default function TaskListPage() {
     void fetchFormOptions();
     void fetchTasks();
   }, [fetchCurrentUser, fetchFormOptions, fetchTasks]);
+
+  useEffect(() => {
+    if (currentRole !== "admin") {
+      setAssignedByProfiles(currentUserProfile ? [currentUserProfile] : []);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/team-members", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const members: ProfileOption[] = (json.members ?? []).map((member: ProfileOption) => ({
+          id: member.id,
+          full_name: member.full_name ?? "",
+          username: member.username ?? "",
+        }));
+        if (!cancelled) setAssignedByProfiles(members);
+      } catch {
+        if (!cancelled) setAssignedByProfiles(currentUserProfile ? [currentUserProfile] : []);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRole, currentUserProfile]);
 
   useEffect(() => {
     if (!canShowAvailableTasks) {
@@ -343,6 +426,9 @@ export default function TaskListPage() {
   );
 
   const panelCanEditFields = Boolean(selectedTask && !selectedTask.is_collaborative);
+  const canEditAssignedBy = currentRole === "admin" || currentPosition === "Hourly VA";
+  const panelCanEditAssignedBy = Boolean(selectedTask && !selectedTask.is_collaborative && canEditAssignedBy);
+  const panelCanEditInstructions = Boolean(selectedTask && !selectedTask.is_collaborative && currentRole === "admin");
 
   const panelProjectsForAccount = useMemo(
     () => formProjects.filter((project) => project.account === panelAccount),
@@ -359,6 +445,10 @@ export default function TaskListPage() {
     () => (panelProjectId ? formTasksByProject[panelProjectId] ?? [] : []),
     [panelProjectId, formTasksByProject]
   );
+  const panelAssignedByOptions = useMemo(() => {
+    if (assignedByProfiles.length > 0) return assignedByProfiles;
+    return currentUserProfile ? [currentUserProfile] : [];
+  }, [assignedByProfiles, currentUserProfile]);
 
   const filteredTasks = useMemo(
     () => (statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter)),
@@ -590,6 +680,9 @@ export default function TaskListPage() {
     setPanelDueDate("");
     setPanelDetail("");
     setPanelTaskNotes("");
+    setPanelAssignedBy("");
+    setPanelInstructions("");
+    setPanelInstructionsLocked(false);
     setPanelNotes("");
     setPanelSaving(false);
     setPanelUploadSaving(false);
@@ -606,8 +699,11 @@ export default function TaskListPage() {
       task_detail: "",
       due_date: "",
       task_notes: "",
+      assigned_by: currentUserId ?? "",
+      instructions: "",
+      instructions_locked: false,
     });
-  }, []);
+  }, [currentUserId]);
 
   const closeCreate = useCallback(() => {
     setIsCreating(false);
@@ -620,8 +716,11 @@ export default function TaskListPage() {
       task_detail: "",
       due_date: "",
       task_notes: "",
+      assigned_by: currentUserId ?? "",
+      instructions: "",
+      instructions_locked: false,
     });
-  }, []);
+  }, [currentUserId]);
 
   const openPanel = useCallback(
     async (task: VATaskRow) => {
@@ -634,6 +733,9 @@ export default function TaskListPage() {
       setPanelDueDate(task.assigned_tasks.due_date ?? "");
       setPanelDetail(task.assigned_tasks.task_detail ?? "");
       setPanelTaskNotes(task.assigned_tasks.task_notes ?? "");
+      setPanelAssignedBy(task.assigned_tasks.assigned_by ?? "");
+      setPanelInstructions(task.assigned_tasks.instructions ?? "");
+      setPanelInstructionsLocked(Boolean(task.assigned_tasks.instructions_locked));
       setPanelNotes(task.notes ?? "");
       setPanelUploadSaving(false);
       setPanelMsg(null);
@@ -653,6 +755,9 @@ export default function TaskListPage() {
     setPanelDueDate("");
     setPanelDetail("");
     setPanelTaskNotes("");
+    setPanelAssignedBy("");
+    setPanelInstructions("");
+    setPanelInstructionsLocked(false);
     setPanelNotes("");
     setPanelSaving(false);
     setPanelUploadSaving(false);
@@ -681,6 +786,9 @@ export default function TaskListPage() {
           task_detail: addForm.task_detail.trim() || null,
           due_date: addForm.due_date || null,
           task_notes: addForm.task_notes.trim() || null,
+          assigned_by: addForm.assigned_by || currentUserId || null,
+          instructions: addForm.instructions.trim() || null,
+          instructions_locked: addForm.instructions_locked,
           va_ids: currentUserId ? [currentUserId] : undefined,
         }),
       });
@@ -703,7 +811,7 @@ export default function TaskListPage() {
     } finally {
       setAddSaving(false);
     }
-  }, [addForm.account, addForm.due_date, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, fetchTasks]);
+  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks]);
 
   const handleClaimedTaskRefresh = useCallback(async () => {
     await fetchTasks();
@@ -724,6 +832,9 @@ export default function TaskListPage() {
     const nextDueDate = panelDueDate.trim();
     const nextDetail = panelDetail;
     const nextTaskNotes = panelTaskNotes;
+    const nextAssignedBy = panelAssignedBy;
+    const nextInstructions = panelInstructions;
+    const nextInstructionsLocked = panelInstructionsLocked;
     const nextNotes = panelNotes;
     const notesChanged = !sameText(nextNotes, previousNotes);
     const metadataChanged =
@@ -732,7 +843,10 @@ export default function TaskListPage() {
       !sameText(nextTaskName, selectedTask.assigned_tasks.task_name) ||
       !sameText(nextDueDate, selectedTask.assigned_tasks.due_date) ||
       !sameText(nextDetail, selectedTask.assigned_tasks.task_detail) ||
-      !sameText(nextTaskNotes, selectedTask.assigned_tasks.task_notes);
+      !sameText(nextTaskNotes, selectedTask.assigned_tasks.task_notes) ||
+      !sameText(nextAssignedBy, selectedTask.assigned_tasks.assigned_by) ||
+      !sameText(nextInstructions, selectedTask.assigned_tasks.instructions) ||
+      nextInstructionsLocked !== Boolean(selectedTask.assigned_tasks.instructions_locked);
 
     if (selectedTask.is_collaborative || (!statusChanged && !metadataChanged && !notesChanged)) {
       closePanel();
@@ -753,6 +867,9 @@ export default function TaskListPage() {
         body.due_date = nextDueDate || null;
         body.task_detail = nextDetail || null;
         body.task_notes = nextTaskNotes || null;
+        body.assigned_by = nextAssignedBy || null;
+        body.instructions = nextInstructions || null;
+        body.instructions_locked = nextInstructionsLocked;
       }
 
       const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
@@ -781,6 +898,9 @@ export default function TaskListPage() {
                 due_date: metadataChanged ? (nextDueDate || null) : row.assigned_tasks.due_date,
                 task_detail: metadataChanged ? (nextDetail || null) : row.assigned_tasks.task_detail,
                 task_notes: metadataChanged ? (nextTaskNotes || null) : row.assigned_tasks.task_notes,
+                assigned_by: metadataChanged ? (nextAssignedBy || null) : row.assigned_tasks.assigned_by,
+                instructions: metadataChanged ? (nextInstructions || null) : row.assigned_tasks.instructions,
+                instructions_locked: metadataChanged ? nextInstructionsLocked : row.assigned_tasks.instructions_locked,
                 updated_at: metadataChanged ? updatedAt : row.assigned_tasks.updated_at,
               },
             };
@@ -802,6 +922,9 @@ export default function TaskListPage() {
                 due_date: metadataChanged ? (nextDueDate || null) : current.assigned_tasks.due_date,
                 task_detail: metadataChanged ? (nextDetail || null) : current.assigned_tasks.task_detail,
                 task_notes: metadataChanged ? (nextTaskNotes || null) : current.assigned_tasks.task_notes,
+                assigned_by: metadataChanged ? (nextAssignedBy || null) : current.assigned_tasks.assigned_by,
+                instructions: metadataChanged ? (nextInstructions || null) : current.assigned_tasks.instructions,
+                instructions_locked: metadataChanged ? nextInstructionsLocked : current.assigned_tasks.instructions_locked,
                 updated_at: metadataChanged ? updatedAt : current.assigned_tasks.updated_at,
               },
             }
@@ -817,8 +940,11 @@ export default function TaskListPage() {
   }, [
     closePanel,
     panelAccount,
+    panelAssignedBy,
     panelDetail,
     panelDueDate,
+    panelInstructions,
+    panelInstructionsLocked,
     panelNotes,
     panelProject,
     panelStatus,
@@ -1187,6 +1313,50 @@ export default function TaskListPage() {
                   onChange={(e) => setAddForm((form) => ({ ...form, task_notes: e.target.value }))}
                   rows={5}
                   placeholder="Add any helpful notes for this task..."
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
+                {canEditAssignedBy ? (
+                  <select
+                    value={addForm.assigned_by}
+                    onChange={(e) => setAddForm((form) => ({ ...form, assigned_by: e.target.value }))}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  >
+                    <option value="">Select assignee...</option>
+                    {panelAssignedByOptions.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.full_name || profile.username || profile.id}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {currentUserProfile?.full_name || currentUserProfile?.username || "—"}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
+                  <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-stone">
+                    <input
+                      type="checkbox"
+                      checked={addForm.instructions_locked}
+                      onChange={(e) => setAddForm((form) => ({ ...form, instructions_locked: e.target.checked }))}
+                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                    />
+                    Locked
+                  </label>
+                </div>
+                <textarea
+                  value={addForm.instructions}
+                  onChange={(e) => setAddForm((form) => ({ ...form, instructions: e.target.value }))}
+                  rows={4}
+                  placeholder="Add task instructions..."
                   className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta resize-none"
                 />
               </div>

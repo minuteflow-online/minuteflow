@@ -469,9 +469,15 @@ export interface AssignedTask {
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
+  assigned_by: string | null;
+  instructions: string | null;
+  instructions_locked: boolean;
+  fixed_pay_task_id: number | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  assigned_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
+  fixed_pay_tasks?: { rate: number } | null;
 }
 
 export type AssignedTaskStatus = 'pending' | 'on_queue' | 'in_progress' | 'submitted' | 'reviewing' | 'revision_needed' | 'approved' | 'completed' | 'paid' | 'cancelled';
@@ -511,6 +517,8 @@ export interface FixedPayTaskWithClaimer {
   is_active: boolean;
   task_detail: string | null;
   task_notes: string | null;
+  instructions: string | null;
+  instructions_locked: boolean;
   status: "open" | "in_progress" | "completed" | "cancelled";
   assigned_to: string | null;
   claimed_by: string | null;

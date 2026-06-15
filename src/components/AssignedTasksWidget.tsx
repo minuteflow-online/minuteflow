@@ -46,6 +46,34 @@ const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
   cancelled: 8,
 };
 
+function renderTextWithLinks(text: string) {
+  const parts: React.JSX.Element[] = [];
+  const urlRegex = /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+|www\.[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = urlRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(<Fragment key={`text-${lastIndex}`}>{text.slice(lastIndex, match.index)}</Fragment>);
+    }
+
+    const rawUrl = match[0];
+    const href = rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`;
+    parts.push(
+      <a key={`link-${match.index}`} href={href} target="_blank" rel="noreferrer" className="text-terracotta hover:underline">
+        {rawUrl}
+      </a>
+    );
+    lastIndex = match.index + rawUrl.length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(<Fragment key={`text-${lastIndex}`}>{text.slice(lastIndex)}</Fragment>);
+  }
+
+  return parts.length > 0 ? parts : [<Fragment key="empty">{text}</Fragment>];
+}
+
 export default function AssignedTasksWidget({
   userId,
   isAdmin = false,
@@ -72,7 +100,7 @@ export default function AssignedTasksWidget({
           assigned_tasks: (row.assigned_tasks as unknown as VAAssignedTask["assigned_tasks"]),
         }));
         const visible = data
-          .filter((t) => t.status === 'on_queue' || t.status === 'in_progress')
+          .filter((t) => t.status === 'pending' || t.status === 'on_queue' || t.status === 'in_progress')
           .sort(
             (a, b) =>
               (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
@@ -336,6 +364,14 @@ export default function AssignedTasksWidget({
                             <div className="text-[11px] text-bark pl-[18px]">{accountProject}</div>
                           )}
 
+                          {detail.fixed_pay_tasks?.rate != null && (
+                            <div className="pl-[18px]">
+                              <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                Rate ${detail.fixed_pay_tasks.rate.toFixed(2)}
+                              </span>
+                            </div>
+                          )}
+
                           <div className="pl-[18px] space-y-2 mt-0.5">
                             {detail.task_detail && (
                               <div>
@@ -347,6 +383,14 @@ export default function AssignedTasksWidget({
                               <div>
                                 <p className="text-[10px] font-semibold text-walnut mb-0.5 tracking-wide uppercase">Notes</p>
                                 <p className="text-[11px] text-stone/80 leading-relaxed whitespace-pre-wrap">{detail.task_notes}</p>
+                              </div>
+                            )}
+                            {detail.instructions && (
+                              <div>
+                                <p className="text-[10px] font-semibold text-walnut mb-0.5 tracking-wide uppercase">Instructions</p>
+                                <div className="text-[11px] text-stone/80 leading-relaxed whitespace-pre-wrap">
+                                  {renderTextWithLinks(detail.instructions)}
+                                </div>
                               </div>
                             )}
                             {!detail.task_detail && !detail.task_notes && (
@@ -369,6 +413,16 @@ export default function AssignedTasksWidget({
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-2 mt-0.5 pl-[18px]">
+                        {task.status === "pending" && (
+                          <button
+                            onClick={() => updateStatus(task, "on_queue")}
+                            disabled={isUpdating}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-terracotta text-white hover:bg-[#a85840] cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isUpdating ? "Accepting..." : "Accept"}
+                          </button>
+                        )}
+
                         {task.status === "on_queue" && (
                           <button
                             onClick={() => handlePlay(task)}
