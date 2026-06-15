@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTaskStatus } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
@@ -171,7 +170,6 @@ function sameText(a: string | null | undefined, b: string | null | undefined) {
 
 export default function TaskListPage() {
   const supabase = useMemo(() => createClient(), []);
-  const router = useRouter();
 
   const [tasks, setTasks] = useState<VATaskRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -182,6 +180,7 @@ export default function TaskListPage() {
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
   const [formTasksByProject, setFormTasksByProject] = useState<Record<number, FormTask[]>>({});
   const [currentPosition, setCurrentPosition] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
   const [activeView, setActiveView] = useState<"my_tasks" | "available_tasks">("my_tasks");
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -219,7 +218,7 @@ export default function TaskListPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/assigned-tasks", { cache: "no-store" });
+      const res = await fetch("/api/assigned-tasks?selfOnly=true", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       const raw = Array.isArray(json) ? json : json.tasks ?? [];
@@ -254,6 +253,8 @@ export default function TaskListPage() {
       const { data } = await supabase.auth.getUser();
       if (!data.user) return;
 
+      setCurrentUserId(data.user.id);
+
       const { data: profile } = await supabase
         .from("profiles")
         .select("role, position, can_see_available_tasks")
@@ -262,15 +263,10 @@ export default function TaskListPage() {
 
       setCurrentPosition(profile?.position ?? null);
       setCanSeeAvailableTasks(Boolean(profile?.can_see_available_tasks));
-
-      if (profile?.role === "admin" || profile?.role === "manager") {
-        router.replace("/admin");
-        return;
-      }
     } catch {
-      // leave the task list usable for VAs if profile lookup fails
+      // leave the task list usable for all users if profile lookup fails
     }
-  }, [router, supabase]);
+  }, [supabase]);
 
   const isPerTaskVa = currentPosition === "Per Task VA";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
@@ -685,6 +681,7 @@ export default function TaskListPage() {
           task_detail: addForm.task_detail.trim() || null,
           due_date: addForm.due_date || null,
           task_notes: addForm.task_notes.trim() || null,
+          va_ids: currentUserId ? [currentUserId] : undefined,
         }),
       });
 
