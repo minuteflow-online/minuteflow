@@ -1,11 +1,16 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const TASK_STATUSES = new Set(["open", "in_progress", "completed", "cancelled"]);
+const TASK_SELECT =
+  "id, task_name, account, category, rate, is_active, task_detail, task_notes, status, assigned_to, claimed_by, claimed_at, created_by, created_at, updated_at";
+
+type ProfileSummary = { id: string; full_name: string; username: string };
 
 async function getAuthedProfile() {
   const supabase = await createServerClient();
@@ -35,23 +40,59 @@ function makeAdminClient() {
   });
 }
 
+function normalizeText(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function parseRate(value: unknown): number | null {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: FixedPayTaskWithClaimer[]) {
+  const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to]).filter((id): id is string => Boolean(id)))];
+  let profileMap: Record<string, ProfileSummary> = {};
+
+  if (profileIds.length > 0) {
+    const { data: profiles } = await client
+      .from("profiles")
+      .select("id, full_name, username")
+      .in("id", profileIds);
+
+    profileMap = Object.fromEntries((profiles ?? []).map((profile: ProfileSummary) => [profile.id, profile]));
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    claimed_by_profile: row.claimed_by ? profileMap[row.claimed_by] ?? null : null,
+    assigned_to_profile: row.assigned_to ? profileMap[row.assigned_to] ?? null : null,
+  }));
+}
+
 export async function GET() {
   const auth = await getAuthedProfile();
   if ("error" in auth) return auth.error;
 
-  const { supabase, userId, role } = auth;
+  const { supabase, role } = auth;
   const isAdminOrManager = role === "admin" || role === "manager";
 
   const { data, error } = await supabase
     .from("fixed_pay_tasks")
-    .select("id, task_name, account, category, rate, is_active, claimed_by, claimed_at, created_by, created_at, updated_at")
+    .select(TASK_SELECT)
     .order("created_at", { ascending: false });
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = (data ?? []) as FixedPayTaskWithClaimer[];
+  const rows = await hydrateTaskProfiles(supabase, (data ?? []) as FixedPayTaskWithClaimer[]);
 
   if (!isAdminOrManager) {
     return Response.json({
@@ -59,22 +100,7 @@ export async function GET() {
     });
   }
 
-  const claimerIds = [...new Set(rows.map((task) => task.claimed_by).filter((id): id is string => Boolean(id)))];
-  let claimerMap: Record<string, { id: string; full_name: string; username: string }> = {};
-  if (claimerIds.length > 0) {
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, full_name, username")
-      .in("id", claimerIds);
-    claimerMap = Object.fromEntries((profiles ?? []).map((profile) => [profile.id, profile]));
-  }
-
-  return Response.json({
-    tasks: rows.map((task) => ({
-      ...task,
-      claimed_by_profile: task.claimed_by ? claimerMap[task.claimed_by] ?? null : null,
-    })),
-  });
+  return Response.json({ tasks: rows });
 }
 
 export async function POST(request: Request) {
@@ -88,13 +114,17 @@ export async function POST(request: Request) {
 
   const body = await request.json();
   const taskName = String(body.task_name ?? "").trim();
-  const rate = Number(body.rate);
+  const rate = parseRate(body.rate);
+  const status = body.status === undefined ? "open" : String(body.status);
 
   if (!taskName) {
     return Response.json({ error: "task_name is required" }, { status: 400 });
   }
-  if (!Number.isFinite(rate)) {
+  if (rate === null) {
     return Response.json({ error: "rate is required" }, { status: 400 });
+  }
+  if (!TASK_STATUSES.has(status)) {
+    return Response.json({ error: "status is invalid" }, { status: 400 });
   }
 
   const admin = makeAdminClient();
@@ -102,18 +132,23 @@ export async function POST(request: Request) {
     .from("fixed_pay_tasks")
     .insert({
       task_name: taskName,
-      account: body.account ? String(body.account).trim() : null,
-      category: body.category ? String(body.category).trim() : null,
+      account: normalizeText(body.account),
+      category: normalizeText(body.category),
       rate,
+      task_detail: normalizeText(body.task_detail),
+      task_notes: normalizeText(body.task_notes),
+      status,
+      assigned_to: normalizeText(body.assigned_to),
       is_active: body.is_active !== false,
       created_by: userId,
     })
-    .select("id, task_name, account, category, rate, is_active, claimed_by, claimed_at, created_by, created_at, updated_at")
+    .select(TASK_SELECT)
     .single();
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  return Response.json({ task: data }, { status: 201 });
+  const [task] = await hydrateTaskProfiles(admin, [data as FixedPayTaskWithClaimer]);
+  return Response.json({ task }, { status: 201 });
 }

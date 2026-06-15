@@ -509,11 +509,29 @@ export interface FixedPayTaskWithClaimer {
   category: string | null;
   rate: number;
   is_active: boolean;
+  task_detail: string | null;
+  task_notes: string | null;
+  status: "open" | "in_progress" | "completed" | "cancelled";
+  assigned_to: string | null;
   claimed_by: string | null;
   claimed_at: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** Joined profile for the assignee — present on admin responses, absent on VA responses */
+  assigned_to_profile?: { id: string; full_name: string; username: string } | null;
   /** Joined profile for the claimer — present on admin responses, absent on VA responses */
   claimed_by_profile?: { id: string; full_name: string; username: string } | null;
+}
+
+export interface FixedPayTaskAttachment {
+  id: number;
+  task_id: number;
+  filename: string;
+  storage_path: string;
+  file_size: number | null;
+  mime_type: string | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+  url: string | null;
 }
