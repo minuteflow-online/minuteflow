@@ -716,7 +716,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const net = revenue - cost - expenseTotal;
     const margin = revenue > 0 ? (net / revenue) * 100 : 0;
     const collected = revenueData.totalCollected;
-    const receivable = revenue - collected; // what clients still owe you
+    const receivable = revenueData.rows.reduce((sum, row) => sum + (row.balance ?? 0), 0); // sum the same row balances shown below
     const vaPaid = vaCostData.totalVaPaid;
     const vaPayable = cost - vaPaid; // what you still owe VAs
     return { revenue, cost, net, margin, expenseTotal, collected, receivable, vaPaid, vaPayable };
