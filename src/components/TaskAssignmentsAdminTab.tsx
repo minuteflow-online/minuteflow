@@ -493,6 +493,12 @@ export default function TaskAssignmentsAdminTab({
   const detailTasksForObjective = detailObjectiveTagId
     ? (formTasksByObjective[detailObjectiveTagId] ?? [])
     : [];
+  const allTaskNameOptions = Array.from(
+    new Set([
+      ...Object.values(formTasksByObjective).flatMap((tasks) => tasks.map((task) => task.task_name)),
+      ...tasks.map((task) => task.task_name),
+    ])
+  ).sort();
 
   // ─── Fetch attachments ────────────────────────────────────────────────────────
 
@@ -708,13 +714,15 @@ export default function TaskAssignmentsAdminTab({
     setInlineEdit({ taskId, field, value });
   };
 
-  const commitInlineEdit = useCallback(async () => {
+  const commitInlineEdit = useCallback(async (nextValue?: string) => {
     if (!inlineEdit || inlineSaving) return;
     const task = tasks.find((t) => t.id === inlineEdit.taskId);
     if (!task) {
       setInlineEdit(null);
       return;
     }
+
+    const value = nextValue ?? inlineEdit.value;
 
     // If value unchanged, just close
     const currentValue = (() => {
@@ -727,26 +735,19 @@ export default function TaskAssignmentsAdminTab({
       }
     })();
 
-    if (inlineEdit.value === currentValue) {
+    if (value === currentValue) {
       setInlineEdit(null);
       return;
     }
 
     setInlineSaving(true);
-    const payload = {
-      task_name:  inlineEdit.field === "task_name" ? inlineEdit.value : task.task_name,
-      account:    inlineEdit.field === "account"   ? (inlineEdit.value || null) : (task.account || null),
-      project:    inlineEdit.field === "project"   ? (inlineEdit.value || null) : (task.project || null),
-      task_detail: task.task_detail || null,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      task_notes: (task as any).task_notes || null,
-      due_date:   inlineEdit.field === "due_date"  ? (inlineEdit.value || null) : (task.due_date || null),
-      va_ids:     task.assigned_task_assignees.map((a) => a.va_id),
+    const payload: Record<string, unknown> = {
+      [inlineEdit.field]: value || null,
     };
 
     try {
       await fetch(`/api/assigned-tasks/${task.id}`, {
-        method: "PUT",
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -866,32 +867,64 @@ export default function TaskAssignmentsAdminTab({
     if (isEditing) {
       return (
         <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
-          {field === "account" ? (
-            <>
-              <input
-                autoFocus
-                type="text"
-                list={`accounts-list-${task.id}`}
-                value={inlineEdit.value}
-                onChange={(e) => setInlineEdit({ ...inlineEdit, value: e.target.value })}
-                onBlur={commitInlineEdit}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitInlineEdit();
-                  if (e.key === "Escape") cancelInlineEdit();
-                }}
-                className="w-full bg-transparent border-b-2 border-terracotta outline-none text-[13px] text-ink py-0.5"
-              />
-              <datalist id={`accounts-list-${task.id}`}>
-                {KNOWN_ACCOUNTS.map((a) => <option key={a} value={a} />)}
-              </datalist>
-            </>
+          {field === "task_name" ? (
+            <select
+              autoFocus
+              value={inlineEdit.value}
+              onChange={(e) => void commitInlineEdit(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") cancelInlineEdit();
+              }}
+              className="w-full bg-transparent border-b-2 border-terracotta outline-none text-[13px] text-ink py-0.5"
+            >
+              <option value="">Select task...</option>
+              {allTaskNameOptions.map((taskName) => (
+                <option key={taskName} value={taskName}>
+                  {taskName}
+                </option>
+              ))}
+            </select>
+          ) : field === "account" ? (
+            <select
+              autoFocus
+              value={inlineEdit.value}
+              onChange={(e) => void commitInlineEdit(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") cancelInlineEdit();
+              }}
+              className="w-full bg-transparent border-b-2 border-terracotta outline-none text-[13px] text-ink py-0.5"
+            >
+              <option value="">Select account...</option>
+              {accountsForPanel.map((account) => (
+                <option key={account} value={account}>
+                  {account}
+                </option>
+              ))}
+            </select>
+          ) : field === "project" ? (
+            <select
+              autoFocus
+              value={inlineEdit.value}
+              onChange={(e) => void commitInlineEdit(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") cancelInlineEdit();
+              }}
+              className="w-full bg-transparent border-b-2 border-terracotta outline-none text-[13px] text-ink py-0.5"
+            >
+              <option value="">Select objective...</option>
+              {(projectTagsMap[task.account ?? ""] ?? []).map((proj: string) => (
+                <option key={proj} value={proj}>
+                  {proj}
+                </option>
+              ))}
+            </select>
           ) : (
             <input
               autoFocus
               type={inputType}
               value={inlineEdit.value}
               onChange={(e) => setInlineEdit({ ...inlineEdit, value: e.target.value })}
-              onBlur={commitInlineEdit}
+              onBlur={() => void commitInlineEdit()}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitInlineEdit();
                 if (e.key === "Escape") cancelInlineEdit();
@@ -1365,30 +1398,19 @@ export default function TaskAssignmentsAdminTab({
                 <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
                   Task Name <span className="text-terracotta">*</span>
                 </label>
-                {detailTasksForObjective.length > 0 ? (
-                  <select
-                    value={detailForm.task_name}
-                    onChange={(e) =>
-                      setDetailForm((f) => ({ ...f, task_name: e.target.value }))
-                    }
-                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-                  >
-                    <option value="">Select task...</option>
-                    {detailTasksForObjective.map((t) => (
-                      <option key={t.id} value={t.task_name}>{t.task_name}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={detailForm.task_name}
-                    onChange={(e) =>
-                      setDetailForm((f) => ({ ...f, task_name: e.target.value }))
-                    }
-                    placeholder="Task name..."
-                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                  />
-                )}
+                <select
+                  value={detailForm.task_name}
+                  onChange={(e) =>
+                    setDetailForm((f) => ({ ...f, task_name: e.target.value }))
+                  }
+                  disabled={!detailForm.project}
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer disabled:opacity-60 disabled:bg-parchment"
+                >
+                  <option value="">{detailForm.project ? "Select task..." : "Select objective first..."}</option>
+                  {detailTasksForObjective.map((t) => (
+                    <option key={t.id} value={t.task_name}>{t.task_name}</option>
+                  ))}
+                </select>
               </div>
 
               {/* Due Date */}

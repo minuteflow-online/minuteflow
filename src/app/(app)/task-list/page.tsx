@@ -248,6 +248,7 @@ export default function TaskListPage() {
 
       if (profile?.role === "admin" || profile?.role === "manager") {
         router.replace("/admin");
+        return;
       }
     } catch {
       // leave the task list usable for VAs if profile lookup fails
@@ -828,29 +829,25 @@ export default function TaskListPage() {
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                {addTasksForProject.length > 0 ? (
-                  <select
-                    value={addForm.task_name}
-                    onChange={(e) => setAddForm((form) => ({ ...form, task_name: e.target.value }))}
-                    disabled={!addForm.project}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                  >
-                    <option value="">{addForm.project ? "Select task..." : "Select objective first..."}</option>
-                    {addTasksForProject.map((task) => (
-                      <option key={task.id} value={task.task_name}>
-                        {task.task_name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={addForm.task_name}
-                    onChange={(e) => setAddForm((form) => ({ ...form, task_name: e.target.value }))}
-                    placeholder="Task name"
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                )}
+                <select
+                  value={addForm.task_name}
+                  onChange={(e) => setAddForm((form) => ({ ...form, task_name: e.target.value }))}
+                  disabled={!addForm.project || addTasksForProject.length === 0}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
+                >
+                  <option value="">
+                    {addForm.project
+                      ? addTasksForProject.length > 0
+                        ? "Select task..."
+                        : "No tasks available"
+                      : "Select objective first..."}
+                  </option>
+                  {addTasksForProject.map((task) => (
+                    <option key={task.id} value={task.task_name}>
+                      {task.task_name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -983,35 +980,25 @@ export default function TaskListPage() {
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                {panelCanEditFields ? (
-                  panelTasksForProject.length > 0 ? (
-                    <select
-                      value={panelTaskName}
-                      onChange={(e) => setPanelTaskName(e.target.value)}
-                      disabled={!panelProject}
-                      className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                    >
-                      <option value="">{panelProject ? "Select task..." : "Select objective first..."}</option>
-                      {panelTasksForProject.map((task) => (
-                        <option key={task.id} value={task.task_name}>
-                          {task.task_name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={panelTaskName}
-                      onChange={(e) => setPanelTaskName(e.target.value)}
-                      placeholder="Task name"
-                      className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                    />
-                  )
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] font-medium text-espresso">
-                    {selectedTask.assigned_tasks.task_name}
-                  </div>
-                )}
+                <select
+                  value={panelTaskName}
+                  onChange={(e) => setPanelTaskName(e.target.value)}
+                  disabled={!panelProject || panelTasksForProject.length === 0}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
+                >
+                  <option value="">
+                    {panelProject
+                      ? panelTasksForProject.length > 0
+                        ? "Select task..."
+                        : "No tasks available"
+                      : "Select objective first..."}
+                  </option>
+                  {panelTasksForProject.map((task) => (
+                    <option key={task.id} value={task.task_name}>
+                      {task.task_name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
