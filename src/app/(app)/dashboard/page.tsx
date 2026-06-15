@@ -9,7 +9,6 @@ import TeamSidebar from "@/components/TeamSidebar";
 import ActivityLog from "@/components/ActivityLog";
 import LiveSessionPrompt from "@/components/LiveSessionPrompt";
 import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSidebar";
-import VaAssignmentsColumn from "@/components/VaAssignmentsColumn";
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
@@ -153,9 +152,6 @@ export default function DashboardPage() {
 
   // Session action debounce — prevents double-taps on Clock In/Out/Break
   const [sessionActionPending, setSessionActionPending] = useState(false);
-
-  // VA has fixed/project-based task assignments
-  const [hasFixedAssignments, setHasFixedAssignments] = useState(false);
 
   // Timer refs
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -456,17 +452,6 @@ export default function DashboardPage() {
           }
         });
         setScreenshots(grouped);
-      }
-
-      // Check if VA has fixed/project-based task assignments
-      if (userId && profileRes.data?.role === "va") {
-        try {
-          const assignRes = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
-          const assignData = await assignRes.json();
-          setHasFixedAssignments((assignData.assignments ?? []).length > 0);
-        } catch {
-          // silently ignore
-        }
       }
 
       // After load: recover any pending capture requests missed during page refresh.
@@ -3022,10 +3007,6 @@ export default function DashboardPage() {
         const isProjectBased = pos === "Project Based VA";
         const isPerTask = pos === "Per Task VA";
         const isHourly = !isProjectBased && !isPerTask; // Full-time, Part-time, null
-
-        // My Assignments: Project Based → always; Per Task → always; Hourly → only if they have fixed task assignments
-        const canSeeAssignments = isVa && (isProjectBased || isPerTask || (isHourly && hasFixedAssignments));
-        // Available Tasks: controlled by per-VA toggle
         const canSeeAvailable = isVa && !!profile?.can_see_available_tasks;
 
         // Grid: when VA is idle, always show 4 columns (locked panels fill the gaps)
@@ -3054,25 +3035,10 @@ export default function DashboardPage() {
                 isAdmin={role === "admin" || role === "manager"}
               />
             )}
-            {/* VA Assignments — visible BEFORE clock-in, based on position rules */}
-            {isVa && userId && sessionState === "idle" && canSeeAssignments && (
-              <VaAssignmentsColumn userId={userId} key={`va-assign-${claimRefreshKey}`} />
-            )}
-            {/* Locked panel for VAs who can't see assignments */}
-            {isVa && userId && sessionState === "idle" && !canSeeAssignments && (
-              <div className="rounded-xl border border-sand bg-white/60 p-3 flex flex-col items-center justify-center text-center min-h-[120px]">
-                <svg className="h-6 w-6 text-stone/40 mb-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                  <path d="M7 11V7a5 5 0 0110 0v4" />
-                </svg>
-                <p className="text-[11px] text-stone font-medium">My Assignments</p>
-                <p className="text-[10px] text-stone/60 mt-0.5">Locked</p>
-              </div>
-            )}
             {isVa && sessionState === "idle" && (isPerTask ? (
-              <AvailableTasksWidget onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
+              <AvailableTasksWidget key={`avail-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
             ) : canSeeAvailable ? (
-              <ClaimableTasksColumn onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
+              <ClaimableTasksColumn key={`claim-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
             ) : (
               <div className="rounded-xl border border-sand bg-white/60 p-3 flex flex-col items-center justify-center text-center min-h-[120px]">
                 <svg className="h-6 w-6 text-stone/40 mb-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
