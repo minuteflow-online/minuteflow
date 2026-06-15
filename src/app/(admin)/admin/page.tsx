@@ -7561,10 +7561,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     // Calculate new total paid
     const newAmountPaid = Number(selectedInvoice.amount_paid || 0) + amt;
     const invoiceTotal = Number(selectedInvoice.total);
+    const prevBalance = Number(selectedInvoice.previous_balance || 0);
+    const grandTotal = invoiceTotal + prevBalance;
 
     // Determine new status
     let newStatus: Invoice["status"] = selectedInvoice.status;
-    if (newAmountPaid >= invoiceTotal) {
+    if (newAmountPaid >= grandTotal - 0.01) {
       newStatus = "paid";
     } else if (newAmountPaid > 0) {
       newStatus = "partially_paid";
@@ -10323,10 +10325,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   type="number"
                   step="0.01"
                   min="0"
-                  max={Number(inv.total) - Number(inv.amount_paid || 0)}
+                  max={Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0)}
                   value={paymentAmount}
                   onChange={(e) => setPaymentAmount(e.target.value)}
-                  placeholder={`Max: ${formatCurrency(Number(inv.total) - Number(inv.amount_paid || 0))}`}
+                  placeholder={`Max: ${formatCurrency(Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0))}`}
                   className="w-full rounded-lg border border-sand bg-white px-3 py-2.5 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta placeholder:text-stone"
                 />
               </div>
