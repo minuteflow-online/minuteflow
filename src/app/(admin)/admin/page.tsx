@@ -6921,10 +6921,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       if (["sent", "paid", "partially_paid", "overdue", "archived"].includes(inv.status)) {
         totalInvoiced += Number(inv.total);
       }
-      if (inv.status === "sent") outstanding += Number(inv.total);
-      if (inv.status === "partially_paid") outstanding += Number(inv.total) - Number(inv.amount_paid || 0);
+      if (inv.status === "sent") outstanding += Number(inv.total) + Number(inv.previous_balance || 0);
+      if (inv.status === "partially_paid") outstanding += Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0);
       if (inv.status === "paid" || inv.status === "archived") paid += Number(inv.total);
-      if (inv.status === "overdue") overdue += Number(inv.total) - Number(inv.amount_paid || 0);
+      if (inv.status === "overdue") overdue += Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0);
     });
     return { totalInvoiced, outstanding, paid, overdue, draftTotal };
   }, [invoices]);
