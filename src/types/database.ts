@@ -514,4 +514,6 @@ export interface FixedPayTaskWithClaimer {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** Joined profile for the claimer — present on admin responses, absent on VA responses */
+  claimed_by_profile?: { id: string; full_name: string; username: string } | null;
 }
