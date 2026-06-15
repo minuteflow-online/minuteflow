@@ -87,12 +87,16 @@ export async function POST(request: Request) {
 
   const entries = logs ?? [];
 
-  // Group by session_date (local date) — matches Financial tab logic
+  // Group by session_date (local date) — matches Financial tab logic.
+  // Personal time should not be included in paystub hours or totals.
   const byDate: Record<string, number> = {};
   let totalMs = 0;
 
   for (const log of entries) {
     if (!log.duration_ms) continue;
+    const category = String(log.category ?? "").trim().toLowerCase();
+    if (category === "personal") continue;
+
     const ms = Number(log.duration_ms);
     // Use session_date (local date VA was working), fall back to UTC date
     const dateKey = (log.session_date as string) || (log.start_time as string).split("T")[0];
