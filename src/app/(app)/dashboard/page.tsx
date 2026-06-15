@@ -1366,7 +1366,7 @@ export default function DashboardPage() {
         account: "Virtual Concierge",
         client_name: "Toni Colina",
         start_time: now,
-        billable: true,
+        billable: false,
         billing_type: "hourly",
         session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
       })

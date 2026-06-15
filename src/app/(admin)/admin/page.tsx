@@ -856,13 +856,27 @@ export default function AdminPage() {
   const handleForceClockOut = async (targetUserId: string) => {
     const supabase = createClient();
     const now = new Date().toISOString();
+    const nowMs = new Date(now).getTime();
 
     // Close any open time logs for this user
-    await supabase
+    const { data: openLogs } = await supabase
       .from("time_logs")
-      .update({ end_time: now, duration_ms: 0 })
+      .select("id, start_time")
       .eq("user_id", targetUserId)
       .is("end_time", null);
+
+    if (openLogs?.length) {
+      await Promise.all(
+        openLogs.map((log) => {
+          const startMs = log.start_time ? new Date(log.start_time).getTime() : nowMs;
+          const duration_ms = Math.max(0, nowMs - startMs);
+          return supabase
+            .from("time_logs")
+            .update({ end_time: now, duration_ms })
+            .eq("id", log.id);
+        })
+      );
+    }
 
     // Reset their session (use update, not upsert — RLS INSERT policy blocks admins)
     await supabase
@@ -873,6 +887,36 @@ export default function AdminPage() {
         updated_at: now,
       })
       .eq("user_id", targetUserId);
+
+    // Create a "Forced Clock Out" log entry so the activity log shows it was forced
+    const { data: targetProfile } = await supabase
+      .from("profiles")
+      .select("username, full_name, department, position")
+      .eq("id", targetUserId)
+      .single();
+
+    const { data: targetSession } = await supabase
+      .from("sessions")
+      .select("session_date")
+      .eq("user_id", targetUserId)
+      .single();
+
+    if (targetProfile) {
+      await supabase.from("time_logs").insert({
+        user_id: targetUserId,
+        username: targetProfile.username,
+        full_name: targetProfile.full_name,
+        department: targetProfile.department,
+        position: targetProfile.position,
+        task_name: "Forced Clock Out",
+        category: "Clock Out",
+        start_time: now,
+        end_time: now,
+        duration_ms: 0,
+        billable: false,
+        session_date: targetSession?.session_date ?? new Date(now).toLocaleDateString("en-CA"),
+      });
+    }
 
     fetchData();
   };
