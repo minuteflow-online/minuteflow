@@ -201,7 +201,10 @@ export default function TeamPage() {
 
       const userLogs = logs.filter((l) => l.user_id === profile.id);
       const nonBreakLogs = userLogs.filter((l) => l.category !== "Break");
-      const todayHoursMs = userLogs.reduce(
+      const payableLogs = userLogs.filter(
+        (l) => l.category !== "Break" && l.category !== "Personal"
+      );
+      const todayHoursMs = payableLogs.reduce(
         (sum, l) => sum + (l.duration_ms || 0),
         0
       );
@@ -1220,7 +1223,8 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
       .sort((a, b) => b[1].dateSort - a[1].dateSort) // newest first
       .map(([dateLabel, { logs: dayLogs, isoDate }]) => {
         const nonBreakLogs = dayLogs.filter(l => l.category !== "Break");
-        const totalMs = dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+        const payableLogs = dayLogs.filter(l => l.category !== "Break" && l.category !== "Personal");
+        const totalMs = payableLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
         const dayPayable = computePayable(totalMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
 
         // Clock in: earliest start_time of non-break logs
