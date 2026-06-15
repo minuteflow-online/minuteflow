@@ -1,18 +1,6 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
-interface FixedPayTaskWithClaimer {
-  id: string;
-  task_name: string;
-  account: string | null;
-  category: string | null;
-  rate: number;
-  is_active: boolean;
-  claimed_by: string | null;
-  claimed_at: string | null;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-}
+import type { FixedPayTaskWithClaimer } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 

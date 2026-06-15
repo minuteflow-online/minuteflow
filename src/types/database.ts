@@ -500,3 +500,18 @@ export interface AssignedTaskWithAssignees extends AssignedTask {
 export interface VAAssignedTask extends AssignedTaskAssignee {
   assigned_tasks: AssignedTask;
 }
+
+/** Fixed-pay task row from the fixed_pay_tasks table */
+export interface FixedPayTaskWithClaimer {
+  id: string;
+  task_name: string;
+  account: string | null;
+  category: string | null;
+  rate: number;
+  is_active: boolean;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
