@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTaskStatus } from "@/types/database";
+import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 
 type VATaskRow = {
   id: number;
@@ -172,6 +173,8 @@ export default function TaskListPage() {
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
   const [formTasksByProject, setFormTasksByProject] = useState<Record<number, FormTask[]>>({});
+  const [currentPosition, setCurrentPosition] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<"my_tasks" | "available_tasks">("my_tasks");
 
   const [isCreating, setIsCreating] = useState(false);
   const [addSaving, setAddSaving] = useState(false);
@@ -242,9 +245,11 @@ export default function TaskListPage() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, position")
         .eq("id", data.user.id)
         .single();
+
+      setCurrentPosition(profile?.position ?? null);
 
       if (profile?.role === "admin" || profile?.role === "manager") {
         router.replace("/admin");
@@ -254,6 +259,8 @@ export default function TaskListPage() {
       // leave the task list usable for VAs if profile lookup fails
     }
   }, [router, supabase]);
+
+  const isPerTaskVa = currentPosition === "Per Task VA";
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -284,6 +291,12 @@ export default function TaskListPage() {
     void fetchFormOptions();
     void fetchTasks();
   }, [fetchCurrentUser, fetchFormOptions, fetchTasks]);
+
+  useEffect(() => {
+    if (!isPerTaskVa) {
+      setActiveView("my_tasks");
+    }
+  }, [isPerTaskVa]);
 
   const accountOptions = useMemo(() => {
     if (formAccounts.length > 0) return formAccounts;
@@ -453,6 +466,11 @@ export default function TaskListPage() {
     }
   }, [addForm.account, addForm.due_date, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, fetchTasks]);
 
+  const handleClaimedTaskRefresh = useCallback(async () => {
+    await fetchTasks();
+    setActiveView("my_tasks");
+  }, [fetchTasks]);
+
   const handleSavePanel = useCallback(async () => {
     if (!selectedTask) return;
 
@@ -619,142 +637,169 @@ export default function TaskListPage() {
             <p className="text-xs text-stone">Assigned work and collaborative tasks visible to you.</p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={openCreate}
-              className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-            >
-              + Create Task
-            </button>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as AssignedTaskStatus | "all")}
-              className="rounded-lg border border-sand bg-white px-3 py-2 text-xs text-espresso outline-none focus:border-terracotta"
-            >
-              {STATUS_FILTERS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="px-5 py-4">
-          <div className="mb-3 flex items-center gap-2 text-[11px] text-stone">
-            <span className="rounded-full bg-parchment px-2 py-0.5 font-semibold text-walnut">
-              {filteredTasks.length}
-            </span>
-            <span>task{filteredTasks.length === 1 ? "" : "s"}</span>
-            {statusFilter !== "all" && (
-              <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 font-semibold text-slate-blue">
-                filtered by {STATUS_LABELS[statusFilter]}
-              </span>
-            )}
-          </div>
-
-          {error && (
-            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
+          {isPerTaskVa && (
+            <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setActiveView("my_tasks")}
+                className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "my_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+              >
+                My Tasks
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView("available_tasks")}
+                className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+              >
+                Available Tasks
+              </button>
             </div>
           )}
 
-          {loading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-14 animate-pulse rounded-xl bg-parchment" />
-              ))}
+          {(!isPerTaskVa || activeView === "my_tasks") && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={openCreate}
+                className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+              >
+                + Create Task
+              </button>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as AssignedTaskStatus | "all")}
+                className="rounded-lg border border-sand bg-white px-3 py-2 text-xs text-espresso outline-none focus:border-terracotta"
+              >
+                {STATUS_FILTERS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </div>
-          ) : filteredTasks.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
-              No assigned tasks found.
-            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4">
+          {isPerTaskVa && activeView === "available_tasks" ? (
+            <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} />
           ) : (
-            <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-sand bg-parchment">
-                    <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut" />
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Task Name</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Objective</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Detail</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Due Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredTasks.map((task) => {
-                    const detail = task.assigned_tasks;
-                    const due = formatDueDate(detail.due_date);
-                    const isSelected = selectedTask?.id === task.id;
-                    const dueTextClass = due.isOverdue ? "text-terracotta" : "text-walnut";
+            <>
+              <div className="mb-3 flex items-center gap-2 text-[11px] text-stone">
+                <span className="rounded-full bg-parchment px-2 py-0.5 font-semibold text-walnut">
+                  {filteredTasks.length}
+                </span>
+                <span>task{filteredTasks.length === 1 ? "" : "s"}</span>
+                {statusFilter !== "all" && (
+                  <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 font-semibold text-slate-blue">
+                    filtered by {STATUS_LABELS[statusFilter]}
+                  </span>
+                )}
+              </div>
 
-                    return (
-                      <tr
-                        key={task.id}
-                        className={`group cursor-pointer border-b border-sand last:border-0 transition-colors hover:bg-parchment/30 ${
-                          isSelected ? "bg-parchment/50" : ""
-                        }`}
-                        onClick={() => void openPanel(task)}
-                      >
-                        <td className="w-8 px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => void openPanel(task)}
-                            className="flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-walnut"
-                            aria-label={`Open ${detail.task_name}`}
-                          >
-                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M9 18l6-6-6-6" />
-                            </svg>
-                          </button>
-                        </td>
+              {error && (
+                <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {error}
+                </div>
+              )}
 
-                        <td className="px-3 py-3 text-[13px]">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium text-walnut">{detail.task_name}</span>
-                            {task.is_collaborative && (
-                              <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
-                                Collaborative
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        <td className="px-3 py-3 text-[13px] text-walnut">
-                          {detail.account || <span className="text-stone/60">—</span>}
-                        </td>
-
-                        <td className="px-3 py-3 text-[13px] text-walnut">
-                          {detail.project || <span className="text-stone/60">—</span>}
-                        </td>
-
-                        <td className="max-w-[220px] px-3 py-3 text-[13px] text-walnut">
-                          {detail.task_detail ? (
-                            <span className="block truncate text-stone/70" title={detail.task_detail}>
-                              {detail.task_detail.length > 45 ? `${detail.task_detail.slice(0, 45)}…` : detail.task_detail}
-                            </span>
-                          ) : (
-                            <span className="text-stone/30">—</span>
-                          )}
-                        </td>
-
-                        <td className="px-3 py-3 text-[13px]">
-                          <StatusBadge status={task.status} />
-                        </td>
-
-                        <td className={`px-3 py-3 text-[13px] font-medium ${dueTextClass}`}>
-                          {due.isOverdue ? "Overdue · " : ""}
-                          {due.label}
-                        </td>
+              {loading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-14 animate-pulse rounded-xl bg-parchment" />
+                  ))}
+                </div>
+              ) : filteredTasks.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
+                  No assigned tasks found.
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-sand bg-parchment">
+                        <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut" />
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Task Name</th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Objective</th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Detail</th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Due Date</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {filteredTasks.map((task) => {
+                        const detail = task.assigned_tasks;
+                        const due = formatDueDate(detail.due_date);
+                        const isSelected = selectedTask?.id === task.id;
+                        const dueTextClass = due.isOverdue ? "text-terracotta" : "text-walnut";
+
+                        return (
+                          <tr
+                            key={task.id}
+                            className={`group cursor-pointer border-b border-sand last:border-0 transition-colors hover:bg-parchment/30 ${
+                              isSelected ? "bg-parchment/50" : ""
+                            }`}
+                            onClick={() => void openPanel(task)}
+                          >
+                            <td className="w-8 px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                onClick={() => void openPanel(task)}
+                                className="flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-walnut"
+                                aria-label={`Open ${detail.task_name}`}
+                              >
+                                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M9 18l6-6-6-6" />
+                                </svg>
+                              </button>
+                            </td>
+
+                            <td className="px-3 py-3 text-[13px]">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-medium text-walnut">{detail.task_name}</span>
+                                {task.is_collaborative && (
+                                  <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
+                                    Collaborative
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            <td className="px-3 py-3 text-[13px] text-walnut">
+                              {detail.account || <span className="text-stone/60">—</span>}
+                            </td>
+
+                            <td className="px-3 py-3 text-[13px] text-walnut">
+                              {detail.project || <span className="text-stone/60">—</span>}
+                            </td>
+
+                            <td className="max-w-[220px] px-3 py-3 text-[13px] text-walnut">
+                              {detail.task_detail ? (
+                                <span className="block truncate text-stone/70" title={detail.task_detail}>
+                                  {detail.task_detail.length > 45 ? `${detail.task_detail.slice(0, 45)}…` : detail.task_detail}
+                                </span>
+                              ) : (
+                                <span className="text-stone/30">—</span>
+                              )}
+                            </td>
+
+                            <td className="px-3 py-3 text-[13px]">
+                              <StatusBadge status={task.status} />
+                            </td>
+
+                            <td className={`px-3 py-3 text-[13px] font-medium ${dueTextClass}`}>
+                              {due.isOverdue ? "Overdue · " : ""}
+                              {due.label}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

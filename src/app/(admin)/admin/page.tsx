@@ -42,6 +42,7 @@ import VaTokensAdminTab from "@/components/VaTokensAdminTab";
 import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
 import EmailStatusTab from "@/components/EmailStatusTab";
 import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
+import FixedPayTasksTab from "@/components/FixedPayTasksTab";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 
 /* ── Constants ───────────────────────────────────────────── */
@@ -102,7 +103,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "email_log" | "reset_va_password";
+type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "email_log" | "reset_va_password";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -148,6 +149,18 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
         <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
         <rect x="9" y="3" width="6" height="4" rx="1" />
         <path d="M9 12l2 2 4-4" />
+      </svg>
+    ),
+  },
+  {
+    id: "fixed_pay_tasks",
+    label: "Fixed Pay Tasks",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M12 2L3 7v10l9 5 9-5V7z" />
+        <path d="M12 12l9-5" />
+        <path d="M12 12l-9-5" />
+        <path d="M12 12v10" />
       </svg>
     ),
   },
@@ -365,7 +378,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "team",
     label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log", "reset_va_password"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log", "reset_va_password"] as AdminTab[]).includes(t.id)),
   },
 ];
 
@@ -373,7 +386,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
 const SIDEBAR_GROUPS: SidebarGroup[] = [...ADMIN_SIDEBAR_GROUPS, ...TEAM_SIDEBAR_GROUPS];
 
 // Tab IDs that belong to the TEAM section
-const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log", "reset_va_password"];
+const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log", "reset_va_password"];
 
 /* ── Main Admin Page ─────────────────────────────────────── */
 
@@ -1369,6 +1382,7 @@ export default function AdminPage() {
                 {activeTab === "email_log" && "Track opens and clicks for all outgoing emails"}
                 {activeTab === "reset_va_password" && "Reset the password for any team member"}
                 {activeTab === "task_assignments" && "Assign tasks to VAs and track their progress"}
+                {activeTab === "fixed_pay_tasks" && "Manage the fixed-pay task pool for per-task VAs"}
               </p>
             </div>
             {activeTab === "overview" && (
@@ -1435,6 +1449,8 @@ export default function AdminPage() {
           {activeTab === "task_assignments" && (
             <TaskAssignmentsAdminTab profiles={profiles} orgTimezone={orgTimezone} />
           )}
+
+          {activeTab === "fixed_pay_tasks" && <FixedPayTasksTab />}
 
           {activeTab === "projects" && (
             <ProjectsTasksTab />

@@ -27,7 +27,7 @@ export interface Profile {
   position: string | null;
   role: UserRole;
   pay_rate: number;
-  pay_rate_type: 'hourly' | 'daily' | 'monthly';
+  pay_rate_type: 'hourly' | 'daily' | 'monthly' | 'per_task';
   is_active: boolean;
   can_see_available_tasks: boolean;
   visible_for_collaboration: boolean;

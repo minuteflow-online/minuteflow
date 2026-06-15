@@ -24,7 +24,7 @@ interface ProfileRow {
   id: string;
   full_name: string;
   pay_rate: number;
-  pay_rate_type: "hourly" | "daily" | "monthly";
+  pay_rate_type: "hourly" | "daily" | "monthly" | "per_task";
   role: string;
   is_active: boolean;
 }

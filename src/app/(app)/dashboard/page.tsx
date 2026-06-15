@@ -12,6 +12,7 @@ import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSid
 import VaAssignmentsColumn from "@/components/VaAssignmentsColumn";
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
+import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import { getTodayBoundsInTimezone } from "@/lib/utils";
 import type {
@@ -3068,12 +3069,11 @@ export default function DashboardPage() {
                 <p className="text-[10px] text-stone/60 mt-0.5">Locked</p>
               </div>
             )}
-            {/* Available Tasks to Claim — only if admin toggled on for this VA */}
-            {isVa && sessionState === "idle" && canSeeAvailable && (
+            {isVa && sessionState === "idle" && (isPerTask ? (
+              <AvailableTasksWidget onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
+            ) : canSeeAvailable ? (
               <ClaimableTasksColumn onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
-            )}
-            {/* Locked panel for VAs who can't see available tasks */}
-            {isVa && sessionState === "idle" && !canSeeAvailable && (
+            ) : (
               <div className="rounded-xl border border-sand bg-white/60 p-3 flex flex-col items-center justify-center text-center min-h-[120px]">
                 <svg className="h-6 w-6 text-stone/40 mb-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -3082,7 +3082,7 @@ export default function DashboardPage() {
                 <p className="text-[11px] text-stone font-medium">Available Tasks</p>
                 <p className="text-[10px] text-stone/60 mt-0.5">Locked</p>
               </div>
-            )}
+            ))}
             {/* Quick Pick — hidden for VAs before clock-in */}
             {(role !== "va" || sessionState !== "idle") && (
               <ProjectSidebar
