@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import type {
   Profile,
   AssignedTaskWithAssignees,
@@ -392,6 +393,7 @@ export default function TaskAssignmentsAdminTab({
   profiles,
   orgTimezone,
 }: TaskAssignmentsAdminTabProps) {
+  const router = useRouter();
   const activeProfiles = profiles.filter((p) => p.is_active !== false);
 
   // ── Data state ───────────────────────────────────────────────────────────────
@@ -710,7 +712,8 @@ export default function TaskAssignmentsAdminTab({
           setIsCreating(false);
           setSelectedTask(newTask);
         }
-        fetchTasks();
+        await fetchTasks();
+        router.push("/task-list");
       } else {
         const e = await res.json();
         setDetailSaveMsg({ type: "err", text: e.error || "Failed to save" });
@@ -720,7 +723,7 @@ export default function TaskAssignmentsAdminTab({
     } finally {
       setDetailSaving(false);
     }
-  }, [detailForm, selectedTask, fetchTasks]);
+  }, [detailForm, selectedTask, fetchTasks, router]);
 
   // ─── Delete ───────────────────────────────────────────────────────────────────
 

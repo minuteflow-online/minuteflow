@@ -43,7 +43,6 @@ import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
 import EmailStatusTab from "@/components/EmailStatusTab";
 import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
 import FixedPayTasksTab from "@/components/FixedPayTasksTab";
-import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -654,24 +653,10 @@ export default function AdminPage() {
     return map;
   }, [profiles]);
 
-  const currentUserProfile = useMemo(
-    () => (currentUserId ? profileMap.get(currentUserId) ?? null : null),
-    [currentUserId, profileMap]
-  );
-
   const currentUserSession = useMemo(
     () => (currentUserId ? sessions.find((s) => s.user_id === currentUserId) ?? null : null),
     [currentUserId, sessions]
   );
-
-  const currentUserSessionState = currentUserSession?.clocked_in
-    ? currentUserSession.active_task?.isBreak
-      ? "on-break"
-      : "clocked-in"
-    : "idle";
-
-  const currentUserHasActiveTask =
-    !!currentUserSession?.active_task && !currentUserSession.active_task.isBreak;
 
   const logMap = useMemo(() => {
     const map = new Map<number, TimeLog>();
@@ -1410,9 +1395,6 @@ export default function AdminPage() {
               onRefresh={fetchData}
               orgTimezone={orgTimezone}
               extensionUploadStatus={extensionUploadStatus}
-              currentUserProfile={currentUserProfile}
-              currentUserSessionState={currentUserSessionState}
-              currentUserHasActiveTask={currentUserHasActiveTask}
             />
           )}
 
@@ -1629,9 +1611,6 @@ function OverviewTab({
   onRefresh,
   orgTimezone,
   extensionUploadStatus,
-  currentUserProfile,
-  currentUserSessionState,
-  currentUserHasActiveTask,
 }: {
   stats: { activeCount: number; todayHoursMs: number; todayScreenshots: number; todayTasks: number; wizardTimeMs: number };
   profiles: Profile[];
@@ -1661,9 +1640,6 @@ function OverviewTab({
   onRefresh: () => void;
   orgTimezone: string;
   extensionUploadStatus: ExtensionUploadStatus[];
-  currentUserProfile: Profile | null;
-  currentUserSessionState: string;
-  currentUserHasActiveTask: boolean;
 }) {
   return (
     <>
@@ -1675,19 +1651,6 @@ function OverviewTab({
         <StatCard value={stats.todayTasks} label="Tasks Completed" sub="today" color="amber" />
         <StatCard value={formatDuration(stats.wizardTimeMs)} label="Wizard Time" sub="task entry form time" color="walnut" />
       </div>
-
-      {currentUserProfile?.role === "admin" && (
-        <div className="mb-6">
-          <AssignedTasksWidget
-            userId={currentUserProfile.id}
-            isAdmin
-            sessionState={currentUserSessionState}
-            hasActiveTask={currentUserHasActiveTask}
-            onPlayAssignedTask={() => {}}
-            orgTimezone={orgTimezone}
-          />
-        </div>
-      )}
 
       {/* Live Team Monitor */}
       <div className="mb-6 rounded-xl border border-sand bg-white">
