@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { AssignedTaskStatus, FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
+import type { FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
 
 function formatClaimedAt(claimedAt: string | null) {
   if (!claimedAt) return "";
@@ -15,43 +15,10 @@ function formatClaimedAt(claimedAt: string | null) {
   });
 }
 
-function buildVATask(task: FixedPayTaskWithClaimer): VAAssignedTask {
-  return {
-    id: 0,
-    assigned_task_id: task.assigned_task_id!,
-    va_id: "",
-    status: "on_queue" as AssignedTaskStatus,
-    log_id: null,
-    notes: null,
-    assigned_at: task.claimed_at ?? task.created_at,
-    updated_at: task.updated_at,
-    assigned_tasks: {
-      id: task.assigned_task_id!,
-      task_name: task.task_name,
-      account: task.account,
-      project: task.category,
-      task_detail: task.task_detail,
-      task_notes: task.task_notes,
-      due_date: null,
-      assigned_by: null,
-      instructions: task.instructions ?? null,
-      instructions_locked: task.instructions_locked ?? false,
-      fixed_pay_task_id: Number(task.id),
-      created_by: null,
-      created_at: task.created_at,
-      updated_at: task.updated_at,
-      assigned_by_profile: null,
-      fixed_pay_tasks: { rate: task.rate },
-    },
-  };
-}
-
 export default function AvailableTasksWidget({
   onClaimed,
-  onPlayAssignedTask,
 }: {
   onClaimed?: () => void;
-  onPlayAssignedTask?: (task: VAAssignedTask) => void;
 }) {
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [pendingAssigned, setPendingAssigned] = useState<VAAssignedTask[]>([]);
@@ -153,9 +120,8 @@ export default function AvailableTasksWidget({
     [onClaimed]
   );
 
-  const myTasks = tasks.filter((t) => t.claimed_by_me);
   const openTasks = tasks.filter((t) => !t.claimed_by_me);
-  const totalCount = myTasks.length + pendingAssigned.length + openTasks.length;
+  const totalCount = pendingAssigned.length + openTasks.length;
 
   return (
     <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
@@ -215,33 +181,6 @@ export default function AvailableTasksWidget({
               </div>
             );
           })}
-
-          {/* Fixed-pay tasks already grabbed by this VA */}
-          {myTasks.map((task) => (
-            <div key={`mine-${task.id}`} className="rounded-lg border border-sage/30 overflow-hidden">
-              <div className="px-2.5 py-2 bg-sage-soft/30">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
-                  <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-sage-soft text-sage border border-sage/20">
-                    ${Number(task.rate).toFixed(2)}
-                  </span>
-                </div>
-                <div className="text-[10px] text-stone mt-0.5 flex items-center gap-1.5">
-                  <span className="text-sage font-semibold">You grabbed this</span>
-                  {task.claimed_at && <span>· {formatClaimedAt(task.claimed_at)}</span>}
-                </div>
-              </div>
-              <div className="px-2.5 py-2.5 bg-parchment/10">
-                <button
-                  onClick={() => task.assigned_task_id != null && onPlayAssignedTask?.(buildVATask(task))}
-                  disabled={task.assigned_task_id == null}
-                  className="w-full px-3 py-2 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 disabled:opacity-50 cursor-pointer transition-colors"
-                >
-                  ▶ Start
-                </button>
-              </div>
-            </div>
-          ))}
 
           {/* Fixed-pay tasks available to grab */}
           {openTasks.map((task) => {

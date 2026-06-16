@@ -3027,6 +3027,7 @@ export default function DashboardPage() {
             {/* Assigned Tasks Widget — visible for all users */}
             {userId && (
               <AssignedTasksWidget
+                key={`assigned-${claimRefreshKey}`}
                 userId={userId}
                 sessionState={sessionState}
                 hasActiveTask={!!activeTask}

@@ -100,7 +100,7 @@ export default function AssignedTasksWidget({
           assigned_tasks: (row.assigned_tasks as unknown as VAAssignedTask["assigned_tasks"]),
         }));
         const visible = data
-          .filter((t) => (t.status === 'on_queue' || t.status === 'in_progress') && !t.assigned_tasks?.fixed_pay_task_id)
+          .filter((t) => t.status === 'on_queue' || t.status === 'in_progress')
           .sort(
             (a, b) =>
               (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
@@ -321,6 +321,8 @@ export default function AssignedTasksWidget({
                 const due = detail.due_date ? formatDueDate(detail.due_date, orgTimezone) : null;
                 const accountProject = [detail.account, detail.project].filter(Boolean).join(" · ");
 
+                const rate = detail.fixed_pay_tasks?.rate;
+
                 return (
                   <Fragment key={task.id}>
                     <div className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
@@ -349,21 +351,20 @@ export default function AssignedTasksWidget({
                             {detail.task_name}
                           </span>
                         </button>
-                        {statusBadge(task.status)}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {statusBadge(task.status)}
+                          {rate != null && (
+                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
+                              ${Number(rate).toFixed(2)}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {isExpanded && (
                         <>
                           {accountProject && (
                             <div className="text-[11px] text-bark pl-[18px]">{accountProject}</div>
-                          )}
-
-                          {detail.fixed_pay_tasks?.rate != null && (
-                            <div className="pl-[18px]">
-                              <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                                Rate ${detail.fixed_pay_tasks.rate.toFixed(2)}
-                              </span>
-                            </div>
                           )}
 
                           <div className="pl-[18px] space-y-2 mt-0.5">
