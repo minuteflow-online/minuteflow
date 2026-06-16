@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { FixedPayTaskWithClaimer } from "@/types/database";
+import type { FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
 
 function formatClaimedAt(claimedAt: string | null) {
   if (!claimedAt) return "";
@@ -21,19 +21,31 @@ export default function AvailableTasksWidget({
   onClaimed?: () => void;
 }) {
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
+  const [pendingAssigned, setPendingAssigned] = useState<VAAssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/fixed-pay-tasks", { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      const rows = Array.isArray(json) ? json : json.tasks ?? [];
-      setTasks(rows as FixedPayTaskWithClaimer[]);
+      const [fixedRes, assignedRes] = await Promise.all([
+        fetch("/api/fixed-pay-tasks", { cache: "no-store" }),
+        fetch("/api/assigned-tasks?status=pending", { cache: "no-store" }),
+      ]);
+
+      if (!fixedRes.ok) throw new Error(`HTTP ${fixedRes.status}`);
+      const fixedJson = await fixedRes.json();
+      const fixedRows = Array.isArray(fixedJson) ? fixedJson : fixedJson.tasks ?? [];
+      setTasks(fixedRows as FixedPayTaskWithClaimer[]);
+
+      if (assignedRes.ok) {
+        const assignedJson = await assignedRes.json();
+        const assignedRows = assignedJson.tasks ?? [];
+        setPendingAssigned(assignedRows as VAAssignedTask[]);
+      }
     } catch {
       setError("Unable to load available tasks right now.");
     } finally {
@@ -75,6 +87,41 @@ export default function AvailableTasksWidget({
     [fetchTasks, onClaimed]
   );
 
+  const handleAccept = useCallback(
+    async (task: VAAssignedTask) => {
+      const assigneeId = String(task.id);
+      setAcceptingId(assigneeId);
+      setError(null);
+      try {
+        const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "on_queue" }),
+        });
+        if (!res.ok) {
+          let message = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            if (data?.error) message = data.error;
+          } catch {
+            // ignore parse failures
+          }
+          throw new Error(message);
+        }
+        // Remove from pending list optimistically
+        setPendingAssigned((prev) => prev.filter((t) => t.id !== task.id));
+        onClaimed?.();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to accept task.");
+      } finally {
+        setAcceptingId(null);
+      }
+    },
+    [onClaimed]
+  );
+
+  const totalCount = tasks.length + pendingAssigned.length;
+
   return (
     <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
       <h3 className="text-xs font-bold text-espresso uppercase tracking-wide flex items-center gap-1.5 sticky top-0 bg-white pb-1 z-10">
@@ -84,7 +131,7 @@ export default function AvailableTasksWidget({
           <path d="M2 12l10 5 10-5" />
         </svg>
         Available Tasks
-        <span className="text-stone font-normal normal-case">({tasks.length})</span>
+        <span className="text-stone font-normal normal-case">({totalCount})</span>
       </h3>
 
       {error && (
@@ -95,10 +142,46 @@ export default function AvailableTasksWidget({
 
       {loading ? (
         <p className="text-stone text-[11px] text-center py-3">Loading...</p>
-      ) : tasks.length === 0 ? (
+      ) : totalCount === 0 ? (
         <p className="text-stone text-[11px] text-center py-3 italic">No available tasks right now.</p>
       ) : (
         <div className="space-y-1.5">
+          {/* Pending assigned tasks (admin-assigned, awaiting acceptance) */}
+          {pendingAssigned.map((task) => {
+            const assigneeId = String(task.id);
+            const isAccepting = acceptingId === assigneeId;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const rate = (task.assigned_tasks as any)?.fixed_pay_tasks?.rate;
+            return (
+              <div key={`assigned-${task.id}`} className="rounded-lg border border-sand overflow-hidden">
+                <div className="px-2.5 py-2 bg-parchment/20">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-espresso truncate">{task.assigned_tasks.task_name}</span>
+                    {rate != null && (
+                      <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
+                        ${Number(rate).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-stone mt-0.5 truncate">
+                    {task.assigned_tasks.account ?? ""}
+                    {task.assigned_tasks.project ? ` / ${task.assigned_tasks.project}` : ""}
+                  </div>
+                </div>
+                <div className="px-2.5 py-2.5 bg-parchment/10">
+                  <button
+                    onClick={() => void handleAccept(task)}
+                    disabled={isAccepting}
+                    className="w-full px-3 py-2 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 disabled:opacity-50 cursor-pointer transition-colors"
+                  >
+                    {isAccepting ? "Accepting..." : "Accept"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Fixed-pay tasks available to grab */}
           {tasks.map((task) => {
             const isClaiming = claimingId === task.id;
             return (
