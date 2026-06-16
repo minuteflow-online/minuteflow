@@ -25,6 +25,8 @@ import type {
   VAAssignedTask,
 } from "@/types/database";
 
+type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean };
+
 // ─── Helpers ───────────────────────────────────────────────
 
 function getGreeting(timezone?: string): string {
@@ -1915,6 +1917,7 @@ export default function DashboardPage() {
     async (formData: TaskFormData) => {
       if (!userId || !profile) return;
       const now = new Date().toISOString();
+      const skipClockIn = Boolean((formData as DashboardTaskFormData)._skipClockIn);
 
       // ─── Fixed Task Log: instant insert, no timer, no screenshots ───
       if (formData._isFixedTaskLog) {
@@ -2090,75 +2093,78 @@ export default function DashboardPage() {
         task_rate: formData.task_rate ?? null,
       };
 
-      // Auto-clock in if idle
-      const clockInTime =
-        sessionState === "idle" ? now : session?.clock_in_time || now;
-      const taskSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
+      if (!skipClockIn) {
+        // Auto-clock in if idle
+        const clockInTime =
+          sessionState === "idle" ? now : session?.clock_in_time || now;
+        const taskSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
 
-      await supabase.from("sessions").upsert(
-        {
-          user_id: userId,
-          clocked_in: true,
-          clock_in_time: clockInTime,
-          active_task: newActiveTask,
-          session_date: taskSessionDate,
-          updated_at: now,
-        },
-        { onConflict: "user_id" }
-      );
+        await supabase.from("sessions").upsert(
+          {
+            user_id: userId,
+            clocked_in: true,
+            clock_in_time: clockInTime,
+            active_task: newActiveTask,
+            session_date: taskSessionDate,
+            updated_at: now,
+          },
+          { onConflict: "user_id" }
+        );
 
+        if (sessionState === "idle") {
+          setSession((prev) => ({
+            ...(prev || {
+              id: 0,
+              user_id: userId,
+              clock_out_time: null,
+            }),
+            clocked_in: true,
+            clock_in_time: now,
+            active_task: newActiveTask,
+            session_date: taskSessionDate,
+            updated_at: now,
+          } as Session));
+          setSessionState("clocked-in");
+          setSessionElapsed(0);
+        } else if (sessionState === "on-break") {
+          // Close any open break logs when starting a new task from break
+          if (session?.active_task?.logId && session.active_task.isBreak) {
+            const breakLogId = parseInt(session.active_task.logId, 10);
+            if (breakLogId) {
+              const breakDurationMs = Date.now() - new Date(session.active_task.start_time || now).getTime();
+              await supabase
+                .from("time_logs")
+                .update({ end_time: now, duration_ms: breakDurationMs })
+                .eq("id", breakLogId);
+              setTimeLogs((prev) =>
+                prev.map((log) =>
+                  log.id === breakLogId
+                    ? { ...log, end_time: now, duration_ms: breakDurationMs }
+                    : log
+                )
+              );
+            }
+          }
+          // Also close any other orphaned break logs
+          await supabase
+            .from("time_logs")
+            .update({ end_time: now, duration_ms: 0 })
+            .eq("user_id", userId)
+            .eq("category", "Break")
+            .is("end_time", null);
+
+          setSessionState("clocked-in");
+          setBreakElapsed(0);
+          setBreakStartTime(null);
+        }
+      }
+
+      // Always update active task state (even when skipping clock-in for assigned tasks)
       setActiveTask(newActiveTask);
       setTaskElapsed(0);
 
       if (logData) {
         setTimeLogs((prev) => [logData as TimeLog, ...prev]);
-      }
-
-      if (sessionState === "idle") {
-        setSession((prev) => ({
-          ...(prev || {
-            id: 0,
-            user_id: userId,
-            clock_out_time: null,
-          }),
-          clocked_in: true,
-          clock_in_time: now,
-          active_task: newActiveTask,
-          session_date: taskSessionDate,
-          updated_at: now,
-        } as Session));
-        setSessionState("clocked-in");
-        setSessionElapsed(0);
-      } else if (sessionState === "on-break") {
-        // Close any open break logs when starting a new task from break
-        if (session?.active_task?.logId && session.active_task.isBreak) {
-          const breakLogId = parseInt(session.active_task.logId, 10);
-          if (breakLogId) {
-            const breakDurationMs = Date.now() - new Date(session.active_task.start_time || now).getTime();
-            await supabase
-              .from("time_logs")
-              .update({ end_time: now, duration_ms: breakDurationMs })
-              .eq("id", breakLogId);
-            setTimeLogs((prev) =>
-              prev.map((log) =>
-                log.id === breakLogId
-                  ? { ...log, end_time: now, duration_ms: breakDurationMs }
-                  : log
-              )
-            );
-          }
-        }
-        // Also close any other orphaned break logs
-        await supabase
-          .from("time_logs")
-          .update({ end_time: now, duration_ms: 0 })
-          .eq("user_id", userId)
-          .eq("category", "Break")
-          .is("end_time", null);
-
-        setSessionState("clocked-in");
-        setBreakElapsed(0);
-        setBreakStartTime(null);
       }
 
       // ─── Screen capture: request stream on first task, then schedule ───
@@ -2500,7 +2506,7 @@ export default function DashboardPage() {
 
   const handlePlayAssignedTask = useCallback((task: VAAssignedTask) => {
     const detail = task.assigned_tasks;
-    const formData: TaskFormData = {
+    const formData: DashboardTaskFormData = {
       task_name: detail.task_name,
       category: "Task",
       account: detail.account || "",
@@ -2508,6 +2514,7 @@ export default function DashboardPage() {
       project: detail.project || "",
       client_memo: "",
       internal_memo: detail.task_detail || "",
+      _skipClockIn: true,
     };
 
     setPendingAssignedTaskId(task.assigned_tasks.id);
