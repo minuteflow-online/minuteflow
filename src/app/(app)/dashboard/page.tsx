@@ -25,7 +25,7 @@ import type {
   VAAssignedTask,
 } from "@/types/database";
 
-type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean };
+type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number };
 
 // ─── Helpers ───────────────────────────────────────────────
 
@@ -1963,6 +1963,13 @@ export default function DashboardPage() {
         }
         // Auto-update assignment status for fixed tasks too
         await autoUpdateAssignmentStatus(formData.task_name);
+        if (formData._assignedTaskId) {
+          fetch('/api/assigned-tasks/' + formData._assignedTaskId, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'in_progress' }),
+          }).catch(console.error);
+        }
         return; // No timer, no active task, no screenshots
       }
 
@@ -2506,6 +2513,7 @@ export default function DashboardPage() {
 
   const handlePlayAssignedTask = useCallback((task: VAAssignedTask) => {
     const detail = task.assigned_tasks;
+    const isFixedPay = detail.fixed_pay_task_id !== null;
     const formData: DashboardTaskFormData = {
       task_name: detail.task_name,
       category: "Task",
@@ -2515,9 +2523,19 @@ export default function DashboardPage() {
       client_memo: "",
       internal_memo: detail.task_detail || "",
       _skipClockIn: true,
+      ...(isFixedPay
+        ? {
+            _isFixedTaskLog: true,
+            billing_type: "fixed",
+            task_rate: detail.fixed_pay_tasks?.rate ?? null,
+            _assignedTaskId: task.assigned_tasks.id,
+          }
+        : {}),
     };
 
-    setPendingAssignedTaskId(task.assigned_tasks.id);
+    if (!isFixedPay) {
+      setPendingAssignedTaskId(task.assigned_tasks.id);
+    }
 
     if (activeTask) {
       // Build a TimeLog shape from the current active task so the wizard can

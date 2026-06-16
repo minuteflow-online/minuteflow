@@ -52,6 +52,7 @@ export interface TaskFormData {
   billing_type?: BillingType;
   task_rate?: number | null;
   _isFixedTaskLog?: boolean;
+  _assignedTaskId?: number;
   task_rating?: number | null;
   task_rating_note?: string;
 }
