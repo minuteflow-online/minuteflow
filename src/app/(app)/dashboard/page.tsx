@@ -3037,7 +3037,7 @@ export default function DashboardPage() {
         // Grid: when VA is idle, always show 4 columns (locked panels fill the gaps)
         // When VA is clocked in, show 4 columns: form | plan | assigned tasks | quick pick
         const gridClass = isVa
-          ? "grid-cols-1 md:grid-cols-[280px_1fr_240px]"
+          ? "grid-cols-1 md:grid-cols-[1fr_1.2fr_240px]"
           : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]";
 
         return (
