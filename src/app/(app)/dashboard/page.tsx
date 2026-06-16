@@ -3037,7 +3037,7 @@ export default function DashboardPage() {
               />
             )}
             {isVa && sessionState === "idle" && (isPerTask ? (
-              <AvailableTasksWidget key={`avail-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} onPlayAssignedTask={handlePlayAssignedTask} />
+              <AvailableTasksWidget key={`avail-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
             ) : canSeeAvailable ? (
               <ClaimableTasksColumn key={`claim-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
             ) : (
