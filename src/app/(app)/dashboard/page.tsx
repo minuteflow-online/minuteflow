@@ -3039,7 +3039,7 @@ export default function DashboardPage() {
             {isVa && sessionState === "idle" && (isPerTask ? (
               <AvailableTasksWidget key={`avail-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
             ) : canSeeAvailable ? (
-              <ClaimableTasksColumn key={`claim-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
+              <AvailableTasksWidget key={`avail-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
             ) : (
               <div className="rounded-xl border border-sand bg-white/60 p-3 flex flex-col items-center justify-center text-center min-h-[120px]">
                 <svg className="h-6 w-6 text-stone/40 mb-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
