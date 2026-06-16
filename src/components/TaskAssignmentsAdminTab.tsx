@@ -25,6 +25,7 @@ const KNOWN_ACCOUNTS = [
 
 const STATUS_OPTIONS: { value: AssignedTaskStatus | ""; label: string }[] = [
   { value: "", label: "All Statuses" },
+  { value: "unassigned", label: "Unassigned" },
   { value: "pending", label: "Pending" },
   { value: "on_queue", label: "On Queue" },
   { value: "in_progress", label: "In Progress" },
@@ -147,6 +148,7 @@ function mergeProfiles(
 
 function StatusBadge({ status }: { status: AssignedTaskStatus }) {
   const map: Record<AssignedTaskStatus, { cls: string; label: string }> = {
+    unassigned:     { cls: "bg-stone/10 text-stone", label: "Unassigned" },
     pending:        { cls: "bg-slate-blue-soft text-slate-blue", label: "Pending" },
     on_queue:       { cls: "bg-stone/10 text-stone", label: "On Queue" },
     in_progress:    { cls: "bg-amber-100 text-amber-700", label: "In Progress" },
@@ -547,17 +549,20 @@ export default function TaskAssignmentsAdminTab({
   const handleFileUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!selectedTask) return;
-      const file = e.target.files?.[0];
-      if (!file) return;
+      const files = Array.from(e.target.files ?? []);
+      if (files.length === 0) return;
       setUploadingFile(true);
-      const formData = new FormData();
-      formData.append("file", file);
       try {
-        const res = await fetch(
-          `/api/assigned-tasks/${selectedTask.id}/attachments`,
-          { method: "POST", body: formData }
-        );
-        if (res.ok) await fetchAttachments(selectedTask.id);
+        for (const file of files) {
+          const formData = new FormData();
+          formData.append("file", file);
+          const res = await fetch(
+            `/api/assigned-tasks/${selectedTask.id}/attachments`,
+            { method: "POST", body: formData }
+          );
+          if (!res.ok) break;
+        }
+        await fetchAttachments(selectedTask.id);
       } catch {
         // silently fail
       } finally {
@@ -1630,6 +1635,7 @@ export default function TaskAssignmentsAdminTab({
                       <input
                         ref={attachmentInputRef}
                         type="file"
+                        multiple
                         className="hidden"
                         disabled={uploadingFile}
                         onChange={handleFileUpload}

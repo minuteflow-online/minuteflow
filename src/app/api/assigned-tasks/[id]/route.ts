@@ -1,8 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 export const dynamic = "force-dynamic";
 
 type AssignedTaskStatus =
+  | "unassigned"
   | "pending"
   | "on_queue"
   | "in_progress"
@@ -244,6 +249,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   }
 
   const validStatuses: AssignedTaskStatus[] = [
+    "unassigned",
     "pending",
     "on_queue",
     "in_progress",
@@ -344,6 +350,36 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
     if (taskError) {
       return Response.json({ error: taskError.message }, { status: 500 });
+    }
+  }
+
+  if (status === "submitted") {
+    const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const { data: taskRow, error: taskRowError } = await supabase
+      .from("assigned_tasks")
+      .select("assigned_by")
+      .eq("id", id)
+      .single();
+
+    if (taskRowError) {
+      return Response.json({ error: taskRowError.message }, { status: 500 });
+    }
+
+    if (taskRow?.assigned_by) {
+      const { error: routeError } = await admin.from("assigned_task_assignees").upsert(
+        {
+          assigned_task_id: Number(id),
+          va_id: taskRow.assigned_by,
+          status: "reviewing",
+          updated_at: now,
+        },
+        { onConflict: "assigned_task_id,va_id" }
+      );
+
+      if (routeError) {
+        return Response.json({ error: routeError.message }, { status: 500 });
+      }
     }
   }
 

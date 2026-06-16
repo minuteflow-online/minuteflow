@@ -74,6 +74,7 @@ type InlineEditState = {
 
 const STATUS_FILTERS: Array<{ value: AssignedTaskStatus | "all"; label: string }> = [
   { value: "all", label: "All Statuses" },
+  { value: "unassigned", label: "Unassigned" },
   { value: "pending", label: "Pending" },
   { value: "on_queue", label: "On Queue" },
   { value: "in_progress", label: "In Progress" },
@@ -87,6 +88,7 @@ const STATUS_FILTERS: Array<{ value: AssignedTaskStatus | "all"; label: string }
 ];
 
 const STATUS_ORDER: Record<AssignedTaskStatus, number> = {
+  unassigned: -2,
   pending: -1,
   on_queue: 0,
   in_progress: 1,
@@ -100,6 +102,7 @@ const STATUS_ORDER: Record<AssignedTaskStatus, number> = {
 };
 
 const STATUS_LABELS: Record<AssignedTaskStatus, string> = {
+  unassigned: "Unassigned",
   pending: "Pending",
   on_queue: "On Queue",
   in_progress: "In Progress",
@@ -113,6 +116,7 @@ const STATUS_LABELS: Record<AssignedTaskStatus, string> = {
 };
 
 const STATUS_CLASSES: Record<AssignedTaskStatus, string> = {
+  unassigned: "bg-stone/10 text-stone",
   pending: "bg-slate-blue-soft text-slate-blue",
   on_queue: "bg-stone/10 text-stone",
   in_progress: "bg-amber-100 text-amber-700",
@@ -429,9 +433,8 @@ export default function TaskListPage() {
   );
 
   const panelCanEditFields = Boolean(selectedTask && !selectedTask.is_collaborative);
-  const canEditAssignedBy = currentRole === "admin" || currentPosition === "Hourly VA";
-  const panelCanEditAssignedBy = Boolean(selectedTask && !selectedTask.is_collaborative && canEditAssignedBy);
-  const panelCanEditInstructions = Boolean(selectedTask && !selectedTask.is_collaborative && currentRole === "admin");
+  const panelCanEditAssignedBy = Boolean(selectedTask && !selectedTask.is_collaborative);
+  const panelCanEditInstructions = Boolean(selectedTask && !selectedTask.is_collaborative);
 
   const panelProjectsForAccount = useMemo(
     () => formProjects.filter((project) => project.account === panelAccount),
@@ -976,35 +979,56 @@ export default function TaskListPage() {
 
   const handleAttachmentUpload = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
+      const files = Array.from(event.target.files ?? []);
       event.target.value = "";
-      if (!file || !selectedTask) return;
+      if (files.length === 0 || !selectedTask) return;
 
       setPanelUploadSaving(true);
       setPanelMsg(null);
 
       try {
-        const formData = new FormData();
-        formData.append("file", file);
+        let uploadedCount = 0;
+        let failureMessage: string | null = null;
 
-        const res = await fetch(`/api/assigned-tasks/${selectedTask.assigned_tasks.id}/attachments`, {
-          method: "POST",
-          body: formData,
-        });
+        for (const file of files) {
+          const formData = new FormData();
+          formData.append("file", file);
 
-        if (!res.ok) {
-          let message = `HTTP ${res.status}`;
-          try {
-            const data = await res.json();
-            if (data?.error) message = data.error;
-          } catch {
-            // ignore JSON parsing errors
+          const res = await fetch(`/api/assigned-tasks/${selectedTask.assigned_tasks.id}/attachments`, {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            let message = `HTTP ${res.status}`;
+            try {
+              const data = await res.json();
+              if (data?.error) message = data.error;
+            } catch {
+              // ignore JSON parsing errors
+            }
+            failureMessage = `${file.name}: ${message}`;
+            break;
           }
-          throw new Error(message);
+
+          uploadedCount += 1;
         }
 
         await fetchAttachments(selectedTask.assigned_tasks.id);
-        setPanelMsg({ type: "ok", text: "Attachment uploaded." });
+        if (failureMessage) {
+          setPanelMsg({
+            type: "err",
+            text:
+              uploadedCount > 0
+                ? `Uploaded ${uploadedCount} file${uploadedCount === 1 ? "" : "s"} before an error. ${failureMessage}`
+                : failureMessage,
+          });
+        } else {
+          setPanelMsg({
+            type: "ok",
+            text: uploadedCount === 1 ? "Attachment uploaded." : `${uploadedCount} attachments uploaded.`,
+          });
+        }
       } catch (err) {
         setPanelMsg({ type: "err", text: err instanceof Error ? err.message : "Unable to upload file right now." });
       } finally {
@@ -1340,7 +1364,7 @@ export default function TaskListPage() {
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
-                {canEditAssignedBy ? (
+                {true ? (
                   <select
                     value={addForm.assigned_by}
                     onChange={(e) => setAddForm((form) => ({ ...form, assigned_by: e.target.value }))}
@@ -1598,7 +1622,7 @@ export default function TaskListPage() {
                     </label>
                   ) : null}
                 </div>
-                {panelCanEditInstructions ? (
+                {panelCanEditInstructions && !panelInstructionsLocked ? (
                   <textarea
                     value={panelInstructions}
                     onChange={(e) => setPanelInstructions(e.target.value)}
@@ -1673,6 +1697,7 @@ export default function TaskListPage() {
                     <input
                       ref={panelAttachmentInputRef}
                       type="file"
+                      multiple
                       className="hidden"
                       onChange={(e) => void handleAttachmentUpload(e)}
                     />

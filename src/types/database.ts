@@ -480,7 +480,7 @@ export interface AssignedTask {
   fixed_pay_tasks?: { rate: number } | null;
 }
 
-export type AssignedTaskStatus = 'pending' | 'on_queue' | 'in_progress' | 'submitted' | 'reviewing' | 'revision_needed' | 'approved' | 'completed' | 'paid' | 'cancelled';
+export type AssignedTaskStatus = 'unassigned' | 'pending' | 'on_queue' | 'in_progress' | 'submitted' | 'reviewing' | 'revision_needed' | 'approved' | 'completed' | 'paid' | 'cancelled';
 
 export interface AssignedTaskAssignee {
   id: number;

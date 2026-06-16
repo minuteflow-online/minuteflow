@@ -34,6 +34,7 @@ function formatDueDate(dueDateStr: string, orgTimezone: string): { label: string
 }
 
 const STATUS_SORT_ORDER: Record<AssignedTaskStatus, number> = {
+  unassigned: -2,
   pending: -1,
   on_queue: 0,
   in_progress: 1,

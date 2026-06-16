@@ -1,4 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +83,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
  */
 export async function POST(request: Request, { params }: RouteContext) {
   const supabase = await createClient();
+  const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   const auth = await supabase.auth.getUser();
   const user = auth.data.user;
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -100,7 +105,6 @@ export async function POST(request: Request, { params }: RouteContext) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to verify access" }, { status: 500 });
   }
 
-  // Verify task exists
   const { data: task, error: taskError } = await supabase
     .from("assigned_tasks")
     .select("id")
@@ -111,7 +115,6 @@ export async function POST(request: Request, { params }: RouteContext) {
     return Response.json({ error: "Task not found" }, { status: 404 });
   }
 
-  // Parse multipart form data
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -119,60 +122,89 @@ export async function POST(request: Request, { params }: RouteContext) {
     return Response.json({ error: "Invalid form data" }, { status: 400 });
   }
 
-  const file = formData.get("file") as File | null;
-  if (!file) {
+  const files = formData
+    .getAll("file")
+    .filter((entry): entry is File => entry instanceof File);
+
+  if (files.length === 0) {
+    const singleFile = formData.get("file");
+    if (singleFile instanceof File) files.push(singleFile);
+  }
+
+  if (files.length === 0) {
     return Response.json({ error: "No file provided" }, { status: 400 });
   }
 
-  if (file.size > 52428800) {
-    return Response.json({ error: "File too large (max 50MB)" }, { status: 400 });
+  const uploadedPaths: string[] = [];
+  const insertedIds: number[] = [];
+  const attachments: Array<Record<string, unknown> & { url: string | null }> = [];
+
+  try {
+    for (const [index, file] of files.entries()) {
+      if (file.size > 52428800) {
+        throw new Error("File too large (max 50MB)");
+      }
+
+      const timestamp = Date.now();
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const storagePath = `tasks/${id}/${timestamp}-${index}-${safeName}`;
+
+      const arrayBuffer = await file.arrayBuffer();
+      const { error: uploadError } = await admin.storage
+        .from("task-attachments")
+        .upload(storagePath, arrayBuffer, {
+          contentType: file.type || "application/octet-stream",
+          upsert: false,
+        });
+
+      if (uploadError) {
+        throw new Error(uploadError.message);
+      }
+
+      uploadedPaths.push(storagePath);
+
+      const { data: attachment, error: dbError } = await admin
+        .from("assigned_task_attachments")
+        .insert({
+          assigned_task_id: Number(id),
+          filename: file.name,
+          storage_path: storagePath,
+          file_size: file.size,
+          mime_type: file.type || null,
+          uploaded_by: user.id,
+        })
+        .select("id, filename, storage_path, file_size, mime_type, uploaded_by, uploaded_at")
+        .single();
+
+      if (dbError || !attachment) {
+        throw new Error(dbError?.message || "Unable to save attachment record");
+      }
+
+      insertedIds.push(attachment.id as number);
+
+      const { data: signedData } = await admin.storage
+        .from("task-attachments")
+        .createSignedUrl(storagePath, 3600);
+
+      attachments.push({ ...attachment, url: signedData?.signedUrl ?? null });
+    }
+  } catch (error) {
+    if (insertedIds.length > 0) {
+      await admin.from("assigned_task_attachments").delete().in("id", insertedIds);
+    }
+    if (uploadedPaths.length > 0) {
+      await admin.storage.from("task-attachments").remove(uploadedPaths);
+    }
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Unable to upload attachment" },
+      { status: 500 }
+    );
   }
-
-  // Build a unique storage path
-  const timestamp = Date.now();
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const storagePath = `tasks/${id}/${timestamp}-${safeName}`;
-
-  // Upload to Supabase Storage
-  const arrayBuffer = await file.arrayBuffer();
-  const { error: uploadError } = await supabase.storage
-    .from("task-attachments")
-    .upload(storagePath, arrayBuffer, {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
-    });
-
-  if (uploadError) {
-    return Response.json({ error: uploadError.message }, { status: 500 });
-  }
-
-  // Record in DB
-  const { data: attachment, error: dbError } = await supabase
-    .from("assigned_task_attachments")
-    .insert({
-      assigned_task_id: parseInt(id),
-      filename: file.name,
-      storage_path: storagePath,
-      file_size: file.size,
-      mime_type: file.type || null,
-      uploaded_by: user.id,
-    })
-    .select("id, filename, storage_path, file_size, mime_type, uploaded_by, uploaded_at")
-    .single();
-
-  if (dbError) {
-    // Clean up storage on DB failure
-    await supabase.storage.from("task-attachments").remove([storagePath]);
-    return Response.json({ error: dbError.message }, { status: 500 });
-  }
-
-  // Return with signed URL
-  const { data: signedData } = await supabase.storage
-    .from("task-attachments")
-    .createSignedUrl(storagePath, 3600);
 
   return Response.json(
-    { attachment: { ...attachment, url: signedData?.signedUrl ?? null } },
+    files.length === 1
+      ? { attachment: attachments[0], attachments }
+      : { attachments },
     { status: 201 }
   );
 }
