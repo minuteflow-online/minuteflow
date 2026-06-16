@@ -530,6 +530,10 @@ export interface FixedPayTaskWithClaimer {
   assigned_to_profile?: { id: string; full_name: string; username: string } | null;
   /** Joined profile for the claimer — present on admin responses, absent on VA responses */
   claimed_by_profile?: { id: string; full_name: string; username: string } | null;
+  /** True when this task was claimed by the current VA (VA responses only) */
+  claimed_by_me?: boolean;
+  /** The assigned_tasks.id linked to this fixed-pay task for the current VA (VA responses only) */
+  assigned_task_id?: number | null;
 }
 
 export interface FixedPayTaskAttachment {

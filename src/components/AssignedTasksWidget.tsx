@@ -100,7 +100,7 @@ export default function AssignedTasksWidget({
           assigned_tasks: (row.assigned_tasks as unknown as VAAssignedTask["assigned_tasks"]),
         }));
         const visible = data
-          .filter((t) => t.status === 'on_queue' || t.status === 'in_progress')
+          .filter((t) => (t.status === 'on_queue' || t.status === 'in_progress') && !t.assigned_tasks?.fixed_pay_task_id)
           .sort(
             (a, b) =>
               (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)

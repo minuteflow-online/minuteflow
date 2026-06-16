@@ -80,7 +80,7 @@ export async function GET() {
   const auth = await getAuthedProfile();
   if ("error" in auth) return auth.error;
 
-  const { supabase, role } = auth;
+  const { supabase, userId, role } = auth;
   const isAdminOrManager = role === "admin" || role === "manager";
 
   const { data, error } = await supabase
@@ -95,8 +95,24 @@ export async function GET() {
   const rows = await hydrateTaskProfiles(supabase, (data ?? []) as FixedPayTaskWithClaimer[]);
 
   if (!isAdminOrManager) {
+    const unclaimed = rows.filter((task) => task.is_active && !task.claimed_by);
+    const mine = rows.filter((task) => task.is_active && task.claimed_by === userId);
+
+    const mineIds = mine.map((t) => t.id);
+    let atMap: Record<string | number, number> = {};
+    if (mineIds.length > 0) {
+      const { data: atRows } = await supabase
+        .from("assigned_tasks")
+        .select("id, fixed_pay_task_id")
+        .in("fixed_pay_task_id", mineIds);
+      atMap = Object.fromEntries((atRows ?? []).map((r: { fixed_pay_task_id: string | number; id: number }) => [r.fixed_pay_task_id, r.id]));
+    }
+
     return Response.json({
-      tasks: rows.filter((task) => task.is_active && !task.claimed_by),
+      tasks: [
+        ...unclaimed.map((t) => ({ ...t, claimed_by_me: false, assigned_task_id: null })),
+        ...mine.map((t) => ({ ...t, claimed_by_me: true, assigned_task_id: atMap[t.id] ?? null })),
+      ],
     });
   }
 
