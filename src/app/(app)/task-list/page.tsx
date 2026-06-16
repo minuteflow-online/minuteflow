@@ -508,10 +508,14 @@ export default function TaskListPage() {
       setInlineSaving(true);
       try {
         const payloadValue = inlineEdit.field === "due_date" && value === "" ? null : value || null;
+        const body: Record<string, unknown> = { [inlineEdit.field]: payloadValue };
+        if (inlineEdit.field === "status" && currentRole === "admin" && currentUserId) {
+          body.va_id = currentUserId;
+        }
         const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ [inlineEdit.field]: payloadValue }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         await fetchTasks();
@@ -872,6 +876,9 @@ export default function TaskListPage() {
       const body: Record<string, unknown> = {};
       if (statusChanged) body.status = nextStatus;
       if (notesChanged) body.notes = nextNotes;
+      if ((statusChanged || notesChanged) && currentRole === "admin" && currentUserId) {
+        body.va_id = currentUserId;
+      }
       if (metadataChanged) {
         body.account = nextAccount || null;
         body.project = nextProject || null;
@@ -963,6 +970,8 @@ export default function TaskListPage() {
     panelTaskName,
     panelTaskNotes,
     selectedTask,
+    currentRole,
+    currentUserId,
   ]);
 
   const handleAttachmentUpload = useCallback(
@@ -1548,6 +1557,58 @@ export default function TaskListPage() {
                 ) : (
                   <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
                     {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
+                {panelCanEditAssignedBy ? (
+                  <select
+                    value={panelAssignedBy}
+                    onChange={(e) => setPanelAssignedBy(e.target.value)}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  >
+                    <option value="">Select assignee...</option>
+                    {panelAssignedByOptions.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.full_name || profile.username || profile.id}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.assigned_by || <span className="text-stone/60">—</span>}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
+                  {panelCanEditInstructions ? (
+                    <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-stone">
+                      <input
+                        type="checkbox"
+                        checked={panelInstructionsLocked}
+                        onChange={(e) => setPanelInstructionsLocked(e.target.checked)}
+                        className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                      />
+                      Locked
+                    </label>
+                  ) : null}
+                </div>
+                {panelCanEditInstructions ? (
+                  <textarea
+                    value={panelInstructions}
+                    onChange={(e) => setPanelInstructions(e.target.value)}
+                    rows={4}
+                    placeholder="Add task instructions..."
+                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                ) : (
+                  <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.instructions ? renderTextWithLinks(selectedTask.assigned_tasks.instructions) : <span className="text-stone/60">No instructions provided.</span>}
                   </div>
                 )}
               </div>

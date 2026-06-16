@@ -50,6 +50,8 @@ interface DetailFormState {
   project: string;
   task_detail: string;
   task_notes: string;
+  instructions: string;
+  instructions_locked: boolean;
   due_date: string;
   assigned_by_id: string;
   assignee_ids: string[];
@@ -404,6 +406,8 @@ export default function TaskAssignmentsAdminTab({
     project: "",
     task_detail: "",
     task_notes: "",
+    instructions: "",
+    instructions_locked: false,
     due_date: "",
     assigned_by_id: "",
     assignee_ids: [],
@@ -591,6 +595,8 @@ export default function TaskAssignmentsAdminTab({
     project: "",
     task_detail: "",
     task_notes: "",
+    instructions: "",
+    instructions_locked: false,
     due_date: "",
     assigned_by_id: "",
     assignee_ids: [],
@@ -616,6 +622,10 @@ export default function TaskAssignmentsAdminTab({
       task_detail: task.task_detail || "",
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       task_notes: (task as any).task_notes || "",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      instructions: (task as any).instructions || "",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      instructions_locked: Boolean((task as any).instructions_locked),
       due_date: task.due_date ? task.due_date.slice(0, 10) : "",
       assigned_by_id: task.assigned_by || "",
       assignee_ids: task.assigned_task_assignees.map((a) => a.va_id),
@@ -664,6 +674,8 @@ export default function TaskAssignmentsAdminTab({
       project: detailForm.project.trim() || null,
       task_detail: detailForm.task_detail.trim() || null,
       task_notes: detailForm.task_notes.trim() || null,
+      instructions: detailForm.instructions.trim() || null,
+      instructions_locked: detailForm.instructions_locked,
       due_date: detailForm.due_date || null,
       assigned_by: detailForm.assigned_by_id || null,
       va_ids: detailForm.assignee_ids,
@@ -1543,6 +1555,28 @@ export default function TaskAssignmentsAdminTab({
                   onChange={(e) => setDetailForm((f) => ({ ...f, task_notes: e.target.value }))}
                   rows={5}
                   placeholder="Detailed instructions, context, links, or anything the VA needs to know..."
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
+                />
+              </div>
+
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <label className="block text-[11px] font-semibold text-walnut tracking-wide uppercase">Instructions</label>
+                  <label className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-stone">
+                    <input
+                      type="checkbox"
+                      checked={detailForm.instructions_locked}
+                      onChange={(e) => setDetailForm((f) => ({ ...f, instructions_locked: e.target.checked }))}
+                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                    />
+                    Locked
+                  </label>
+                </div>
+                <textarea
+                  value={detailForm.instructions}
+                  onChange={(e) => setDetailForm((f) => ({ ...f, instructions: e.target.value }))}
+                  rows={5}
+                  placeholder="Add instructions for the assignee..."
                   className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
                 />
               </div>
