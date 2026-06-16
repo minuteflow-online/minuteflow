@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTaskStatus } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
@@ -181,7 +181,7 @@ function sameText(a: string | null | undefined, b: string | null | undefined) {
 }
 
 function renderTextWithLinks(text: string) {
-  const parts: JSX.Element[] = [];
+  const parts: ReactElement[] = [];
   const urlRegex = /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+|www\.[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/gi;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -263,7 +263,7 @@ export default function TaskListPage() {
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
 
-  const fetchTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (): Promise<VATaskRow[]> => {
     setLoading(true);
     setError(null);
     try {
@@ -276,9 +276,12 @@ export default function TaskListPage() {
         is_collaborative: Boolean(row.is_collaborative),
         collaborator_name: row.collaborator_name ?? null,
       }));
-      setTasks(sortTasks(normalized));
+      const sorted = sortTasks(normalized);
+      setTasks(sorted);
+      return sorted;
     } catch {
       setError("Unable to load assigned tasks right now.");
+      return [];
     } finally {
       setLoading(false);
     }
@@ -505,7 +508,7 @@ export default function TaskListPage() {
       setInlineSaving(true);
       try {
         const payloadValue = inlineEdit.field === "due_date" && value === "" ? null : value || null;
-        const res = await fetch(`/api/assigned-tasks/${task.id}`, {
+        const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ [inlineEdit.field]: payloadValue }),
@@ -804,14 +807,23 @@ export default function TaskListPage() {
         throw new Error(message);
       }
 
-      await fetchTasks();
+      const responseData = await res.json();
+      const newTaskId: number | undefined = responseData?.task?.id;
+      const freshTasks = await fetchTasks();
+      if (newTaskId) {
+        const newTask = freshTasks.find((t) => t.assigned_tasks?.id === newTaskId);
+        if (newTask) {
+          openPanel(newTask);
+          return;
+        }
+      }
       closeCreate();
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Unable to add task right now.");
     } finally {
       setAddSaving(false);
     }
-  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks]);
+  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel]);
 
   const handleClaimedTaskRefresh = useCallback(async () => {
     await fetchTasks();
