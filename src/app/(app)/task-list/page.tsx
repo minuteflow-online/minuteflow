@@ -216,7 +216,7 @@ function renderTextWithLinks(text: string) {
 
 export default function TaskListPage() {
   const supabase = useMemo(() => createClient(), []);
-  const { requestStream, captureFrame } = useScreenCapture();
+  const { isActive, requestStream, captureFrame } = useScreenCapture();
 
   const [tasks, setTasks] = useState<VATaskRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -275,6 +275,10 @@ export default function TaskListPage() {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const activeLogIdRef = useRef<number | null>(null);
   const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const captureWorkerRef = useRef<Worker | null>(null);
+  const silentCaptureRef = useRef<((logId: number, screenshotType: "start" | "progress") => Promise<boolean>) | null>(
+    null
+  );
 
   const fetchTasks = useCallback(async (): Promise<VATaskRow[]> => {
     setLoading(true);
@@ -505,6 +509,56 @@ export default function TaskListPage() {
     },
     [currentUserId]
   );
+
+  const silentCapture = useCallback(
+    async (logId: number, screenshotType: "start" | "progress") => {
+      const blob = await captureFrame();
+      if (!blob) return false;
+
+      const screenshot = await uploadTaskScreenshot(blob, logId, screenshotType === "start" ? "start" : "remote");
+      if (!screenshot) return false;
+
+      appendPanelScreenshot(logId, screenshot);
+      return true;
+    },
+    [appendPanelScreenshot, captureFrame, uploadTaskScreenshot]
+  );
+
+  useEffect(() => {
+    silentCaptureRef.current = silentCapture;
+  }, [silentCapture]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const worker = new Worker("/capture-worker.js");
+      worker.onmessage = (event: MessageEvent) => {
+        const { type, logId, screenshotType } = event.data ?? {};
+        if (type === "capture" && silentCaptureRef.current) {
+          void silentCaptureRef.current(logId, screenshotType);
+        }
+      };
+      worker.onerror = () => {
+        captureWorkerRef.current = null;
+      };
+      captureWorkerRef.current = worker;
+    } catch {
+      captureWorkerRef.current = null;
+    }
+
+    return () => {
+      captureWorkerRef.current?.postMessage({ type: "stop" });
+      captureWorkerRef.current?.terminate();
+      captureWorkerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isActive) {
+      captureWorkerRef.current?.postMessage({ type: "stop" });
+    }
+  }, [isActive]);
 
   const captureTaskScreenshot = useCallback(
     async (logId: number, screenshotType: "start" | "remote", captureRequestId?: number) => {
@@ -1157,8 +1211,13 @@ export default function TaskListPage() {
         void (async () => {
           const result = await requestStream();
           if (result !== "granted") return;
-          await captureTaskScreenshot(taskLogId, "start");
+          const captured = await captureTaskScreenshot(taskLogId, "start");
+          if (captured) {
+            captureWorkerRef.current?.postMessage({ type: "start", logId: taskLogId });
+          }
         })();
+      } else if (statusChanged && nextStatus !== "in_progress" && taskLogId) {
+        captureWorkerRef.current?.postMessage({ type: "stop" });
       }
       setPanelMsg({ type: "ok", text: "Changes saved." });
       window.setTimeout(() => closePanel(), 800);
@@ -1555,8 +1614,14 @@ export default function TaskListPage() {
                   <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
                   <div className="group relative">
                     <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-52 -translate-x-1/2 rounded-lg border border-sand bg-white px-3 py-2 text-[11px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
-                      Keep it short and professional — this is added to the client memo on the time log. Write a brief summary or reference only.
+                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-64 -translate-x-1/2 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                      <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
+                      <div className="space-y-0.5 text-[10px]">
+                        <p><span className="font-semibold">1. Who:</span> Who</p>
+                        <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+                        <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+                        <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1774,8 +1839,14 @@ export default function TaskListPage() {
                   <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
                   <div className="group relative">
                     <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-52 -translate-x-1/2 rounded-lg border border-sand bg-white px-3 py-2 text-[11px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
-                      Keep it short and professional — this is added to the client memo on the time log. Write a brief summary or reference only.
+                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-64 -translate-x-1/2 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                      <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
+                      <div className="space-y-0.5 text-[10px]">
+                        <p><span className="font-semibold">1. Who:</span> Who</p>
+                        <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+                        <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+                        <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
+                      </div>
                     </div>
                   </div>
                 </div>
