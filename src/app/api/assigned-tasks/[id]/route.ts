@@ -95,6 +95,25 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (updateError)
     return Response.json({ error: updateError.message }, { status: 500 });
 
+  // Sync task_detail → client_memo on linked time_logs
+  if (task_detail !== undefined) {
+    const { data: assigneeRows } = await supabase
+      .from("assigned_task_assignees")
+      .select("log_id")
+      .eq("assigned_task_id", id);
+
+    const logIds = (assigneeRows ?? [])
+      .map((r: { log_id: number | null }) => r.log_id)
+      .filter((lid): lid is number => typeof lid === "number");
+
+    if (logIds.length > 0) {
+      await supabase
+        .from("time_logs")
+        .update({ client_memo: task_detail || null })
+        .in("id", logIds);
+    }
+  }
+
   // Handle va_ids reconciliation if provided
   if (Array.isArray(va_ids)) {
     // Fetch current assignees
@@ -350,6 +369,25 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
     if (taskError) {
       return Response.json({ error: taskError.message }, { status: 500 });
+    }
+
+    // Sync task_detail → client_memo on linked time_logs
+    if (task_detail !== undefined) {
+      const { data: assigneeRows } = await supabase
+        .from("assigned_task_assignees")
+        .select("log_id")
+        .eq("assigned_task_id", id);
+
+      const logIds = (assigneeRows ?? [])
+        .map((r: { log_id: number | null }) => r.log_id)
+        .filter((lid): lid is number => typeof lid === "number");
+
+      if (logIds.length > 0) {
+        await supabase
+          .from("time_logs")
+          .update({ client_memo: task_detail || null })
+          .in("id", logIds);
+      }
     }
   }
 

@@ -391,20 +391,12 @@ export default function TaskListPage() {
       setPanelScreenshots(screenshots);
 
       const signedUrls: Record<number, string> = {};
-      const missing = screenshots.filter((ss) => !ss.drive_file_id);
 
       screenshots.forEach((ss) => {
         if (ss.drive_file_id) {
           signedUrls[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
         }
       });
-
-      await Promise.all(
-        missing.map(async (ss) => {
-          const { data } = await supabase.storage.from("screenshots").createSignedUrl(ss.storage_path, 3600);
-          if (data?.signedUrl) signedUrls[ss.id] = data.signedUrl;
-        })
-      );
 
       setPanelSignedUrls(signedUrls);
     } catch {
@@ -1198,7 +1190,7 @@ export default function TaskListPage() {
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Task Name</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Objective</th>
-                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Detail</th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Client Detail</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Due Date</th>
                       </tr>
@@ -1407,12 +1399,20 @@ export default function TaskListPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Detail</label>
+                <div className="mb-1 flex items-center gap-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
+                  <div className="group relative">
+                    <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
+                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-52 -translate-x-1/2 rounded-lg border border-sand bg-white px-3 py-2 text-[11px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                      Keep it short and professional — this is added to the client memo on the time log. Write a brief summary or reference only.
+                    </div>
+                  </div>
+                </div>
                 <input
                   type="text"
                   value={addForm.task_detail}
                   onChange={(e) => setAddForm((form) => ({ ...form, task_detail: e.target.value }))}
-                  placeholder="Short summary or reference..."
+                  placeholder="Added to client memo — keep it short and sensible"
                   className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                 />
               </div>
@@ -1618,13 +1618,21 @@ export default function TaskListPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Detail</label>
+                <div className="mb-1 flex items-center gap-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
+                  <div className="group relative">
+                    <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
+                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-52 -translate-x-1/2 rounded-lg border border-sand bg-white px-3 py-2 text-[11px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                      Keep it short and professional — this is added to the client memo on the time log. Write a brief summary or reference only.
+                    </div>
+                  </div>
+                </div>
                 {panelCanEditFields ? (
                   <textarea
                     value={panelDetail}
                     onChange={(e) => setPanelDetail(e.target.value)}
                     rows={4}
-                    placeholder="Add task detail..."
+                    placeholder="Added to client memo — keep it short and sensible"
                     className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                   />
                 ) : (
