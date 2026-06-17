@@ -462,7 +462,8 @@ export default function TaskAssignmentsAdminTab({
   const [panelScreenshots, setPanelScreenshots] = useState<TaskScreenshot[]>([]);
   const [panelSignedUrls, setPanelSignedUrls] = useState<Record<number, string>>({});
   const [panelScreenshotsLoading, setPanelScreenshotsLoading] = useState(false);
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxUrls, setLightboxUrls] = useState<string[] | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
   const [uploadingFile, setUploadingFile] = useState(false);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
 
@@ -680,7 +681,8 @@ export default function TaskAssignmentsAdminTab({
     setPanelScreenshots([]);
     setPanelSignedUrls({});
     setPanelScreenshotsLoading(false);
-    setLightboxUrl(null);
+    setLightboxUrls(null);
+    setLightboxIndex(0);
   };
 
   const openEdit = (task: AssignedTaskWithAssignees) => {
@@ -1693,7 +1695,14 @@ export default function TaskAssignmentsAdminTab({
                           <button
                             key={ss.id}
                             type="button"
-                            onClick={() => url && setLightboxUrl(url)}
+                            onClick={() => {
+                              if (!url) return;
+                              const urls = panelScreenshots
+                                .map((s) => panelSignedUrls[s.id])
+                                .filter((candidate): candidate is string => Boolean(candidate));
+                              setLightboxUrls(urls);
+                              setLightboxIndex(Math.max(0, urls.indexOf(url)));
+                            }}
                             className="relative group w-[48px] h-[36px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer hover:border-terracotta hover:scale-105 transition-all shrink-0"
                             title={`Screenshot ${ss.screenshot_type || "manual"}`}
                           >
@@ -1878,8 +1887,15 @@ export default function TaskAssignmentsAdminTab({
           }}
         />
       )}
-      {lightboxUrl && (
-        <ScreenshotLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />
+      {lightboxUrls && lightboxUrls.length > 0 && (
+        <ScreenshotLightbox
+          urls={lightboxUrls}
+          initialIndex={lightboxIndex}
+          onClose={() => {
+            setLightboxUrls(null);
+            setLightboxIndex(0);
+          }}
+        />
       )}
     </div>
   );

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { AssignedTaskStatus, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import { useScreenCapture } from "@/hooks/useScreenCapture";
 
 type VATaskRow = {
   id: number;
@@ -215,6 +216,7 @@ function renderTextWithLinks(text: string) {
 
 export default function TaskListPage() {
   const supabase = useMemo(() => createClient(), []);
+  const { requestStream, captureFrame } = useScreenCapture();
 
   const [tasks, setTasks] = useState<VATaskRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -269,7 +271,9 @@ export default function TaskListPage() {
   const [panelScreenshots, setPanelScreenshots] = useState<TaskScreenshot[]>([]);
   const [panelSignedUrls, setPanelSignedUrls] = useState<Record<number, string>>({});
   const [panelScreenshotsLoading, setPanelScreenshotsLoading] = useState(false);
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxUrls, setLightboxUrls] = useState<string[] | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
+  const activeLogIdRef = useRef<number | null>(null);
   const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchTasks = useCallback(async (): Promise<VATaskRow[]> => {
@@ -446,6 +450,142 @@ export default function TaskListPage() {
       setActiveView("my_tasks");
     }
   }, [canShowAvailableTasks]);
+
+  useEffect(() => {
+    const activeTask = tasks.find((task) => task.status === "in_progress" && typeof task.log_id === "number");
+    activeLogIdRef.current = activeTask?.log_id ?? null;
+  }, [tasks]);
+
+  const appendPanelScreenshot = useCallback(
+    (logId: number, screenshot: TaskScreenshot) => {
+      if (selectedTask?.log_id !== logId) return;
+      setPanelScreenshots((current) => [...current, screenshot]);
+      if (screenshot.drive_file_id) {
+        setPanelSignedUrls((current) => ({
+          ...current,
+          [screenshot.id]: `/api/drive-image?id=${screenshot.drive_file_id}`,
+        }));
+      }
+    },
+    [selectedTask?.log_id]
+  );
+
+  const updateCaptureRequest = useCallback(
+    async (captureRequestId: number, status: "failed" | "completed", logId?: number, screenshotId?: number) => {
+      await supabase
+        .from("capture_requests")
+        .update({
+          status,
+          log_id: logId ?? null,
+          screenshot_id: screenshotId ?? null,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", captureRequestId);
+    },
+    [supabase]
+  );
+
+  const uploadTaskScreenshot = useCallback(
+    async (blob: Blob, logId: number, screenshotType: "start" | "remote", captureRequestId?: number) => {
+      if (!currentUserId) return null;
+
+      const formData = new FormData();
+      formData.append("file", blob, "screenshot.png");
+      formData.append("userId", currentUserId);
+      formData.append("logId", String(logId));
+      formData.append("screenshotType", screenshotType);
+      if (captureRequestId) {
+        formData.append("captureRequestId", String(captureRequestId));
+      }
+
+      const res = await fetch("/api/upload-screenshot", { method: "POST", body: formData });
+      if (!res.ok) return null;
+      const json = await res.json();
+      return (json.screenshot ?? null) as TaskScreenshot | null;
+    },
+    [currentUserId]
+  );
+
+  const captureTaskScreenshot = useCallback(
+    async (logId: number, screenshotType: "start" | "remote", captureRequestId?: number) => {
+      const blob = await captureFrame();
+      if (!blob) {
+        if (captureRequestId) {
+          await updateCaptureRequest(captureRequestId, "failed");
+        }
+        return false;
+      }
+
+      const screenshot = await uploadTaskScreenshot(blob, logId, screenshotType, captureRequestId);
+      if (!screenshot) {
+        if (captureRequestId) {
+          await updateCaptureRequest(captureRequestId, "failed");
+        }
+        return false;
+      }
+
+      if (captureRequestId) {
+        await updateCaptureRequest(captureRequestId, "completed", logId, screenshot.id);
+      }
+
+      appendPanelScreenshot(logId, screenshot);
+      return true;
+    },
+    [appendPanelScreenshot, captureFrame, updateCaptureRequest, uploadTaskScreenshot]
+  );
+
+  useEffect(() => {
+    if (!currentUserId) return;
+
+    const channel = supabase
+      .channel("task-list-capture-requests")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "capture_requests",
+          filter: `target_user_id=eq.${currentUserId}`,
+        },
+        async (payload) => {
+          const request = payload.new as { id: number; status: string };
+          if (request.status !== "pending") return;
+
+          const logId = activeLogIdRef.current;
+          if (!logId) {
+            await updateCaptureRequest(request.id, "failed");
+            return;
+          }
+
+          await captureTaskScreenshot(logId, "remote", request.id);
+        }
+      )
+      .subscribe();
+
+    void (async () => {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: pendingCaptures } = await supabase
+        .from("capture_requests")
+        .select("id")
+        .eq("target_user_id", currentUserId)
+        .eq("status", "pending")
+        .gte("created_at", fiveMinutesAgo);
+
+      for (const req of pendingCaptures ?? []) {
+        const logId = activeLogIdRef.current;
+        if (!logId) {
+          await updateCaptureRequest(req.id, "failed");
+          continue;
+        }
+
+        await captureTaskScreenshot(logId, "remote", req.id);
+      }
+    })();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [captureTaskScreenshot, currentUserId, supabase, updateCaptureRequest]);
 
   const accountOptions = useMemo(() => {
     if (formAccounts.length > 0) return formAccounts;
@@ -831,7 +971,8 @@ export default function TaskListPage() {
     setPanelScreenshots([]);
     setPanelSignedUrls({});
     setPanelScreenshotsLoading(false);
-    setLightboxUrl(null);
+    setLightboxUrls(null);
+    setLightboxIndex(0);
   }, []);
 
   const handleAddTask = useCallback(async () => {
@@ -899,6 +1040,7 @@ export default function TaskListPage() {
     if (!selectedTask) return;
 
     const taskId = selectedTask.assigned_tasks.id;
+    const taskLogId = selectedTask.log_id;
     const previousStatus = selectedTask.status;
     const previousNotes = selectedTask.notes ?? "";
     const nextStatus = panelStatus;
@@ -1010,6 +1152,14 @@ export default function TaskListPage() {
             }
           : current
       );
+      if (statusChanged && nextStatus === "in_progress" && taskLogId) {
+        activeLogIdRef.current = taskLogId;
+        void (async () => {
+          const result = await requestStream();
+          if (result !== "granted") return;
+          await captureTaskScreenshot(taskLogId, "start");
+        })();
+      }
       setPanelMsg({ type: "ok", text: "Changes saved." });
       window.setTimeout(() => closePanel(), 800);
     } catch {
@@ -1033,6 +1183,8 @@ export default function TaskListPage() {
     selectedTask,
     currentRole,
     currentUserId,
+    requestStream,
+    captureTaskScreenshot,
   ]);
 
   const handleAttachmentUpload = useCallback(
@@ -1775,7 +1927,14 @@ export default function TaskListPage() {
                         <button
                           key={ss.id}
                           type="button"
-                          onClick={() => url && setLightboxUrl(url)}
+                          onClick={() => {
+                            if (!url) return;
+                            const urls = panelScreenshots
+                              .map((s) => panelSignedUrls[s.id])
+                              .filter((candidate): candidate is string => Boolean(candidate));
+                            setLightboxUrls(urls);
+                            setLightboxIndex(Math.max(0, urls.indexOf(url)));
+                          }}
                           className="relative group w-[48px] h-[36px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer hover:border-terracotta hover:scale-105 transition-all shrink-0"
                           title={`Screenshot ${ss.screenshot_type || "manual"}`}
                         >
@@ -1892,10 +2051,14 @@ export default function TaskListPage() {
           </div>
         </div>
       )}
-      {lightboxUrl && (
+      {lightboxUrls && lightboxUrls.length > 0 && (
         <ScreenshotLightbox
-          url={lightboxUrl}
-          onClose={() => setLightboxUrl(null)}
+          urls={lightboxUrls}
+          initialIndex={lightboxIndex}
+          onClose={() => {
+            setLightboxUrls(null);
+            setLightboxIndex(0);
+          }}
         />
       )}
     </div>

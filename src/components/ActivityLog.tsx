@@ -220,7 +220,8 @@ export default function ActivityLog({
 
   // Screenshot signed URLs + lightbox
   const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxUrls, setLightboxUrls] = useState<string[] | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
 
   // Edited log IDs (for "edited" indicator)
   const [editedLogIds, setEditedLogIds] = useState<Set<number>>(new Set());
@@ -1037,7 +1038,14 @@ export default function ActivityLog({
                             <div key={ss.id} className="relative group shrink-0">
                               <button
                                 type="button"
-                                onClick={() => url && setLightboxUrl(url)}
+                                onClick={() => {
+                                  if (!url) return;
+                                  const urls = logScreenshots
+                                    .map((s) => signedUrls[s.id])
+                                    .filter((candidate): candidate is string => Boolean(candidate));
+                                  setLightboxUrls(urls);
+                                  setLightboxIndex(Math.max(0, urls.indexOf(url)));
+                                }}
                                 className="w-[28px] h-[20px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer transition-all hover:border-terracotta hover:scale-105 flex-shrink-0"
                                 title={`Screenshot ${ss.screenshot_type || "manual"}`}
                               >
@@ -1407,10 +1415,14 @@ export default function ActivityLog({
         />
       )}
 
-      {lightboxUrl && (
+      {lightboxUrls && lightboxUrls.length > 0 && (
         <ScreenshotLightbox
-          url={lightboxUrl}
-          onClose={() => setLightboxUrl(null)}
+          urls={lightboxUrls}
+          initialIndex={lightboxIndex}
+          onClose={() => {
+            setLightboxUrls(null);
+            setLightboxIndex(0);
+          }}
         />
       )}
     </>

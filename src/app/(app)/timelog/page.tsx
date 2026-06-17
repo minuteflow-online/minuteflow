@@ -187,7 +187,8 @@ export default function TimeLogPage() {
   /* ── Screenshots state (for admin/manager) ───────────────── */
   const [screenshots, setScreenshots] = useState<Record<number, TaskScreenshot[]>>({});
   const [signedUrls, setSignedUrls] = useState<Record<number, string>>({});
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxUrls, setLightboxUrls] = useState<string[] | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
 
   /* ── Mood data ────────────────────────────────────────────── */
   const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
@@ -1327,7 +1328,14 @@ export default function TimeLogPage() {
                                       return (
                                         <button
                                           key={ss.id}
-                                          onClick={() => url && setLightboxUrl(url)}
+                                          onClick={() => {
+                                            if (!url) return;
+                                            const urls = logScreenshots
+                                              .map((s) => signedUrls[s.id])
+                                              .filter((candidate): candidate is string => Boolean(candidate));
+                                            setLightboxUrls(urls);
+                                            setLightboxIndex(Math.max(0, urls.indexOf(url)));
+                                          }}
                                           className="w-[28px] h-[20px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer transition-all hover:border-terracotta hover:scale-105 flex-shrink-0"
                                           title={`Screenshot ${ss.screenshot_type || "manual"}`}
                                         >
@@ -1512,10 +1520,14 @@ export default function TimeLogPage() {
         />
       )}
 
-      {lightboxUrl && (
+      {lightboxUrls && lightboxUrls.length > 0 && (
         <ScreenshotLightbox
-          url={lightboxUrl}
-          onClose={() => setLightboxUrl(null)}
+          urls={lightboxUrls}
+          initialIndex={lightboxIndex}
+          onClose={() => {
+            setLightboxUrls(null);
+            setLightboxIndex(0);
+          }}
         />
       )}
 
