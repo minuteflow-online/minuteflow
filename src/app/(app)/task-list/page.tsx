@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { AssignedTaskStatus } from "@/types/database";
+import type { AssignedTaskStatus, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
+import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 
 type VATaskRow = {
   id: number;
@@ -265,6 +266,10 @@ export default function TaskListPage() {
   const [panelMsg, setPanelMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [panelScreenshots, setPanelScreenshots] = useState<TaskScreenshot[]>([]);
+  const [panelSignedUrls, setPanelSignedUrls] = useState<Record<number, string>>({});
+  const [panelScreenshotsLoading, setPanelScreenshotsLoading] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchTasks = useCallback(async (): Promise<VATaskRow[]> => {
@@ -356,6 +361,59 @@ export default function TaskListPage() {
       setAttachmentsLoading(false);
     }
   }, []);
+
+  const fetchPanelScreenshots = useCallback(async (taskId: number) => {
+    setPanelScreenshotsLoading(true);
+    setPanelScreenshots([]);
+    setPanelSignedUrls({});
+    try {
+      const { data: assigneeRows } = await supabase
+        .from("assigned_task_assignees")
+        .select("log_id")
+        .eq("assigned_task_id", taskId);
+
+      const logIds = Array.from(
+        new Set(
+          (assigneeRows ?? [])
+            .map((row) => row.log_id)
+            .filter((logId): logId is number => typeof logId === "number")
+        )
+      );
+
+      if (logIds.length === 0) return;
+
+      const { data: screenshotRows } = await supabase
+        .from("task_screenshots")
+        .select("*")
+        .in("log_id", logIds);
+
+      const screenshots = (screenshotRows ?? []) as TaskScreenshot[];
+      setPanelScreenshots(screenshots);
+
+      const signedUrls: Record<number, string> = {};
+      const missing = screenshots.filter((ss) => !ss.drive_file_id);
+
+      screenshots.forEach((ss) => {
+        if (ss.drive_file_id) {
+          signedUrls[ss.id] = `/api/drive-image?id=${ss.drive_file_id}`;
+        }
+      });
+
+      await Promise.all(
+        missing.map(async (ss) => {
+          const { data } = await supabase.storage.from("screenshots").createSignedUrl(ss.storage_path, 3600);
+          if (data?.signedUrl) signedUrls[ss.id] = data.signedUrl;
+        })
+      );
+
+      setPanelSignedUrls(signedUrls);
+    } catch {
+      setPanelScreenshots([]);
+      setPanelSignedUrls({});
+    } finally {
+      setPanelScreenshotsLoading(false);
+    }
+  }, [supabase]);
 
   useEffect(() => {
     void fetchCurrentUser();
@@ -750,10 +808,14 @@ export default function TaskListPage() {
       setPanelUploadSaving(false);
       setPanelMsg(null);
       setAttachments([]);
+      setPanelScreenshots([]);
+      setPanelSignedUrls({});
       setAttachmentsLoading(true);
+      setPanelScreenshotsLoading(true);
       await fetchAttachments(task.assigned_tasks.id);
+      await fetchPanelScreenshots(task.assigned_tasks.id);
     },
-    [closeCreate, fetchAttachments]
+    [closeCreate, fetchAttachments, fetchPanelScreenshots]
   );
 
   const closePanel = useCallback(() => {
@@ -774,6 +836,10 @@ export default function TaskListPage() {
     setPanelMsg(null);
     setAttachments([]);
     setAttachmentsLoading(false);
+    setPanelScreenshots([]);
+    setPanelSignedUrls({});
+    setPanelScreenshotsLoading(false);
+    setLightboxUrl(null);
   }, []);
 
   const handleAddTask = useCallback(async () => {
@@ -1683,6 +1749,41 @@ export default function TaskListPage() {
               </div>
 
               <div>
+                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
+                {panelScreenshotsLoading ? (
+                  <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
+                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                    Loading screenshots...
+                  </div>
+                ) : panelScreenshots.length === 0 ? (
+                  <p className="py-2 text-[12px] text-stone/50">No screenshots.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {panelScreenshots.map((ss) => {
+                      const url = panelSignedUrls[ss.id];
+                      return (
+                        <button
+                          key={ss.id}
+                          type="button"
+                          onClick={() => url && setLightboxUrl(url)}
+                          className="relative group w-[48px] h-[36px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer hover:border-terracotta hover:scale-105 transition-all shrink-0"
+                          title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                        >
+                          {url ? (
+                            <img src={url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div>
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
                   <div className="flex items-center gap-2">
@@ -1782,6 +1883,12 @@ export default function TaskListPage() {
             </div>
           </div>
         </div>
+      )}
+      {lightboxUrl && (
+        <ScreenshotLightbox
+          url={lightboxUrl}
+          onClose={() => setLightboxUrl(null)}
+        />
       )}
     </div>
   );

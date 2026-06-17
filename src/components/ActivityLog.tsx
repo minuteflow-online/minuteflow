@@ -287,6 +287,22 @@ export default function ActivityLog({
     setSignedUrls(newUrls);
   }, [allVisibleScreenshots, signedUrls]);
 
+  const handleDeleteScreenshot = useCallback(
+    async (screenshotId: number) => {
+      if (!isAdminOrManager) return;
+      if (!confirm("Delete this screenshot? This cannot be undone.")) return;
+      const supabase = createClient();
+      await supabase.from("task_screenshots").delete().eq("id", screenshotId);
+      setSignedUrls((current) => {
+        const next = { ...current };
+        delete next[screenshotId];
+        return next;
+      });
+      if (onRefresh) onRefresh();
+    },
+    [isAdminOrManager, onRefresh]
+  );
+
   useEffect(() => {
     loadSignedUrls();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1014,13 +1030,13 @@ export default function ActivityLog({
 
                     {/* Screenshots */}
                     <td className="py-2.5 px-3 text-[12px] border-b border-parchment align-top" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex gap-1 items-center">
-                        {logScreenshots.length > 0 ? (
-                          logScreenshots.slice(0, 3).map((ss) => {
-                            const url = signedUrls[ss.id];
-                            return (
+                      <div className="flex max-w-[140px] flex-nowrap gap-1 items-center overflow-x-auto pb-1">
+                        {logScreenshots.map((ss) => {
+                          const url = signedUrls[ss.id];
+                          return (
+                            <div key={ss.id} className="relative group shrink-0">
                               <button
-                                key={ss.id}
+                                type="button"
                                 onClick={() => url && setLightboxUrl(url)}
                                 className="w-[28px] h-[20px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer transition-all hover:border-terracotta hover:scale-105 flex-shrink-0"
                                 title={`Screenshot ${ss.screenshot_type || "manual"}`}
@@ -1031,12 +1047,19 @@ export default function ActivityLog({
                                   <div className="w-full h-full flex items-center justify-center text-[7px] text-stone">...</div>
                                 )}
                               </button>
-                            );
-                          })
-                        ) : null}
-                        {logScreenshots.length > 3 && (
-                          <span className="text-[9px] text-bark font-medium">+{logScreenshots.length - 3}</span>
-                        )}
+                              {isAdminOrManager && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteScreenshot(ss.id)}
+                                  className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-terracotta text-[8px] text-white opacity-0 transition-opacity group-hover:opacity-100"
+                                  title="Delete screenshot"
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
                         {isOwnEntry && (
                           <button
                             onClick={() => onAddScreenshot(log.id)}
