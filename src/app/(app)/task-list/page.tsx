@@ -1614,7 +1614,7 @@ export default function TaskListPage() {
                   <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
                   <div className="group relative">
                     <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-64 -translate-x-1/2 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                    <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
                       <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
                       <div className="space-y-0.5 text-[10px]">
                         <p><span className="font-semibold">1. Who:</span> Who</p>
@@ -1839,7 +1839,7 @@ export default function TaskListPage() {
                   <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
                   <div className="group relative">
                     <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1 w-64 -translate-x-1/2 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                    <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
                       <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
                       <div className="space-y-0.5 text-[10px]">
                         <p><span className="font-semibold">1. Who:</span> Who</p>
