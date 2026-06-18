@@ -235,7 +235,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const { id } = await params;
   const body = await request.json();
-  const { va_id: bodyVaId, status, log_id, notes, account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked } = body as {
+  const { va_id: bodyVaId, status, log_id, notes, account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, archived_at, deleted_at } = body as {
     va_id?: string;
     status?: AssignedTaskStatus;
     log_id?: number;
@@ -249,6 +249,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
+    archived_at?: string | null;
+    deleted_at?: string | null;
   };
 
   const hasAssigneeUpdate = status !== undefined || log_id !== undefined || notes !== undefined;
@@ -261,7 +263,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     due_date !== undefined ||
     assigned_by !== undefined ||
     instructions !== undefined ||
-    instructions_locked !== undefined;
+    instructions_locked !== undefined ||
+    archived_at !== undefined ||
+    deleted_at !== undefined;
 
   if (!hasAssigneeUpdate && !hasMetadataUpdate) {
     return Response.json({ error: "At least one field is required" }, { status: 400 });
@@ -361,6 +365,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
     if (instructions !== undefined) updatePayload.instructions = instructions;
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
+    if (archived_at !== undefined) updatePayload.archived_at = archived_at;
+    if (deleted_at !== undefined) updatePayload.deleted_at = deleted_at;
 
     const { error: taskError } = await supabase
       .from("assigned_tasks")

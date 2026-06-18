@@ -35,11 +35,22 @@ type TaskRow = {
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
+  archived_at: string | null;
+  deleted_at: string | null;
   created_by: string | null;
   created_at: string | null;
   updated_at: string | null;
   assigned_task_assignees: AssigneeRow[];
 };
+
+function matchesTaskView(
+  task: { archived_at?: string | null; deleted_at?: string | null },
+  view: string | null
+) {
+  if (view === "archived") return Boolean(task.archived_at) && !task.deleted_at;
+  if (view === "trash") return Boolean(task.deleted_at);
+  return !task.archived_at && !task.deleted_at;
+}
 
 /**
  * GET /api/assigned-tasks
@@ -69,6 +80,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const vaIdParam = searchParams.get("vaId");
   const statusParam = searchParams.get("status") as AssignedTaskStatus | null;
+  const viewParam = searchParams.get("view");
   const selfOnly = searchParams.get("selfOnly") === "true";
 
   const isAdminOrManager =
@@ -81,7 +93,7 @@ export async function GET(request: Request) {
     const query = supabase
       .from("assigned_tasks")
       .select(
-        `id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
+        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
          assigned_task_assignees(${assigneeSelect})`
       )
       .order("created_at", { ascending: false });
@@ -89,7 +101,6 @@ export async function GET(request: Request) {
     const { data, error } = await query;
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
-    // Fetch profiles separately (PostgREST can't join profiles via auth.users FK)
     const allVaIds = [
       ...new Set(
         (data ?? []).flatMap((t) =>
@@ -116,7 +127,6 @@ export async function GET(request: Request) {
       })),
     }))) as unknown as TaskRow[];
 
-    // Post-filter: if vaId param, keep only tasks that have that VA as assignee
     if (vaIdParam) {
       result = result
         .map((task) => ({
@@ -128,7 +138,6 @@ export async function GET(request: Request) {
         .filter((task) => task.assigned_task_assignees.length > 0);
     }
 
-    // Post-filter: if status param, filter assignees by status
     if (statusParam) {
       result = result
         .map((task) => ({
@@ -140,6 +149,8 @@ export async function GET(request: Request) {
         .filter((task) => task.assigned_task_assignees.length > 0);
     }
 
+    result = result.filter((task) => matchesTaskView(task, viewParam));
+
     return Response.json({ tasks: result });
   }
 
@@ -149,7 +160,7 @@ export async function GET(request: Request) {
     .from("assigned_task_assignees")
     .select(
       `id, va_id, status, log_id, notes, assigned_at, updated_at,
-       assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
+       assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
     )
     .eq("va_id", user.id)
     .order("assigned_at", { ascending: false });
@@ -184,7 +195,7 @@ export async function GET(request: Request) {
       .from("assigned_task_assignees")
       .select(
         `id, va_id, status, log_id, notes, assigned_at, updated_at,
-         assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
+         assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
       )
       .in("va_id", collabVaIds)
       .order("assigned_at", { ascending: false });
@@ -213,7 +224,15 @@ export async function GET(request: Request) {
     })) as Array<AssigneeRow & { is_collaborative: true; collaborator_name: string | null }>),
   ];
 
-  return Response.json({ tasks: combined });
+  const filtered = combined.filter((task) =>
+    matchesTaskView(
+      ((task as unknown) as { assigned_tasks: { archived_at?: string | null; deleted_at?: string | null } })
+        .assigned_tasks,
+      viewParam
+    )
+  );
+
+  return Response.json({ tasks: filtered });
 }
 
 /**
@@ -244,7 +263,19 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, fixed_pay_task_id, va_ids: rawVaIds } = body as {
+  const {
+    account,
+    project,
+    task_name,
+    task_detail,
+    task_notes,
+    due_date,
+    assigned_by,
+    instructions,
+    instructions_locked,
+    fixed_pay_task_id,
+    va_ids: rawVaIds,
+  } = body as {
     account: string;
     project: string;
     task_name: string;

@@ -440,6 +440,8 @@ export default function TaskAssignmentsAdminTab({
   // ── Filter state ─────────────────────────────────────────────────────────────
   const [filterVaId, setFilterVaId] = useState("");
   const [filterStatus, setFilterStatus] = useState<AssignedTaskStatus | "">("");
+  const [taskView, setTaskView] = useState<"active" | "archived" | "trash">("active");
+  const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
 
   // ── CSV Upload state ─────────────────────────────────────────────────────────
   const [showCsvModal, setShowCsvModal] = useState(false);
@@ -473,7 +475,8 @@ export default function TaskAssignmentsAdminTab({
     setLoading(true);
     setFetchError(null);
     try {
-      const res = await fetch("/api/assigned-tasks");
+      const viewQuery = taskView === "active" ? "" : `&view=${taskView}`;
+      const res = await fetch(`/api/assigned-tasks?${viewQuery}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
       setTasks(d.tasks || d || []);
@@ -482,7 +485,7 @@ export default function TaskAssignmentsAdminTab({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [taskView]);
 
   useEffect(() => {
     fetchTasks();
