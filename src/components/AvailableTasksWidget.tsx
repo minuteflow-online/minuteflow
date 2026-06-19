@@ -46,8 +46,10 @@ function renderTextWithLinks(text: string) {
 
 export default function AvailableTasksWidget({
   onClaimed,
+  canSeeFixedPay = true,
 }: {
   onClaimed?: () => void;
+  canSeeFixedPay?: boolean;
 }) {
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [pendingAssigned, setPendingAssigned] = useState<VAAssignedTask[]>([]);
@@ -121,34 +123,54 @@ export default function AvailableTasksWidget({
     setLoading(true);
     setError(null);
     try {
-      const [fixedRes, assignedRes, unassignedRes] = await Promise.all([
-        fetch("/api/fixed-pay-tasks", { cache: "no-store" }),
-        fetch("/api/assigned-tasks?status=pending", { cache: "no-store" }),
-        fetch("/api/assigned-tasks?unassigned=true", { cache: "no-store" }),
-      ]);
+      if (canSeeFixedPay) {
+        const [fixedRes, assignedRes, unassignedRes] = await Promise.all([
+          fetch("/api/fixed-pay-tasks", { cache: "no-store" }),
+          fetch("/api/assigned-tasks?status=pending", { cache: "no-store" }),
+          fetch("/api/assigned-tasks?unassigned=true", { cache: "no-store" }),
+        ]);
 
-      if (!fixedRes.ok) throw new Error(`HTTP ${fixedRes.status}`);
-      const fixedJson = await fixedRes.json();
-      const fixedRows = Array.isArray(fixedJson) ? fixedJson : fixedJson.tasks ?? [];
-      setTasks(fixedRows as FixedPayTaskWithClaimer[]);
+        if (!fixedRes.ok) throw new Error(`HTTP ${fixedRes.status}`);
+        const fixedJson = await fixedRes.json();
+        const fixedRows = Array.isArray(fixedJson) ? fixedJson : fixedJson.tasks ?? [];
+        setTasks(fixedRows as FixedPayTaskWithClaimer[]);
 
-      if (assignedRes.ok) {
-        const assignedJson = await assignedRes.json();
-        const assignedRows = assignedJson.tasks ?? [];
-        setPendingAssigned(assignedRows as VAAssignedTask[]);
-      }
+        if (assignedRes.ok) {
+          const assignedJson = await assignedRes.json();
+          const assignedRows = assignedJson.tasks ?? [];
+          setPendingAssigned(assignedRows as VAAssignedTask[]);
+        }
 
-      if (unassignedRes.ok) {
-        const unassignedJson = await unassignedRes.json();
-        const unassignedRows = unassignedJson.tasks ?? [];
-        setUnassignedTasks(unassignedRows as AssignedTaskWithAssignees[]);
+        if (unassignedRes.ok) {
+          const unassignedJson = await unassignedRes.json();
+          const unassignedRows = unassignedJson.tasks ?? [];
+          setUnassignedTasks(unassignedRows as AssignedTaskWithAssignees[]);
+        }
+      } else {
+        setTasks([]);
+        const [assignedRes, unassignedRes] = await Promise.all([
+          fetch("/api/assigned-tasks?status=pending", { cache: "no-store" }),
+          fetch("/api/assigned-tasks?unassigned=true", { cache: "no-store" }),
+        ]);
+
+        if (assignedRes.ok) {
+          const assignedJson = await assignedRes.json();
+          const assignedRows = assignedJson.tasks ?? [];
+          setPendingAssigned(assignedRows as VAAssignedTask[]);
+        }
+
+        if (unassignedRes.ok) {
+          const unassignedJson = await unassignedRes.json();
+          const unassignedRows = unassignedJson.tasks ?? [];
+          setUnassignedTasks(unassignedRows as AssignedTaskWithAssignees[]);
+        }
       }
     } catch {
       setError("Unable to load available tasks right now.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canSeeFixedPay]);
 
   useEffect(() => {
     void fetchTasks();
@@ -247,7 +269,7 @@ export default function AvailableTasksWidget({
     [onClaimed]
   );
 
-  const openTasks = tasks.filter((t) => !t.claimed_by_me);
+  const openTasks = canSeeFixedPay ? tasks.filter((t) => !t.claimed_by_me) : [];
   const totalCount = pendingAssigned.length + openTasks.length + unassignedTasks.length;
 
   return (
@@ -404,79 +426,83 @@ export default function AvailableTasksWidget({
             );
           })}
 
-          {/* Fixed-pay tasks available to grab */}
-          {openTasks.length > 0 && (
-            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5 pt-1">Fixed Pay Tasks</p>
-          )}
-          {openTasks.map((task) => {
-            const isClaiming = claimingId === task.id;
-            const isExpanded = expandedIds.has(`fixed-${task.id}`);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const taskData = task as any;
-            return (
-              <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
-                <div className="px-2.5 py-2 bg-parchment/20">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
-                        ${Number(task.rate).toFixed(2)}
-                      </span>
+          {canSeeFixedPay && (
+            <>
+              {/* Fixed-pay tasks available to grab */}
+              {openTasks.length > 0 && (
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5 pt-1">Fixed Pay Tasks</p>
+              )}
+              {openTasks.map((task) => {
+                const isClaiming = claimingId === task.id;
+                const isExpanded = expandedIds.has(`fixed-${task.id}`);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const taskData = task as any;
+                return (
+                  <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
+                    <div className="px-2.5 py-2 bg-parchment/20">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
+                            ${Number(task.rate).toFixed(2)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleExpanded(`fixed-${task.id}`)}
+                            aria-expanded={isExpanded}
+                            aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
+                            className="p-1 rounded-full hover:bg-stone-100/60 transition-colors"
+                          >
+                            <svg
+                              className={`h-3 w-3 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <path d="M6 9l6 6 6-6" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-stone mt-0.5 truncate">
+                        {task.account ?? ""}
+                        {task.category ? ` / ${task.category}` : ""}
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="px-2.5 py-2.5 bg-parchment/10 border-t border-sand/60">
+                        {renderDetails({
+                          taskDetail: taskData.task_detail,
+                          instructions: taskData.instructions,
+                          link: taskData.link,
+                          notes: taskData.task_notes,
+                        })}
+                      </div>
+                    )}
+
+                    <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
+                      <div className="text-[11px] text-stone">
+                        {task.claimed_at ? (
+                          <span>Claimed {formatClaimedAt(task.claimed_at)}</span>
+                        ) : (
+                          <span>Unclaimed</span>
+                        )}
+                      </div>
                       <button
-                        type="button"
-                        onClick={() => toggleExpanded(`fixed-${task.id}`)}
-                        aria-expanded={isExpanded}
-                        aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
-                        className="p-1 rounded-full hover:bg-stone-100/60 transition-colors"
+                        onClick={() => void handleClaim(task.id)}
+                        disabled={isClaiming}
+                        className="w-full px-3 py-2 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
                       >
-                        <svg
-                          className={`h-3 w-3 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                        >
-                          <path d="M6 9l6 6 6-6" />
-                        </svg>
+                        {isClaiming ? "Claiming..." : "Grab This Task"}
                       </button>
                     </div>
                   </div>
-                  <div className="text-[10px] text-stone mt-0.5 truncate">
-                    {task.account ?? ""}
-                    {task.category ? ` / ${task.category}` : ""}
-                  </div>
-                </div>
-
-                {isExpanded && (
-                  <div className="px-2.5 py-2.5 bg-parchment/10 border-t border-sand/60">
-                    {renderDetails({
-                      taskDetail: taskData.task_detail,
-                      instructions: taskData.instructions,
-                      link: taskData.link,
-                      notes: taskData.task_notes,
-                    })}
-                  </div>
-                )}
-
-                <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
-                  <div className="text-[11px] text-stone">
-                    {task.claimed_at ? (
-                      <span>Claimed {formatClaimedAt(task.claimed_at)}</span>
-                    ) : (
-                      <span>Unclaimed</span>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => void handleClaim(task.id)}
-                    disabled={isClaiming}
-                    className="w-full px-3 py-2 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
-                  >
-                    {isClaiming ? "Claiming..." : "Grab This Task"}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
+            </>
+          )}
         </div>
       )}
     </div>

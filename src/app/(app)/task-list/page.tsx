@@ -352,7 +352,7 @@ export default function TaskListPage() {
   }, [supabase]);
 
   const isPerTaskVa = currentPosition === "Per Task VA";
-  const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
+  const canShowAvailableTasks = currentRole === "va";
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -1652,7 +1652,7 @@ export default function TaskListPage() {
 
         <div className="px-5 py-4">
           {canShowAvailableTasks && activeView === "available_tasks" ? (
-            <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} />
+            <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} />
           ) : (
             <>
               <div className="mb-3 flex items-center gap-2 text-[11px] text-stone">

@@ -3061,20 +3061,13 @@ export default function DashboardPage() {
                 isAdmin={role === "admin" || role === "manager"}
               />
             )}
-            {isVa && sessionState === "idle" && (isPerTask ? (
-              <AvailableTasksWidget key={`avail-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
-            ) : canSeeAvailable ? (
-              <AvailableTasksWidget key={`avail-${claimRefreshKey}`} onClaimed={() => setClaimRefreshKey((k) => k + 1)} />
-            ) : (
-              <div className="rounded-xl border border-sand bg-white/60 p-3 flex flex-col items-center justify-center text-center min-h-[120px]">
-                <svg className="h-6 w-6 text-stone/40 mb-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                  <path d="M7 11V7a5 5 0 0110 0v4" />
-                </svg>
-                <p className="text-[11px] text-stone font-medium">Available Tasks</p>
-                <p className="text-[10px] text-stone/60 mt-0.5">Locked</p>
-              </div>
-            ))}
+            {isVa && sessionState === "idle" && (
+              <AvailableTasksWidget
+                key={`avail-${claimRefreshKey}`}
+                onClaimed={() => setClaimRefreshKey((k) => k + 1)}
+                canSeeFixedPay={isPerTask || canSeeAvailable}
+              />
+            )}
             {/* Quick Pick — hidden for VAs before clock-in */}
             {(role !== "va" || sessionState !== "idle") && (
               <ProjectSidebar
