@@ -961,6 +961,32 @@ export default function TaskAssignmentsAdminTab({
 
   const handleStatusChange = useCallback(
     async (taskId: number, vaId: string, newStatus: AssignedTaskStatus) => {
+      // Optimistic update — immediately reflect the new status so the dropdown
+      // doesn't snap back while the API call is in flight.
+      setTasks((prev) =>
+        prev.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                assigned_task_assignees: task.assigned_task_assignees.map((a) =>
+                  a.va_id === vaId ? { ...a, status: newStatus } : a
+                ),
+              }
+            : task
+        )
+      );
+      if (selectedTaskRef.current?.id === taskId) {
+        setSelectedTask((prev) =>
+          prev
+            ? {
+                ...prev,
+                assigned_task_assignees: prev.assigned_task_assignees.map((a) =>
+                  a.va_id === vaId ? { ...a, status: newStatus } : a
+                ),
+              }
+            : null
+        );
+      }
       setStatusSaving(true);
       try {
         await fetch(`/api/assigned-tasks/${taskId}`, {
