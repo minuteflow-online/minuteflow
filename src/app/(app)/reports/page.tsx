@@ -275,6 +275,7 @@ export default function ReportsPage() {
 
   const reportSummary = useMemo(() => {
     let totalMs = 0;
+    let billableMs = 0;
     let personalMs = 0;
     let wizardMs = 0;
     let fixedCount = 0;
@@ -286,6 +287,7 @@ export default function ReportsPage() {
 
     filteredLogs.forEach((l) => {
       totalMs += l.duration_ms || 0;
+      if (l.billable) billableMs += l.duration_ms || 0;
       wizardMs += l.form_fill_ms || 0;
 
       const rawCat = l.category || "Task";
@@ -308,8 +310,6 @@ export default function ReportsPage() {
       else if (l.progress === "completed") completedCount++;
       else if (l.progress === "on_hold") onHoldCount++;
     });
-
-    const billableMs = totalMs - personalMs;
 
     // Build sorted category entries (alphabetical, Personal last, Wizard Time second-to-last)
     const categories = Object.entries(categoryMs)

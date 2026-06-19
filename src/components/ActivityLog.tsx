@@ -451,6 +451,7 @@ export default function ActivityLog({
   // Summary — today's logs only, with fixed/hourly & status breakdowns
   const summary = useMemo(() => {
     let totalMs = 0;
+    let billableMs = 0;
     let personalMs = 0;
     let wizardMs = 0;
     let fixedCount = 0;
@@ -462,6 +463,7 @@ export default function ActivityLog({
 
     filteredLogs.forEach((log) => {
       totalMs += log.duration_ms;
+      if (log.billable) billableMs += log.duration_ms;
       wizardMs += log.form_fill_ms || 0;
 
       // Normalize old category names for display
@@ -486,8 +488,6 @@ export default function ActivityLog({
       else if (log.progress === "completed") completedCount++;
       else if (log.progress === "on_hold") onHoldCount++;
     });
-
-    const billableMs = totalMs - personalMs;
 
     // Build sorted category entries (alphabetical, but Personal last)
     const categoryEntries = Object.entries(categoryMs)

@@ -575,6 +575,7 @@ export default function TimeLogPage() {
 
   const daySummary = useMemo(() => {
     let totalMs = 0;
+    let billableMs = 0;
     let personalMs = 0;
     let wizardMs = 0;
     let fixedCount = 0;
@@ -586,6 +587,7 @@ export default function TimeLogPage() {
 
     filteredLogs.forEach((l) => {
       totalMs += l.duration_ms || 0;
+      if (l.billable) billableMs += l.duration_ms || 0;
       wizardMs += l.form_fill_ms || 0;
 
       const rawCat = l.category || "Other";
@@ -609,7 +611,6 @@ export default function TimeLogPage() {
       else if (l.progress === "on_hold") onHoldCount++;
     });
 
-    const billableMs = totalMs - personalMs;
     const entryCount = filteredLogs.length;
 
     // Build sorted category entries (alphabetical, Personal last)
