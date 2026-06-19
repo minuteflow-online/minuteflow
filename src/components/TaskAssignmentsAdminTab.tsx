@@ -770,10 +770,6 @@ export default function TaskAssignmentsAdminTab({
 
   const handleDetailSave = useCallback(async () => {
     if (!detailForm.task_name.trim()) return;
-    if (detailForm.assignee_ids.length === 0) {
-      setDetailSaveMsg({ type: "err", text: "Please select at least one VA to assign this task to." });
-      return;
-    }
     setDetailSaving(true);
     setDetailSaveMsg(null);
 
@@ -1111,7 +1107,9 @@ export default function TaskAssignmentsAdminTab({
     }
     if (filterStatuses.length > 0) {
       const hasStatus = task.assigned_task_assignees.some((a) => filterStatuses.includes(a.status));
-      if (!hasStatus) return false;
+      const matchesUnassigned =
+        filterStatuses.includes("unassigned") && task.assigned_task_assignees.length === 0;
+      if (!hasStatus && !matchesUnassigned) return false;
     }
     if (filterAccounts.length > 0) {
       if (!task.account || !filterAccounts.includes(task.account)) return false;

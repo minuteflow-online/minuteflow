@@ -82,28 +82,15 @@ export async function GET(request: Request) {
   const statusParam = searchParams.get("status") as AssignedTaskStatus | null;
   const viewParam = searchParams.get("view");
   const selfOnly = searchParams.get("selfOnly") === "true";
+  const unassignedOnly = searchParams.get("unassigned") === "true";
 
-  const isAdminOrManager =
-    profile?.role === "admin" || profile?.role === "manager";
+  const assigneeSelect =
+    "id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked";
 
-  if (isAdminOrManager && !selfOnly) {
-    const assigneeSelect =
-      "id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked";
-
-    const query = supabase
-      .from("assigned_tasks")
-      .select(
-        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
-         assigned_task_assignees(${assigneeSelect})`
-      )
-      .order("created_at", { ascending: false });
-
-    const { data, error } = await query;
-    if (error) return Response.json({ error: error.message }, { status: 500 });
-
+  const formatAdminTaskRows = async (data: Array<Record<string, unknown>>) => {
     const allVaIds = [
       ...new Set(
-        (data ?? []).flatMap((t) =>
+        data.flatMap((t) =>
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ((t as any).assigned_task_assignees ?? []).map((a: AssigneeRow) => a.va_id)
         )
@@ -118,14 +105,52 @@ export async function GET(request: Request) {
       profilesMap = Object.fromEntries((profiles ?? []).map((p) => [p.id, p]));
     }
 
-    let result = ((data ?? []).map((task) => ({
+    return data.map((task) => ({
       ...task,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       assigned_task_assignees: ((task as any).assigned_task_assignees ?? []).map((a: AssigneeRow) => ({
         ...a,
         profiles: profilesMap[a.va_id] ?? null,
       })),
-    }))) as unknown as TaskRow[];
+    })) as unknown as TaskRow[];
+  };
+
+  if (unassignedOnly) {
+    const { data, error } = await supabase
+      .from("assigned_tasks")
+      .select(
+        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
+         assigned_task_assignees(${assigneeSelect})`
+      )
+      .order("created_at", { ascending: false });
+
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    const result = await formatAdminTaskRows((data ?? []).filter((task) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const assignees = ((task as any).assigned_task_assignees ?? []) as AssigneeRow[];
+      return assignees.length === 0;
+    }));
+
+    return Response.json({ tasks: result.filter((task) => matchesTaskView(task, viewParam)) });
+  }
+
+  const isAdminOrManager =
+    profile?.role === "admin" || profile?.role === "manager";
+
+  if (isAdminOrManager && !selfOnly) {
+    const query = supabase
+      .from("assigned_tasks")
+      .select(
+        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
+         assigned_task_assignees(${assigneeSelect})`
+      )
+      .order("created_at", { ascending: false });
+
+    const { data, error } = await query;
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    let result = await formatAdminTaskRows(data ?? []);
 
     if (vaIdParam) {
       result = result
@@ -295,12 +320,6 @@ export async function POST(request: Request) {
   if (!task_name?.trim()) {
     return Response.json({ error: "task_name is required" }, { status: 400 });
   }
-  if (!Array.isArray(va_ids) || va_ids.length === 0) {
-    return Response.json(
-      { error: "va_ids must be a non-empty array" },
-      { status: 400 }
-    );
-  }
 
   // Use service-role admin client for inserts so that RLS JWT-forwarding
   // issues on the server don't block authenticated users. Auth is already
@@ -334,19 +353,35 @@ export async function POST(request: Request) {
     return Response.json({ error: taskError.message }, { status: 500 });
 
   // Insert one assignee row per va_id
-  const assigneeRows = va_ids.map((va_id) => ({
-    assigned_task_id: task.id,
-    va_id,
-    status: "pending" as AssignedTaskStatus,
-  }));
+  let assignees = [] as Array<{
+    id: string;
+    va_id: string;
+    status: AssignedTaskStatus;
+    log_id: number | null;
+    notes: string | null;
+    assigned_at: string | null;
+    updated_at: string | null;
+    instructions?: string | null;
+    instructions_locked?: boolean | null;
+  }>;
 
-  const { data: assignees, error: assigneeError } = await adminSupabase
-    .from("assigned_task_assignees")
-    .insert(assigneeRows)
-    .select("id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked");
+  if (va_ids.length > 0) {
+    const assigneeRows = va_ids.map((va_id) => ({
+      assigned_task_id: task.id,
+      va_id,
+      status: "pending" as AssignedTaskStatus,
+    }));
 
-  if (assigneeError)
-    return Response.json({ error: assigneeError.message }, { status: 500 });
+    const { data: insertedAssignees, error: assigneeError } = await adminSupabase
+      .from("assigned_task_assignees")
+      .insert(assigneeRows)
+      .select("id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked");
 
-  return Response.json({ task: { ...task, assigned_task_assignees: assignees ?? [] } }, { status: 201 });
+    if (assigneeError)
+      return Response.json({ error: assigneeError.message }, { status: 500 });
+
+    assignees = insertedAssignees ?? [];
+  }
+
+  return Response.json({ task: { ...task, assigned_task_assignees: assignees } }, { status: 201 });
 }
