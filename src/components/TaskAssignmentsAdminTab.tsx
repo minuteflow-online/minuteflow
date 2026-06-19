@@ -441,7 +441,12 @@ export default function TaskAssignmentsAdminTab({
   const [filterVaIds, setFilterVaIds] = useState<string[]>([]);
   const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
-  const [openFilter, setOpenFilter] = useState<"va" | "status" | "account" | null>(null);
+  const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
+  const [filterObjectives, setFilterObjectives] = useState<string[]>([]);
+  const [filterDueStart, setFilterDueStart] = useState<string>("");
+  const [filterDueEnd, setFilterDueEnd] = useState<string>("");
+  const [taskNameSearch, setTaskNameSearch] = useState<string>("");
+  const [openFilter, setOpenFilter] = useState<"va" | "status" | "account" | "taskname" | "objective" | "duedate" | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const [taskView, setTaskView] = useState<"active" | "archived" | "trash">("active");
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
@@ -543,6 +548,14 @@ export default function TaskAssignmentsAdminTab({
       ...tasks.map((task) => task.task_name),
     ])
   ).sort();
+  const taskNameFilterOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.task_name).filter(Boolean))).sort(),
+    [tasks]
+  );
+  const objectiveFilterOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.project?.trim()).filter((project): project is string => !!project))).sort(),
+    [tasks]
+  );
 
   // ─── Fetch attachments ────────────────────────────────────────────────────────
 
@@ -1100,6 +1113,18 @@ export default function TaskAssignmentsAdminTab({
     if (filterAccounts.length > 0) {
       if (!task.account || !filterAccounts.includes(task.account)) return false;
     }
+    if (filterTaskNames.length > 0 && !filterTaskNames.includes(task.task_name)) {
+      return false;
+    }
+    if (filterObjectives.length > 0) {
+      if (!task.project || !filterObjectives.includes(task.project)) return false;
+    }
+    if (filterDueStart && (!task.due_date || task.due_date.slice(0, 10) < filterDueStart)) {
+      return false;
+    }
+    if (filterDueEnd && (!task.due_date || task.due_date.slice(0, 10) > filterDueEnd)) {
+      return false;
+    }
     return true;
   });
 
@@ -1219,6 +1244,10 @@ export default function TaskAssignmentsAdminTab({
     onChange,
     isOpen,
     onToggle,
+    searchable,
+    searchValue,
+    onSearchChange,
+    searchPlaceholder,
   }: {
     label: string;
     options: { value: T; label: string }[];
@@ -1226,7 +1255,15 @@ export default function TaskAssignmentsAdminTab({
     onChange: (v: T[]) => void;
     isOpen: boolean;
     onToggle: () => void;
+    searchable?: boolean;
+    searchValue?: string;
+    onSearchChange?: (v: string) => void;
+    searchPlaceholder?: string;
   }) {
+    const visibleOptions = searchable && searchValue
+      ? options.filter((opt) => opt.label.toLowerCase().includes(searchValue.toLowerCase()))
+      : options;
+
     return (
       <div className="relative">
         <button
@@ -1249,9 +1286,19 @@ export default function TaskAssignmentsAdminTab({
         </button>
         {isOpen && (
           <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-sand rounded-xl shadow-lg min-w-[180px] py-1">
+            {searchable && onSearchChange && (
+              <div className="px-3 py-2 border-b border-sand">
+                <input
+                  value={searchValue || ""}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  placeholder={searchPlaceholder || `Search ${label.toLowerCase()}...`}
+                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+                />
+              </div>
+            )}
             <div className="flex items-center justify-between px-3 py-1.5 border-b border-sand">
               <button
-                onClick={() => onChange(options.map(o => o.value))}
+                onClick={() => onChange(visibleOptions.map((o) => o.value))}
                 className="text-[11px] text-terracotta hover:underline cursor-pointer"
               >Select All</button>
               <button
@@ -1259,7 +1306,7 @@ export default function TaskAssignmentsAdminTab({
                 className="text-[11px] text-stone hover:underline cursor-pointer"
               >Clear</button>
             </div>
-            {options.map(opt => (
+            {visibleOptions.length > 0 ? visibleOptions.map((opt) => (
               <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-parchment cursor-pointer">
                 <input
                   type="checkbox"
@@ -1272,7 +1319,82 @@ export default function TaskAssignmentsAdminTab({
                 />
                 <span className="text-[13px] text-ink">{opt.label}</span>
               </label>
-            ))}
+            )) : (
+              <div className="px-3 py-2 text-[12px] text-stone">No options found</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function DateRangeDropdown({
+    label,
+    start,
+    end,
+    isOpen,
+    onToggle,
+    onStartChange,
+    onEndChange,
+  }: {
+    label: string;
+    start: string;
+    end: string;
+    isOpen: boolean;
+    onToggle: () => void;
+    onStartChange: (v: string) => void;
+    onEndChange: (v: string) => void;
+  }) {
+    const activeCount = Number(Boolean(start)) + Number(Boolean(end));
+
+    return (
+      <div className="relative">
+        <button
+          onClick={onToggle}
+          className={`flex items-center gap-1.5 py-2 px-3 border rounded-lg text-[13px] bg-white outline-none cursor-pointer transition-all ${
+            activeCount > 0
+              ? "border-terracotta text-terracotta"
+              : "border-sand text-ink hover:border-walnut"
+          }`}
+        >
+          {label}
+          {activeCount > 0 && (
+            <span className="bg-terracotta text-white text-[10px] font-bold rounded-full px-1.5 py-px leading-none">
+              {activeCount}
+            </span>
+          )}
+          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {isOpen && (
+          <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-sand rounded-xl shadow-lg min-w-[240px] p-3">
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
+                <input
+                  type="date"
+                  value={start}
+                  onChange={(e) => onStartChange(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">To</label>
+                <input
+                  type="date"
+                  value={end}
+                  onChange={(e) => onEndChange(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+                />
+              </div>
+              <div className="flex items-center justify-between border-t border-sand pt-2">
+                <button
+                  onClick={() => { onStartChange(""); onEndChange(""); }}
+                  className="text-[11px] text-stone hover:underline cursor-pointer"
+                >Clear</button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -1305,6 +1427,35 @@ export default function TaskAssignmentsAdminTab({
         {/* Filters */}
         <div ref={filterRef} className="flex items-center gap-2 flex-wrap">
           <FilterDropdown
+            label="Task Name"
+            options={taskNameFilterOptions.map(taskName => ({ value: taskName, label: taskName }))}
+            selected={filterTaskNames}
+            onChange={setFilterTaskNames}
+            isOpen={openFilter === "taskname"}
+            onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
+            searchable
+            searchValue={taskNameSearch}
+            onSearchChange={setTaskNameSearch}
+            searchPlaceholder="Search task names..."
+          />
+          <FilterDropdown
+            label="Objective"
+            options={objectiveFilterOptions.map(objective => ({ value: objective, label: objective }))}
+            selected={filterObjectives}
+            onChange={setFilterObjectives}
+            isOpen={openFilter === "objective"}
+            onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
+          />
+          <DateRangeDropdown
+            label="Due Date"
+            start={filterDueStart}
+            end={filterDueEnd}
+            isOpen={openFilter === "duedate"}
+            onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
+            onStartChange={setFilterDueStart}
+            onEndChange={setFilterDueEnd}
+          />
+          <FilterDropdown
             label="Member"
             options={activeProfiles.map(p => ({ value: p.id, label: p.full_name || p.username || p.id }))}
             selected={filterVaIds}
@@ -1328,9 +1479,9 @@ export default function TaskAssignmentsAdminTab({
             isOpen={openFilter === "account"}
             onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
           />
-          {(filterVaIds.length > 0 || filterStatuses.length > 0 || filterAccounts.length > 0) && (
+          {(filterVaIds.length > 0 || filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd) && (
             <button
-              onClick={() => { setFilterVaIds([]); setFilterStatuses([]); setFilterAccounts([]); }}
+              onClick={() => { setFilterVaIds([]); setFilterStatuses([]); setFilterAccounts([]); setFilterTaskNames([]); setFilterObjectives([]); setFilterDueStart(""); setFilterDueEnd(""); setTaskNameSearch(""); }}
               className="text-[12px] text-stone hover:text-terracotta hover:underline cursor-pointer"
             >
               Clear all
