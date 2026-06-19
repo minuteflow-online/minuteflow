@@ -1524,124 +1524,128 @@ export default function TaskListPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
       <div className="rounded-2xl border border-sand bg-white shadow-sm">
-        <div className="flex flex-col gap-4 border-b border-parchment px-5 py-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-espresso">Tasks</h1>
-            <p className="text-xs text-stone">Assigned work and collaborative tasks visible to you.</p>
-          </div>
-
-          <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-            {(["active", "archived", "trash"] as const).map((view) => (
-              <button
-                key={view}
-                type="button"
-                onClick={() => setTaskView(view)}
-                className={`rounded-md px-3 py-1.5 capitalize transition-colors ${
-                  taskView === view ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
-                }`}
-              >
-                {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
-              </button>
-            ))}
-          </div>
-
-          {canShowAvailableTasks && (
-            <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-              <button
-                type="button"
-                onClick={() => setActiveView("my_tasks")}
-                className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "my_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-              >
-                My Tasks
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveView("available_tasks")}
-                className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-              >
-                Available Tasks
-              </button>
+        <div className="border-b border-parchment px-5 py-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h1 className="text-lg font-bold text-espresso">Tasks</h1>
+              <p className="text-xs text-stone">Assigned work and collaborative tasks visible to you.</p>
             </div>
-          )}
 
-          {(!canShowAvailableTasks || activeView === "my_tasks") && (
-            <div className="flex flex-wrap items-center gap-2">
-              {taskView === "active" && (
-                <button
-                  type="button"
-                  onClick={openCreate}
-                  className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-                >
-                  + Create Task
-                </button>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+              <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+                {(["active", "archived", "trash"] as const).map((view) => (
+                  <button
+                    key={view}
+                    type="button"
+                    onClick={() => setTaskView(view)}
+                    className={`rounded-md px-3 py-1.5 capitalize transition-colors ${
+                      taskView === view ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                    }`}
+                  >
+                    {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
+                  </button>
+                ))}
+              </div>
+
+              {canShowAvailableTasks && (
+                <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("my_tasks")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "my_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    My Tasks
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("available_tasks")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    Available Tasks
+                  </button>
+                </div>
               )}
-              <FilterDropdown
-                label="Task Name"
-                options={taskNameFilterOptions.map((taskName) => ({ value: taskName, label: taskName }))}
-                selected={filterTaskNames}
-                onChange={setFilterTaskNames}
-                isOpen={openFilter === "taskname"}
-                onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
-                searchable
-                searchValue={taskNameSearch}
-                onSearchChange={setTaskNameSearch}
-                searchPlaceholder="Search task names..."
-              />
-              <FilterDropdown
-                label="Objective"
-                options={objectiveFilterOptions.map((objective) => ({ value: objective, label: objective }))}
-                selected={filterObjectives}
-                onChange={setFilterObjectives}
-                isOpen={openFilter === "objective"}
-                onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
-              />
-              <DateRangeDropdown
-                label="Due Date"
-                start={filterDueStart}
-                end={filterDueEnd}
-                isOpen={openFilter === "duedate"}
-                onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
-                onStartChange={setFilterDueStart}
-                onEndChange={setFilterDueEnd}
-              />
-              <FilterDropdown
-                label="Status"
-                options={STATUS_FILTERS.filter((option) => option.value !== "all").map((option) => ({
-                  value: option.value as AssignedTaskStatus,
-                  label: option.label,
-                }))}
-                selected={filterStatuses}
-                onChange={setFilterStatuses}
-                isOpen={openFilter === "status"}
-                onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
-              />
-              <FilterDropdown
-                label="Account"
-                options={accountFilterOptions.map((account) => ({ value: account, label: account }))}
-                selected={filterAccounts}
-                onChange={setFilterAccounts}
-                isOpen={openFilter === "account"}
-                onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
-              />
-              {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFilterStatuses([]);
-                    setFilterAccounts([]);
-                    setFilterTaskNames([]);
-                    setFilterObjectives([]);
-                    setFilterDueStart("");
-                    setFilterDueEnd("");
-                    setTaskNameSearch("");
-                  }}
-                  className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
-                >
-                  Clear all
-                </button>
+
+              {(!canShowAvailableTasks || activeView === "my_tasks") && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {taskView === "active" && (
+                    <button
+                      type="button"
+                      onClick={openCreate}
+                      className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                    >
+                      + Create Task
+                    </button>
+                  )}
+                  <FilterDropdown
+                    label="Task Name"
+                    options={taskNameFilterOptions.map((taskName) => ({ value: taskName, label: taskName }))}
+                    selected={filterTaskNames}
+                    onChange={setFilterTaskNames}
+                    isOpen={openFilter === "taskname"}
+                    onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
+                    searchable
+                    searchValue={taskNameSearch}
+                    onSearchChange={setTaskNameSearch}
+                    searchPlaceholder="Search task names..."
+                  />
+                  <FilterDropdown
+                    label="Objective"
+                    options={objectiveFilterOptions.map((objective) => ({ value: objective, label: objective }))}
+                    selected={filterObjectives}
+                    onChange={setFilterObjectives}
+                    isOpen={openFilter === "objective"}
+                    onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
+                  />
+                  <DateRangeDropdown
+                    label="Due Date"
+                    start={filterDueStart}
+                    end={filterDueEnd}
+                    isOpen={openFilter === "duedate"}
+                    onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
+                    onStartChange={setFilterDueStart}
+                    onEndChange={setFilterDueEnd}
+                  />
+                  <FilterDropdown
+                    label="Status"
+                    options={STATUS_FILTERS.filter((option) => option.value !== "all").map((option) => ({
+                      value: option.value as AssignedTaskStatus,
+                      label: option.label,
+                    }))}
+                    selected={filterStatuses}
+                    onChange={setFilterStatuses}
+                    isOpen={openFilter === "status"}
+                    onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
+                  />
+                  <FilterDropdown
+                    label="Account"
+                    options={accountFilterOptions.map((account) => ({ value: account, label: account }))}
+                    selected={filterAccounts}
+                    onChange={setFilterAccounts}
+                    isOpen={openFilter === "account"}
+                    onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
+                  />
+                  {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFilterStatuses([]);
+                        setFilterAccounts([]);
+                        setFilterTaskNames([]);
+                        setFilterObjectives([]);
+                        setFilterDueStart("");
+                        setFilterDueEnd("");
+                        setTaskNameSearch("");
+                      }}
+                      className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
               )}
             </div>
-          )}
+          </div>
         </div>
 
         <div className="px-5 py-4">
