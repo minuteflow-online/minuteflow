@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { AssignedTaskStatus, TaskScreenshot } from "@/types/database";
+import type { AssignedTask, AssignedTaskStatus, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
@@ -73,6 +73,8 @@ type InlineEditState = {
   field: InlineEditField;
   value: string;
 };
+
+type HourlyPoolTask = AssignedTask;
 
 const STATUS_FILTERS: Array<{ value: AssignedTaskStatus | "all"; label: string }> = [
   { value: "all", label: "All Statuses" },
@@ -240,7 +242,11 @@ export default function TaskListPage() {
   const [currentUserProfile, setCurrentUserProfile] = useState<ProfileOption | null>(null);
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "available_tasks">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "available_tasks" | "hourly_pool">("my_tasks");
+  const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
+  const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
+  const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
+  const [hourlyGrabbingId, setHourlyGrabbingId] = useState<number | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
   const [inlineSaving, setInlineSaving] = useState(false);
 
@@ -312,6 +318,24 @@ export default function TaskListPage() {
     }
   }, [taskView]);
 
+  const fetchHourlyPool = useCallback(async () => {
+    setHourlyPoolLoading(true);
+    setHourlyPoolError(null);
+    try {
+      const res = await fetch("/api/assigned-tasks?unassigned=true", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const raw = Array.isArray(json) ? json : json.tasks ?? [];
+      const normalized = (raw as HourlyPoolTask[]).filter((row) => row.fixed_pay_task_id == null && row.status === "unassigned");
+      setHourlyPoolTasks(normalized);
+    } catch {
+      setHourlyPoolTasks([]);
+      setHourlyPoolError("Unable to load unassigned tasks right now.");
+    } finally {
+      setHourlyPoolLoading(false);
+    }
+  }, []);
+
   const fetchFormOptions = useCallback(async () => {
     try {
       const res = await fetch("/api/task-form-options", { cache: "no-store" });
@@ -352,7 +376,8 @@ export default function TaskListPage() {
   }, [supabase]);
 
   const isPerTaskVa = currentPosition === "Per Task VA";
-  const canShowAvailableTasks = currentRole === "va";
+  const canShowAvailableTasks = currentRole === "va" && (isPerTaskVa || canSeeAvailableTasks);
+  const canShowHourlyPool = currentRole === "va" && !isPerTaskVa;
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -453,10 +478,20 @@ export default function TaskListPage() {
   }, [currentUserProfile]);
 
   useEffect(() => {
-    if (!canShowAvailableTasks) {
+    if (!canShowAvailableTasks && !canShowHourlyPool) {
       setActiveView("my_tasks");
     }
-  }, [canShowAvailableTasks]);
+  }, [canShowAvailableTasks, canShowHourlyPool]);
+
+  useEffect(() => {
+    if (canShowHourlyPool) {
+      void fetchHourlyPool();
+    } else {
+      setHourlyPoolTasks([]);
+      setHourlyPoolLoading(false);
+      setHourlyPoolError(null);
+    }
+  }, [canShowHourlyPool, fetchHourlyPool]);
 
   useEffect(() => {
     setFilterStatuses([]);
@@ -1300,9 +1335,38 @@ export default function TaskListPage() {
   }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel]);
 
   const handleClaimedTaskRefresh = useCallback(async () => {
-    await fetchTasks();
+    await Promise.all([fetchTasks(), canShowHourlyPool ? fetchHourlyPool() : Promise.resolve()]);
     setActiveView("my_tasks");
-  }, [fetchTasks]);
+  }, [canShowHourlyPool, fetchHourlyPool, fetchTasks]);
+
+  const handleHourlyGrab = useCallback(
+    async (taskId: number) => {
+      setHourlyGrabbingId(taskId);
+      try {
+        const res = await fetch(`/api/assigned-tasks/${taskId}/grab`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!res.ok) {
+          let message = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            if (data?.error) message = data.error;
+          } catch {
+            // ignore parse failures
+          }
+          throw new Error(message);
+        }
+        await Promise.all([fetchTasks(), fetchHourlyPool()]);
+        setActiveView("my_tasks");
+      } catch (err) {
+        setHourlyPoolError(err instanceof Error ? err.message : "Failed to grab task.");
+      } finally {
+        setHourlyGrabbingId(null);
+      }
+    },
+    [fetchHourlyPool, fetchTasks]
+  );
 
   const handleSavePanel = useCallback(async () => {
     if (!selectedTask) return;
@@ -1547,7 +1611,7 @@ export default function TaskListPage() {
                 ))}
               </div>
 
-              {canShowAvailableTasks && (
+              {currentRole === "va" && (
                 <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
                   <button
                     type="button"
@@ -1556,20 +1620,31 @@ export default function TaskListPage() {
                   >
                     My Tasks
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveView("available_tasks")}
-                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                  >
-                    Unassigned Tasks
-                  </button>
+                  {canShowAvailableTasks && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveView("available_tasks")}
+                      className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                    >
+                      Available Tasks
+                    </button>
+                  )}
+                  {canShowHourlyPool && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveView("hourly_pool")}
+                      className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "hourly_pool" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                    >
+                      Unassigned Tasks
+                    </button>
+                  )}
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {(!canShowAvailableTasks || activeView === "my_tasks") && (
+        {activeView === "my_tasks" && (
           <div className="border-b border-parchment bg-cream/50 px-5 py-4">
             <div className="flex flex-wrap items-center gap-2">
               {taskView === "active" && (
@@ -1653,6 +1728,67 @@ export default function TaskListPage() {
         <div className="px-5 py-4">
           {canShowAvailableTasks && activeView === "available_tasks" ? (
             <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} />
+          ) : canShowHourlyPool && activeView === "hourly_pool" ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-[11px] text-stone">
+                <span className="rounded-full bg-parchment px-2 py-0.5 font-semibold text-walnut">{hourlyPoolTasks.length}</span>
+                <span>task{hourlyPoolTasks.length === 1 ? "" : "s"}</span>
+                <span className="rounded-full bg-sage-soft px-2 py-0.5 font-semibold text-sage">Unassigned Pool</span>
+              </div>
+
+              {hourlyPoolError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{hourlyPoolError}</div>
+              )}
+
+              {hourlyPoolLoading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-20 animate-pulse rounded-xl bg-parchment" />
+                  ))}
+                </div>
+              ) : hourlyPoolTasks.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
+                  No unassigned tasks found.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {hourlyPoolTasks.map((task) => {
+                    const due = formatDueDate(task.due_date);
+                    const isGrabbing = hourlyGrabbingId === task.id;
+                    const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
+
+                    return (
+                      <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
+                        <div className="px-2.5 py-2 bg-parchment/20">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
+                              {due.label === "—" ? "No due date" : `Due ${due.label}`}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 truncate text-[10px] text-stone">
+                            {task.account ?? ""}
+                            {task.project ? ` / ${task.project}` : ""}
+                          </div>
+                        </div>
+
+                        <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
+                          <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
+                          <button
+                            type="button"
+                            onClick={() => void handleHourlyGrab(task.id)}
+                            disabled={isGrabbing}
+                            className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {isGrabbing ? "Grabbing..." : "Grab"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           ) : (
             <>
               <div className="mb-3 flex items-center gap-2 text-[11px] text-stone">
