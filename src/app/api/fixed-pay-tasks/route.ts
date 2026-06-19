@@ -117,7 +117,9 @@ export async function GET() {
     });
   }
 
-  return Response.json({ tasks: rows });
+  return Response.json({
+    tasks: rows.map((t) => ({ ...t, claimed_by_me: t.claimed_by === userId })),
+  });
 }
 
 export async function POST(request: Request) {

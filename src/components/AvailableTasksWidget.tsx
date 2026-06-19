@@ -124,7 +124,7 @@ export default function AvailableTasksWidget({
       if (canSeeFixedPay) {
         const [fixedRes, assignedRes] = await Promise.all([
           fetch("/api/fixed-pay-tasks", { cache: "no-store" }),
-          fetch("/api/assigned-tasks?status=pending", { cache: "no-store" }),
+          fetch("/api/assigned-tasks?status=pending&selfOnly=true", { cache: "no-store" }),
         ]);
 
         if (!fixedRes.ok) throw new Error(`HTTP ${fixedRes.status}`);
@@ -140,7 +140,7 @@ export default function AvailableTasksWidget({
 
       } else {
         setTasks([]);
-        const assignedRes = await fetch("/api/assigned-tasks?status=pending", { cache: "no-store" });
+        const assignedRes = await fetch("/api/assigned-tasks?status=pending&selfOnly=true", { cache: "no-store" });
 
         if (assignedRes.ok) {
           const assignedJson = await assignedRes.json();
