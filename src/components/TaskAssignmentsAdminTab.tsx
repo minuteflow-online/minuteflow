@@ -42,6 +42,19 @@ const STATUS_OPTIONS: { value: AssignedTaskStatus | ""; label: string }[] = [
   { value: "cancelled", label: "Cancelled" },
 ];
 
+const ASSIGNEE_STATUS_OPTIONS: { value: AssignedTaskStatus; label: string }[] = [
+  { value: "pending", label: "Pending" },
+  { value: "on_queue", label: "On Queue" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "submitted", label: "Submitted" },
+  { value: "reviewing", label: "Reviewing" },
+  { value: "revision_needed", label: "Revision Needed" },
+  { value: "approved", label: "Approved" },
+  { value: "completed", label: "Completed" },
+  { value: "paid", label: "Paid" },
+  { value: "cancelled", label: "Cancelled" },
+];
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface TaskAssignmentsAdminTabProps {
@@ -1805,16 +1818,11 @@ export default function TaskAssignmentsAdminTab({
                                 onBlur={() => setStatusEdit(null)}
                                 className="text-[11px] border border-sand rounded-lg px-2 py-1 outline-none focus:border-terracotta cursor-pointer bg-white"
                               >
-                                <option value="pending">Pending</option>
-                                <option value="on_queue">On Queue</option>
-                                <option value="in_progress">In Progress</option>
-                                <option value="submitted">Submitted</option>
-                                <option value="reviewing">Reviewing</option>
-                                <option value="revision_needed">Revision Needed</option>
-                                <option value="approved">Approved</option>
-                                <option value="completed">Completed</option>
-                                <option value="paid">Paid</option>
-                                <option value="cancelled">Cancelled</option>
+                                {ASSIGNEE_STATUS_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
                               </select>
                             );
                           }
@@ -2149,6 +2157,54 @@ export default function TaskAssignmentsAdminTab({
                   />
                 )}
               </div>
+
+              {/* Status — only visible when editing an existing task */}
+              {selectedTask && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide uppercase">
+                    Status
+                  </label>
+                  {selectedTask.assigned_task_assignees.length === 0 ? (
+                    <p className="py-2 text-[12px] text-stone/50">No assignees available to update yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedTask.assigned_task_assignees.map((assignee) => {
+                        const assigneeName =
+                          assignee.profiles?.full_name || assignee.profiles?.username || assignee.va_id;
+
+                        return (
+                          <div
+                            key={assignee.id}
+                            className="flex items-center gap-3 rounded-lg border border-sand bg-parchment/30 px-3 py-2"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-[12px] font-medium text-walnut">{assigneeName}</p>
+                            </div>
+                            <select
+                              value={assignee.status}
+                              disabled={statusSaving}
+                              onChange={(e) =>
+                                void handleStatusChange(
+                                  selectedTask.id,
+                                  assignee.va_id,
+                                  e.target.value as AssignedTaskStatus
+                                )
+                              }
+                              className="min-w-[140px] rounded-lg border border-sand bg-white px-2 py-1 text-[11px] outline-none transition-colors focus:border-terracotta cursor-pointer disabled:opacity-60"
+                            >
+                              {ASSIGNEE_STATUS_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Screenshots — only visible when editing an existing task */}
               {selectedTask && (
