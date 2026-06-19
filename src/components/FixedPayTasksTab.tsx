@@ -137,7 +137,7 @@ export default function FixedPayTasksTab() {
       const [accountsRes, categoriesRes, profilesRes] = await Promise.all([
         fetch("/api/task-form-options", { cache: "no-store" }),
         fetch("/api/task-categories", { cache: "no-store" }),
-        fetch("/api/profiles?active=true", { cache: "no-store" }),
+        fetch("/api/team-members", { cache: "no-store" }),
       ]);
 
       if (accountsRes.ok) {
@@ -151,8 +151,8 @@ export default function FixedPayTasksTab() {
       }
 
       if (profilesRes.ok) {
-        const data = (await profilesRes.json()) as { profiles?: ProfileSummary[] };
-        setActiveProfiles(data.profiles ?? []);
+        const data = (await profilesRes.json()) as { members?: ProfileSummary[] };
+        setActiveProfiles(data.members ?? []);
       }
     } catch {
       // Keep the form usable with values already present on tasks.
