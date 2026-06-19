@@ -72,6 +72,7 @@ interface DetailFormState {
   instructions_locked: boolean;
   due_date: string;
   assigned_by_id: string;
+  initial_status: AssignedTaskStatus;
   assignee_ids: string[];
 }
 
@@ -434,6 +435,7 @@ export default function TaskAssignmentsAdminTab({
     instructions_locked: false,
     due_date: "",
     assigned_by_id: "",
+    initial_status: "on_queue",
     assignee_ids: [],
   });
   const [detailSaving, setDetailSaving] = useState(false);
@@ -703,6 +705,7 @@ export default function TaskAssignmentsAdminTab({
     instructions_locked: false,
     due_date: "",
     assigned_by_id: "",
+    initial_status: "on_queue",
     assignee_ids: [],
   });
 
@@ -737,6 +740,7 @@ export default function TaskAssignmentsAdminTab({
       instructions_locked: Boolean((task as any).instructions_locked),
       due_date: task.due_date ? task.due_date.slice(0, 10) : "",
       assigned_by_id: task.assigned_by || "",
+      initial_status: task.assigned_task_assignees[0]?.status ?? "on_queue",
       assignee_ids: task.assigned_task_assignees.map((a) => a.va_id),
     });
     setDetailSaveMsg(null);
@@ -797,6 +801,7 @@ export default function TaskAssignmentsAdminTab({
       due_date: detailForm.due_date || null,
       assigned_by: detailForm.assigned_by_id || null,
       va_ids: detailForm.assignee_ids,
+      ...(selectedTask ? {} : { initial_status: detailForm.initial_status }),
     };
 
     try {
@@ -2142,6 +2147,29 @@ export default function TaskAssignmentsAdminTab({
               </div>
 
               {/* Assignees */}
+              {isCreating && (
+                <div>
+                  <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide uppercase">
+                    Status
+                  </label>
+                  <select
+                    value={detailForm.initial_status}
+                    onChange={(e) =>
+                      setDetailForm((f) => ({
+                        ...f,
+                        initial_status: e.target.value as AssignedTaskStatus,
+                      }))
+                    }
+                    className="min-w-[140px] rounded-lg border border-sand bg-white px-2 py-1 text-[11px] outline-none transition-colors focus:border-terracotta cursor-pointer"
+                  >
+                    {ASSIGNEE_STATUS_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide uppercase">
                   Assigned To <span className="text-terracotta">*</span>

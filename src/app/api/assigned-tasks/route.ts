@@ -300,6 +300,7 @@ export async function POST(request: Request) {
     instructions_locked,
     fixed_pay_task_id,
     va_ids: rawVaIds,
+    initial_status,
   } = body as {
     account: string;
     project: string;
@@ -312,6 +313,7 @@ export async function POST(request: Request) {
     instructions_locked?: boolean;
     fixed_pay_task_id?: number | null;
     va_ids?: string[];
+    initial_status?: AssignedTaskStatus;
   };
 
   // VAs always self-assign regardless of what va_ids was sent
@@ -369,7 +371,7 @@ export async function POST(request: Request) {
     const assigneeRows = va_ids.map((va_id) => ({
       assigned_task_id: task.id,
       va_id,
-      status: "pending" as AssignedTaskStatus,
+      status: (initial_status ?? "on_queue") as AssignedTaskStatus,
     }));
 
     const { data: insertedAssignees, error: assigneeError } = await adminSupabase
