@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement } from "react";
 import type { FixedPayTaskAttachment, FixedPayTaskWithClaimer, Profile } from "@/types/database";
 
 const ACTIVE_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive"; label: string }> = [
@@ -9,16 +9,24 @@ const ACTIVE_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive"; label: 
   { value: "inactive", label: "Inactive" },
 ];
 
-const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "in_progress", "completed", "cancelled"];
+const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"];
 const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "Open",
+  pending: "Pending",
+  on_queue: "Queue",
   in_progress: "In Progress",
+  submitted: "Submit for Review",
+  revision_needed: "Revision Needed",
   completed: "Completed",
   cancelled: "Cancelled",
 };
 const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "bg-slate-blue-soft text-slate-blue",
+  pending: "bg-parchment text-walnut",
+  on_queue: "bg-stone/10 text-stone",
   in_progress: "bg-amber-100 text-amber-700",
+  submitted: "bg-sky-50 text-sky-600",
+  revision_needed: "bg-amber-soft text-amber",
   completed: "bg-sage-soft text-sage",
   cancelled: "bg-red-100 text-red-500",
 };
@@ -30,7 +38,11 @@ const EMPTY_FORM = {
   rate: "",
   task_detail: "",
   task_notes: "",
+  link: "",
+  instructions: "",
+  instructions_locked: false,
   assigned_to: "",
+  assigned_by: "",
   status: "open" as FixedPayTaskWithClaimer["status"],
   is_active: true,
 };
@@ -75,7 +87,11 @@ function taskToForm(task: FixedPayTaskWithClaimer): TaskFormState {
     rate: String(task.rate ?? ""),
     task_detail: task.task_detail ?? "",
     task_notes: task.task_notes ?? "",
+    link: task.link ?? "",
+    instructions: task.instructions ?? "",
+    instructions_locked: task.instructions_locked,
     assigned_to: task.assigned_to ?? "",
+    assigned_by: task.assigned_by ?? "",
     status: task.status ?? "open",
     is_active: task.is_active,
   };
@@ -92,6 +108,34 @@ function mergeProfiles(options: ProfileSummary[], current: ProfileSummary | null
   for (const option of options) map.set(option.id, option);
   if (current) map.set(current.id, current);
   return Array.from(map.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
+}
+
+function parseLinks(text: string) {
+  const parts: ReactElement[] = [];
+  const urlRegex = /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+|www\.[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = urlRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(<span key={`text-${lastIndex}`}>{text.slice(lastIndex, match.index)}</span>);
+    }
+
+    const rawUrl = match[0];
+    const href = rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`;
+    parts.push(
+      <a key={`link-${match.index}`} href={href} target="_blank" rel="noreferrer" className="text-terracotta hover:underline">
+        {rawUrl}
+      </a>
+    );
+    lastIndex = match.index + rawUrl.length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(<span key={`text-${lastIndex}`}>{text.slice(lastIndex)}</span>);
+  }
+
+  return parts;
 }
 
 export default function FixedPayTasksTab() {
@@ -382,7 +426,11 @@ export default function FixedPayTasksTab() {
           rate,
           task_detail: form.task_detail.trim() || null,
           task_notes: form.task_notes.trim() || null,
+          link: form.link.trim() || null,
+          instructions: form.instructions.trim() || null,
+          instructions_locked: form.instructions_locked,
           assigned_to: form.assigned_to || null,
+          assigned_by: form.assigned_by || null,
           status: form.status,
           is_active: form.is_active,
         }),
@@ -416,7 +464,24 @@ export default function FixedPayTasksTab() {
     } finally {
       setSaving(false);
     }
-  }, [fetchTasks, form.account, form.assigned_to, form.category, form.is_active, form.rate, form.status, form.task_detail, form.task_name, form.task_notes, panelMode, selectedTask]);
+  }, [
+    fetchTasks,
+    form.account,
+    form.assigned_by,
+    form.assigned_to,
+    form.category,
+    form.instructions,
+    form.instructions_locked,
+    form.is_active,
+    form.link,
+    form.rate,
+    form.status,
+    form.task_detail,
+    form.task_name,
+    form.task_notes,
+    panelMode,
+    selectedTask,
+  ]);
 
   const handleAttachmentPick = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setPendingAttachment(event.target.files?.[0] ?? null);
@@ -468,7 +533,9 @@ export default function FixedPayTasksTab() {
   const panelSubtitle = panelMode === "edit" && selectedTask ? `Editing #${selectedTask.id}` : "Create a task for the fixed-pay pool.";
 
   const currentAssignedProfile = selectedTask?.assigned_to_profile ?? null;
+  const currentAssignedByProfile = selectedTask?.assigned_by_profile ?? null;
   const assignedToOptions = useMemo(() => mergeProfiles(vaOptions, currentAssignedProfile), [currentAssignedProfile, vaOptions]);
+  const assignedByOptions = useMemo(() => mergeProfiles(activeProfiles, currentAssignedByProfile), [activeProfiles, currentAssignedByProfile]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -754,6 +821,59 @@ export default function FixedPayTasksTab() {
                   className="min-h-[96px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                   placeholder="Task notes"
                 />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Link</label>
+                <input
+                  type="text"
+                  value={form.link}
+                  onChange={(event) => setForm((current) => ({ ...current, link: event.target.value }))}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  placeholder="https://..."
+                />
+              </div>
+
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
+                  <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-stone">
+                    <input
+                      type="checkbox"
+                      checked={form.instructions_locked}
+                      onChange={(event) => setForm((current) => ({ ...current, instructions_locked: event.target.checked }))}
+                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                    />
+                    Locked
+                  </label>
+                </div>
+                <textarea
+                  value={form.instructions}
+                  onChange={(event) => setForm((current) => ({ ...current, instructions: event.target.value }))}
+                  className="min-h-[120px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  placeholder="Instructions"
+                />
+                {form.instructions_locked && form.instructions.trim() && (
+                  <div className="mt-2 rounded-lg border border-sand bg-parchment/30 px-3 py-2 text-[13px] text-espresso">
+                    {parseLinks(form.instructions)}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
+                <select
+                  value={form.assigned_by}
+                  onChange={(event) => setForm((current) => ({ ...current, assigned_by: event.target.value }))}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                >
+                  <option value="">Unassigned</option>
+                  {assignedByOptions.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.full_name || profile.username || profile.id}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>

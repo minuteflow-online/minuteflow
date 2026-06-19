@@ -6,9 +6,9 @@ export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const TASK_STATUSES = new Set(["open", "in_progress", "completed", "cancelled"]);
+const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"]);
 const TASK_SELECT =
-  "id, task_name, account, category, rate, is_active, task_detail, task_notes, instructions, instructions_locked, status, assigned_to, claimed_by, claimed_at, created_by, created_at, updated_at";
+  "id, task_name, account, category, rate, is_active, task_detail, task_notes, link, instructions, instructions_locked, status, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -57,7 +57,7 @@ function parseRate(value: unknown): number | null {
 }
 
 async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: FixedPayTaskWithClaimer[]) {
-  const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to]).filter((id): id is string => Boolean(id)))];
+  const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to, row.assigned_by]).filter((id): id is string => Boolean(id)))];
   let profileMap: Record<string, ProfileSummary> = {};
 
   if (profileIds.length > 0) {
@@ -71,6 +71,7 @@ async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: F
 
   return rows.map((row) => ({
     ...row,
+    assigned_by_profile: row.assigned_by ? profileMap[row.assigned_by] ?? null : null,
     claimed_by_profile: row.claimed_by ? profileMap[row.claimed_by] ?? null : null,
     assigned_to_profile: row.assigned_to ? profileMap[row.assigned_to] ?? null : null,
   }));
@@ -153,10 +154,12 @@ export async function POST(request: Request) {
       rate,
       task_detail: normalizeText(body.task_detail),
       task_notes: normalizeText(body.task_notes),
+      link: normalizeText(body.link),
       instructions: normalizeText(body.instructions),
       instructions_locked: body.instructions_locked === true,
       status,
       assigned_to: normalizeText(body.assigned_to),
+      assigned_by: normalizeText(body.assigned_by),
       is_active: body.is_active !== false,
       created_by: userId,
     })
