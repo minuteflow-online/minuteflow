@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ReactElement } from "react";
-import type { AssignedTaskWithAssignees, FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
+import type { FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
 
 function formatClaimedAt(claimedAt: string | null) {
   if (!claimedAt) return "";
@@ -53,10 +53,8 @@ export default function AvailableTasksWidget({
 }) {
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [pendingAssigned, setPendingAssigned] = useState<VAAssignedTask[]>([]);
-  const [unassignedTasks, setUnassignedTasks] = useState<AssignedTaskWithAssignees[]>([]);
   const [loading, setLoading] = useState(true);
   const [claimingId, setClaimingId] = useState<number | null>(null);
-  const [grabbingId, setGrabbingId] = useState<string | null>(null);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
@@ -124,10 +122,9 @@ export default function AvailableTasksWidget({
     setError(null);
     try {
       if (canSeeFixedPay) {
-        const [fixedRes, assignedRes, unassignedRes] = await Promise.all([
+        const [fixedRes, assignedRes] = await Promise.all([
           fetch("/api/fixed-pay-tasks", { cache: "no-store" }),
           fetch("/api/assigned-tasks?status=pending", { cache: "no-store" }),
-          fetch("/api/assigned-tasks?unassigned=true", { cache: "no-store" }),
         ]);
 
         if (!fixedRes.ok) throw new Error(`HTTP ${fixedRes.status}`);
@@ -141,28 +138,14 @@ export default function AvailableTasksWidget({
           setPendingAssigned(assignedRows as VAAssignedTask[]);
         }
 
-        if (unassignedRes.ok) {
-          const unassignedJson = await unassignedRes.json();
-          const unassignedRows = unassignedJson.tasks ?? [];
-          setUnassignedTasks(unassignedRows as AssignedTaskWithAssignees[]);
-        }
       } else {
         setTasks([]);
-        const [assignedRes, unassignedRes] = await Promise.all([
-          fetch("/api/assigned-tasks?status=pending", { cache: "no-store" }),
-          fetch("/api/assigned-tasks?unassigned=true", { cache: "no-store" }),
-        ]);
+        const assignedRes = await fetch("/api/assigned-tasks?status=pending", { cache: "no-store" });
 
         if (assignedRes.ok) {
           const assignedJson = await assignedRes.json();
           const assignedRows = assignedJson.tasks ?? [];
           setPendingAssigned(assignedRows as VAAssignedTask[]);
-        }
-
-        if (unassignedRes.ok) {
-          const unassignedJson = await unassignedRes.json();
-          const unassignedRows = unassignedJson.tasks ?? [];
-          setUnassignedTasks(unassignedRows as AssignedTaskWithAssignees[]);
         }
       }
     } catch {
@@ -206,36 +189,6 @@ export default function AvailableTasksWidget({
     [fetchTasks, onClaimed]
   );
 
-  const handleGrabAssigned = useCallback(
-    async (taskId: string) => {
-      setGrabbingId(taskId);
-      setError(null);
-      try {
-        const res = await fetch(`/api/assigned-tasks/${taskId}/grab`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
-        if (!res.ok) {
-          let message = `HTTP ${res.status}`;
-          try {
-            const data = await res.json();
-            if (data?.error) message = data.error;
-          } catch {
-            // ignore parse failures
-          }
-          throw new Error(message);
-        }
-        await fetchTasks();
-        onClaimed?.();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to grab task.");
-      } finally {
-        setGrabbingId(null);
-      }
-    },
-    [fetchTasks, onClaimed]
-  );
-
   const handleAccept = useCallback(
     async (task: VAAssignedTask) => {
       const assigneeId = String(task.id);
@@ -270,7 +223,7 @@ export default function AvailableTasksWidget({
   );
 
   const openTasks = canSeeFixedPay ? tasks.filter((t) => !t.claimed_by_me) : [];
-  const totalCount = pendingAssigned.length + openTasks.length + unassignedTasks.length;
+  const totalCount = pendingAssigned.length + openTasks.length;
 
   return (
     <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
@@ -280,7 +233,7 @@ export default function AvailableTasksWidget({
           <path d="M2 17l10 5 10-5" />
           <path d="M2 12l10 5 10-5" />
         </svg>
-        Unassigned Tasks
+        Available Tasks
         <span className="text-stone font-normal normal-case">({totalCount})</span>
       </h3>
 
@@ -296,67 +249,6 @@ export default function AvailableTasksWidget({
         <p className="text-stone text-[11px] text-center py-3 italic">No available tasks right now.</p>
       ) : (
         <div className="space-y-1.5">
-          {/* Hourly unassigned tasks */}
-          {unassignedTasks.length > 0 && (
-            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5">Hourly Tasks</p>
-          )}
-          {unassignedTasks.map((task) => {
-            const taskId = String(task.id);
-            const isGrabbing = grabbingId === taskId;
-            const isExpanded = expandedIds.has(`unassigned-${task.id}`);
-            return (
-              <div key={`unassigned-${task.id}`} className="rounded-lg border border-sand overflow-hidden">
-                <div className="px-2.5 py-2 bg-parchment/20">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
-                    <button
-                      type="button"
-                      onClick={() => toggleExpanded(`unassigned-${task.id}`)}
-                      aria-expanded={isExpanded}
-                      aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
-                      className="p-1 rounded-full hover:bg-stone-100/60 transition-colors shrink-0"
-                    >
-                      <svg
-                        className={`h-3 w-3 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                      >
-                        <path d="M6 9l6 6 6-6" />
-                      </svg>
-                    </button>
-                  </div>
-                  <div className="text-[10px] text-stone mt-0.5 truncate">
-                    {task.account ?? ""}
-                    {task.project ? ` / ${task.project}` : ""}
-                  </div>
-                </div>
-
-                {isExpanded && (
-                  <div className="px-2.5 py-2.5 bg-parchment/10 border-t border-sand/60">
-                    {renderDetails({
-                      taskDetail: task.task_detail,
-                      instructions: task.instructions,
-                      notes: task.task_notes,
-                    })}
-                  </div>
-                )}
-
-                <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
-                  <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
-                  <button
-                    onClick={() => void handleGrabAssigned(taskId)}
-                    disabled={isGrabbing}
-                    className="w-full px-3 py-2 rounded-lg bg-terracotta text-white text-[11px] font-semibold hover:bg-[#c4573a] disabled:opacity-50 cursor-pointer transition-colors"
-                  >
-                    {isGrabbing ? "Grabbing..." : "Grab"}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-
           {/* Pending assigned tasks (admin-assigned, awaiting acceptance) */}
           {pendingAssigned.map((task) => {
             const assigneeId = String(task.id);
