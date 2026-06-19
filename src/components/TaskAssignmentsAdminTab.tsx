@@ -811,7 +811,6 @@ export default function TaskAssignmentsAdminTab({
           setSelectedTask(newTask);
         }
         await fetchTasks();
-        router.push("/task-list");
       } else {
         const e = await res.json();
         setDetailSaveMsg({ type: "err", text: e.error || "Failed to save" });
@@ -1781,7 +1780,9 @@ export default function TaskAssignmentsAdminTab({
                     <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-wrap gap-1">
                         {assignees.length === 0 && (
-                          <span className="text-[11px] text-stone/40">—</span>
+                          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-stone/10 text-stone border border-stone/20">
+                            Unassigned
+                          </span>
                         )}
                         {assignees.map((a) => {
                           const isEditing =
