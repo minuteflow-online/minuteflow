@@ -438,8 +438,11 @@ export default function TaskAssignmentsAdminTab({
   const [deleting, setDeleting] = useState<Record<number, boolean>>({});
 
   // ── Filter state ─────────────────────────────────────────────────────────────
-  const [filterVaId, setFilterVaId] = useState("");
-  const [filterStatus, setFilterStatus] = useState<AssignedTaskStatus | "">("");
+  const [filterVaIds, setFilterVaIds] = useState<string[]>([]);
+  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
+  const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
+  const [openFilter, setOpenFilter] = useState<"va" | "status" | "account" | null>(null);
+  const filterRef = useRef<HTMLDivElement>(null);
   const [taskView, setTaskView] = useState<"active" | "archived" | "trash">("active");
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
 
@@ -735,6 +738,18 @@ export default function TaskAssignmentsAdminTab({
     return () => document.removeEventListener("mousedown", handleMouseDown);
   }, [assignedToEdit]);
 
+  // Close filter dropdowns on outside click
+  useEffect(() => {
+    if (!openFilter) return;
+    const handleClick = (event: MouseEvent) => {
+      if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
+        setOpenFilter(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [openFilter]);
+
   // ─── Detail panel save ────────────────────────────────────────────────────────
 
   const handleDetailSave = useCallback(async () => {
@@ -812,6 +827,95 @@ export default function TaskAssignmentsAdminTab({
     },
     [fetchTasks, selectedTask]
   );
+
+  const handleArchive = useCallback(async (taskId: number) => {
+    setDeleting(d => ({ ...d, [taskId]: true }));
+    try {
+      await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived_at: new Date().toISOString() }),
+      });
+      fetchTasks();
+    } finally {
+      setDeleting(d => { const n = { ...d }; delete n[taskId]; return n; });
+    }
+  }, [fetchTasks]);
+
+  const handleTrash = useCallback(async (taskId: number) => {
+    setDeleting(d => ({ ...d, [taskId]: true }));
+    try {
+      await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deleted_at: new Date().toISOString() }),
+      });
+      fetchTasks();
+    } finally {
+      setDeleting(d => { const n = { ...d }; delete n[taskId]; return n; });
+    }
+  }, [fetchTasks]);
+
+  const handleRestore = useCallback(async (taskId: number) => {
+    setDeleting(d => ({ ...d, [taskId]: true }));
+    try {
+      await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived_at: null, deleted_at: null }),
+      });
+      fetchTasks();
+    } finally {
+      setDeleting(d => { const n = { ...d }; delete n[taskId]; return n; });
+    }
+  }, [fetchTasks]);
+
+  const handlePermanentDelete = useCallback(async (taskId: number) => {
+    if (!confirm("Permanently delete this task? This cannot be undone.")) return;
+    setDeleting(d => ({ ...d, [taskId]: true }));
+    try {
+      await fetch(`/api/assigned-tasks/${taskId}`, { method: "DELETE" });
+      fetchTasks();
+    } finally {
+      setDeleting(d => { const n = { ...d }; delete n[taskId]; return n; });
+    }
+  }, [fetchTasks]);
+
+  const handleBulkArchive = useCallback(async () => {
+    await Promise.all(
+      selectedTaskIds.map(id =>
+        fetch(`/api/assigned-tasks/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ archived_at: new Date().toISOString() }),
+        })
+      )
+    );
+    setSelectedTaskIds([]);
+    fetchTasks();
+  }, [selectedTaskIds, fetchTasks]);
+
+  const handleBulkTrash = useCallback(async () => {
+    await Promise.all(
+      selectedTaskIds.map(id =>
+        fetch(`/api/assigned-tasks/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deleted_at: new Date().toISOString() }),
+        })
+      )
+    );
+    setSelectedTaskIds([]);
+    fetchTasks();
+  }, [selectedTaskIds, fetchTasks]);
+
+  const handleEmptyTrash = useCallback(async () => {
+    if (!confirm(`Permanently delete all ${tasks.length} trashed tasks? This cannot be undone.`)) return;
+    await Promise.all(
+      tasks.map(t => fetch(`/api/assigned-tasks/${t.id}`, { method: "DELETE" }))
+    );
+    fetchTasks();
+  }, [tasks, fetchTasks]);
 
   // ─── Status change ───────────────────────────────────────────────────────────
 
@@ -985,15 +1089,16 @@ export default function TaskAssignmentsAdminTab({
   // ─── Filtered tasks ───────────────────────────────────────────────────────────
 
   const filteredTasks = tasks.filter((task) => {
-    if (filterVaId) {
-      const hasVa = task.assigned_task_assignees.some((a) => a.va_id === filterVaId);
+    if (filterVaIds.length > 0) {
+      const hasVa = task.assigned_task_assignees.some((a) => filterVaIds.includes(a.va_id));
       if (!hasVa) return false;
     }
-    if (filterStatus) {
-      const hasStatus = task.assigned_task_assignees.some(
-        (a) => a.status === filterStatus
-      );
+    if (filterStatuses.length > 0) {
+      const hasStatus = task.assigned_task_assignees.some((a) => filterStatuses.includes(a.status));
       if (!hasStatus) return false;
+    }
+    if (filterAccounts.length > 0) {
+      if (!task.account || !filterAccounts.includes(task.account)) return false;
     }
     return true;
   });
@@ -1105,73 +1210,214 @@ export default function TaskAssignmentsAdminTab({
     );
   }
 
+  // ─── Filter Dropdown sub-component ───────────────────────────────────────────
+
+  function FilterDropdown<T extends string>({
+    label,
+    options,
+    selected,
+    onChange,
+    isOpen,
+    onToggle,
+  }: {
+    label: string;
+    options: { value: T; label: string }[];
+    selected: T[];
+    onChange: (v: T[]) => void;
+    isOpen: boolean;
+    onToggle: () => void;
+  }) {
+    return (
+      <div className="relative">
+        <button
+          onClick={onToggle}
+          className={`flex items-center gap-1.5 py-2 px-3 border rounded-lg text-[13px] bg-white outline-none cursor-pointer transition-all ${
+            selected.length > 0
+              ? "border-terracotta text-terracotta"
+              : "border-sand text-ink hover:border-walnut"
+          }`}
+        >
+          {label}
+          {selected.length > 0 && (
+            <span className="bg-terracotta text-white text-[10px] font-bold rounded-full px-1.5 py-px leading-none">
+              {selected.length}
+            </span>
+          )}
+          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {isOpen && (
+          <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-sand rounded-xl shadow-lg min-w-[180px] py-1">
+            <div className="flex items-center justify-between px-3 py-1.5 border-b border-sand">
+              <button
+                onClick={() => onChange(options.map(o => o.value))}
+                className="text-[11px] text-terracotta hover:underline cursor-pointer"
+              >Select All</button>
+              <button
+                onClick={() => onChange([])}
+                className="text-[11px] text-stone hover:underline cursor-pointer"
+              >Clear</button>
+            </div>
+            {options.map(opt => (
+              <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-parchment cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(opt.value)}
+                  onChange={e => {
+                    if (e.target.checked) onChange([...selected, opt.value]);
+                    else onChange(selected.filter(v => v !== opt.value));
+                  }}
+                  className="accent-terracotta"
+                />
+                <span className="text-[13px] text-ink">{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ─── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div className="w-full space-y-6">
+      {/* ── Tab bar ─────────────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-1 border-b border-sand">
+        {(["active", "archived", "trash"] as const).map(view => (
+          <button
+            key={view}
+            onClick={() => { setTaskView(view); setSelectedTaskIds([]); }}
+            className={`px-4 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors capitalize ${
+              taskView === view
+                ? "border-terracotta text-terracotta"
+                : "border-transparent text-stone hover:text-espresso"
+            }`}
+          >
+            {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
+          </button>
+        ))}
+      </div>
+
       {/* ── Header row ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         {/* Filters */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <select
-            value={filterVaId}
-            onChange={(e) => setFilterVaId(e.target.value)}
-            className="py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-          >
-            <option value="">All Members</option>
-            {activeProfiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.full_name || p.username}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={filterStatus}
-            onChange={(e) =>
-              setFilterStatus(e.target.value as AssignedTaskStatus | "")
-            }
-            className="py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-          >
-            {STATUS_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+        <div ref={filterRef} className="flex items-center gap-2 flex-wrap">
+          <FilterDropdown
+            label="Member"
+            options={activeProfiles.map(p => ({ value: p.id, label: p.full_name || p.username || p.id }))}
+            selected={filterVaIds}
+            onChange={setFilterVaIds}
+            isOpen={openFilter === "va"}
+            onToggle={() => setOpenFilter(openFilter === "va" ? null : "va")}
+          />
+          <FilterDropdown
+            label="Status"
+            options={STATUS_OPTIONS.filter(o => o.value !== "").map(o => ({ value: o.value as string, label: o.label }))}
+            selected={filterStatuses}
+            onChange={setFilterStatuses}
+            isOpen={openFilter === "status"}
+            onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
+          />
+          <FilterDropdown
+            label="Account"
+            options={KNOWN_ACCOUNTS.map(a => ({ value: a, label: a }))}
+            selected={filterAccounts}
+            onChange={setFilterAccounts}
+            isOpen={openFilter === "account"}
+            onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
+          />
+          {(filterVaIds.length > 0 || filterStatuses.length > 0 || filterAccounts.length > 0) && (
+            <button
+              onClick={() => { setFilterVaIds([]); setFilterStatuses([]); setFilterAccounts([]); }}
+              className="text-[12px] text-stone hover:text-terracotta hover:underline cursor-pointer"
+            >
+              Clear all
+            </button>
+          )}
         </div>
 
         {/* Action buttons */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              setShowCsvModal(true);
-              setCsvRows([]);
-              setCsvResult(null);
-            }}
-            className="inline-flex items-center gap-2 rounded-lg border border-sand px-4 py-2.5 text-[13px] font-semibold text-walnut cursor-pointer transition-all hover:border-walnut"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="12" y1="18" x2="12" y2="12" />
-              <line x1="9" y1="15" x2="15" y2="15" />
-            </svg>
-            Bulk Upload (CSV)
-          </button>
+          {taskView === "active" && (
+            <button
+              onClick={() => {
+                setShowCsvModal(true);
+                setCsvRows([]);
+                setCsvResult(null);
+              }}
+              className="inline-flex items-center gap-2 rounded-lg border border-sand px-4 py-2.5 text-[13px] font-semibold text-walnut cursor-pointer transition-all hover:border-walnut"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+              Bulk Upload (CSV)
+            </button>
+          )}
 
-          <button
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            Create Task
-          </button>
+          {taskView === "active" && (
+            <button
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Create Task
+            </button>
+          )}
         </div>
       </div>
+
+      {/* ── Bulk action bar ─────────────────────────────────────────────────────── */}
+      {selectedTaskIds.length > 0 && taskView === "active" && (
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+          <span className="text-[13px] font-semibold text-amber-700">{selectedTaskIds.length} selected</span>
+          <button
+            onClick={handleBulkArchive}
+            className="px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-white border border-sand text-walnut hover:border-walnut transition-colors cursor-pointer"
+          >
+            Archive Selected
+          </button>
+          <button
+            onClick={handleBulkTrash}
+            className="px-3 py-1.5 rounded-lg text-[12px] font-semibold bg-white border border-sand text-terracotta hover:border-terracotta transition-colors cursor-pointer"
+          >
+            Move to Trash
+          </button>
+          <button
+            onClick={() => setSelectedTaskIds([])}
+            className="ml-auto text-[12px] text-stone hover:text-espresso cursor-pointer"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* ── Trash warning banner ─────────────────────────────────────────────────── */}
+      {taskView === "trash" && !loading && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+          <div className="flex items-center gap-2">
+            <svg className="h-4 w-4 text-red-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span className="text-[13px] text-red-700 font-medium">Tasks in trash can be restored or permanently deleted.</span>
+          </div>
+          {tasks.length > 0 && (
+            <button
+              onClick={handleEmptyTrash}
+              className="text-[12px] font-semibold text-red-600 hover:text-red-800 underline cursor-pointer shrink-0"
+            >
+              Empty Trash ({tasks.length})
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Loading skeleton ────────────────────────────────────────────────────── */}
       {loading && (
@@ -1242,7 +1488,16 @@ export default function TaskAssignmentsAdminTab({
           <table className="w-full">
             <thead>
               <tr className="bg-parchment border-b border-sand">
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left w-8">↗</th>
+                <th className="px-3 py-2.5 w-8">
+                  {taskView === "active" && (
+                    <input
+                      type="checkbox"
+                      className="accent-terracotta cursor-pointer"
+                      checked={selectedTaskIds.length === filteredTasks.length && filteredTasks.length > 0}
+                      onChange={e => setSelectedTaskIds(e.target.checked ? filteredTasks.map(t => t.id) : [])}
+                    />
+                  )}
+                </th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Objective</th>
@@ -1268,15 +1523,30 @@ export default function TaskAssignmentsAdminTab({
                     className="border-b border-sand last:border-0 hover:bg-parchment/30 transition-colors cursor-pointer group"
                     onClick={() => openEdit(task)}
                   >
-                    {/* Expand icon */}
-                    <td className="px-3 py-3 w-8" onClick={(e) => { e.stopPropagation(); openEdit(task); }}>
-                      <button className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-walnut hover:bg-sand/50 transition-colors">
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                          <polyline points="15 3 21 3 21 9" />
-                          <line x1="10" y1="14" x2="21" y2="3" />
-                        </svg>
-                      </button>
+                    {/* Checkbox / Expand icon */}
+                    <td className="px-3 py-3 w-8" onClick={e => e.stopPropagation()}>
+                      {taskView === "active" ? (
+                        <input
+                          type="checkbox"
+                          className="accent-terracotta cursor-pointer"
+                          checked={selectedTaskIds.includes(task.id)}
+                          onChange={e => {
+                            if (e.target.checked) setSelectedTaskIds(ids => [...ids, task.id]);
+                            else setSelectedTaskIds(ids => ids.filter(id => id !== task.id));
+                          }}
+                        />
+                      ) : (
+                        <button
+                          className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-walnut hover:bg-sand/50 transition-colors"
+                          onClick={() => openEdit(task)}
+                        >
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                            <polyline points="15 3 21 3 21 9" />
+                            <line x1="10" y1="14" x2="21" y2="3" />
+                          </svg>
+                        </button>
+                      )}
                     </td>
 
                     {/* Task Name */}
@@ -1423,24 +1693,74 @@ export default function TaskAssignmentsAdminTab({
                       inputType="date"
                     />
 
-                    {/* Overflow / delete */}
-                    <td
-                      className="px-2 py-3 w-8 text-right"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        onClick={() => handleDelete(task.id)}
-                        disabled={!!deleting[task.id]}
-                        className="opacity-0 group-hover:opacity-100 flex items-center justify-center w-6 h-6 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft transition-all disabled:opacity-30 cursor-pointer"
-                        title="Delete task"
-                      >
-                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                          <path d="M10 11v6M14 11v6" />
-                          <path d="M9 6V4h6v2" />
-                        </svg>
-                      </button>
+                    {/* Archive / Trash / Restore / Permanent Delete */}
+                    <td className="px-2 py-3 w-16 text-right" onClick={(e) => e.stopPropagation()}>
+                      {taskView === "active" && (
+                        <div className="opacity-0 group-hover:opacity-100 flex items-center justify-end gap-1 transition-all">
+                          <button
+                            onClick={() => handleArchive(task.id)}
+                            disabled={!!deleting[task.id]}
+                            className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-amber-600 hover:bg-amber-50 transition-all cursor-pointer"
+                            title="Archive task"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="21 8 21 21 3 21 3 8"/>
+                              <rect x="1" y="3" width="22" height="5"/>
+                              <line x1="10" y1="12" x2="14" y2="12"/>
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleTrash(task.id)}
+                            disabled={!!deleting[task.id]}
+                            className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft transition-all cursor-pointer"
+                            title="Move to trash"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4h6v2" />
+                            </svg>
+                          </button>
+                        </div>
+                      )}
+                      {taskView === "archived" && (
+                        <div className="opacity-0 group-hover:opacity-100 flex items-center justify-end gap-1 transition-all">
+                          <button
+                            onClick={() => handleRestore(task.id)}
+                            disabled={!!deleting[task.id]}
+                            className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-sage hover:bg-sage-soft transition-all cursor-pointer"
+                            title="Restore task"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.08"/></svg>
+                          </button>
+                          <button
+                            onClick={() => handleTrash(task.id)}
+                            disabled={!!deleting[task.id]}
+                            className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft transition-all cursor-pointer"
+                            title="Move to trash"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+                          </button>
+                        </div>
+                      )}
+                      {taskView === "trash" && (
+                        <div className="opacity-0 group-hover:opacity-100 flex items-center justify-end gap-1 transition-all">
+                          <button
+                            onClick={() => handleRestore(task.id)}
+                            disabled={!!deleting[task.id]}
+                            className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-sage hover:bg-sage-soft transition-all cursor-pointer"
+                            title="Restore task"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.08"/></svg>
+                          </button>
+                          <button
+                            onClick={() => handlePermanentDelete(task.id)}
+                            disabled={!!deleting[task.id]}
+                            className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-red-600 hover:bg-red-50 transition-all cursor-pointer"
+                            title="Delete permanently"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );
