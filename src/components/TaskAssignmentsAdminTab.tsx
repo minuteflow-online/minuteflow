@@ -1939,12 +1939,7 @@ export default function TaskAssignmentsAdminTab({
 
       {/* ── Detail Panel ────────────────────────────────────────────────────────── */}
       {isPanelOpen && (
-        <div className="fixed inset-0 z-40 flex items-stretch">
-          {/* Backdrop */}
-          <div className="flex-1" onClick={closePanel} />
-
-          {/* Panel */}
-          <div className="w-[520px] max-w-full bg-white border-l border-sand shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed top-0 right-0 h-full w-[520px] max-w-full z-40 bg-white border-l border-sand shadow-2xl flex flex-col overflow-hidden">
             {/* Header */}
             <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-sand">
               <div className="flex items-center gap-2">
@@ -2427,7 +2422,6 @@ export default function TaskAssignmentsAdminTab({
                 </div>
               </div>
             </div>
-          </div>
         </div>
       )}
 
@@ -2660,6 +2654,7 @@ function CsvModal({
             </button>
           )}
         </div>
-      </div>    </div>
+      </div>
+    </div>
   );
 }
