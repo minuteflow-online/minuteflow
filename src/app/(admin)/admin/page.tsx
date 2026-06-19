@@ -2476,7 +2476,7 @@ function TeamManagementTab({
       if (!catStrs.some((c) => colFilters.assignments.includes(c))) return false;
     }
     if ("availTasks" in colFilters) {
-      const val = p.role === "va" ? (p.can_see_available_tasks ? "On" : "Off") : "—";
+      const val = p.can_see_available_tasks ? "On" : "Off";
       if (!check("availTasks", val)) return false;
     }
     if (joinedStart) {
@@ -3081,56 +3081,52 @@ function TeamManagementTab({
                   </td>
                   {/* Available Tasks toggle */}
                   <td className="px-3 py-3 text-center">
-                    {p.role === "va" ? (
-                      <div className="flex flex-col items-center gap-1">
-                        <button
-                          onClick={async () => {
-                            const newVal = !p.can_see_available_tasks;
-                            try {
-                              const res = await fetch("/api/users", {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ user_id: p.id, can_see_available_tasks: newVal }),
-                              });
-                              if (res.ok) fetchData();
-                            } catch { /* silent */ }
-                          }}
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-all cursor-pointer ${
-                            p.can_see_available_tasks
-                              ? "bg-sage-soft text-sage hover:bg-sage/20"
-                              : "bg-parchment text-stone hover:bg-sand"
-                          }`}
-                          title={p.can_see_available_tasks ? "Click to hide Available Tasks" : "Click to show Available Tasks"}
-                        >
-                          <span className={`inline-block h-1.5 w-1.5 rounded-full ${p.can_see_available_tasks ? "bg-sage" : "bg-stone"}`} />
-                          {p.can_see_available_tasks ? "On" : "Off"}
-                        </button>
-                        <button
-                          onClick={async () => {
-                            const newVal = !p.visible_for_collaboration;
-                            try {
-                              const res = await fetch("/api/users", {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ user_id: p.id, visible_for_collaboration: newVal }),
-                              });
-                              if (res.ok) fetchData();
-                            } catch { /* silent */ }
-                          }}
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-all cursor-pointer ${
-                            p.visible_for_collaboration
-                              ? "bg-slate-blue-soft text-slate-blue hover:bg-slate-blue/20"
-                              : "bg-parchment text-stone hover:bg-sand"
-                          }`}
-                          title={p.visible_for_collaboration ? "Click to hide from VA collaboration" : "Click to allow VA collaboration"}
-                        >
-                          <span className={`inline-block h-1.5 w-1.5 rounded-full ${p.visible_for_collaboration ? "bg-slate-blue" : "bg-stone"}`} />
-                          Collab
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-[10px] text-stone">&mdash;</span>
-                    )}
+                    <div className="flex flex-col items-center gap-1">
+                      <button
+                        onClick={async () => {
+                          const newVal = !p.can_see_available_tasks;
+                          try {
+                            const res = await fetch("/api/users", {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ user_id: p.id, can_see_available_tasks: newVal }),
+                            });
+                            if (res.ok) fetchData();
+                          } catch { /* silent */ }
+                        }}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-all cursor-pointer ${
+                          p.can_see_available_tasks
+                            ? "bg-sage-soft text-sage hover:bg-sage/20"
+                            : "bg-parchment text-stone hover:bg-sand"
+                        }`}
+                        title={p.can_see_available_tasks ? "Click to hide Available Tasks" : "Click to show Available Tasks"}
+                      >
+                        <span className={`inline-block h-1.5 w-1.5 rounded-full ${p.can_see_available_tasks ? "bg-sage" : "bg-stone"}`} />
+                        {p.can_see_available_tasks ? "On" : "Off"}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const newVal = !p.visible_for_collaboration;
+                          try {
+                            const res = await fetch("/api/users", {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ user_id: p.id, visible_for_collaboration: newVal }),
+                            });
+                            if (res.ok) fetchData();
+                          } catch { /* silent */ }
+                        }}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-all cursor-pointer ${
+                          p.visible_for_collaboration
+                            ? "bg-slate-blue-soft text-slate-blue hover:bg-slate-blue/20"
+                            : "bg-parchment text-stone hover:bg-sand"
+                        }`}
+                        title={p.visible_for_collaboration ? "Click to hide from VA collaboration" : "Click to allow VA collaboration"}
+                      >
+                        <span className={`inline-block h-1.5 w-1.5 rounded-full ${p.visible_for_collaboration ? "bg-slate-blue" : "bg-stone"}`} />
+                        Collab
+                      </button>
+                    </div>
                   </td>
                   <td className="px-3 py-3 text-[11px] text-stone whitespace-nowrap">
                     {new Date(p.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}

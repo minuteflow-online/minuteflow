@@ -376,7 +376,7 @@ export default function TaskListPage() {
   }, [supabase]);
 
   const isPerTaskVa = currentPosition === "Per Task VA";
-  const canShowAvailableTasks = currentRole === "va" && (isPerTaskVa || canSeeAvailableTasks);
+  const canShowAvailableTasks = canSeeAvailableTasks;
   const canShowHourlyPool = currentRole === "va" && !isPerTaskVa;
 
   const fetchAttachments = useCallback(async (taskId: number) => {
@@ -1611,7 +1611,7 @@ export default function TaskListPage() {
                 ))}
               </div>
 
-              {currentRole === "va" && (
+              {(canShowAvailableTasks || canShowHourlyPool) && (
                 <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
                   <button
                     type="button"
