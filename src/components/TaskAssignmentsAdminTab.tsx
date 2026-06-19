@@ -43,6 +43,7 @@ const STATUS_OPTIONS: { value: AssignedTaskStatus | ""; label: string }[] = [
 ];
 
 const ASSIGNEE_STATUS_OPTIONS: { value: AssignedTaskStatus; label: string }[] = [
+  { value: "unassigned", label: "Unassigned" },
   { value: "pending", label: "Pending" },
   { value: "on_queue", label: "On Queue" },
   { value: "in_progress", label: "In Progress" },

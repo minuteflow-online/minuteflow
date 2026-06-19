@@ -1561,7 +1561,7 @@ export default function TaskListPage() {
                     onClick={() => setActiveView("available_tasks")}
                     className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                   >
-                    Available Tasks
+                    Unassigned Tasks
                   </button>
                 </div>
               )}

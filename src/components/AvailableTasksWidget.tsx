@@ -258,7 +258,7 @@ export default function AvailableTasksWidget({
           <path d="M2 17l10 5 10-5" />
           <path d="M2 12l10 5 10-5" />
         </svg>
-        Available Tasks
+        Unassigned Tasks
         <span className="text-stone font-normal normal-case">({totalCount})</span>
       </h3>
 
@@ -274,7 +274,10 @@ export default function AvailableTasksWidget({
         <p className="text-stone text-[11px] text-center py-3 italic">No available tasks right now.</p>
       ) : (
         <div className="space-y-1.5">
-          {/* Open pool: admin-created tasks with no assignees yet */}
+          {/* Hourly unassigned tasks */}
+          {unassignedTasks.length > 0 && (
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5">Hourly Tasks</p>
+          )}
           {unassignedTasks.map((task) => {
             const taskId = String(task.id);
             const isGrabbing = grabbingId === taskId;
@@ -402,6 +405,9 @@ export default function AvailableTasksWidget({
           })}
 
           {/* Fixed-pay tasks available to grab */}
+          {openTasks.length > 0 && (
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5 pt-1">Fixed Pay Tasks</p>
+          )}
           {openTasks.map((task) => {
             const isClaiming = claimingId === task.id;
             const isExpanded = expandedIds.has(`fixed-${task.id}`);
