@@ -422,11 +422,6 @@ export default function TaskListPage() {
   }, [fetchCurrentUser, fetchFormOptions, fetchTasks]);
 
   useEffect(() => {
-    if (currentRole !== "admin") {
-      setAssignedByProfiles(currentUserProfile ? [currentUserProfile] : []);
-      return;
-    }
-
     let cancelled = false;
     (async () => {
       try {
@@ -447,7 +442,7 @@ export default function TaskListPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentRole, currentUserProfile]);
+  }, [currentUserProfile]);
 
   useEffect(() => {
     if (!canShowAvailableTasks) {

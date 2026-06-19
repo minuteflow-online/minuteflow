@@ -399,6 +399,9 @@ export default function TaskAssignmentsAdminTab({
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const activeProfiles = profiles.filter((p) => p.is_active !== false);
+  const assignedByProfiles = activeProfiles.filter(
+    (p) => p.role === "admin" || p.position === "Full-time VA" || p.position === "Part-time VA"
+  );
 
   // ── Data state ───────────────────────────────────────────────────────────────
   const [tasks, setTasks] = useState<AssignedTaskWithAssignees[]>([]);
@@ -539,8 +542,8 @@ export default function TaskAssignmentsAdminTab({
     ? (formTasksByObjective[detailObjectiveTagId] ?? [])
     : [];
   const assignedByOptions = useMemo(
-    () => mergeProfiles(activeProfiles, selectedTask?.assigned_by_profile ?? null),
-    [activeProfiles, selectedTask?.assigned_by_profile]
+    () => mergeProfiles(assignedByProfiles, selectedTask?.assigned_by_profile ?? null),
+    [assignedByProfiles, selectedTask?.assigned_by_profile]
   );
   const allTaskNameOptions = Array.from(
     new Set([
