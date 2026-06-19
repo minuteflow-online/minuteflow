@@ -2522,7 +2522,7 @@ export default function DashboardPage() {
       project: detail.project || "",
       client_memo: "",
       internal_memo: detail.task_detail || "",
-      _skipClockIn: true,
+      _skipClockIn: isFixedPay,
       ...(isFixedPay
         ? {
             _isFixedTaskLog: true,
