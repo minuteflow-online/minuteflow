@@ -119,7 +119,7 @@ export async function GET(request: Request) {
     const { data, error } = await supabase
       .from("assigned_tasks")
       .select(
-        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
+        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
          assigned_task_assignees(${assigneeSelect})`
       )
       .order("created_at", { ascending: false });
@@ -142,7 +142,7 @@ export async function GET(request: Request) {
     const query = supabase
       .from("assigned_tasks")
       .select(
-        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
+        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
          assigned_task_assignees(${assigneeSelect})`
       )
       .order("created_at", { ascending: false });
@@ -185,7 +185,7 @@ export async function GET(request: Request) {
     .from("assigned_task_assignees")
     .select(
       `id, va_id, status, log_id, notes, assigned_at, updated_at,
-       assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
+       assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
     )
     .eq("va_id", user.id)
     .order("assigned_at", { ascending: false });
@@ -220,7 +220,7 @@ export async function GET(request: Request) {
       .from("assigned_task_assignees")
       .select(
         `id, va_id, status, log_id, notes, assigned_at, updated_at,
-         assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
+         assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
       )
       .in("va_id", collabVaIds)
       .order("assigned_at", { ascending: false });

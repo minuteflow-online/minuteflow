@@ -253,7 +253,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     deleted_at?: string | null;
   };
 
-  const hasAssigneeUpdate = status !== undefined || log_id !== undefined || notes !== undefined;
+  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
+  const hasTaskLevelStatusUpdate =
+    status !== undefined && !bodyVaId && isAdminOrManager && log_id === undefined && notes === undefined;
+  const hasAssigneeUpdate = log_id !== undefined || notes !== undefined || (status !== undefined && bodyVaId !== undefined);
   const hasMetadataUpdate =
     account !== undefined ||
     project !== undefined ||
@@ -267,7 +270,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     archived_at !== undefined ||
     deleted_at !== undefined;
 
-  if (!hasAssigneeUpdate && !hasMetadataUpdate) {
+  if (!hasAssigneeUpdate && !hasMetadataUpdate && !hasTaskLevelStatusUpdate) {
     return Response.json({ error: "At least one field is required" }, { status: 400 });
   }
 
@@ -292,7 +295,6 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ error: "task_name cannot be empty" }, { status: 400 });
   }
 
-  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
   const now = new Date().toISOString();
 
   if (!isAdminOrManager) {
@@ -311,6 +313,19 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (!assignedTask) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
+  }
+
+  if (hasTaskLevelStatusUpdate) {
+    const { error: taskStatusError } = await supabase
+      .from("assigned_tasks")
+      .update({ status, updated_at: now })
+      .eq("id", id);
+
+    if (taskStatusError) {
+      return Response.json({ error: taskStatusError.message }, { status: 500 });
+    }
+
+    return Response.json({ ok: true });
   }
 
   if (hasAssigneeUpdate) {

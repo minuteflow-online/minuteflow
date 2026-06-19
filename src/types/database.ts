@@ -478,6 +478,7 @@ export interface AssignedTask {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  status: AssignedTaskStatus;
   assigned_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
   fixed_pay_tasks?: { rate: number } | null;
 }

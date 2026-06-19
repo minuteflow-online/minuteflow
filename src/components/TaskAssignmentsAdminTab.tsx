@@ -452,6 +452,7 @@ export default function TaskAssignmentsAdminTab({
 
   // ── Status edit state ─────────────────────────────────────────────────────────
   const [statusEdit, setStatusEdit] = useState<{ taskId: number; vaId: string } | null>(null);
+  const [taskStatusEdit, setTaskStatusEdit] = useState<{ taskId: number } | null>(null);
   const [statusSaving, setStatusSaving] = useState(false);
 
   const [assignedToEdit, setAssignedToEdit] = useState<{ taskId: number } | null>(null);
@@ -998,6 +999,30 @@ export default function TaskAssignmentsAdminTab({
       } finally {
         setStatusSaving(false);
         setStatusEdit(null);
+      }
+    },
+    [fetchTasks]
+  );
+
+  const handleTaskLevelStatusChange = useCallback(
+    async (taskId: number, newStatus: AssignedTaskStatus) => {
+      setTasks((prev) =>
+        prev.map((task) => (task.id === taskId ? { ...task, status: newStatus } : task))
+      );
+      if (selectedTaskRef.current?.id === taskId) {
+        setSelectedTask((prev) => (prev ? { ...prev, status: newStatus } : null));
+      }
+      setStatusSaving(true);
+      try {
+        await fetch(`/api/assigned-tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: newStatus }),
+        });
+        await fetchTasks();
+      } finally {
+        setStatusSaving(false);
+        setTaskStatusEdit(null);
       }
     },
     [fetchTasks]
@@ -1835,9 +1860,37 @@ export default function TaskAssignmentsAdminTab({
                     <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-wrap gap-1">
                         {assignees.length === 0 && (
-                          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-stone/10 text-stone border border-stone/20">
-                            Unassigned
-                          </span>
+                          taskStatusEdit?.taskId === task.id ? (
+                            <select
+                              autoFocus
+                              value={task.status}
+                              disabled={statusSaving}
+                              onChange={(e) =>
+                                void handleTaskLevelStatusChange(
+                                  task.id,
+                                  e.target.value as AssignedTaskStatus
+                                )
+                              }
+                              onBlur={() => setTaskStatusEdit(null)}
+                              className="text-[11px] border border-sand rounded-lg px-2 py-1 outline-none focus:border-terracotta cursor-pointer bg-white"
+                            >
+                              {ASSIGNEE_STATUS_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <button
+                              type="button"
+                              title="Unassigned task — click to change status"
+                              onClick={() => setTaskStatusEdit({ taskId: task.id })}
+                              disabled={statusSaving}
+                              className="cursor-pointer hover:opacity-75 transition-opacity disabled:opacity-40"
+                            >
+                              <StatusBadge status={task.status} />
+                            </button>
+                          )
                         )}
                         {assignees.map((a) => {
                           const isEditing =
@@ -2225,7 +2278,37 @@ export default function TaskAssignmentsAdminTab({
                     Status
                   </label>
                   {selectedTask.assigned_task_assignees.length === 0 ? (
-                    <p className="py-2 text-[12px] text-stone/50">No assignees available to update yet.</p>
+                    taskStatusEdit?.taskId === selectedTask.id ? (
+                      <select
+                        autoFocus
+                        value={selectedTask.status}
+                        disabled={statusSaving}
+                        onChange={(e) =>
+                          void handleTaskLevelStatusChange(
+                            selectedTask.id,
+                            e.target.value as AssignedTaskStatus
+                          )
+                        }
+                        onBlur={() => setTaskStatusEdit(null)}
+                        className="min-w-[140px] rounded-lg border border-sand bg-white px-2 py-1 text-[11px] outline-none transition-colors focus:border-terracotta cursor-pointer disabled:opacity-60"
+                      >
+                        {ASSIGNEE_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <button
+                        type="button"
+                        title="Unassigned task — click to change status"
+                        onClick={() => setTaskStatusEdit({ taskId: selectedTask.id })}
+                        disabled={statusSaving}
+                        className="cursor-pointer hover:opacity-75 transition-opacity disabled:opacity-40"
+                      >
+                        <StatusBadge status={selectedTask.status} />
+                      </button>
+                    )
                   ) : (
                     <div className="space-y-2">
                       {selectedTask.assigned_task_assignees.map((assignee) => {
