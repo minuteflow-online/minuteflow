@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { ReactElement } from "react";
 import type { FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
 
 function formatClaimedAt(claimedAt: string | null) {
@@ -15,6 +16,34 @@ function formatClaimedAt(claimedAt: string | null) {
   });
 }
 
+function renderTextWithLinks(text: string) {
+  const parts: ReactElement[] = [];
+  const urlRegex = /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+|www\.[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = urlRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(<span key={`text-${lastIndex}`}>{text.slice(lastIndex, match.index)}</span>);
+    }
+
+    const rawUrl = match[0];
+    const href = rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`;
+    parts.push(
+      <a key={`link-${match.index}`} href={href} target="_blank" rel="noreferrer" className="text-terracotta hover:underline">
+        {rawUrl}
+      </a>
+    );
+    lastIndex = match.index + rawUrl.length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(<span key={`text-${lastIndex}`}>{text.slice(lastIndex)}</span>);
+  }
+
+  return parts.length > 0 ? parts : [<span key="empty">{text}</span>];
+}
+
 export default function AvailableTasksWidget({
   onClaimed,
 }: {
@@ -25,7 +54,66 @@ export default function AvailableTasksWidget({
   const [loading, setLoading] = useState(true);
   const [claimingId, setClaimingId] = useState<number | null>(null);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const renderDetails = useCallback((fields: {
+    taskDetail?: string | null;
+    instructions?: string | null;
+    link?: string | null;
+    notes?: string | null;
+  }) => {
+    const hasAnyContent = [fields.taskDetail, fields.instructions, fields.link, fields.notes].some((value) => Boolean(value?.trim()));
+
+    return (
+      <div className="space-y-2">
+        {fields.taskDetail?.trim() && (
+          <div className="space-y-0.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-stone">Details</p>
+            <div className="text-[11px] text-espresso whitespace-pre-wrap">{fields.taskDetail}</div>
+          </div>
+        )}
+        {fields.instructions?.trim() && (
+          <div className="space-y-0.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-stone">Instructions</p>
+            <div className="text-[11px] text-espresso whitespace-pre-wrap">{renderTextWithLinks(fields.instructions)}</div>
+          </div>
+        )}
+        {fields.link?.trim() && (
+          <div className="space-y-0.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-stone">Link</p>
+            <a
+              href={fields.link.startsWith("http") ? fields.link : `https://${fields.link}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-terracotta hover:underline break-all"
+            >
+              {fields.link}
+            </a>
+          </div>
+        )}
+        {fields.notes?.trim() && (
+          <div className="space-y-0.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-stone">Notes</p>
+            <div className="text-[11px] text-espresso whitespace-pre-wrap">{fields.notes}</div>
+          </div>
+        )}
+        {!hasAnyContent && <span className="text-stone italic text-[11px]">No details provided.</span>}
+      </div>
+    );
+  }, []);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -151,24 +239,58 @@ export default function AvailableTasksWidget({
           {pendingAssigned.map((task) => {
             const assigneeId = String(task.id);
             const isAccepting = acceptingId === assigneeId;
+            const isExpanded = expandedIds.has(`assigned-${task.id}`);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const rate = (task.assigned_tasks as any)?.fixed_pay_tasks?.rate;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const assignedTask = task.assigned_tasks as any;
             return (
               <div key={`assigned-${task.id}`} className="rounded-lg border border-sand overflow-hidden">
                 <div className="px-2.5 py-2 bg-parchment/20">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-start justify-between gap-2">
                     <span className="text-xs font-medium text-espresso truncate">{task.assigned_tasks.task_name}</span>
-                    {rate != null && (
-                      <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
-                        ${Number(rate).toFixed(2)}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {rate != null && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
+                          ${Number(rate).toFixed(2)}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(`assigned-${task.id}`)}
+                        aria-expanded={isExpanded}
+                        aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
+                        className="p-1 rounded-full hover:bg-stone-100/60 transition-colors"
+                      >
+                        <svg
+                          className={`h-3 w-3 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M6 9l6 6 6-6" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   <div className="text-[10px] text-stone mt-0.5 truncate">
                     {task.assigned_tasks.account ?? ""}
                     {task.assigned_tasks.project ? ` / ${task.assigned_tasks.project}` : ""}
                   </div>
                 </div>
+
+                {isExpanded && (
+                  <div className="px-2.5 py-2.5 bg-parchment/10 border-t border-sand/60">
+                    {renderDetails({
+                      taskDetail: assignedTask.task_detail,
+                      instructions: assignedTask.instructions,
+                      link: assignedTask.link,
+                      notes: assignedTask.task_notes,
+                    })}
+                  </div>
+                )}
+
                 <div className="px-2.5 py-2.5 bg-parchment/10">
                   <button
                     onClick={() => void handleAccept(task)}
@@ -185,20 +307,53 @@ export default function AvailableTasksWidget({
           {/* Fixed-pay tasks available to grab */}
           {openTasks.map((task) => {
             const isClaiming = claimingId === task.id;
+            const isExpanded = expandedIds.has(`fixed-${task.id}`);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const taskData = task as any;
             return (
               <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
                 <div className="px-2.5 py-2 bg-parchment/20">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-start justify-between gap-2">
                     <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
-                    <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
-                      ${Number(task.rate).toFixed(2)}
-                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
+                        ${Number(task.rate).toFixed(2)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(`fixed-${task.id}`)}
+                        aria-expanded={isExpanded}
+                        aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
+                        className="p-1 rounded-full hover:bg-stone-100/60 transition-colors"
+                      >
+                        <svg
+                          className={`h-3 w-3 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                        >
+                          <path d="M6 9l6 6 6-6" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   <div className="text-[10px] text-stone mt-0.5 truncate">
                     {task.account ?? ""}
                     {task.category ? ` / ${task.category}` : ""}
                   </div>
                 </div>
+
+                {isExpanded && (
+                  <div className="px-2.5 py-2.5 bg-parchment/10 border-t border-sand/60">
+                    {renderDetails({
+                      taskDetail: taskData.task_detail,
+                      instructions: taskData.instructions,
+                      link: taskData.link,
+                      notes: taskData.task_notes,
+                    })}
+                  </div>
+                )}
 
                 <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
                   <div className="text-[11px] text-stone">
