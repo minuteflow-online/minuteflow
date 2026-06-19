@@ -250,6 +250,9 @@ export default function AvailableTasksWidget({
       ) : (
         <div className="space-y-1.5">
           {/* Pending assigned tasks (admin-assigned, awaiting acceptance) */}
+          {pendingAssigned.length > 0 && (
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5 pt-1">Assigned to You</p>
+          )}
           {pendingAssigned.map((task) => {
             const assigneeId = String(task.id);
             const isAccepting = acceptingId === assigneeId;
