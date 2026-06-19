@@ -116,7 +116,16 @@ export async function GET(request: Request) {
   };
 
   if (unassignedOnly) {
-    const { data, error } = await supabase
+    // Use service-role client so VAs can read the open task pool.
+    // RLS on assigned_tasks only lets VAs see tasks they're already assigned to,
+    // which means unassigned tasks (no assignees yet) would return empty for VAs.
+    const unassignedAdminClient = createAdminClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+
+    const { data, error } = await unassignedAdminClient
       .from("assigned_tasks")
       .select(
         `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),

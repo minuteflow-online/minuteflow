@@ -39,7 +39,16 @@ export async function POST(_request: Request, { params }: RouteContext) {
 
   const { id } = await params;
 
-  const { data: task, error: fetchError } = await supabase
+  // Use service-role client to fetch the task — VAs can't read assigned_tasks
+  // rows via the user client unless they're already an assignee (RLS), but
+  // the whole point of grab is to claim an unassigned task they're NOT on yet.
+  const adminSupabase = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
+  const { data: task, error: fetchError } = await adminSupabase
     .from("assigned_tasks")
     .select(
       "id, account, project, task_name, task_detail, task_notes, due_date, instructions, instructions_locked, created_at, updated_at, assigned_task_assignees(id)"
@@ -55,12 +64,6 @@ export async function POST(_request: Request, { params }: RouteContext) {
   if ((typedTask.assigned_task_assignees ?? []).length > 0) {
     return Response.json({ error: "Task already claimed" }, { status: 409 });
   }
-
-  const adminSupabase = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
 
   const { data: assignee, error: insertError } = await adminSupabase
     .from("assigned_task_assignees")
