@@ -425,6 +425,10 @@ export default function TaskAssignmentsAdminTab({
 
   // ── Detail panel state ───────────────────────────────────────────────────────
   const [selectedTask, setSelectedTask] = useState<AssignedTaskWithAssignees | null>(null);
+  const selectedTaskRef = useRef<AssignedTaskWithAssignees | null>(null);
+  useEffect(() => {
+    selectedTaskRef.current = selectedTask;
+  }, [selectedTask]);
   const [isCreating, setIsCreating] = useState(false);
   const [detailForm, setDetailForm] = useState<DetailFormState>({
     task_name: "",
@@ -506,7 +510,13 @@ export default function TaskAssignmentsAdminTab({
       const res = await fetch(`/api/assigned-tasks?${viewQuery}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
-      setTasks(d.tasks || d || []);
+      const freshTasks = d.tasks || d || [];
+      setTasks(freshTasks);
+      const currentSelectedTaskId = selectedTaskRef.current?.id;
+      if (currentSelectedTaskId != null) {
+        const updatedSelectedTask = freshTasks.find((task: AssignedTaskWithAssignees) => task.id === currentSelectedTaskId);
+        if (updatedSelectedTask) setSelectedTask(updatedSelectedTask);
+      }
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Failed to load tasks");
     } finally {
