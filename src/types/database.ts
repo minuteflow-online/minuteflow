@@ -511,7 +511,7 @@ export interface VAAssignedTask extends AssignedTaskAssignee {
 
 /** Fixed-pay task row from the fixed_pay_tasks table */
 export interface FixedPayTaskWithClaimer {
-  id: string;
+  id: number;
   task_name: string;
   account: string | null;
   category: string | null;

@@ -23,7 +23,7 @@ export default function AvailableTasksWidget({
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [pendingAssigned, setPendingAssigned] = useState<VAAssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
-  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [claimingId, setClaimingId] = useState<number | null>(null);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +58,7 @@ export default function AvailableTasksWidget({
   }, [fetchTasks]);
 
   const handleClaim = useCallback(
-    async (taskId: string) => {
+    async (taskId: number) => {
       setClaimingId(taskId);
       setError(null);
       try {

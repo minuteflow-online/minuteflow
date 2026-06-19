@@ -8,7 +8,7 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const TASK_STATUSES = new Set(["open", "in_progress", "completed", "cancelled"]);
 const TASK_SELECT =
-  "id, task_name, account, category, rate, is_active, task_detail, task_notes, status, assigned_to, claimed_by, claimed_at, created_by, created_at, updated_at";
+  "id, task_name, account, category, rate, is_active, task_detail, task_notes, instructions, instructions_locked, status, assigned_to, claimed_by, claimed_at, created_by, created_at, updated_at";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -153,6 +153,8 @@ export async function POST(request: Request) {
       rate,
       task_detail: normalizeText(body.task_detail),
       task_notes: normalizeText(body.task_notes),
+      instructions: normalizeText(body.instructions),
+      instructions_locked: body.instructions_locked === true,
       status,
       assigned_to: normalizeText(body.assigned_to),
       is_active: body.is_active !== false,
