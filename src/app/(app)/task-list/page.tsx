@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTaskStatus, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
@@ -221,7 +221,15 @@ export default function TaskListPage() {
   const [tasks, setTasks] = useState<VATaskRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<AssignedTaskStatus | "all">("all");
+  const [taskView, setTaskView] = useState<"active" | "archived" | "trash">("active");
+  const [filterStatuses, setFilterStatuses] = useState<AssignedTaskStatus[]>([]);
+  const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
+  const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
+  const [filterObjectives, setFilterObjectives] = useState<string[]>([]);
+  const [filterDueStart, setFilterDueStart] = useState("");
+  const [filterDueEnd, setFilterDueEnd] = useState("");
+  const [taskNameSearch, setTaskNameSearch] = useState("");
+  const [openFilter, setOpenFilter] = useState<"taskname" | "objective" | "duedate" | "status" | "account" | null>(null);
 
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
@@ -284,7 +292,7 @@ export default function TaskListPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/assigned-tasks?selfOnly=true", { cache: "no-store" });
+      const res = await fetch(`/api/assigned-tasks?selfOnly=true&view=${taskView}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       const raw = Array.isArray(json) ? json : json.tasks ?? [];
@@ -302,7 +310,7 @@ export default function TaskListPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [taskView]);
 
   const fetchFormOptions = useCallback(async () => {
     try {
@@ -449,6 +457,17 @@ export default function TaskListPage() {
       setActiveView("my_tasks");
     }
   }, [canShowAvailableTasks]);
+
+  useEffect(() => {
+    setFilterStatuses([]);
+    setFilterAccounts([]);
+    setFilterTaskNames([]);
+    setFilterObjectives([]);
+    setFilterDueStart("");
+    setFilterDueEnd("");
+    setTaskNameSearch("");
+    setOpenFilter(null);
+  }, [taskView]);
 
   useEffect(() => {
     const activeTask = tasks.find((task) => task.status === "in_progress" && typeof task.log_id === "number");
@@ -695,10 +714,39 @@ export default function TaskListPage() {
     return currentUserProfile ? [currentUserProfile] : [];
   }, [assignedByProfiles, currentUserProfile]);
 
-  const filteredTasks = useMemo(
-    () => (statusFilter === "all" ? tasks : tasks.filter((task) => task.status === statusFilter)),
-    [tasks, statusFilter]
+  const taskNameFilterOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.assigned_tasks.task_name).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [tasks]
   );
+  const objectiveFilterOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.assigned_tasks.project ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
+  const accountFilterOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.assigned_tasks.account ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
+
+  const filteredTasks = useMemo(() => {
+    const start = filterDueStart ? new Date(filterDueStart) : null;
+    const end = filterDueEnd ? new Date(`${filterDueEnd}T23:59:59.999`) : null;
+    const taskNameSearchLower = taskNameSearch.trim().toLowerCase();
+
+    return tasks.filter((task) => {
+      const detail = task.assigned_tasks;
+      const dueDate = detail.due_date ? new Date(detail.due_date) : null;
+      const dueTime = dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate.getTime() : null;
+
+      if (filterStatuses.length > 0 && !filterStatuses.includes(task.status)) return false;
+      if (filterAccounts.length > 0 && !filterAccounts.includes(detail.account ?? "")) return false;
+      if (filterTaskNames.length > 0 && !filterTaskNames.includes(detail.task_name)) return false;
+      if (filterObjectives.length > 0 && !filterObjectives.includes(detail.project ?? "")) return false;
+      if (taskNameSearchLower && !detail.task_name.toLowerCase().includes(taskNameSearchLower)) return false;
+      if (start && (!dueTime || dueTime < start.getTime())) return false;
+      if (end && (!dueTime || dueTime > end.getTime())) return false;
+      return true;
+    });
+  }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterTaskNames, taskNameSearch, tasks]);
 
   const startInlineEdit = useCallback(
     (e: React.MouseEvent, taskId: number, field: InlineEditField, value: string) => {
@@ -775,18 +823,189 @@ export default function TaskListPage() {
     setInlineEdit(null);
   }, []);
 
+  function FilterDropdown<T extends string>({
+    label,
+    options,
+    selected,
+    onChange,
+    isOpen,
+    onToggle,
+    searchable,
+    searchValue,
+    onSearchChange,
+    searchPlaceholder,
+  }: {
+    label: string;
+    options: { value: T; label: string }[];
+    selected: T[];
+    onChange: (v: T[]) => void;
+    isOpen: boolean;
+    onToggle: () => void;
+    searchable?: boolean;
+    searchValue?: string;
+    onSearchChange?: (v: string) => void;
+    searchPlaceholder?: string;
+  }) {
+    const visibleOptions = searchable && searchValue
+      ? options.filter((opt) => opt.label.toLowerCase().includes(searchValue.toLowerCase()))
+      : options;
+
+    return (
+      <div className="relative">
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] outline-none transition-all ${
+            selected.length > 0
+              ? "border-terracotta text-terracotta"
+              : "border-sand bg-white text-espresso hover:border-walnut"
+          }`}
+        >
+          {label}
+          {selected.length > 0 && (
+            <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">
+              {selected.length}
+            </span>
+          )}
+          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {isOpen && (
+          <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-xl border border-sand bg-white py-1 shadow-lg">
+            {searchable && onSearchChange && (
+              <div className="border-b border-sand px-3 py-2">
+                <input
+                  value={searchValue || ""}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  placeholder={searchPlaceholder || `Search ${label.toLowerCase()}...`}
+                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-between border-b border-sand px-3 py-1.5">
+              <button type="button" onClick={() => onChange(visibleOptions.map((o) => o.value))} className="cursor-pointer text-[11px] text-terracotta hover:underline">
+                Select All
+              </button>
+              <button type="button" onClick={() => onChange([])} className="cursor-pointer text-[11px] text-stone hover:underline">
+                Clear
+              </button>
+            </div>
+            {visibleOptions.length > 0 ? (
+              visibleOptions.map((opt) => (
+                <label key={opt.value} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-parchment">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(opt.value)}
+                    onChange={(e) => {
+                      if (e.target.checked) onChange([...selected, opt.value]);
+                      else onChange(selected.filter((value) => value !== opt.value));
+                    }}
+                    className="accent-terracotta"
+                  />
+                  <span className="text-[13px] text-espresso">{opt.label}</span>
+                </label>
+              ))
+            ) : (
+              <div className="px-3 py-2 text-[12px] text-stone">No options found</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function DateRangeDropdown({
+    label,
+    start,
+    end,
+    isOpen,
+    onToggle,
+    onStartChange,
+    onEndChange,
+  }: {
+    label: string;
+    start: string;
+    end: string;
+    isOpen: boolean;
+    onToggle: () => void;
+    onStartChange: (v: string) => void;
+    onEndChange: (v: string) => void;
+  }) {
+    const activeCount = Number(Boolean(start)) + Number(Boolean(end));
+
+    return (
+      <div className="relative">
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] outline-none transition-all ${
+            activeCount > 0
+              ? "border-terracotta text-terracotta"
+              : "border-sand bg-white text-espresso hover:border-walnut"
+          }`}
+        >
+          {label}
+          {activeCount > 0 && (
+            <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">
+              {activeCount}
+            </span>
+          )}
+          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {isOpen && (
+          <div className="absolute left-0 top-full z-50 mt-1 min-w-[240px] rounded-xl border border-sand bg-white p-3 shadow-lg">
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
+                <input
+                  type="date"
+                  value={start}
+                  onChange={(e) => onStartChange(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">To</label>
+                <input
+                  type="date"
+                  value={end}
+                  onChange={(e) => onEndChange(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+                />
+              </div>
+              <div className="flex items-center justify-between border-t border-sand pt-2">
+                <button type="button" onClick={() => { onStartChange(""); onEndChange(""); }} className="cursor-pointer text-[11px] text-stone hover:underline">
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function InlineCell({
     task,
     field,
     display,
     className,
+    disabled,
   }: {
     task: VATaskRow;
     field: InlineEditField;
-    display: React.ReactNode;
+    display: ReactNode;
     className?: string;
+    disabled?: boolean;
   }) {
     const isEditing = inlineEdit?.taskId === task.id && inlineEdit?.field === field;
+
+    if (disabled) {
+      return <td className={className ?? "px-3 py-3 text-[13px]"}>{display || <span className="text-stone/40">—</span>}</td>;
+    }
 
     if (isEditing) {
       return (
@@ -1311,6 +1530,21 @@ export default function TaskListPage() {
             <p className="text-xs text-stone">Assigned work and collaborative tasks visible to you.</p>
           </div>
 
+          <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+            {(["active", "archived", "trash"] as const).map((view) => (
+              <button
+                key={view}
+                type="button"
+                onClick={() => setTaskView(view)}
+                className={`rounded-md px-3 py-1.5 capitalize transition-colors ${
+                  taskView === view ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                }`}
+              >
+                {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
+              </button>
+            ))}
+          </div>
+
           {canShowAvailableTasks && (
             <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
               <button
@@ -1332,24 +1566,80 @@ export default function TaskListPage() {
 
           {(!canShowAvailableTasks || activeView === "my_tasks") && (
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={openCreate}
-                className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-              >
-                + Create Task
-              </button>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as AssignedTaskStatus | "all")}
-                className="rounded-lg border border-sand bg-white px-3 py-2 text-xs text-espresso outline-none focus:border-terracotta"
-              >
-                {STATUS_FILTERS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              {taskView === "active" && (
+                <button
+                  type="button"
+                  onClick={openCreate}
+                  className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                >
+                  + Create Task
+                </button>
+              )}
+              <FilterDropdown
+                label="Task Name"
+                options={taskNameFilterOptions.map((taskName) => ({ value: taskName, label: taskName }))}
+                selected={filterTaskNames}
+                onChange={setFilterTaskNames}
+                isOpen={openFilter === "taskname"}
+                onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
+                searchable
+                searchValue={taskNameSearch}
+                onSearchChange={setTaskNameSearch}
+                searchPlaceholder="Search task names..."
+              />
+              <FilterDropdown
+                label="Objective"
+                options={objectiveFilterOptions.map((objective) => ({ value: objective, label: objective }))}
+                selected={filterObjectives}
+                onChange={setFilterObjectives}
+                isOpen={openFilter === "objective"}
+                onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
+              />
+              <DateRangeDropdown
+                label="Due Date"
+                start={filterDueStart}
+                end={filterDueEnd}
+                isOpen={openFilter === "duedate"}
+                onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
+                onStartChange={setFilterDueStart}
+                onEndChange={setFilterDueEnd}
+              />
+              <FilterDropdown
+                label="Status"
+                options={STATUS_FILTERS.filter((option) => option.value !== "all").map((option) => ({
+                  value: option.value as AssignedTaskStatus,
+                  label: option.label,
+                }))}
+                selected={filterStatuses}
+                onChange={setFilterStatuses}
+                isOpen={openFilter === "status"}
+                onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
+              />
+              <FilterDropdown
+                label="Account"
+                options={accountFilterOptions.map((account) => ({ value: account, label: account }))}
+                selected={filterAccounts}
+                onChange={setFilterAccounts}
+                isOpen={openFilter === "account"}
+                onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
+              />
+              {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterStatuses([]);
+                    setFilterAccounts([]);
+                    setFilterTaskNames([]);
+                    setFilterObjectives([]);
+                    setFilterDueStart("");
+                    setFilterDueEnd("");
+                    setTaskNameSearch("");
+                  }}
+                  className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
+                >
+                  Clear all
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1364,11 +1654,9 @@ export default function TaskListPage() {
                   {filteredTasks.length}
                 </span>
                 <span>task{filteredTasks.length === 1 ? "" : "s"}</span>
-                {statusFilter !== "all" && (
-                  <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 font-semibold text-slate-blue">
-                    filtered by {STATUS_LABELS[statusFilter]}
-                  </span>
-                )}
+                <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 font-semibold text-slate-blue">
+                  {taskView === "active" ? "Active" : taskView === "archived" ? "Archived" : "Trash"}
+                </span>
               </div>
 
               {error && (
@@ -1433,6 +1721,7 @@ export default function TaskListPage() {
                               task={task}
                               field="task_name"
                               className="px-3 py-3 text-[13px]"
+                              disabled={taskView !== "active"}
                               display={
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="font-medium text-walnut">{detail.task_name}</span>
@@ -1449,6 +1738,7 @@ export default function TaskListPage() {
                               task={task}
                               field="account"
                               className="px-3 py-3 text-[13px] text-walnut"
+                              disabled={taskView !== "active"}
                               display={detail.account || <span className="text-stone/60">—</span>}
                             />
 
@@ -1456,6 +1746,7 @@ export default function TaskListPage() {
                               task={task}
                               field="project"
                               className="px-3 py-3 text-[13px] text-walnut"
+                              disabled={taskView !== "active"}
                               display={detail.project || <span className="text-stone/60">—</span>}
                             />
 
@@ -1473,6 +1764,7 @@ export default function TaskListPage() {
                               task={task}
                               field="status"
                               className="px-3 py-3 text-[13px]"
+                              disabled={taskView !== "active"}
                               display={<StatusBadge status={task.status} />}
                             />
 
@@ -1480,6 +1772,7 @@ export default function TaskListPage() {
                               task={task}
                               field="due_date"
                               className={`px-3 py-3 text-[13px] font-medium ${dueTextClass}`}
+                              disabled={taskView !== "active"}
                               display={
                                 detail.due_date ? (
                                   <>

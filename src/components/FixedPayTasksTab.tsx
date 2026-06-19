@@ -99,7 +99,11 @@ export default function FixedPayTasksTab() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
-
+  const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
+  const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
+  const [filterCategories, setFilterCategories] = useState<string[]>([]);
+  const [filterStatuses, setFilterStatuses] = useState<FixedPayTaskWithClaimer["status"][]>([]);
+  const [openFilter, setOpenFilter] = useState<"taskname" | "account" | "category" | "status" | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
   const [form, setForm] = useState<TaskFormState>(EMPTY_FORM);
@@ -190,11 +194,30 @@ export default function FixedPayTasksTab() {
     }
   }, [fetchAttachments, panelMode, selectedTask]);
 
+  const taskNameFilterOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.task_name).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
+  const accountFilterOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.account ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
+  const categoryFilterOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.category ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
+
   const filteredTasks = useMemo(() => {
-    if (activeFilter === "all") return tasks;
-    if (activeFilter === "active") return tasks.filter((task) => task.is_active);
-    return tasks.filter((task) => !task.is_active);
-  }, [activeFilter, tasks]);
+    return tasks.filter((task) => {
+      if (activeFilter === "active" && !task.is_active) return false;
+      if (activeFilter === "inactive" && task.is_active) return false;
+      if (filterTaskNames.length > 0 && !filterTaskNames.includes(task.task_name ?? "")) return false;
+      if (filterAccounts.length > 0 && !filterAccounts.includes(task.account ?? "")) return false;
+      if (filterCategories.length > 0 && !filterCategories.includes(task.category ?? "")) return false;
+      if (filterStatuses.length > 0 && !filterStatuses.includes(task.status)) return false;
+      return true;
+    });
+  }, [activeFilter, filterAccounts, filterCategories, filterStatuses, filterTaskNames, tasks]);
 
   const accountOptions = useMemo(() => mergeTextOptions(accounts, form.account), [accounts, form.account]);
   const categoryOptions = useMemo(() => mergeTextOptions(categories, form.category), [categories, form.category]);
@@ -203,6 +226,76 @@ export default function FixedPayTasksTab() {
     () => mergeProfiles(activeProfiles, selectedAssignedProfile),
     [selectedAssignedProfile, activeProfiles]
   );
+
+  function FilterDropdown<T extends string>({
+    label,
+    options,
+    selected,
+    onChange,
+    isOpen,
+    onToggle,
+  }: {
+    label: string;
+    options: { value: T; label: string }[];
+    selected: T[];
+    onChange: (v: T[]) => void;
+    isOpen: boolean;
+    onToggle: () => void;
+  }) {
+    return (
+      <div className="relative">
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] outline-none transition-all ${
+            selected.length > 0
+              ? "border-terracotta text-terracotta"
+              : "border-sand bg-white text-espresso hover:border-walnut"
+          }`}
+        >
+          {label}
+          {selected.length > 0 && (
+            <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">
+              {selected.length}
+            </span>
+          )}
+          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {isOpen && (
+          <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-xl border border-sand bg-white py-1 shadow-lg">
+            <div className="flex items-center justify-between border-b border-sand px-3 py-1.5">
+              <button type="button" onClick={() => onChange(options.map((o) => o.value))} className="cursor-pointer text-[11px] text-terracotta hover:underline">
+                Select All
+              </button>
+              <button type="button" onClick={() => onChange([])} className="cursor-pointer text-[11px] text-stone hover:underline">
+                Clear
+              </button>
+            </div>
+            {options.length > 0 ? (
+              options.map((opt) => (
+                <label key={opt.value} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-parchment">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(opt.value)}
+                    onChange={(e) => {
+                      if (e.target.checked) onChange([...selected, opt.value]);
+                      else onChange(selected.filter((value) => value !== opt.value));
+                    }}
+                    className="accent-terracotta"
+                  />
+                  <span className="text-[13px] text-espresso">{opt.label}</span>
+                </label>
+              ))
+            ) : (
+              <div className="px-3 py-2 text-[12px] text-stone">No options found</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const openCreatePanel = useCallback(() => {
     setPanelMode("create");
@@ -401,6 +494,54 @@ export default function FixedPayTasksTab() {
                 </button>
               ))}
             </div>
+
+            <FilterDropdown
+              label="Task Name"
+              options={taskNameFilterOptions.map((taskName) => ({ value: taskName, label: taskName }))}
+              selected={filterTaskNames}
+              onChange={setFilterTaskNames}
+              isOpen={openFilter === "taskname"}
+              onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
+            />
+            <FilterDropdown
+              label="Account"
+              options={accountFilterOptions.map((account) => ({ value: account, label: account }))}
+              selected={filterAccounts}
+              onChange={setFilterAccounts}
+              isOpen={openFilter === "account"}
+              onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
+            />
+            <FilterDropdown
+              label="Category"
+              options={categoryFilterOptions.map((category) => ({ value: category, label: category }))}
+              selected={filterCategories}
+              onChange={setFilterCategories}
+              isOpen={openFilter === "category"}
+              onToggle={() => setOpenFilter(openFilter === "category" ? null : "category")}
+            />
+            <FilterDropdown
+              label="Status"
+              options={STATUS_OPTIONS.map((status) => ({ value: status, label: STATUS_LABELS[status] }))}
+              selected={filterStatuses}
+              onChange={setFilterStatuses}
+              isOpen={openFilter === "status"}
+              onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
+            />
+            {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || activeFilter !== "all") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveFilter("all");
+                  setFilterTaskNames([]);
+                  setFilterAccounts([]);
+                  setFilterCategories([]);
+                  setFilterStatuses([]);
+                }}
+                className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
+              >
+                Clear all
+              </button>
+            )}
 
             <button
               type="button"
