@@ -375,9 +375,10 @@ export default function TaskListPage() {
     }
   }, [supabase]);
 
+  const isAdmin = currentRole === "admin";
   const isPerTaskVa = currentPosition === "Per Task VA";
-  const canShowAvailableTasks = canSeeAvailableTasks;
-  const canShowHourlyPool = currentRole === "va" && !isPerTaskVa;
+  const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
+  const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
