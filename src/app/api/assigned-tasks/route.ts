@@ -327,6 +327,7 @@ export async function POST(request: Request) {
     instructions,
     instructions_locked,
     fixed_pay_task_id,
+    recurring_template_id,
     va_ids: rawVaIds,
     initial_status,
   } = body as {
