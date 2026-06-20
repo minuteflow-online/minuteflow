@@ -1719,49 +1719,61 @@ export default function TaskListPage() {
     []
   );
 
+  // Map assignee row IDs (stored in selectedTaskIds) to actual assigned_tasks IDs
+  const assigneeIdsToTaskIds = useCallback((assigneeIds: number[]): number[] => {
+    return assigneeIds
+      .map((id) => tasks.find((t) => t.id === id)?.assigned_tasks.id)
+      .filter((id): id is number => id !== undefined);
+  }, [tasks]);
+
   const handleBulkArchive = useCallback(async () => {
-    const ids = [...selectedTaskIds];
-    await Promise.all(ids.map((id) => patchTaskVisibility(id, { archived_at: new Date().toISOString() })));
+    const assigneeIds = [...selectedTaskIds];
+    const taskIds = assigneeIdsToTaskIds(assigneeIds);
+    await Promise.all(taskIds.map((id) => patchTaskVisibility(id, { archived_at: new Date().toISOString() })));
     setSelectedTaskIds([]);
-    if (selectedTask && ids.includes(selectedTask.id)) closePanel();
+    if (selectedTask && assigneeIds.includes(selectedTask.id)) closePanel();
     await fetchTasks();
-  }, [closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds]);
+  }, [assigneeIdsToTaskIds, closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds]);
 
   const handleBulkTrash = useCallback(async () => {
-    const ids = [...selectedTaskIds];
-    await Promise.all(ids.map((id) => patchTaskVisibility(id, { deleted_at: new Date().toISOString() })));
+    const assigneeIds = [...selectedTaskIds];
+    const taskIds = assigneeIdsToTaskIds(assigneeIds);
+    await Promise.all(taskIds.map((id) => patchTaskVisibility(id, { deleted_at: new Date().toISOString() })));
     setSelectedTaskIds([]);
-    if (selectedTask && ids.includes(selectedTask.id)) closePanel();
+    if (selectedTask && assigneeIds.includes(selectedTask.id)) closePanel();
     await fetchTasks();
-  }, [closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds]);
+  }, [assigneeIdsToTaskIds, closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds]);
 
   const handleBulkRestore = useCallback(async () => {
-    const ids = [...selectedTaskIds];
+    const assigneeIds = [...selectedTaskIds];
+    const taskIds = assigneeIdsToTaskIds(assigneeIds);
     const payload: Record<string, string | null> = taskView === "archived" ? { archived_at: null } : { deleted_at: null };
-    await Promise.all(ids.map((id) => patchTaskVisibility(id, payload)));
+    await Promise.all(taskIds.map((id) => patchTaskVisibility(id, payload)));
     setSelectedTaskIds([]);
-    if (selectedTask && ids.includes(selectedTask.id)) closePanel();
+    if (selectedTask && assigneeIds.includes(selectedTask.id)) closePanel();
     await fetchTasks();
-  }, [closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds, taskView]);
+  }, [assigneeIdsToTaskIds, closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds, taskView]);
 
   const handleBulkPermanentDelete = useCallback(async () => {
-    const ids = [...selectedTaskIds];
-    await Promise.all(ids.map((id) => fetch(`/api/assigned-tasks/${id}`, { method: "DELETE" })));
+    const assigneeIds = [...selectedTaskIds];
+    const taskIds = assigneeIdsToTaskIds(assigneeIds);
+    await Promise.all(taskIds.map((id) => fetch(`/api/assigned-tasks/${id}`, { method: "DELETE" })));
     setSelectedTaskIds([]);
-    if (selectedTask && ids.includes(selectedTask.id)) closePanel();
+    if (selectedTask && assigneeIds.includes(selectedTask.id)) closePanel();
     await fetchTasks();
-  }, [closePanel, fetchTasks, selectedTask, selectedTaskIds]);
+  }, [assigneeIdsToTaskIds, closePanel, fetchTasks, selectedTask, selectedTaskIds]);
 
+  // Row-level handlers receive the actual assigned_tasks.id (not assignee row id)
   const handleRestoreTask = useCallback(async (taskId: number) => {
     const payload: Record<string, string | null> = taskView === "archived" ? { archived_at: null } : { deleted_at: null };
     await patchTaskVisibility(taskId, payload);
-    if (selectedTask?.id === taskId) closePanel();
+    if (selectedTask?.assigned_tasks.id === taskId) closePanel();
     await fetchTasks();
   }, [closePanel, fetchTasks, patchTaskVisibility, selectedTask, taskView]);
 
   const handlePermanentDeleteTask = useCallback(async (taskId: number) => {
     await fetch(`/api/assigned-tasks/${taskId}`, { method: "DELETE" });
-    if (selectedTask?.id === taskId) closePanel();
+    if (selectedTask?.assigned_tasks.id === taskId) closePanel();
     await fetchTasks();
   }, [closePanel, fetchTasks, selectedTask]);
 
@@ -2197,7 +2209,7 @@ export default function TaskListPage() {
                                 <div className="flex items-center gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => void handleRestoreTask(task.id)}
+                                    onClick={() => void handleRestoreTask(task.assigned_tasks.id)}
                                     className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment"
                                   >
                                     Restore
@@ -2205,7 +2217,7 @@ export default function TaskListPage() {
                                   {taskView === "trash" && isAdmin && (
                                     <button
                                       type="button"
-                                      onClick={() => void handlePermanentDeleteTask(task.id)}
+                                      onClick={() => void handlePermanentDeleteTask(task.assigned_tasks.id)}
                                       className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-100"
                                     >
                                       Delete Forever
