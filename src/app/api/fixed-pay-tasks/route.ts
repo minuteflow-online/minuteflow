@@ -8,7 +8,7 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"]);
 const TASK_SELECT =
-  "id, task_name, account, category, rate, is_active, task_detail, task_notes, link, instructions, instructions_locked, status, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
+  "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -56,6 +56,16 @@ function parseRate(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function matchesTaskView(
+  task: { is_active?: boolean | null; archived_at?: string | null; deleted_at?: string | null },
+  view: string | null
+) {
+  if (view === "archived") return Boolean(task.archived_at) && !task.deleted_at;
+  if (view === "trash") return Boolean(task.deleted_at);
+  if (view === "inactive") return !task.is_active && !task.archived_at && !task.deleted_at;
+  if (view === "active") return Boolean(task.is_active) && !task.archived_at && !task.deleted_at;
+  return true;
+}
 async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: FixedPayTaskWithClaimer[]) {
   const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to, row.assigned_by]).filter((id): id is string => Boolean(id)))];
   let profileMap: Record<string, ProfileSummary> = {};
@@ -77,12 +87,14 @@ async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: F
   }));
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const auth = await getAuthedProfile();
   if ("error" in auth) return auth.error;
 
   const { supabase, userId, role } = auth;
   const isAdminOrManager = role === "admin" || role === "manager";
+  const { searchParams } = new URL(request.url);
+  const view = searchParams.get("view");
 
   const { data, error } = await supabase
     .from("fixed_pay_tasks")
@@ -96,8 +108,9 @@ export async function GET() {
   const rows = await hydrateTaskProfiles(supabase, (data ?? []) as FixedPayTaskWithClaimer[]);
 
   if (!isAdminOrManager) {
-    const unclaimed = rows.filter((task) => task.is_active && !task.claimed_by);
-    const mine = rows.filter((task) => task.is_active && task.claimed_by === userId);
+    const visibleRows = rows.filter((task) => matchesTaskView(task, "active"));
+    const unclaimed = visibleRows.filter((task) => !task.claimed_by);
+    const mine = visibleRows.filter((task) => task.claimed_by === userId);
 
     const mineIds = mine.map((t) => t.id);
     let atMap: Record<string | number, number> = {};
@@ -117,8 +130,10 @@ export async function GET() {
     });
   }
 
+  const filteredRows = view ? rows.filter((task) => matchesTaskView(task, view)) : rows;
+
   return Response.json({
-    tasks: rows.map((t) => ({ ...t, claimed_by_me: t.claimed_by === userId })),
+    tasks: filteredRows.map((t) => ({ ...t, claimed_by_me: t.claimed_by === userId })),
   });
 }
 
@@ -154,6 +169,8 @@ export async function POST(request: Request) {
       account: normalizeText(body.account),
       category: normalizeText(body.category),
       rate,
+      archived_at: null,
+      deleted_at: null,
       task_detail: normalizeText(body.task_detail),
       task_notes: normalizeText(body.task_notes),
       link: normalizeText(body.link),

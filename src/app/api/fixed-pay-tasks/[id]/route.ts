@@ -8,7 +8,7 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"]);
 const TASK_SELECT =
-  "id, task_name, account, category, rate, is_active, task_detail, task_notes, link, instructions, instructions_locked, status, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
+  "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -64,6 +64,14 @@ function parseRate(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeTimestamp(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: FixedPayTaskWithClaimer[]) {
   const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to, row.assigned_by]).filter((id): id is string => Boolean(id)))];
   let profileMap: Record<string, ProfileSummary> = {};
@@ -100,6 +108,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const now = new Date().toISOString();
   const hasAssignedTo = Object.prototype.hasOwnProperty.call(body, "assigned_to");
   const nextAssignedTo = hasAssignedTo ? normalizeText(body.assigned_to) : undefined;
+  const hasArchivedAt = Object.prototype.hasOwnProperty.call(body, "archived_at");
+  const hasDeletedAt = Object.prototype.hasOwnProperty.call(body, "deleted_at");
+  const nextArchivedAt = hasArchivedAt ? normalizeTimestamp(body.archived_at) : undefined;
+  const nextDeletedAt = hasDeletedAt ? normalizeTimestamp(body.deleted_at) : undefined;
   let currentTaskForAssignment:
     | { claimed_by: string | null; task_name: string | null; account: string | null; category: string | null }
     | null = null;
@@ -121,6 +133,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if ("link" in body) updates.link = normalizeText(body.link);
   if ("instructions" in body) updates.instructions = normalizeText(body.instructions);
   if ("instructions_locked" in body) updates.instructions_locked = Boolean(body.instructions_locked);
+  if (hasArchivedAt) updates.archived_at = nextArchivedAt;
+  if (hasDeletedAt) updates.deleted_at = nextDeletedAt;
   if ("status" in body) {
     const status = String(body.status ?? "");
     if (!isValidStatus(status)) {
@@ -131,6 +145,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (hasAssignedTo) updates.assigned_to = nextAssignedTo;
   if ("assigned_by" in body) updates.assigned_by = normalizeText(body.assigned_by);
   if ("is_active" in body) updates.is_active = Boolean(body.is_active);
+  if (hasArchivedAt || hasDeletedAt) {
+    const isInactive = Boolean(nextArchivedAt || nextDeletedAt);
+    updates.is_active = isInactive ? false : "is_active" in body ? Boolean(body.is_active) : true;
+  }
 
   const revokeClaim = Object.prototype.hasOwnProperty.call(body, "claimed_by") && body.claimed_by === null;
   if (revokeClaim) {

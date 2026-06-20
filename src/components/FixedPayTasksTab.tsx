@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement } from "react";
 import type { FixedPayTaskAttachment, FixedPayTaskWithClaimer, Profile } from "@/types/database";
 
-const ACTIVE_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive"; label: string }> = [
+const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
   { value: "inactive", label: "Inactive" },
+  { value: "archived", label: "Archived" },
+  { value: "trash", label: "Trash" },
 ];
 
 const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"];
@@ -49,7 +51,7 @@ const EMPTY_FORM = {
 
 type TaskFormState = typeof EMPTY_FORM;
 type PanelMode = "create" | "edit" | null;
-type ActiveFilter = "all" | "active" | "inactive";
+type ActiveFilter = "all" | "active" | "inactive" | "archived" | "trash";
 
 type ProfileSummary = Pick<Profile, "id" | "full_name" | "username">;
 
@@ -165,10 +167,11 @@ export default function FixedPayTasksTab() {
   const [pendingAttachment, setPendingAttachment] = useState<File | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
 
-  const fetchTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (view: ActiveFilter = activeFilter) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/fixed-pay-tasks", { cache: "no-store" });
+      const query = view === "all" ? "" : `?view=${encodeURIComponent(view)}`;
+      const res = await fetch(`/api/fixed-pay-tasks${query}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { tasks?: FixedPayTaskWithClaimer[] } | FixedPayTaskWithClaimer[];
       const rows = Array.isArray(json) ? json : json.tasks ?? [];
@@ -179,7 +182,7 @@ export default function FixedPayTasksTab() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeFilter]);
 
   const fetchLookups = useCallback(async () => {
     try {
@@ -224,8 +227,11 @@ export default function FixedPayTasksTab() {
 
   useEffect(() => {
     void fetchTasks();
+  }, [fetchTasks]);
+
+  useEffect(() => {
     void fetchLookups();
-  }, [fetchLookups, fetchTasks]);
+  }, [fetchLookups]);
 
   useEffect(() => {
     if (panelMode === "edit" && selectedTask) {
@@ -254,8 +260,10 @@ export default function FixedPayTasksTab() {
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
-      if (activeFilter === "active" && !task.is_active) return false;
-      if (activeFilter === "inactive" && task.is_active) return false;
+      if (activeFilter === "active" && (!task.is_active || task.archived_at || task.deleted_at)) return false;
+      if (activeFilter === "inactive" && (task.is_active || task.archived_at || task.deleted_at)) return false;
+      if (activeFilter === "archived" && (!task.archived_at || task.deleted_at)) return false;
+      if (activeFilter === "trash" && !task.deleted_at) return false;
       if (filterTaskNames.length > 0 && !filterTaskNames.includes(task.task_name ?? "")) return false;
       if (filterAccounts.length > 0 && !filterAccounts.includes(task.account ?? "")) return false;
       if (filterCategories.length > 0 && !filterCategories.includes(task.category ?? "")) return false;
@@ -370,10 +378,15 @@ export default function FixedPayTasksTab() {
   const handleToggleActive = useCallback(
     async (task: FixedPayTaskWithClaimer) => {
       try {
+        const restoreArchive = Boolean(task.archived_at || task.deleted_at);
         const res = await fetch(`/api/fixed-pay-tasks/${task.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ is_active: !task.is_active }),
+          body: JSON.stringify(
+            restoreArchive
+              ? { archived_at: null, deleted_at: null, is_active: true }
+              : { is_active: !task.is_active }
+          ),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as { task?: FixedPayTaskWithClaimer };
@@ -428,14 +441,58 @@ export default function FixedPayTasksTab() {
       }
 
       setForm((current) => ({ ...current, assigned_to: "" }));
-      await fetchTasks();
+      await fetchTasks(activeFilter);
       setMessage({ type: "ok", text: "Claim revoked." });
     } catch (error) {
       setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to revoke claim." });
     } finally {
       setRevokingClaim(false);
     }
-  }, [fetchTasks, selectedTask]);
+  }, [activeFilter, fetchTasks, selectedTask]);
+
+  const handleTaskVisibilityChange = useCallback(
+    async (task: FixedPayTaskWithClaimer, payload: Record<string, unknown>, successText: string) => {
+      try {
+        const res = await fetch(`/api/fixed-pay-tasks/${task.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data = (await res.json()) as { task?: FixedPayTaskWithClaimer };
+        if (data.task) {
+          setTasks((current) => current.map((item) => (item.id === task.id ? data.task! : item)));
+          if (selectedTask?.id === task.id) {
+            setSelectedTask(data.task);
+            setForm(taskToForm(data.task));
+          }
+        }
+
+        await fetchTasks(activeFilter);
+        setMessage({ type: "ok", text: successText });
+      } catch (error) {
+        setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to update task." });
+      }
+    },
+    [activeFilter, fetchTasks, selectedTask?.id]
+  );
+
+  const handleArchiveTask = useCallback(
+    (task: FixedPayTaskWithClaimer) => void handleTaskVisibilityChange(task, { archived_at: new Date().toISOString(), deleted_at: null }, "Task archived."),
+    [handleTaskVisibilityChange]
+  );
+
+  const handleTrashTask = useCallback(
+    (task: FixedPayTaskWithClaimer) => void handleTaskVisibilityChange(task, { deleted_at: new Date().toISOString(), archived_at: null }, "Task moved to trash."),
+    [handleTaskVisibilityChange]
+  );
+
+  const handleRestoreTask = useCallback(
+    (task: FixedPayTaskWithClaimer) => void handleTaskVisibilityChange(task, { archived_at: null, deleted_at: null, is_active: true }, "Task restored."),
+    [handleTaskVisibilityChange]
+  );
 
   const handleSubmit = useCallback(async () => {
     if (!form.task_name.trim()) {
@@ -594,7 +651,7 @@ export default function FixedPayTasksTab() {
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-              {ACTIVE_FILTER_PILLS.map((pill) => (
+              {VIEW_FILTER_PILLS.map((pill) => (
                 <button
                   key={pill.value}
                   type="button"
@@ -678,7 +735,7 @@ export default function FixedPayTasksTab() {
             <span>task{filteredTasks.length === 1 ? "" : "s"}</span>
             {activeFilter !== "all" && (
               <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 font-semibold text-slate-blue">
-                filtered by {activeFilter === "active" ? "Active" : "Inactive"}
+                filtered by {activeFilter === "active" ? "Active" : activeFilter === "inactive" ? "Inactive" : activeFilter === "archived" ? "Archived" : "Trash"}
               </span>
             )}
           </div>
@@ -712,6 +769,14 @@ export default function FixedPayTasksTab() {
                   {filteredTasks.map((task) => {
                     const claimedBy = task.claimed_by_profile?.full_name || task.claimed_by_profile?.username || "—";
                     const isSelected = selectedTask?.id === task.id;
+                    const rowStateLabel = task.deleted_at ? "Trash" : task.archived_at ? "Archived" : task.is_active ? "On" : "Off";
+                    const rowStateClass = task.deleted_at
+                      ? "bg-red-100 text-red-600 hover:bg-red-100"
+                      : task.archived_at
+                        ? "bg-amber-100 text-amber-700 hover:bg-amber-100"
+                        : task.is_active
+                          ? "bg-sage-soft text-sage hover:bg-sage/20"
+                          : "bg-parchment text-stone hover:bg-sand";
 
                     return (
                       <tr
@@ -753,11 +818,9 @@ export default function FixedPayTasksTab() {
                           <button
                             type="button"
                             onClick={() => void handleToggleActive(task)}
-                            className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${
-                              task.is_active ? "bg-sage-soft text-sage hover:bg-sage/20" : "bg-parchment text-stone hover:bg-sand"
-                            }`}
+                            className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition-colors ${rowStateClass}`}
                           >
-                            {task.is_active ? "On" : "Off"}
+                            {rowStateLabel}
                           </button>
                         </td>
                       </tr>
@@ -984,6 +1047,37 @@ export default function FixedPayTasksTab() {
                 />
                 Active
               </label>
+
+              {panelMode === "edit" && selectedTask && (
+                <div className="flex flex-wrap gap-2">
+                  {selectedTask.archived_at || selectedTask.deleted_at ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleRestoreTask(selectedTask)}
+                      className="rounded-lg border border-sage px-3 py-1.5 text-[11px] font-semibold text-sage transition-colors hover:bg-sage-soft"
+                    >
+                      Restore
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleArchiveTask(selectedTask)}
+                        className="rounded-lg border border-amber-400 px-3 py-1.5 text-[11px] font-semibold text-amber-700 transition-colors hover:bg-amber-50"
+                      >
+                        Archive
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleTrashTask(selectedTask)}
+                        className="rounded-lg border border-red-300 px-3 py-1.5 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-50"
+                      >
+                        Trash
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
 
               <div className="rounded-xl border border-sand bg-parchment/20 p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">

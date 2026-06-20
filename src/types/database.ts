@@ -541,6 +541,8 @@ export interface FixedPayTaskWithClaimer {
   category: string | null;
   rate: number;
   is_active: boolean;
+  archived_at: string | null;
+  deleted_at: string | null;
   task_detail: string | null;
   task_notes: string | null;
   link: string | null;

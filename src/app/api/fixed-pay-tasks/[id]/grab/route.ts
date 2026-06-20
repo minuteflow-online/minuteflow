@@ -52,7 +52,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const { data: task, error: taskError } = await admin
     .from("fixed_pay_tasks")
-    .select("id, task_name, account, category, rate, is_active, claimed_by, claimed_at, created_by, created_at, updated_at")
+    .select("id, task_name, account, category, rate, is_active, archived_at, deleted_at, claimed_by, claimed_at, created_by, created_at, updated_at")
     .eq("id", taskId)
     .single();
 
@@ -62,6 +62,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   if (!task.is_active) {
     return Response.json({ error: "Task is inactive" }, { status: 409 });
+  }
+  if (task.deleted_at) {
+    return Response.json({ error: "Task is in trash" }, { status: 409 });
+  }
+  if (task.archived_at) {
+    return Response.json({ error: "Task is archived" }, { status: 409 });
   }
   if (task.claimed_by) {
     return Response.json({ error: "Task has already been claimed" }, { status: 409 });
