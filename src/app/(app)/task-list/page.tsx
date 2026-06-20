@@ -1719,52 +1719,6 @@ export default function TaskListPage() {
     []
   );
 
-  const handleArchive = useCallback(
-    async (taskId: number) => {
-      setPanelMsg(null);
-      await patchTaskVisibility(taskId, { archived_at: new Date().toISOString() });
-      if (selectedTask?.id === taskId) closePanel();
-      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
-      await fetchTasks();
-    },
-    [closePanel, fetchTasks, patchTaskVisibility, selectedTask]
-  );
-
-  const handleTrash = useCallback(
-    async (taskId: number) => {
-      setPanelMsg(null);
-      await patchTaskVisibility(taskId, { deleted_at: new Date().toISOString() });
-      if (selectedTask?.id === taskId) closePanel();
-      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
-      await fetchTasks();
-    },
-    [closePanel, fetchTasks, patchTaskVisibility, selectedTask]
-  );
-
-  const handleRestore = useCallback(
-    async (taskId: number) => {
-      setPanelMsg(null);
-      await patchTaskVisibility(taskId, { archived_at: null, deleted_at: null });
-      if (selectedTask?.id === taskId) closePanel();
-      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
-      await fetchTasks();
-    },
-    [closePanel, fetchTasks, patchTaskVisibility, selectedTask]
-  );
-
-  const handlePermanentDelete = useCallback(
-    async (taskId: number) => {
-      if (!confirm("Permanently delete this task? This cannot be undone.")) return;
-      setPanelMsg(null);
-      const res = await fetch(`/api/assigned-tasks/${taskId}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (selectedTask?.id === taskId) closePanel();
-      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
-      await fetchTasks();
-    },
-    [closePanel, fetchTasks, selectedTask]
-  );
-
   const handleBulkArchive = useCallback(async () => {
     const ids = [...selectedTaskIds];
     await Promise.all(ids.map((id) => patchTaskVisibility(id, { archived_at: new Date().toISOString() })));
@@ -1813,7 +1767,7 @@ export default function TaskListPage() {
                 {canShowHourlyPool && (
                   <button
                     type="button"
-                    onClick={() => setActiveView("hourly_pool")}
+                    onClick={() => { setActiveView("hourly_pool"); void fetchHourlyPool(); }}
                     className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "hourly_pool" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                   >
                     Unassigned Tasks
@@ -2796,54 +2750,6 @@ export default function TaskListPage() {
               </div>
 
               <div className="flex items-center gap-3">
-                {taskView === "active" ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void handleArchive(selectedTask.assigned_tasks.id)}
-                      disabled={panelSaving}
-                      className="cursor-pointer rounded-lg border border-sand bg-white px-4 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Archive
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleTrash(selectedTask.assigned_tasks.id)}
-                      disabled={panelSaving}
-                      className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Trash
-                    </button>
-                  </>
-                ) : taskView === "archived" ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleRestore(selectedTask.assigned_tasks.id)}
-                    disabled={panelSaving}
-                    className="cursor-pointer rounded-lg border border-sand bg-white px-4 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Restore
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void handleRestore(selectedTask.assigned_tasks.id)}
-                      disabled={panelSaving}
-                      className="cursor-pointer rounded-lg border border-sand bg-white px-4 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Restore
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handlePermanentDelete(selectedTask.assigned_tasks.id)}
-                      disabled={panelSaving}
-                      className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Permanent Delete
-                    </button>
-                  </>
-                )}
                 <button type="button" onClick={closePanel} className="cursor-pointer text-xs text-stone hover:text-espresso">
                   Cancel
                 </button>
