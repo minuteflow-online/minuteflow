@@ -47,9 +47,11 @@ function renderTextWithLinks(text: string) {
 export default function AvailableTasksWidget({
   onClaimed,
   canSeeFixedPay = true,
+  currentUserId,
 }: {
   onClaimed?: () => void;
   canSeeFixedPay?: boolean;
+  currentUserId?: string;
 }) {
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [pendingAssigned, setPendingAssigned] = useState<VAAssignedTask[]>([]);
@@ -198,7 +200,7 @@ export default function AvailableTasksWidget({
         const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "on_queue" }),
+          body: JSON.stringify({ status: "on_queue", ...(currentUserId ? { va_id: currentUserId } : {}) }),
         });
         if (!res.ok) {
           let message = `HTTP ${res.status}`;

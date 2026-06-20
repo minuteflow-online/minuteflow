@@ -835,7 +835,7 @@ export default function TaskListPage() {
       try {
         const payloadValue = inlineEdit.field === "due_date" && value === "" ? null : value || null;
         const body: Record<string, unknown> = { [inlineEdit.field]: payloadValue };
-        if (inlineEdit.field === "status" && currentRole === "admin" && currentUserId) {
+        if (inlineEdit.field === "status" && currentUserId) {
           body.va_id = currentUserId;
         }
         const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
@@ -1412,7 +1412,7 @@ export default function TaskListPage() {
       const body: Record<string, unknown> = {};
       if (statusChanged) body.status = nextStatus;
       if (notesChanged) body.notes = nextNotes;
-      if ((statusChanged || notesChanged) && currentRole === "admin" && currentUserId) {
+      if ((statusChanged || notesChanged) && currentUserId) {
         body.va_id = currentUserId;
       }
       if (metadataChanged) {
@@ -1728,7 +1728,7 @@ export default function TaskListPage() {
 
         <div className="px-5 py-4">
           {canShowAvailableTasks && activeView === "available_tasks" ? (
-            <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} />
+            <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} currentUserId={currentUserId ?? undefined} />
           ) : canShowHourlyPool && activeView === "hourly_pool" ? (
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-[11px] text-stone">
