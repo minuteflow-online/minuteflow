@@ -334,7 +334,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ error: "task_name cannot be empty" }, { status: 400 });
   }
 
-  if (isTaskOwner && (hasMetadataUpdate || bodyVaId !== undefined || log_id !== undefined || notes !== undefined)) {
+  if (isTaskOwner && !isAdminOrManager && (hasMetadataUpdate || bodyVaId !== undefined || log_id !== undefined || notes !== undefined)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

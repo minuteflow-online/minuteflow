@@ -217,6 +217,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         task_notes: null,
         due_date: null,
         created_by: auth.userId,
+        assigned_by: auth.userId,
         fixed_pay_task_id: taskId,
       })
       .select("id, account, project, task_name, task_detail, task_notes, due_date, created_by, fixed_pay_task_id, created_at, updated_at")
