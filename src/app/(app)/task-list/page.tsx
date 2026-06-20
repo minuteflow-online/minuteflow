@@ -2013,13 +2013,15 @@ export default function TaskListPage() {
                     >
                       Archive
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleBulkTrash()}
-                      className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-                    >
-                      Trash
-                    </button>
+                    {currentRole !== "va" && (
+                      <button
+                        type="button"
+                        onClick={() => void handleBulkTrash()}
+                        className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                      >
+                        Trash
+                      </button>
+                    )}
                   </>
                 )}
                 {(taskView === "archived" || taskView === "trash") && (

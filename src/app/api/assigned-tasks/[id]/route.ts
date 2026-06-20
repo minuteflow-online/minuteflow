@@ -227,7 +227,7 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
  * PATCH /api/assigned-tasks/[id]
  * Update an assignee row and/or task metadata.
  *
- * VA: must be assigned to the task. Can update their assignee row and task metadata.
+ * VA: must be assigned to the task. Can update their assignee row and archive their own assigned task.
  * Admin/manager: may target an assignee row with va_id; metadata-only updates do not require va_id.
  *
  * Body: { va_id?: string, status?: AssignedTaskStatus, log_id?: number, notes?: string, account?: string | null, project?: string | null, task_name?: string, task_detail?: string | null, task_notes?: string | null, due_date?: string | null }
@@ -308,7 +308,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const isTaskOwner = taskContext?.assigned_by === user.id;
 
-  const hasMetadataUpdate =
+  const hasCoreMetadataUpdate =
     account !== undefined ||
     project !== undefined ||
     task_name !== undefined ||
@@ -317,9 +317,18 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     due_date !== undefined ||
     assigned_by !== undefined ||
     instructions !== undefined ||
-    instructions_locked !== undefined ||
-    archived_at !== undefined ||
-    deleted_at !== undefined;
+    instructions_locked !== undefined;
+  const hasMetadataUpdate =
+    hasCoreMetadataUpdate || archived_at !== undefined || deleted_at !== undefined;
+  const hasArchiveUpdate = archived_at !== undefined;
+  const hasDeleteUpdate = deleted_at !== undefined;
+  const hasArchiveOnlyUpdate =
+    hasArchiveUpdate &&
+    !hasDeleteUpdate &&
+    !hasCoreMetadataUpdate &&
+    log_id === undefined &&
+    notes === undefined &&
+    status === undefined;
   const canUseTaskLevelStatusUpdate = isAdminOrManager || isTaskOwner;
   const hasTaskLevelStatusUpdate =
     status !== undefined &&
@@ -351,13 +360,48 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ error: "task_name cannot be empty" }, { status: 400 });
   }
 
+  const now = new Date().toISOString();
+
   // Task owners (non-admin) may pass va_id to target a specific assignee row for
   // status-only updates (e.g., reviewing a submitted task). Block everything else.
-  if (isTaskOwner && !isAdminOrManager && (hasMetadataUpdate || log_id !== undefined || notes !== undefined)) {
+  if (
+    isTaskOwner &&
+    !isAdminOrManager &&
+    (hasCoreMetadataUpdate || log_id !== undefined || notes !== undefined || hasDeleteUpdate)
+  ) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (hasMetadataUpdate && !isAdminOrManager) {
+  if (!isAdminOrManager && hasArchiveOnlyUpdate) {
+    const { data: assignedTask, error: assignedTaskError } = await supabase
+      .from("assigned_task_assignees")
+      .select("id")
+      .eq("assigned_task_id", id)
+      .eq("va_id", user.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (assignedTaskError) {
+      return Response.json({ error: assignedTaskError.message }, { status: 500 });
+    }
+
+    if (!assignedTask) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const { error: archiveError } = await adminSupabase
+      .from("assigned_tasks")
+      .update({ archived_at, updated_at: now })
+      .eq("id", id);
+
+    if (archiveError) {
+      return Response.json({ error: archiveError.message }, { status: 500 });
+    }
+
+    return Response.json({ ok: true });
+  }
+
+  if (!isAdminOrManager && hasMetadataUpdate) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -382,8 +426,6 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   if (!hasAssigneeUpdate && !hasMetadataUpdate && !hasTaskLevelStatusUpdate) {
     return Response.json({ error: "At least one field is required" }, { status: 400 });
   }
-
-  const now = new Date().toISOString();
 
   if (hasTaskLevelStatusUpdate) {
     const { error: taskStatusError } = await adminSupabase
