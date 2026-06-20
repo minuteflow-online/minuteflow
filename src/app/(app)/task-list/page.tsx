@@ -1532,6 +1532,7 @@ export default function TaskListPage() {
     panelTaskNotes,
     selectedTask,
     currentUserId,
+    isAssignedByMeView,
     requestStream,
     captureTaskScreenshot,
   ]);
