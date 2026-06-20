@@ -256,7 +256,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
   const hasTaskLevelStatusUpdate =
     status !== undefined && !bodyVaId && isAdminOrManager && log_id === undefined && notes === undefined;
-  const hasAssigneeUpdate = log_id !== undefined || notes !== undefined || (status !== undefined && bodyVaId !== undefined);
+  const hasAssigneeUpdate = log_id !== undefined || notes !== undefined || (status !== undefined && bodyVaId !== undefined) || (status !== undefined && !isAdminOrManager);
   const hasMetadataUpdate =
     account !== undefined ||
     project !== undefined ||
