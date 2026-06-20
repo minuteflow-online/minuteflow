@@ -68,7 +68,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
-    recurring_template_id?: number | null;
+    recurring_template_id?: string | null;
     va_ids?: string[];
   };
 

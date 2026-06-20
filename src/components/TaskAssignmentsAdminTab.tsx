@@ -10,6 +10,7 @@ import type {
   RecurringTaskTemplate,
 } from "@/types/database";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -73,7 +74,7 @@ interface DetailFormState {
   instructions_locked: boolean;
   due_date: string;
   assigned_by_id: string;
-  recurring_template_id: number | null;
+  recurring_template_id: string | null;
   initial_status: AssignedTaskStatus;
   assignee_ids: string[];
 }
@@ -473,7 +474,7 @@ export default function TaskAssignmentsAdminTab({
   const [taskNameSearch, setTaskNameSearch] = useState<string>("");
   const [openFilter, setOpenFilter] = useState<"va" | "status" | "account" | "taskname" | "objective" | "duedate" | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
-  const [taskView, setTaskView] = useState<"active" | "submitted" | "archived" | "trash">("active");
+  const [taskView, setTaskView] = useState<"active" | "submitted" | "archived" | "trash" | "recurring">("active");
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
 
   // ── CSV Upload state ─────────────────────────────────────────────────────────
@@ -531,9 +532,28 @@ export default function TaskAssignmentsAdminTab({
     }
   }, [taskView]);
 
+  const fetchRecurringTemplates = useCallback(async () => {
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const res = await fetch("/api/recurring-task-templates", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      setRecurringTemplates((d.templates ?? d.tasks ?? []) as RecurringTaskTemplate[]);
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "Failed to load recurring templates");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
+    if (taskView === "recurring") {
+      void fetchRecurringTemplates();
+      return;
+    }
     fetchTasks();
-  }, [fetchTasks]);
+  }, [taskView, fetchTasks, fetchRecurringTemplates]);
 
   useEffect(() => {
     fetch("/api/project-tags")
@@ -560,15 +580,6 @@ export default function TaskAssignmentsAdminTab({
         if (d.accounts?.length > 0) setFormAccounts(d.accounts);
         if (d.projects?.length > 0) setFormObjectives(d.projects);
         if (d.tasksByProject) setFormTasksByObjective(d.tasksByProject);
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    fetch("/api/recurring-task-templates")
-      .then((r) => r.json())
-      .then((d) => {
-        setRecurringTemplates((d.templates ?? d.tasks ?? []) as RecurringTaskTemplate[]);
       })
       .catch(() => {});
   }, []);
@@ -781,7 +792,7 @@ export default function TaskAssignmentsAdminTab({
       instructions_locked: Boolean((task as any).instructions_locked),
       due_date: task.due_date ? task.due_date.slice(0, 10) : "",
       assigned_by_id: task.assigned_by || "",
-      recurring_template_id: (task.recurring_template_id as number | null | undefined) ?? null,
+      recurring_template_id: (task.recurring_template_id as string | null | undefined) ?? null,
       initial_status: task.assigned_task_assignees[0]?.status ?? "on_queue",
       assignee_ids: task.assigned_task_assignees.map((a) => a.va_id),
     });
@@ -801,6 +812,7 @@ export default function TaskAssignmentsAdminTab({
   };
 
   const isPanelOpen = isCreating || selectedTask !== null;
+  const isRecurringView = taskView === "recurring";
 
   useEffect(() => {
     if (!assignedToEdit) return;
@@ -1542,7 +1554,7 @@ export default function TaskAssignmentsAdminTab({
     <div className="w-full space-y-6">
       {/* ── Tab bar ─────────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-1 border-b border-sand">
-        {(["active", "submitted", "archived", "trash"] as const).map((view) => (
+        {(["active", "submitted", "archived", "trash", "recurring"] as const).map((view) => (
           <button
             key={view}
             onClick={() => { setTaskView(view); setSelectedTaskIds([]); }}
@@ -1552,14 +1564,14 @@ export default function TaskAssignmentsAdminTab({
                 : "border-transparent text-stone hover:text-espresso"
             }`}
           >
-            {view === "active" ? "Active" : view === "submitted" ? "Submitted" : view === "archived" ? "Archived" : "Trash"}
+            {view === "active" ? "Active" : view === "submitted" ? "Submitted" : view === "archived" ? "Archived" : view === "trash" ? "Trash" : "Recurring"}
           </button>
         ))}
       </div>
 
       {/* ── Header row ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        {taskView !== "submitted" && (
+        {taskView !== "submitted" && !isRecurringView && (
           <div ref={filterRef} className="flex items-center gap-2 flex-wrap">
             <FilterDropdown
               label="Task Name"
@@ -1662,7 +1674,7 @@ export default function TaskAssignmentsAdminTab({
       </div>
 
       {/* ── Bulk action bar ─────────────────────────────────────────────────────── */}
-      {selectedTaskIds.length > 0 && taskView === "active" && (
+      {selectedTaskIds.length > 0 && taskView === "active" && !isRecurringView && (
         <div className="flex items-center gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
           <span className="text-[13px] font-semibold text-amber-700">{selectedTaskIds.length} selected</span>
           <button
@@ -1687,7 +1699,7 @@ export default function TaskAssignmentsAdminTab({
       )}
 
       {/* ── Trash warning banner ─────────────────────────────────────────────────── */}
-      {taskView === "trash" && !loading && (
+      {taskView === "trash" && !loading && !isRecurringView && (
         <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
           <div className="flex items-center gap-2">
             <svg className="h-4 w-4 text-red-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1706,8 +1718,18 @@ export default function TaskAssignmentsAdminTab({
         </div>
       )}
 
+      {taskView === "recurring" && (
+        <RecurringTemplatesManager
+          templates={recurringTemplates}
+          loading={loading}
+          activeProfiles={activeProfiles}
+          orgTimezone={orgTimezone}
+          onRefresh={fetchRecurringTemplates}
+        />
+      )}
+
       {/* ── Loading skeleton ────────────────────────────────────────────────────── */}
-      {loading && (
+      {loading && !isRecurringView && (
         <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
           <table className="w-full">
             <thead>
@@ -1743,7 +1765,7 @@ export default function TaskAssignmentsAdminTab({
       )}
 
       {/* ── Fetch error ─────────────────────────────────────────────────────────── */}
-      {!loading && fetchError && (
+      {!loading && fetchError && !isRecurringView && (
         <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
           <p className="text-sm text-red-500">{fetchError}</p>
           <button
@@ -1756,7 +1778,7 @@ export default function TaskAssignmentsAdminTab({
       )}
 
       {/* ── Empty state ─────────────────────────────────────────────────────────── */}
-      {!loading && !fetchError && filteredTasks.length === 0 && (
+      {!loading && !fetchError && filteredTasks.length === 0 && !isRecurringView && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <p className="text-sm font-medium text-espresso">
             {tasks.length === 0 ? "No tasks assigned yet" : "No tasks match your filters"}
@@ -1770,7 +1792,7 @@ export default function TaskAssignmentsAdminTab({
       )}
 
       {/* ── Task table ──────────────────────────────────────────────────────────── */}
-      {!loading && !fetchError && filteredTasks.length > 0 && (
+      {!loading && !fetchError && filteredTasks.length > 0 && !isRecurringView && (
         <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
           <table className="w-full">
             <thead>

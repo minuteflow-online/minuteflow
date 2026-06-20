@@ -462,23 +462,22 @@ export interface ExtensionUploadStatus {
 // ── Assigned Tasks ──────────────────────────────────────────────────────────
 
 export interface RecurringTaskTemplate {
-  id: number;
-  task_name: string;
+  id: string;
+  title: string;
+  description: string | null;
+  assigned_to: string | null;
+  assigned_by: string | null;
   account: string | null;
   project: string | null;
-  task_detail: string | null;
-  task_notes: string | null;
-  instructions: string | null;
-  instructions_locked: boolean;
-  frequency: string | null;
-  day_of_week: number | null;
-  day_of_month: number | null;
-  next_run_at: string | null;
+  category: string | null;
+  pay_type: string | null;
+  recurrence_type: 'daily' | 'weekly' | 'monthly' | 'custom';
+  recurrence_days: string[] | null;
+  recurrence_day_of_month: number | null;
   is_active: boolean;
-  assigned_by: string | null;
-  created_by: string | null;
   created_at: string;
   updated_at: string;
+  assigned_to_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
   assigned_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
 }
 
@@ -496,7 +495,7 @@ export interface AssignedTask {
   instructions: string | null;
   instructions_locked: boolean;
   fixed_pay_task_id: number | null;
-  recurring_template_id: number | null;
+  recurring_template_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

@@ -370,7 +370,7 @@ export async function POST(request: Request) {
     instructions?: string | null;
     instructions_locked?: boolean;
     fixed_pay_task_id?: number | null;
-    recurring_template_id?: number | null;
+    recurring_template_id?: string | null;
     va_ids?: string[];
     initial_status?: AssignedTaskStatus;
   };
