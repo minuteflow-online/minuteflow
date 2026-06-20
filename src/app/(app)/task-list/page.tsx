@@ -1701,13 +1701,6 @@ export default function TaskListPage() {
                 >
                   My Tasks
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveView("submitted")}
-                  className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "submitted" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                >
-                  Submitted
-                </button>
                 {canShowAvailableTasks && (
                   <button
                     type="button"
@@ -1734,22 +1727,32 @@ export default function TaskListPage() {
         {(activeView === "my_tasks" || activeView === "submitted") && (
           <div className="border-b border-parchment bg-cream/50 px-5 py-4">
             <div className="flex flex-wrap items-center gap-2">
-              {activeView !== "submitted" && (
-                <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-                  {taskViewOptions.map((view) => (
-                    <button
-                      key={view}
-                      type="button"
-                      onClick={() => setTaskView(view)}
-                      className={`rounded-md px-3 py-1.5 capitalize transition-colors ${
-                        taskView === view ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
-                      }`}
-                    >
-                      {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => setActiveView("submitted")}
+                className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                  activeView === "submitted"
+                    ? "border-sky-200 bg-sky-100 text-sky-700"
+                    : "border-sand bg-parchment/40 text-stone hover:text-espresso"
+                }`}
+              >
+                Submitted
+              </button>
+
+              <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+                {taskViewOptions.map((view) => (
+                  <button
+                    key={view}
+                    type="button"
+                    onClick={() => setTaskView(view)}
+                    className={`rounded-md px-3 py-1.5 capitalize transition-colors ${
+                      taskView === view ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                    }`}
+                  >
+                    {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
+                  </button>
+                ))}
+              </div>
 
               {taskView === "active" && activeView === "my_tasks" && (
                 <button

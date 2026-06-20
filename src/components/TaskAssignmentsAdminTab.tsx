@@ -443,7 +443,7 @@ export default function TaskAssignmentsAdminTab({
     due_date: "",
     assigned_by_id: "",
     recurring_template_id: null,
-    initial_status: "on_queue",
+    initial_status: "pending",
     assignee_ids: [],
   });
   const [detailSaving, setDetailSaving] = useState(false);
@@ -733,7 +733,7 @@ export default function TaskAssignmentsAdminTab({
     due_date: "",
     assigned_by_id: "",
     recurring_template_id: null,
-    initial_status: "on_queue",
+    initial_status: "pending",
     assignee_ids: [],
   });
 
