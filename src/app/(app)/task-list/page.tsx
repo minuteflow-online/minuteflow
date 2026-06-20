@@ -242,7 +242,7 @@ export default function TaskListPage() {
   const [currentUserProfile, setCurrentUserProfile] = useState<ProfileOption | null>(null);
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "assigned_by_me" | "available_tasks" | "hourly_pool">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "hourly_pool">("my_tasks");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
@@ -295,14 +295,14 @@ export default function TaskListPage() {
   );
 
   const fetchTasks = useCallback(
-    async (mode: "my_tasks" | "assigned_by_me" = activeView === "assigned_by_me" ? "assigned_by_me" : "my_tasks"):
+    async (mode: "my_tasks" | "submitted" = activeView === "submitted" ? "submitted" : "my_tasks"):
       Promise<VATaskRow[]> => {
       setLoading(true);
       setError(null);
       try {
         const endpoint =
-          mode === "assigned_by_me"
-            ? `/api/assigned-tasks?asReviewer=true&view=${taskView}`
+          mode === "submitted"
+            ? "/api/assigned-tasks?asReviewer=true"
             : `/api/assigned-tasks?selfOnly=true&view=${taskView}`;
         const res = await fetch(endpoint, { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -387,7 +387,7 @@ export default function TaskListPage() {
   const isPerTaskVa = currentPosition === "Per Task VA";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
-  const isAssignedByMeView = activeView === "assigned_by_me";
+  const isSubmittedView = activeView === "submitted";
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -847,7 +847,7 @@ export default function TaskListPage() {
       try {
         const payloadValue = inlineEdit.field === "due_date" && value === "" ? null : value || null;
         const body: Record<string, unknown> = { [inlineEdit.field]: payloadValue };
-        if (inlineEdit.field === "status" && currentUserId && !isAssignedByMeView) {
+        if (inlineEdit.field === "status" && currentUserId && !isSubmittedView) {
           body.va_id = currentUserId;
         }
         const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
@@ -864,7 +864,7 @@ export default function TaskListPage() {
         setInlineEdit(null);
       }
     },
-    [fetchTasks, inlineEdit, inlineSaving, tasks, currentUserId, isAssignedByMeView]
+    [fetchTasks, inlineEdit, inlineSaving, tasks, currentUserId, isSubmittedView]
   );
 
   const cancelInlineEdit = useCallback(() => {
@@ -1424,7 +1424,7 @@ export default function TaskListPage() {
       const body: Record<string, unknown> = {};
       if (statusChanged) body.status = nextStatus;
       if (notesChanged) body.notes = nextNotes;
-      if ((statusChanged || notesChanged) && currentUserId && !isAssignedByMeView) {
+      if ((statusChanged || notesChanged) && currentUserId && !isSubmittedView) {
         body.va_id = currentUserId;
       }
       if (metadataChanged) {
@@ -1532,7 +1532,7 @@ export default function TaskListPage() {
     panelTaskNotes,
     selectedTask,
     currentUserId,
-    isAssignedByMeView,
+    isSubmittedView,
     requestStream,
     captureTaskScreenshot,
   ]);
@@ -1634,10 +1634,10 @@ export default function TaskListPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setActiveView("assigned_by_me")}
-                  className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "assigned_by_me" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  onClick={() => setActiveView("submitted")}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "submitted" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                 >
-                  Assigned By Me
+                  Submitted
                 </button>
                 {canShowAvailableTasks && (
                   <button
@@ -1662,9 +1662,26 @@ export default function TaskListPage() {
           </div>
         </div>
 
-        {(activeView === "my_tasks" || activeView === "assigned_by_me") && (
+        {(activeView === "my_tasks" || activeView === "submitted") && (
           <div className="border-b border-parchment bg-cream/50 px-5 py-4">
             <div className="flex flex-wrap items-center gap-2">
+              {activeView !== "submitted" && (
+                <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+                  {(["active", "archived", "trash"] as const).map((view) => (
+                    <button
+                      key={view}
+                      type="button"
+                      onClick={() => setTaskView(view)}
+                      className={`rounded-md px-3 py-1.5 capitalize transition-colors ${
+                        taskView === view ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                      }`}
+                    >
+                      {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {taskView === "active" && activeView === "my_tasks" && (
                 <button
                   type="button"
@@ -1705,12 +1722,9 @@ export default function TaskListPage() {
               />
               <FilterDropdown
                 label="Status"
-                options={STATUS_FILTERS.filter((option) => option.value !== "all").map((option) => ({
-                  value: option.value as AssignedTaskStatus,
-                  label: option.label,
-                }))}
-                selected={filterStatuses}
-                onChange={setFilterStatuses}
+                options={STATUS_FILTERS.filter((option) => option.value !== "all")}
+                selected={filterStatuses.map((status) => status)}
+                onChange={(values) => setFilterStatuses(values as AssignedTaskStatus[])}
                 isOpen={openFilter === "status"}
                 onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
               />
@@ -1722,6 +1736,7 @@ export default function TaskListPage() {
                 isOpen={openFilter === "account"}
                 onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
               />
+
               {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
                 <button
                   type="button"
@@ -1815,7 +1830,7 @@ export default function TaskListPage() {
                 </span>
                 <span>task{filteredTasks.length === 1 ? "" : "s"}</span>
                 <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 font-semibold text-slate-blue">
-                  {activeView === "assigned_by_me" ? "Assigned By Me" : taskView === "active" ? "Active" : taskView === "archived" ? "Archived" : "Trash"}
+                  {activeView === "submitted" ? "Submitted" : taskView === "active" ? "Active" : taskView === "archived" ? "Archived" : "Trash"}
                 </span>
               </div>
 

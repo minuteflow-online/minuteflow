@@ -153,6 +153,7 @@ export async function GET(request: Request) {
          assigned_task_assignees(${assigneeSelect})`
       )
       .eq("assigned_by", user.id)
+      .eq("status", "submitted")
       .order("created_at", { ascending: false });
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -166,9 +167,7 @@ export async function GET(request: Request) {
       }));
     });
 
-    return Response.json({
-      tasks: flattened.filter((task) => matchesTaskView(task.assigned_tasks, viewParam)),
-    });
+    return Response.json({ tasks: flattened });
   }
 
   const isAdminOrManager =
