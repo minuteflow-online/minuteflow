@@ -8,6 +8,7 @@ import type {
   AssignedTaskWithAssignees,
   AssignedTaskStatus,
   TaskScreenshot,
+  RecurringTaskTemplate,
 } from "@/types/database";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 
@@ -73,6 +74,7 @@ interface DetailFormState {
   instructions_locked: boolean;
   due_date: string;
   assigned_by_id: string;
+  recurring_template_id: number | null;
   initial_status: AssignedTaskStatus;
   assignee_ids: string[];
 }
@@ -440,6 +442,7 @@ export default function TaskAssignmentsAdminTab({
     instructions_locked: false,
     due_date: "",
     assigned_by_id: "",
+    recurring_template_id: null,
     initial_status: "on_queue",
     assignee_ids: [],
   });
@@ -489,6 +492,7 @@ export default function TaskAssignmentsAdminTab({
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
   const [formObjectives, setFormObjectives] = useState<FormObjective[]>([]);
   const [formTasksByObjective, setFormTasksByObjective] = useState<Record<number, FormTask[]>>({});
+  const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
 
   // ── Attachments ────────────────────────────────────────────────────────────────
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
@@ -554,6 +558,15 @@ export default function TaskAssignmentsAdminTab({
         if (d.accounts?.length > 0) setFormAccounts(d.accounts);
         if (d.projects?.length > 0) setFormObjectives(d.projects);
         if (d.tasksByProject) setFormTasksByObjective(d.tasksByProject);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/recurring-task-templates")
+      .then((r) => r.json())
+      .then((d) => {
+        setRecurringTemplates((d.templates ?? d.tasks ?? []) as RecurringTaskTemplate[]);
       })
       .catch(() => {});
   }, []);
@@ -717,6 +730,7 @@ export default function TaskAssignmentsAdminTab({
     instructions_locked: false,
     due_date: "",
     assigned_by_id: "",
+    recurring_template_id: null,
     initial_status: "on_queue",
     assignee_ids: [],
   });
@@ -752,6 +766,7 @@ export default function TaskAssignmentsAdminTab({
       instructions_locked: Boolean((task as any).instructions_locked),
       due_date: task.due_date ? task.due_date.slice(0, 10) : "",
       assigned_by_id: task.assigned_by || "",
+      recurring_template_id: (task.recurring_template_id as number | null | undefined) ?? null,
       initial_status: task.assigned_task_assignees[0]?.status ?? "on_queue",
       assignee_ids: task.assigned_task_assignees.map((a) => a.va_id),
     });
@@ -812,6 +827,7 @@ export default function TaskAssignmentsAdminTab({
       instructions_locked: detailForm.instructions_locked,
       due_date: detailForm.due_date || null,
       assigned_by: detailForm.assigned_by_id || null,
+      recurring_template_id: detailForm.recurring_template_id,
       va_ids: detailForm.assignee_ids,
       ...(selectedTask ? {} : { initial_status: detailForm.initial_status }),
     };

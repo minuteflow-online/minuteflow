@@ -58,7 +58,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, va_ids } = body as {
+  const { account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, recurring_template_id, va_ids } = body as {
     account?: string;
     project?: string;
     task_name?: string;
@@ -68,6 +68,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
+    recurring_template_id?: number | null;
     va_ids?: string[];
   };
 
@@ -84,6 +85,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
   if (instructions !== undefined) updatePayload.instructions = instructions;
   if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
+  if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
 
   const { data: updatedTask, error: updateError } = await supabase
     .from("assigned_tasks")

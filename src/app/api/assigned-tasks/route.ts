@@ -87,6 +87,9 @@ export async function GET(request: Request) {
 
   const assigneeSelect =
     "id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked";
+  const taskSelect =
+    `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, recurring_template_id, fixed_pay_tasks(rate), recurring_task_templates(id, task_name, account, project, frequency, day_of_week, day_of_month, next_run_at, is_active), assigned_by_profile:profiles(id, full_name, username),
+         assigned_task_assignees(${assigneeSelect})`;
 
   const formatAdminTaskRows = async (data: Array<Record<string, unknown>>) => {
     const allVaIds = [
@@ -128,10 +131,7 @@ export async function GET(request: Request) {
     // which means unassigned tasks (no assignees yet) would return empty for VAs.
     const { data, error } = await serviceRoleClient
       .from("assigned_tasks")
-      .select(
-        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
-         assigned_task_assignees(${assigneeSelect})`
-      )
+      .select(taskSelect)
       .order("created_at", { ascending: false });
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -148,10 +148,7 @@ export async function GET(request: Request) {
   if (asReviewer) {
     const { data, error } = await serviceRoleClient
       .from("assigned_tasks")
-      .select(
-        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
-         assigned_task_assignees(${assigneeSelect})`
-      )
+      .select(taskSelect)
       .eq("assigned_by", user.id)
       .eq("status", "submitted")
       .order("created_at", { ascending: false });
@@ -176,10 +173,7 @@ export async function GET(request: Request) {
   if (isAdminOrManager && !selfOnly) {
     const query = supabase
       .from("assigned_tasks")
-      .select(
-        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
-         assigned_task_assignees(${assigneeSelect})`
-      )
+      .select(taskSelect)
       .order("created_at", { ascending: false });
 
     const { data, error } = await query;
@@ -346,6 +340,7 @@ export async function POST(request: Request) {
     instructions?: string | null;
     instructions_locked?: boolean;
     fixed_pay_task_id?: number | null;
+    recurring_template_id?: number | null;
     va_ids?: string[];
     initial_status?: AssignedTaskStatus;
   };
@@ -380,6 +375,7 @@ export async function POST(request: Request) {
       instructions: instructions ?? null,
       instructions_locked: Boolean(instructions_locked),
       fixed_pay_task_id: fixed_pay_task_id ?? null,
+      recurring_template_id: recurring_template_id ?? null,
       created_by: user.id,
     })
     .select()

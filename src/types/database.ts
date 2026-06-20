@@ -461,6 +461,27 @@ export interface ExtensionUploadStatus {
 
 // ── Assigned Tasks ──────────────────────────────────────────────────────────
 
+export interface RecurringTaskTemplate {
+  id: number;
+  task_name: string;
+  account: string | null;
+  project: string | null;
+  task_detail: string | null;
+  task_notes: string | null;
+  instructions: string | null;
+  instructions_locked: boolean;
+  frequency: string | null;
+  day_of_week: number | null;
+  day_of_month: number | null;
+  next_run_at: string | null;
+  is_active: boolean;
+  assigned_by: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  assigned_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
+}
+
 export interface AssignedTask {
   id: number;
   account: string | null;
@@ -475,12 +496,14 @@ export interface AssignedTask {
   instructions: string | null;
   instructions_locked: boolean;
   fixed_pay_task_id: number | null;
+  recurring_template_id: number | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
   status: AssignedTaskStatus;
   assigned_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
   fixed_pay_tasks?: { rate: number } | null;
+  recurring_task_templates?: RecurringTaskTemplate | null;
 }
 
 export type AssignedTaskStatus = 'unassigned' | 'pending' | 'on_queue' | 'in_progress' | 'submitted' | 'reviewing' | 'revision_needed' | 'approved' | 'completed' | 'paid' | 'cancelled';
