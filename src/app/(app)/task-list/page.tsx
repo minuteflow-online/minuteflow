@@ -1735,6 +1735,36 @@ export default function TaskListPage() {
     await fetchTasks();
   }, [closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds]);
 
+  const handleBulkRestore = useCallback(async () => {
+    const ids = [...selectedTaskIds];
+    const payload: Record<string, string | null> = taskView === "archived" ? { archived_at: null } : { deleted_at: null };
+    await Promise.all(ids.map((id) => patchTaskVisibility(id, payload)));
+    setSelectedTaskIds([]);
+    if (selectedTask && ids.includes(selectedTask.id)) closePanel();
+    await fetchTasks();
+  }, [closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds, taskView]);
+
+  const handleBulkPermanentDelete = useCallback(async () => {
+    const ids = [...selectedTaskIds];
+    await Promise.all(ids.map((id) => fetch(`/api/assigned-tasks/${id}`, { method: "DELETE" })));
+    setSelectedTaskIds([]);
+    if (selectedTask && ids.includes(selectedTask.id)) closePanel();
+    await fetchTasks();
+  }, [closePanel, fetchTasks, selectedTask, selectedTaskIds]);
+
+  const handleRestoreTask = useCallback(async (taskId: number) => {
+    const payload: Record<string, string | null> = taskView === "archived" ? { archived_at: null } : { deleted_at: null };
+    await patchTaskVisibility(taskId, payload);
+    if (selectedTask?.id === taskId) closePanel();
+    await fetchTasks();
+  }, [closePanel, fetchTasks, patchTaskVisibility, selectedTask, taskView]);
+
+  const handlePermanentDeleteTask = useCallback(async (taskId: number) => {
+    await fetch(`/api/assigned-tasks/${taskId}`, { method: "DELETE" });
+    if (selectedTask?.id === taskId) closePanel();
+    await fetchTasks();
+  }, [closePanel, fetchTasks, selectedTask]);
+
   return (
     <>
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -1956,26 +1986,48 @@ export default function TaskListPage() {
             </div>
           ) : (
             <>
-              {taskView === "active" && selectedTaskIds.length > 0 && (
+              {selectedTaskIds.length > 0 && (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-parchment/40 px-4 py-3 text-sm">
               <div className="text-stone">
                 {selectedTaskIds.length} task{selectedTaskIds.length === 1 ? "" : "s"} selected
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void handleBulkArchive()}
-                  className="rounded-lg border border-sand bg-white px-3 py-2 text-xs font-semibold text-espresso transition-colors hover:bg-parchment"
-                >
-                  Archive
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleBulkTrash()}
-                  className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-                >
-                  Trash
-                </button>
+                {taskView === "active" && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkArchive()}
+                      className="rounded-lg border border-sand bg-white px-3 py-2 text-xs font-semibold text-espresso transition-colors hover:bg-parchment"
+                    >
+                      Archive
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkTrash()}
+                      className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                    >
+                      Trash
+                    </button>
+                  </>
+                )}
+                {(taskView === "archived" || taskView === "trash") && (
+                  <button
+                    type="button"
+                    onClick={() => void handleBulkRestore()}
+                    className="rounded-lg border border-sand bg-white px-3 py-2 text-xs font-semibold text-espresso transition-colors hover:bg-parchment"
+                  >
+                    Restore
+                  </button>
+                )}
+                {taskView === "trash" && isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => void handleBulkPermanentDelete()}
+                    className="rounded-lg border border-red-300 bg-red-500 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-red-600"
+                  >
+                    Delete Forever
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -2010,17 +2062,15 @@ export default function TaskListPage() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-sand bg-parchment">
-                        {taskView === "active" && (
-                          <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                            <input
-                              type="checkbox"
-                              checked={allFilteredTasksSelected}
-                              onChange={toggleAllFilteredTasks}
-                              className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                              aria-label="Select all visible tasks"
-                            />
-                          </th>
-                        )}
+                        <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                          <input
+                            type="checkbox"
+                            checked={allFilteredTasksSelected}
+                            onChange={toggleAllFilteredTasks}
+                            className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                            aria-label="Select all visible tasks"
+                          />
+                        </th>
                         <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut" />
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Task Name</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</th>
@@ -2028,6 +2078,9 @@ export default function TaskListPage() {
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Client Detail</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Due Date</th>
+                        {(taskView === "archived" || taskView === "trash") && (
+                          <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Actions</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -2045,18 +2098,16 @@ export default function TaskListPage() {
                             }`}
                             onClick={() => void openPanel(task)}
                           >
-                            {taskView === "active" && (
-                              <td className="w-8 px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedTaskIdSet.has(task.id)}
-                                  onChange={() => toggleTaskSelection(task.id)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                                  aria-label={`Select ${detail.task_name}`}
-                                />
-                              </td>
-                            )}
+                            <td className="w-8 px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={selectedTaskIdSet.has(task.id)}
+                                onChange={() => toggleTaskSelection(task.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                                aria-label={`Select ${detail.task_name}`}
+                              />
+                            </td>
                             <td className="w-8 px-3 py-3" onClick={(e) => e.stopPropagation()}>
                               <button
                                 type="button"
@@ -2141,6 +2192,28 @@ export default function TaskListPage() {
                                 )
                               }
                             />
+                            {(taskView === "archived" || taskView === "trash") && (
+                              <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleRestoreTask(task.id)}
+                                    className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment"
+                                  >
+                                    Restore
+                                  </button>
+                                  {taskView === "trash" && isAdmin && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handlePermanentDeleteTask(task.id)}
+                                      className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-100"
+                                    >
+                                      Delete Forever
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            )}
                           </tr>
                         );
                       })}
@@ -2155,10 +2228,7 @@ export default function TaskListPage() {
     </div>
 
       {isCreating && (
-        <div className="fixed inset-0 z-40 flex items-stretch">
-          <div className="flex-1 bg-black/20" onClick={closeCreate} />
-
-          <div className="flex w-[520px] max-w-full flex-col overflow-hidden border-l border-sand bg-white shadow-2xl">
+        <div className="fixed right-0 top-0 h-full z-40 w-[520px] max-w-full flex flex-col overflow-hidden border-l border-sand bg-white shadow-2xl">
             <div className="shrink-0 flex items-center justify-between border-b border-sand px-5 py-4">
               <div className="flex items-center gap-2">
                 <button
@@ -2352,14 +2422,10 @@ export default function TaskListPage() {
               </button>
             </div>
           </div>
-        </div>
       )}
 
       {selectedTask && (
-        <div className="fixed inset-0 z-40 flex items-stretch">
-          <div className="flex-1 bg-black/20" onClick={closePanel} />
-
-          <div className="flex w-[520px] max-w-full flex-col overflow-hidden border-l border-sand bg-white shadow-2xl">
+        <div className="fixed right-0 top-0 h-full z-40 w-[520px] max-w-full flex flex-col overflow-hidden border-l border-sand bg-white shadow-2xl">
             <div className="shrink-0 flex items-center justify-between border-b border-sand px-5 py-4">
               <div className="flex items-center gap-2">
                 <button
@@ -2766,7 +2832,6 @@ export default function TaskListPage() {
               </div>
             </div>
           </div>
-        </div>
       )}
       {lightboxUrls && lightboxUrls.length > 0 && (
         <ScreenshotLightbox
