@@ -126,7 +126,32 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if ("assigned_by" in body) updates.assigned_by = normalizeText(body.assigned_by);
   if ("is_active" in body) updates.is_active = Boolean(body.is_active);
 
+  const revokeClaim = Object.prototype.hasOwnProperty.call(body, "claimed_by") && body.claimed_by === null;
+  if (revokeClaim) {
+    updates.claimed_by = null;
+    updates.claimed_at = null;
+  } else if ("claimed_by" in body) {
+    const claimedBy = normalizeText(body.claimed_by);
+    if (!claimedBy) {
+      return Response.json({ error: "claimed_by is required" }, { status: 400 });
+    }
+    updates.claimed_by = claimedBy;
+    updates.claimed_at = new Date().toISOString();
+  }
+
   const admin = makeAdminClient();
+  if (revokeClaim) {
+    const { error: deleteError } = await admin
+      .from("assigned_tasks")
+      .delete()
+      .eq("fixed_pay_task_id", taskId)
+      .is("deleted_at", null);
+
+    if (deleteError) {
+      return Response.json({ error: deleteError.message }, { status: 500 });
+    }
+  }
+
   const { data, error } = await admin
     .from("fixed_pay_tasks")
     .update(updates)

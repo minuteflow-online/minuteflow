@@ -128,3 +128,56 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     { status: 201 }
   );
 }
+
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireVa();
+  if ("error" in auth) return auth.error;
+
+  const { id } = await params;
+  const taskId = Number(id);
+  if (!Number.isFinite(taskId)) {
+    return Response.json({ error: "Invalid task id" }, { status: 400 });
+  }
+
+  const { userId } = auth;
+  const admin = makeAdminClient();
+
+  const { data: task, error: taskError } = await admin
+    .from("fixed_pay_tasks")
+    .select("id, claimed_by, claimed_at")
+    .eq("id", taskId)
+    .single();
+
+  if (taskError || !task) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  if (!task.claimed_by) {
+    return Response.json({ error: "Task is not currently claimed" }, { status: 409 });
+  }
+
+  if (task.claimed_by !== userId) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { error: deleteError } = await admin
+    .from("assigned_tasks")
+    .delete()
+    .eq("fixed_pay_task_id", taskId)
+    .is("deleted_at", null);
+
+  if (deleteError) {
+    return Response.json({ error: deleteError.message }, { status: 500 });
+  }
+
+  const { error: clearError } = await admin
+    .from("fixed_pay_tasks")
+    .update({ claimed_by: null, claimed_at: null })
+    .eq("id", taskId);
+
+  if (clearError) {
+    return Response.json({ error: clearError.message }, { status: 500 });
+  }
+
+  return Response.json({ ok: true });
+}

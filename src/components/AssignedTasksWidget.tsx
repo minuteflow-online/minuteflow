@@ -85,6 +85,7 @@ export default function AssignedTasksWidget({
   const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const [updatingIds, setUpdatingIds] = useState<Set<number>>(new Set());
+  const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
 
@@ -169,7 +170,7 @@ export default function AssignedTasksWidget({
         });
       }
     },
-    []
+    [isAdmin, userId]
   );
 
   const toggleExpand = useCallback((id: number) => {
@@ -201,6 +202,32 @@ export default function AssignedTasksWidget({
     [onPlayAssignedTask]
   );
 
+  const cancelGrab = useCallback(
+    async (task: VAAssignedTask) => {
+      const id = task.id;
+      const fixedPayTaskId = task.assigned_tasks.fixed_pay_task_id;
+      if (fixedPayTaskId == null) return;
+
+      setCancellingIds((prev) => new Set(prev).add(id));
+      try {
+        const res = await fetch(`/api/fixed-pay-tasks/${fixedPayTaskId}/grab`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          await fetchTasks();
+        }
+      } catch {
+        // non-critical widget; keep quiet on failure
+      } finally {
+        setCancellingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [fetchTasks]
+  );
 
   const statusBadge = (status: AssignedTaskStatus) => {
     switch (status) {
@@ -318,11 +345,13 @@ export default function AssignedTasksWidget({
               {tasks.map((task) => {
                 const detail = task.assigned_tasks;
                 const isUpdating = updatingIds.has(task.id);
+                const isCancelling = cancellingIds.has(task.id);
                 const isExpanded = expandedIds.has(task.id);
                 const due = detail.due_date ? formatDueDate(detail.due_date, orgTimezone) : null;
                 const accountProject = [detail.account, detail.project].filter(Boolean).join(" · ");
 
                 const rate = detail.fixed_pay_tasks?.rate;
+                const primaryText = detail.task_detail || detail.task_name;
 
                 return (
                   <Fragment key={task.id}>
@@ -349,7 +378,7 @@ export default function AssignedTasksWidget({
                             />
                           </svg>
                           <span className="text-[13px] font-semibold text-espresso leading-tight group-hover:text-terracotta transition-colors">
-                            {detail.task_name}
+                            {primaryText}
                           </span>
                         </button>
                         <div className="flex items-center gap-1.5 shrink-0">
@@ -361,6 +390,10 @@ export default function AssignedTasksWidget({
                           )}
                         </div>
                       </div>
+
+                      {detail.task_detail && (
+                        <div className="pl-[18px] text-[11px] text-stone">{detail.task_name}</div>
+                      )}
 
                       {isExpanded && (
                         <>
@@ -425,6 +458,16 @@ export default function AssignedTasksWidget({
                               <polygon points="5,3 19,12 5,21" />
                             </svg>
                             {isUpdating ? "Starting..." : "Start"}
+                          </button>
+                        )}
+
+                        {detail.fixed_pay_task_id != null && task.status === "on_queue" && (
+                          <button
+                            onClick={() => void cancelGrab(task)}
+                            disabled={isCancelling}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg border border-sand bg-parchment text-stone hover:bg-sand cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isCancelling ? "Cancelling..." : "Cancel Grab"}
                           </button>
                         )}
 

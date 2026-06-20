@@ -152,6 +152,7 @@ export default function FixedPayTasksTab() {
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
   const [form, setForm] = useState<TaskFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [revokingClaim, setRevokingClaim] = useState(false);
 
   const [accounts, setAccounts] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -266,6 +267,7 @@ export default function FixedPayTasksTab() {
   const accountOptions = useMemo(() => mergeTextOptions(accounts, form.account), [accounts, form.account]);
   const categoryOptions = useMemo(() => mergeTextOptions(categories, form.category), [categories, form.category]);
   const selectedAssignedProfile = selectedTask?.assigned_to_profile ?? null;
+  const selectedClaimer = selectedTask?.claimed_by_profile ?? null;
   const vaOptions = useMemo(
     () => mergeProfiles(activeProfiles, selectedAssignedProfile),
     [selectedAssignedProfile, activeProfiles]
@@ -390,6 +392,49 @@ export default function FixedPayTasksTab() {
     },
     [fetchTasks, selectedTask?.id]
   );
+
+  const handleRevokeClaim = useCallback(async () => {
+    if (!selectedTask) return;
+
+    setRevokingClaim(true);
+    try {
+      const res = await fetch(`/api/fixed-pay-tasks/${selectedTask.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ claimed_by: null, claimed_at: null }),
+      });
+
+      if (!res.ok) {
+        let errorText = `HTTP ${res.status}`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data.error) errorText = data.error;
+        } catch {
+          // ignore parse failures
+        }
+        throw new Error(errorText);
+      }
+
+      const data = (await res.json()) as { task?: FixedPayTaskWithClaimer };
+      if (data.task) {
+        setTasks((current) => current.map((task) => (task.id === data.task!.id ? data.task! : task)));
+        setSelectedTask(data.task);
+      } else {
+        setSelectedTask((current) =>
+          current && current.id === selectedTask.id
+            ? { ...current, claimed_by: null, claimed_at: null, claimed_by_profile: null }
+            : current
+        );
+      }
+
+      await fetchTasks();
+      setMessage({ type: "ok", text: "Claim revoked." });
+    } catch (error) {
+      setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to revoke claim." });
+    } finally {
+      setRevokingClaim(false);
+    }
+  }, [fetchTasks, selectedTask]);
 
   const handleSubmit = useCallback(async () => {
     if (!form.task_name.trim()) {
@@ -891,6 +936,28 @@ export default function FixedPayTasksTab() {
                   ))}
                 </select>
               </div>
+
+              {panelMode === "edit" && selectedTask?.claimed_by && (
+                <div className="rounded-xl border border-sand bg-parchment/20 p-4">
+                  <div className="mb-2 flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Claimed By</div>
+                      <div className="text-[13px] text-espresso">
+                        {selectedClaimer?.full_name || selectedClaimer?.username || selectedTask.claimed_by}
+                      </div>
+                      <div className="text-[11px] text-stone">{formatTimestamp(selectedTask.claimed_at)}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleRevokeClaim()}
+                      disabled={revokingClaim}
+                      className="rounded-lg bg-terracotta px-3 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {revokingClaim ? "Revoking..." : "Revoke Claim"}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
