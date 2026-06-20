@@ -475,7 +475,7 @@ export default function TaskAssignmentsAdminTab({
   const [taskNameSearch, setTaskNameSearch] = useState<string>("");
   const [openFilter, setOpenFilter] = useState<"va" | "status" | "account" | "taskname" | "objective" | "duedate" | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
-  const [taskView, setTaskView] = useState<"active" | "archived" | "trash">("active");
+  const [taskView, setTaskView] = useState<"active" | "submitted" | "archived" | "trash">("active");
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
 
   // ── CSV Upload state ─────────────────────────────────────────────────────────
@@ -511,8 +511,10 @@ export default function TaskAssignmentsAdminTab({
     setLoading(true);
     setFetchError(null);
     try {
-      const viewQuery = taskView === "active" ? "" : `&view=${taskView}`;
-      const res = await fetch(`/api/assigned-tasks?${viewQuery}`, { cache: "no-store" });
+      const endpoint = taskView === "submitted"
+        ? "/api/assigned-tasks?asReviewer=true"
+        : `/api/assigned-tasks${taskView === "active" ? "" : `?view=${taskView}`}`;
+      const res = await fetch(endpoint, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
       const freshTasks = d.tasks || d || [];
@@ -1503,7 +1505,7 @@ export default function TaskAssignmentsAdminTab({
     <div className="w-full space-y-6">
       {/* ── Tab bar ─────────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-1 border-b border-sand">
-        {(["active", "archived", "trash"] as const).map(view => (
+        {(["active", "submitted", "archived", "trash"] as const).map((view) => (
           <button
             key={view}
             onClick={() => { setTaskView(view); setSelectedTaskIds([]); }}
@@ -1513,77 +1515,78 @@ export default function TaskAssignmentsAdminTab({
                 : "border-transparent text-stone hover:text-espresso"
             }`}
           >
-            {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
+            {view === "active" ? "Active" : view === "submitted" ? "Submitted" : view === "archived" ? "Archived" : "Trash"}
           </button>
         ))}
       </div>
 
       {/* ── Header row ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        {/* Filters */}
-        <div ref={filterRef} className="flex items-center gap-2 flex-wrap">
-          <FilterDropdown
-            label="Task Name"
-            options={taskNameFilterOptions.map(taskName => ({ value: taskName, label: taskName }))}
-            selected={filterTaskNames}
-            onChange={setFilterTaskNames}
-            isOpen={openFilter === "taskname"}
-            onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
-            searchable
-            searchValue={taskNameSearch}
-            onSearchChange={setTaskNameSearch}
-            searchPlaceholder="Search task names..."
-          />
-          <FilterDropdown
-            label="Objective"
-            options={objectiveFilterOptions.map(objective => ({ value: objective, label: objective }))}
-            selected={filterObjectives}
-            onChange={setFilterObjectives}
-            isOpen={openFilter === "objective"}
-            onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
-          />
-          <DateRangeDropdown
-            label="Due Date"
-            start={filterDueStart}
-            end={filterDueEnd}
-            isOpen={openFilter === "duedate"}
-            onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
-            onStartChange={setFilterDueStart}
-            onEndChange={setFilterDueEnd}
-          />
-          <FilterDropdown
-            label="Member"
-            options={activeProfiles.map(p => ({ value: p.id, label: p.full_name || p.username || p.id }))}
-            selected={filterVaIds}
-            onChange={setFilterVaIds}
-            isOpen={openFilter === "va"}
-            onToggle={() => setOpenFilter(openFilter === "va" ? null : "va")}
-          />
-          <FilterDropdown
-            label="Status"
-            options={STATUS_OPTIONS.filter(o => o.value !== "").map(o => ({ value: o.value as string, label: o.label }))}
-            selected={filterStatuses}
-            onChange={setFilterStatuses}
-            isOpen={openFilter === "status"}
-            onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
-          />
-          <FilterDropdown
-            label="Account"
-            options={KNOWN_ACCOUNTS.map(a => ({ value: a, label: a }))}
-            selected={filterAccounts}
-            onChange={setFilterAccounts}
-            isOpen={openFilter === "account"}
-            onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
-          />
-          {(filterVaIds.length > 0 || filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd) && (
-            <button
-              onClick={() => { setFilterVaIds([]); setFilterStatuses([]); setFilterAccounts([]); setFilterTaskNames([]); setFilterObjectives([]); setFilterDueStart(""); setFilterDueEnd(""); setTaskNameSearch(""); }}
-              className="text-[12px] text-stone hover:text-terracotta hover:underline cursor-pointer"
-            >
-              Clear all
-            </button>
-          )}
-        </div>
+        {taskView !== "submitted" && (
+          <div ref={filterRef} className="flex items-center gap-2 flex-wrap">
+            <FilterDropdown
+              label="Task Name"
+              options={taskNameFilterOptions.map(taskName => ({ value: taskName, label: taskName }))}
+              selected={filterTaskNames}
+              onChange={setFilterTaskNames}
+              isOpen={openFilter === "taskname"}
+              onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
+              searchable
+              searchValue={taskNameSearch}
+              onSearchChange={setTaskNameSearch}
+              searchPlaceholder="Search task names..."
+            />
+            <FilterDropdown
+              label="Objective"
+              options={objectiveFilterOptions.map(objective => ({ value: objective, label: objective }))}
+              selected={filterObjectives}
+              onChange={setFilterObjectives}
+              isOpen={openFilter === "objective"}
+              onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
+            />
+            <DateRangeDropdown
+              label="Due Date"
+              start={filterDueStart}
+              end={filterDueEnd}
+              isOpen={openFilter === "duedate"}
+              onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
+              onStartChange={setFilterDueStart}
+              onEndChange={setFilterDueEnd}
+            />
+            <FilterDropdown
+              label="Member"
+              options={activeProfiles.map(p => ({ value: p.id, label: p.full_name || p.username || p.id }))}
+              selected={filterVaIds}
+              onChange={setFilterVaIds}
+              isOpen={openFilter === "va"}
+              onToggle={() => setOpenFilter(openFilter === "va" ? null : "va")}
+            />
+            <FilterDropdown
+              label="Status"
+              options={STATUS_OPTIONS.filter(o => o.value !== "").map(o => ({ value: o.value as string, label: o.label }))}
+              selected={filterStatuses}
+              onChange={setFilterStatuses}
+              isOpen={openFilter === "status"}
+              onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
+            />
+            <FilterDropdown
+              label="Account"
+              options={KNOWN_ACCOUNTS.map(a => ({ value: a, label: a }))}
+              selected={filterAccounts}
+              onChange={setFilterAccounts}
+              isOpen={openFilter === "account"}
+              onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
+            />
+            {(filterVaIds.length > 0 || filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd) && (
+              <button
+                onClick={() => { setFilterVaIds([]); setFilterStatuses([]); setFilterAccounts([]); setFilterTaskNames([]); setFilterObjectives([]); setFilterDueStart(""); setFilterDueEnd(""); setTaskNameSearch(""); }}
+                className="text-[12px] text-stone hover:text-terracotta hover:underline cursor-pointer"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Action buttons */}
         <div className="flex items-center gap-2">
