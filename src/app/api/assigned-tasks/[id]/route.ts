@@ -164,6 +164,16 @@ export async function PUT(request: Request, { params }: RouteContext) {
       if (insertError)
         return Response.json({ error: insertError.message }, { status: 500 });
     }
+
+    // If the resulting assignee list is empty, mark the task itself as unassigned
+    const remainingCount =
+      (currentVaIds.filter((v) => incomingVaIds.includes(v)).length) + toInsert.length;
+    if (remainingCount === 0) {
+      await supabase
+        .from("assigned_tasks")
+        .update({ status: "unassigned", updated_at: new Date().toISOString() })
+        .eq("id", id);
+    }
   }
 
   // Return updated task with current assignees

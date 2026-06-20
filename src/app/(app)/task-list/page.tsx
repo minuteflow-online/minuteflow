@@ -407,7 +407,7 @@ export default function TaskListPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       const raw = Array.isArray(json) ? json : json.tasks ?? [];
-      const normalized = (raw as HourlyPoolTask[]).filter((row) => row.fixed_pay_task_id == null && row.status === "unassigned");
+      const normalized = (raw as HourlyPoolTask[]).filter((row) => row.fixed_pay_task_id == null);
       setHourlyPoolTasks(normalized);
     } catch {
       setHourlyPoolTasks([]);

@@ -385,6 +385,8 @@ export async function POST(request: Request) {
       fixed_pay_task_id: fixed_pay_task_id ?? null,
       recurring_template_id: recurring_template_id ?? null,
       created_by: user.id,
+      // When no VAs are assigned at creation time, mark the task as unassigned
+      status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "on_queue"),
     })
     .select()
     .single();
