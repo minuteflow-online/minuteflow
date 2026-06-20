@@ -140,6 +140,69 @@ function parseLinks(text: string) {
   return parts;
 }
 
+type FilterOptionValue = string | number;
+
+type FilterDropdownProps<T extends FilterOptionValue> = {
+  label: string;
+  options: { value: T; label: string }[];
+  selected: T[];
+  onChange: (v: T[]) => void;
+  isOpen: boolean;
+  onToggle: () => void;
+};
+
+function FilterDropdown<T extends FilterOptionValue>({ label, options, selected, onChange, isOpen, onToggle }: FilterDropdownProps<T>) {
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] outline-none transition-all ${
+          selected.length > 0 ? "border-terracotta text-terracotta" : "border-sand bg-white text-espresso hover:border-walnut"
+        }`}
+      >
+        {label}
+        {selected.length > 0 && (
+          <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">{selected.length}</span>
+        )}
+        <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {isOpen && (
+        <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-xl border border-sand bg-white py-1 shadow-lg">
+          <div className="flex items-center justify-between border-b border-sand px-3 py-1.5">
+            <button type="button" onClick={() => onChange(options.map((o) => o.value))} className="cursor-pointer text-[11px] text-terracotta hover:underline">
+              Select All
+            </button>
+            <button type="button" onClick={() => onChange([])} className="cursor-pointer text-[11px] text-stone hover:underline">
+              Clear
+            </button>
+          </div>
+          {options.length > 0 ? (
+            options.map((opt) => (
+              <label key={String(opt.value)} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-parchment">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(opt.value)}
+                  onChange={(e) => {
+                    if (e.target.checked) onChange([...selected, opt.value]);
+                    else onChange(selected.filter((value) => value !== opt.value));
+                  }}
+                  className="accent-terracotta"
+                />
+                <span className="text-[13px] text-espresso">{opt.label}</span>
+              </label>
+            ))
+          ) : (
+            <div className="px-3 py-2 text-[12px] text-stone">No options found</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FixedPayTasksTab() {
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,11 +212,15 @@ export default function FixedPayTasksTab() {
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterStatuses, setFilterStatuses] = useState<FixedPayTaskWithClaimer["status"][]>([]);
-  const [openFilter, setOpenFilter] = useState<"taskname" | "account" | "category" | "status" | null>(null);
+  const [filterClaimedBy, setFilterClaimedBy] = useState<string[]>([]);
+  const [filterRates, setFilterRates] = useState<number[]>([]);
+  const [openFilter, setOpenFilter] = useState<"taskname" | "account" | "category" | "status" | "claimedBy" | "rate" | null>(null);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [form, setForm] = useState<TaskFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [bulkAction, setBulkAction] = useState<"archive" | "trash" | "delete" | null>(null);
   const [revokingClaim, setRevokingClaim] = useState(false);
 
   const [accounts, setAccounts] = useState<string[]>([]);
@@ -166,6 +233,7 @@ export default function FixedPayTasksTab() {
   const [attachmentMessage, setAttachmentMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [pendingAttachment, setPendingAttachment] = useState<File | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const headerSelectAllRef = useRef<HTMLInputElement | null>(null);
 
   const fetchTasks = useCallback(async (view: ActiveFilter = activeFilter) => {
     setLoading(true);
@@ -258,7 +326,7 @@ export default function FixedPayTasksTab() {
     [tasks]
   );
 
-  const filteredTasks = useMemo(() => {
+  const filterBaseTasks = useMemo(() => {
     return tasks.filter((task) => {
       if (activeFilter === "active" && (!task.is_active || task.archived_at || task.deleted_at)) return false;
       if (activeFilter === "inactive" && (task.is_active || task.archived_at || task.deleted_at)) return false;
@@ -272,6 +340,46 @@ export default function FixedPayTasksTab() {
     });
   }, [activeFilter, filterAccounts, filterCategories, filterStatuses, filterTaskNames, tasks]);
 
+  const claimedByFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          filterBaseTasks
+            .filter((task) => task.claimed_by)
+            .map((task) => {
+              const profile = task.claimed_by_profile;
+              const label = profile?.full_name || profile?.username || task.claimed_by || "";
+              return [task.claimed_by!, { value: task.claimed_by!, label } as const];
+            })
+        ).values()
+      ).sort((a, b) => a.label.localeCompare(b.label)),
+    [filterBaseTasks]
+  );
+
+  const rateFilterOptions = useMemo(
+    () =>
+      Array.from(new Set(filterBaseTasks.map((task) => Number(task.rate)).filter((rate) => Number.isFinite(rate)))).sort((a, b) => a - b),
+    [filterBaseTasks]
+  );
+
+  const filteredTasks = useMemo(() => {
+    return filterBaseTasks.filter((task) => {
+      if (filterClaimedBy.length > 0 && !filterClaimedBy.includes(task.claimed_by ?? "")) return false;
+      if (filterRates.length > 0 && !filterRates.includes(Number(task.rate))) return false;
+      return true;
+    });
+  }, [filterBaseTasks, filterClaimedBy, filterRates]);
+
+  const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+  const allVisibleSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
+  const someVisibleSelected = filteredTasks.some((task) => selectedTaskIdSet.has(task.id)) && !allVisibleSelected;
+
+  useEffect(() => {
+    if (headerSelectAllRef.current) {
+      headerSelectAllRef.current.indeterminate = someVisibleSelected;
+    }
+  }, [someVisibleSelected]);
+
   const accountOptions = useMemo(() => mergeTextOptions(accounts, form.account), [accounts, form.account]);
   const categoryOptions = useMemo(() => mergeTextOptions(categories, form.category), [categories, form.category]);
   const selectedAssignedProfile = selectedTask?.assigned_to_profile ?? null;
@@ -281,75 +389,60 @@ export default function FixedPayTasksTab() {
     [selectedAssignedProfile, activeProfiles]
   );
 
-  function FilterDropdown<T extends string>({
-    label,
-    options,
-    selected,
-    onChange,
-    isOpen,
-    onToggle,
-  }: {
-    label: string;
-    options: { value: T; label: string }[];
-    selected: T[];
-    onChange: (v: T[]) => void;
-    isOpen: boolean;
-    onToggle: () => void;
-  }) {
-    return (
-      <div className="relative">
-        <button
-          type="button"
-          onClick={onToggle}
-          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] outline-none transition-all ${
-            selected.length > 0
-              ? "border-terracotta text-terracotta"
-              : "border-sand bg-white text-espresso hover:border-walnut"
-          }`}
-        >
-          {label}
-          {selected.length > 0 && (
-            <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">
-              {selected.length}
-            </span>
-          )}
-          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-        {isOpen && (
-          <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-xl border border-sand bg-white py-1 shadow-lg">
-            <div className="flex items-center justify-between border-b border-sand px-3 py-1.5">
-              <button type="button" onClick={() => onChange(options.map((o) => o.value))} className="cursor-pointer text-[11px] text-terracotta hover:underline">
-                Select All
-              </button>
-              <button type="button" onClick={() => onChange([])} className="cursor-pointer text-[11px] text-stone hover:underline">
-                Clear
-              </button>
-            </div>
-            {options.length > 0 ? (
-              options.map((opt) => (
-                <label key={opt.value} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-parchment">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(opt.value)}
-                    onChange={(e) => {
-                      if (e.target.checked) onChange([...selected, opt.value]);
-                      else onChange(selected.filter((value) => value !== opt.value));
-                    }}
-                    className="accent-terracotta"
-                  />
-                  <span className="text-[13px] text-espresso">{opt.label}</span>
-                </label>
-              ))
-            ) : (
-              <div className="px-3 py-2 text-[12px] text-stone">No options found</div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
+  const syncTaskInState = useCallback((updatedTask: FixedPayTaskWithClaimer) => {
+    setTasks((current) => current.map((item) => (item.id === updatedTask.id ? updatedTask : item)));
+    setSelectedTask((current) => (current && current.id === updatedTask.id ? updatedTask : current));
+  }, []);
+
+  const removeTaskInState = useCallback((taskId: number) => {
+    setTasks((current) => current.filter((item) => item.id !== taskId));
+    setSelectedTask((current) => (current && current.id === taskId ? null : current));
+    setSelectedTaskIds((current) => current.filter((id) => id !== taskId));
+  }, []);
+
+  const updateTaskVisibility = useCallback(
+    async (task: FixedPayTaskWithClaimer, payload: Record<string, unknown>) => {
+      const res = await fetch(`/api/fixed-pay-tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        let errorText = `HTTP ${res.status}`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data.error) errorText = data.error;
+        } catch {
+          // ignore parse failures
+        }
+        throw new Error(errorText);
+      }
+
+      const data = (await res.json()) as { task?: FixedPayTaskWithClaimer };
+      if (data.task) syncTaskInState(data.task);
+      return data.task ?? null;
+    },
+    [syncTaskInState]
+  );
+
+  const deleteTaskPermanently = useCallback(
+    async (task: FixedPayTaskWithClaimer) => {
+      const res = await fetch(`/api/fixed-pay-tasks/${task.id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) {
+        let errorText = `HTTP ${res.status}`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data.error) errorText = data.error;
+        } catch {
+          // ignore parse failures
+        }
+        throw new Error(errorText);
+      }
+      removeTaskInState(task.id);
+    },
+    [removeTaskInState]
+  );
 
   const openCreatePanel = useCallback(() => {
     setPanelMode("create");
@@ -357,6 +450,66 @@ export default function FixedPayTasksTab() {
     setForm(EMPTY_FORM);
     setMessage(null);
   }, []);
+
+  const toggleTaskSelection = useCallback((taskId: number) => {
+    setSelectedTaskIds((current) =>
+      current.includes(taskId) ? current.filter((id) => id !== taskId) : [...current, taskId]
+    );
+  }, []);
+
+  const toggleVisibleSelection = useCallback(() => {
+    setSelectedTaskIds((current) => {
+      const visibleIds = filteredTasks.map((task) => task.id);
+      if (visibleIds.length === 0) return current;
+      const visibleSet = new Set(visibleIds);
+      const hasAllVisible = visibleIds.every((id) => current.includes(id));
+      if (hasAllVisible) {
+        return current.filter((id) => !visibleSet.has(id));
+      }
+      return Array.from(new Set([...current, ...visibleIds]));
+    });
+  }, [filteredTasks]);
+
+  const runBulkVisibilityAction = useCallback(
+    async (payload: Record<string, unknown>, successText: string, action: "archive" | "trash") => {
+      const targets = tasks.filter((task) => selectedTaskIdSet.has(task.id));
+      if (targets.length === 0) return;
+
+      setBulkAction(action);
+      setMessage(null);
+      try {
+        for (const task of targets) {
+          await updateTaskVisibility(task, payload);
+        }
+        setSelectedTaskIds([]);
+        setMessage({ type: "ok", text: successText });
+      } catch (error) {
+        setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to update tasks." });
+      } finally {
+        setBulkAction(null);
+      }
+    },
+    [selectedTaskIdSet, tasks, updateTaskVisibility]
+  );
+
+  const runBulkDeleteAction = useCallback(async () => {
+    const targets = tasks.filter((task) => selectedTaskIdSet.has(task.id));
+    if (targets.length === 0) return;
+
+    setBulkAction("delete");
+    setMessage(null);
+    try {
+      for (const task of targets) {
+        await deleteTaskPermanently(task);
+      }
+      setSelectedTaskIds([]);
+      setMessage({ type: "ok", text: "Selected tasks permanently deleted." });
+    } catch (error) {
+      setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to delete tasks." });
+    } finally {
+      setBulkAction(null);
+    }
+  }, [deleteTaskPermanently, selectedTaskIdSet, tasks]);
 
   const openEditPanel = useCallback((task: FixedPayTaskWithClaimer) => {
     setPanelMode("edit");
@@ -643,28 +796,38 @@ export default function FixedPayTasksTab() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
       <div className="rounded-2xl border border-sand bg-white shadow-sm">
-        <div className="flex flex-col gap-4 border-b border-parchment px-5 py-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-espresso">Fixed Pay Tasks</h1>
-            <p className="text-xs text-stone">Manage the fixed-pay task pool for per-task VAs.</p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-              {VIEW_FILTER_PILLS.map((pill) => (
-                <button
-                  key={pill.value}
-                  type="button"
-                  onClick={() => setActiveFilter(pill.value)}
-                  className={`rounded-md px-3 py-1.5 transition-colors ${
-                    activeFilter === pill.value ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
-                  }`}
-                >
-                  {pill.label}
-                </button>
-              ))}
+        <div className="border-b border-parchment px-5 py-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h1 className="text-lg font-bold text-espresso">Fixed Pay Tasks</h1>
+              <p className="text-xs text-stone">Manage the fixed-pay task pool for per-task VAs.</p>
             </div>
 
+            <button
+              type="button"
+              onClick={openCreatePanel}
+              className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+            >
+              New Task
+            </button>
+          </div>
+
+          <div className="mt-4 inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+            {VIEW_FILTER_PILLS.map((pill) => (
+              <button
+                key={pill.value}
+                type="button"
+                onClick={() => setActiveFilter(pill.value)}
+                className={`rounded-md px-3 py-1.5 transition-colors ${
+                  activeFilter === pill.value ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                }`}
+              >
+                {pill.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             <FilterDropdown
               label="Task Name"
               options={taskNameFilterOptions.map((taskName) => ({ value: taskName, label: taskName }))}
@@ -697,7 +860,23 @@ export default function FixedPayTasksTab() {
               isOpen={openFilter === "status"}
               onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
             />
-            {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || activeFilter !== "all") && (
+            <FilterDropdown
+              label="Claimed By"
+              options={claimedByFilterOptions}
+              selected={filterClaimedBy}
+              onChange={setFilterClaimedBy}
+              isOpen={openFilter === "claimedBy"}
+              onToggle={() => setOpenFilter(openFilter === "claimedBy" ? null : "claimedBy")}
+            />
+            <FilterDropdown
+              label="Rate"
+              options={rateFilterOptions.map((rate) => ({ value: rate, label: formatRate(rate) }))}
+              selected={filterRates}
+              onChange={setFilterRates}
+              isOpen={openFilter === "rate"}
+              onToggle={() => setOpenFilter(openFilter === "rate" ? null : "rate")}
+            />
+            {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterClaimedBy.length > 0 || filterRates.length > 0 || activeFilter !== "all") && (
               <button
                 type="button"
                 onClick={() => {
@@ -706,24 +885,18 @@ export default function FixedPayTasksTab() {
                   setFilterAccounts([]);
                   setFilterCategories([]);
                   setFilterStatuses([]);
+                  setFilterClaimedBy([]);
+                  setFilterRates([]);
                 }}
                 className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
               >
                 Clear all
               </button>
             )}
-
-            <button
-              type="button"
-              onClick={openCreatePanel}
-              className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-            >
-              New Task
-            </button>
           </div>
         </div>
-
         <div className="px-5 py-4">
+
           {!panelMode && message && (
             <div className={`mb-4 rounded-lg px-4 py-3 text-sm ${message.type === "ok" ? "bg-sage-soft text-sage" : "bg-red-50 text-red-700"}`}>
               {message.text}
@@ -740,7 +913,51 @@ export default function FixedPayTasksTab() {
             )}
           </div>
 
+          {selectedTaskIds.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-parchment/30 px-4 py-3">
+              <div className="text-[13px] text-espresso">
+                <span className="font-semibold">{selectedTaskIds.length}</span> selected
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void runBulkVisibilityAction({ archived_at: new Date().toISOString(), deleted_at: null }, "Selected tasks archived.", "archive")}
+                  disabled={bulkAction !== null}
+                  className="rounded-lg border border-amber-400 px-3 py-2 text-[12px] font-semibold text-amber-700 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bulkAction === "archive" ? "Archiving..." : "Archive"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runBulkVisibilityAction({ deleted_at: new Date().toISOString(), archived_at: null }, "Selected tasks moved to trash.", "trash")}
+                  disabled={bulkAction !== null}
+                  className="rounded-lg border border-red-300 px-3 py-2 text-[12px] font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bulkAction === "trash" ? "Trashing..." : "Trash"}
+                </button>
+                {activeFilter === "trash" && (
+                  <button
+                    type="button"
+                    onClick={() => void runBulkDeleteAction()}
+                    disabled={bulkAction !== null}
+                    className="rounded-lg border border-stone px-3 py-2 text-[12px] font-semibold text-stone transition-colors hover:bg-stone/5 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {bulkAction === "delete" ? "Deleting..." : "Permanently Delete"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedTaskIds([])}
+                  className="text-[12px] text-stone hover:text-terracotta hover:underline"
+                >
+                  Clear selection
+                </button>
+              </div>
+            </div>
+          )}
+
           {loading ? (
+
             <div className="space-y-2">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="h-14 animate-pulse rounded-xl bg-parchment" />
@@ -755,7 +972,16 @@ export default function FixedPayTasksTab() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-sand bg-parchment">
-                    <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut" />
+                    <th className="w-10 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      <input
+                        ref={headerSelectAllRef}
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={toggleVisibleSelection}
+                        className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                        aria-label="Select all visible tasks"
+                      />
+                    </th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Task Name</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Category</th>
@@ -768,7 +994,7 @@ export default function FixedPayTasksTab() {
                 <tbody>
                   {filteredTasks.map((task) => {
                     const claimedBy = task.claimed_by_profile?.full_name || task.claimed_by_profile?.username || "—";
-                    const isSelected = selectedTask?.id === task.id;
+                    const isSelected = selectedTaskIdSet.has(task.id) || selectedTask?.id === task.id;
                     const rowStateLabel = task.deleted_at ? "Trash" : task.archived_at ? "Archived" : task.is_active ? "On" : "Off";
                     const rowStateClass = task.deleted_at
                       ? "bg-red-100 text-red-600 hover:bg-red-100"
@@ -786,17 +1012,26 @@ export default function FixedPayTasksTab() {
                         }`}
                         onClick={() => openEditPanel(task)}
                       >
-                        <td className="w-8 px-3 py-3" onClick={(event) => event.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => openEditPanel(task)}
-                            className="flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-walnut"
-                            aria-label={`Open ${task.task_name}`}
-                          >
-                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M9 18l6-6-6-6" />
-                            </svg>
-                          </button>
+                        <td className="w-10 px-3 py-3" onClick={(event) => event.stopPropagation()}>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedTaskIdSet.has(task.id)}
+                              onChange={() => toggleTaskSelection(task.id)}
+                              className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                              aria-label={`Select ${task.task_name}`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => openEditPanel(task)}
+                              className="flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-walnut"
+                              aria-label={`Open ${task.task_name}`}
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M9 18l6-6-6-6" />
+                              </svg>
+                            </button>
+                          </div>
                         </td>
 
                         <td className="px-3 py-3 text-[13px] font-medium text-walnut">{task.task_name}</td>
@@ -828,6 +1063,7 @@ export default function FixedPayTasksTab() {
                   })}
                 </tbody>
               </table>
+
             </div>
           )}
         </div>
@@ -1051,13 +1287,24 @@ export default function FixedPayTasksTab() {
               {panelMode === "edit" && selectedTask && (
                 <div className="flex flex-wrap gap-2">
                   {selectedTask.archived_at || selectedTask.deleted_at ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleRestoreTask(selectedTask)}
-                      className="rounded-lg border border-sage px-3 py-1.5 text-[11px] font-semibold text-sage transition-colors hover:bg-sage-soft"
-                    >
-                      Restore
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleRestoreTask(selectedTask)}
+                        className="rounded-lg border border-sage px-3 py-1.5 text-[11px] font-semibold text-sage transition-colors hover:bg-sage-soft"
+                      >
+                        Restore
+                      </button>
+                      {selectedTask.deleted_at && (
+                        <button
+                          type="button"
+                          onClick={() => void deleteTaskPermanently(selectedTask)}
+                          className="rounded-lg border border-stone px-3 py-1.5 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/5"
+                        >
+                          Permanently Delete
+                        </button>
+                      )}
+                    </>
                   ) : (
                     <>
                       <button

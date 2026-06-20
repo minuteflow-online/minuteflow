@@ -264,3 +264,23 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const [task] = await hydrateTaskProfiles(admin, [data as FixedPayTaskWithClaimer]);
   return Response.json({ task });
 }
+
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireAdmin();
+  if ("error" in auth) return auth.error;
+
+  const { id } = await params;
+  const taskId = Number(id);
+  if (!Number.isFinite(taskId)) {
+    return Response.json({ error: "Invalid task id" }, { status: 400 });
+  }
+
+  const admin = makeAdminClient();
+  const { error } = await admin.from("fixed_pay_tasks").delete().eq("id", taskId);
+
+  if (error) {
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  return new Response(null, { status: 204 });
+}
