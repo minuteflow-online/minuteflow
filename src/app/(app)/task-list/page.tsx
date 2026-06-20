@@ -76,6 +76,39 @@ type InlineEditState = {
 
 type HourlyPoolTask = AssignedTask;
 
+// Admin-format response shape returned by ?asReviewer=true
+type AdminAssigneeFlat = {
+  id: number;
+  va_id: string;
+  status: AssignedTaskStatus;
+  log_id: number | null;
+  notes: string | null;
+  assigned_at: string | null;
+  updated_at: string | null;
+  instructions?: string | null;
+  instructions_locked?: boolean;
+  profiles?: { id: string; full_name: string; username: string } | null;
+};
+type AdminTaskFlat = {
+  id: number;
+  account: string | null;
+  project: string | null;
+  task_name: string;
+  task_detail: string | null;
+  task_notes: string | null;
+  due_date: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  assigned_by?: string | null;
+  assigned_by_profile?: { id: string; full_name: string; username: string } | null;
+  instructions?: string | null;
+  instructions_locked?: boolean;
+  fixed_pay_task_id?: number | null;
+  fixed_pay_tasks?: { rate: number } | null;
+  assigned_task_assignees: AdminAssigneeFlat[];
+};
+
 const STATUS_FILTERS: Array<{ value: AssignedTaskStatus | "all"; label: string }> = [
   { value: "all", label: "All Statuses" },
   { value: "unassigned", label: "Unassigned" },
@@ -308,11 +341,51 @@ export default function TaskListPage() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
         const raw = Array.isArray(json) ? json : json.tasks ?? [];
-        const normalized = raw.map((row: VATaskRow) => ({
-          ...row,
-          is_collaborative: Boolean(row.is_collaborative),
-          collaborator_name: row.collaborator_name ?? null,
-        }));
+
+        let normalized: VATaskRow[];
+        if (mode === "submitted") {
+          // asReviewer=true returns admin format: task rows with nested assignees.
+          // Flatten each submitted assignee into a VA-format row so the task list
+          // can render it with the same logic as My Tasks.
+          normalized = (raw as AdminTaskFlat[]).flatMap((task) =>
+            (task.assigned_task_assignees ?? []).map((assignee) => ({
+              id: assignee.id,
+              va_id: assignee.va_id,
+              status: assignee.status,
+              log_id: assignee.log_id,
+              notes: assignee.notes,
+              assigned_at: assignee.assigned_at,
+              updated_at: assignee.updated_at,
+              is_collaborative: false,
+              collaborator_name: null,
+              assigned_tasks: {
+                id: task.id,
+                account: task.account,
+                project: task.project,
+                task_name: task.task_name,
+                task_detail: task.task_detail,
+                task_notes: task.task_notes,
+                due_date: task.due_date,
+                assigned_by: task.assigned_by ?? null,
+                assigned_by_profile: task.assigned_by_profile ?? null,
+                instructions: task.instructions ?? null,
+                instructions_locked: Boolean(task.instructions_locked),
+                fixed_pay_task_id: task.fixed_pay_task_id ?? null,
+                fixed_pay_tasks: task.fixed_pay_tasks ?? null,
+                created_by: task.created_by,
+                created_at: task.created_at,
+                updated_at: task.updated_at,
+              },
+            }))
+          );
+        } else {
+          normalized = raw.map((row: VATaskRow) => ({
+            ...row,
+            is_collaborative: Boolean(row.is_collaborative),
+            collaborator_name: row.collaborator_name ?? null,
+          }));
+        }
+
         const sorted = sortTasks(normalized);
         setTasks(sorted);
         return sorted;
@@ -847,8 +920,12 @@ export default function TaskListPage() {
       try {
         const payloadValue = inlineEdit.field === "due_date" && value === "" ? null : value || null;
         const body: Record<string, unknown> = { [inlineEdit.field]: payloadValue };
-        if (inlineEdit.field === "status" && currentUserId && !isSubmittedView) {
-          body.va_id = currentUserId;
+        if (inlineEdit.field === "status") {
+          if (isSubmittedView && task.va_id) {
+            body.va_id = task.va_id;
+          } else if (currentUserId) {
+            body.va_id = currentUserId;
+          }
         }
         const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
           method: "PATCH",
@@ -1424,8 +1501,14 @@ export default function TaskListPage() {
       const body: Record<string, unknown> = {};
       if (statusChanged) body.status = nextStatus;
       if (notesChanged) body.notes = nextNotes;
-      if ((statusChanged || notesChanged) && currentUserId && !isSubmittedView) {
-        body.va_id = currentUserId;
+      if (statusChanged || notesChanged) {
+        if (isSubmittedView && selectedTask?.va_id) {
+          // Admin reviewing submitted work: target the specific VA's assignee row
+          body.va_id = selectedTask.va_id;
+        } else if (currentUserId) {
+          // VA updating their own submission
+          body.va_id = currentUserId;
+        }
       }
       if (metadataChanged) {
         body.account = nextAccount || null;
