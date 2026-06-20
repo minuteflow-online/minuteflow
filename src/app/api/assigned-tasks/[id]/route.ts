@@ -288,7 +288,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     deleted_at?: string | null;
   };
 
-  const { data: taskContext, error: taskContextError } = await supabase
+  // Use the service-role client here so VAs who are the task ASSIGNER (assigned_by)
+  // can still be identified as the task owner. The RLS policy `assigned_tasks_va_read`
+  // only permits VAs to read rows where they are an ASSIGNEE — so a VA who created
+  // and assigned a task to someone else cannot read it via the session client, which
+  // causes isTaskOwner to always be false even when the VA legitimately owns the task.
+  const { data: taskContext, error: taskContextError } = await adminSupabase
     .from("assigned_tasks")
     .select("assigned_by")
     .eq("id", id)
