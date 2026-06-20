@@ -146,25 +146,32 @@ export async function GET(request: Request) {
   }
 
   if (asReviewer) {
+    // Fetch all tasks this admin assigned — filter on the assignee level,
+    // not the task level, because VAs update assigned_task_assignees.status,
+    // not assigned_tasks.status.
     const { data, error } = await serviceRoleClient
       .from("assigned_tasks")
       .select(taskSelect)
       .eq("assigned_by", user.id)
-      .eq("status", "submitted")
       .order("created_at", { ascending: false });
 
     if (error) return Response.json({ error: error.message }, { status: 500 });
 
     const reviewerRows = await formatAdminTaskRows(data ?? []);
-    const flattened = reviewerRows.flatMap((task) => {
-      const { assigned_task_assignees, ...taskData } = task;
-      return assigned_task_assignees.map((assignee) => ({
-        ...assignee,
-        assigned_tasks: taskData,
-      }));
-    });
 
-    return Response.json({ tasks: flattened });
+    // Keep only tasks that have at least one assignee with status "submitted",
+    // and narrow each task's assignee list to only the submitted ones.
+    const submittedTasks = reviewerRows
+      .map((task) => ({
+        ...task,
+        assigned_task_assignees: task.assigned_task_assignees.filter(
+          (a) => a.status === "submitted"
+        ),
+      }))
+      .filter((task) => task.assigned_task_assignees.length > 0)
+      .filter((task) => matchesTaskView(task, viewParam));
+
+    return Response.json({ tasks: submittedTasks });
   }
 
   const isAdminOrManager =
