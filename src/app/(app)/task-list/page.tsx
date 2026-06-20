@@ -817,9 +817,9 @@ export default function TaskListPage() {
     [addProjectId, formTasksByProject]
   );
 
-  const panelCanEditFields = Boolean(selectedTask && !selectedTask.is_collaborative);
-  const panelCanEditAssignedBy = Boolean(selectedTask && !selectedTask.is_collaborative);
-  const panelCanEditInstructions = Boolean(selectedTask && !selectedTask.is_collaborative);
+  const panelCanEditFields = Boolean(selectedTask);
+  const panelCanEditAssignedBy = Boolean(selectedTask);
+  const panelCanEditInstructions = Boolean(selectedTask);
 
   const panelProjectsForAccount = useMemo(
     () => formProjects.filter((project) => project.account === panelAccount),
@@ -1515,7 +1515,7 @@ export default function TaskListPage() {
       !sameText(nextInstructions, selectedTask.assigned_tasks.instructions) ||
       nextInstructionsLocked !== Boolean(selectedTask.assigned_tasks.instructions_locked);
 
-    if (selectedTask.is_collaborative || (!statusChanged && !metadataChanged && !notesChanged)) {
+    if (!statusChanged && !metadataChanged && !notesChanged) {
       closePanel();
       return;
     }
@@ -2663,25 +2663,41 @@ export default function TaskListPage() {
                 )}
               </div>
 
-              {!selectedTask.is_collaborative && (
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">My Notes</label>
-                  <textarea
-                    value={panelNotes}
-                    onChange={(e) => setPanelNotes(e.target.value)}
-                    rows={5}
-                    placeholder="Add your private notes for this task..."
-                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                </div>
-              )}
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">My Notes</label>
+                <textarea
+                  value={panelNotes}
+                  onChange={(e) => setPanelNotes(e.target.value)}
+                  rows={5}
+                  placeholder="Add your private notes for this task..."
+                  className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                />
+              </div>
 
               <div>
                 <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned To</label>
                 {selectedTask.is_collaborative ? (
                   <div className="space-y-3 rounded-xl border border-slate-blue/20 bg-slate-blue-soft px-3 py-3 text-sm text-slate-blue">
                     <StatusBadge status={selectedTask.status} />
-                    <p>Collaborative task — status is read only here.</p>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Update Status</label>
+                      <select
+                        value={panelStatus}
+                        onChange={(e) => setPanelStatus(e.target.value as AssignedTaskStatus)}
+                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                      >
+                        {STATUS_FILTERS.filter(
+                          (option): option is { value: AssignedTaskStatus; label: string } => option.value !== "all"
+                        ).map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {selectedTask.collaborator_name ? (
+                      <p className="text-[12px] text-stone">Also assigned to: {selectedTask.collaborator_name}</p>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -2836,16 +2852,14 @@ export default function TaskListPage() {
                 <button type="button" onClick={closePanel} className="cursor-pointer text-xs text-stone hover:text-espresso">
                   Cancel
                 </button>
-                {!selectedTask.is_collaborative && (
-                  <button
-                    type="button"
-                    onClick={() => void handleSavePanel()}
-                    disabled={panelSaving}
-                    className="cursor-pointer rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {panelSaving ? "Saving..." : "Save Changes"}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => void handleSavePanel()}
+                  disabled={panelSaving}
+                  className="cursor-pointer rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {panelSaving ? "Saving..." : "Save Changes"}
+                </button>
               </div>
             </div>
           </div>
