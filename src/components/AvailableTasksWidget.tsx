@@ -64,14 +64,18 @@ function renderTextWithLinks(text: string) {
 export default function AvailableTasksWidget({
   onClaimed,
   canSeeFixedPay = true,
+  fixedPayOnly = false,
   currentUserId,
 }: {
   onClaimed?: () => void;
   canSeeFixedPay?: boolean;
+  fixedPayOnly?: boolean;
   currentUserId?: string;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const [viewMode, setViewMode] = useState<"fixed_pay" | "hourly">(canSeeFixedPay ? "fixed_pay" : "hourly");
+  const [viewMode, setViewMode] = useState<"fixed_pay" | "hourly">(
+    fixedPayOnly || canSeeFixedPay ? "fixed_pay" : "hourly"
+  );
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [pendingAssigned, setPendingAssigned] = useState<VAAssignedTask[]>([]);
   const [hourlyTasks, setHourlyTasks] = useState<AssignedTask[]>([]);
@@ -83,10 +87,15 @@ export default function AvailableTasksWidget({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (fixedPayOnly) {
+      if (viewMode !== "fixed_pay") setViewMode("fixed_pay");
+      return;
+    }
+
     if (!canSeeFixedPay && viewMode === "fixed_pay") {
       setViewMode("hourly");
     }
-  }, [canSeeFixedPay, viewMode]);
+  }, [canSeeFixedPay, fixedPayOnly, viewMode]);
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -311,28 +320,30 @@ export default function AvailableTasksWidget({
         <span className="text-stone font-normal normal-case">({totalCount})</span>
       </h3>
 
-      <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-        {canSeeFixedPay && (
+      {!fixedPayOnly && (
+        <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+          {canSeeFixedPay && (
+            <button
+              type="button"
+              onClick={() => setViewMode("fixed_pay")}
+              className={`rounded-md px-3 py-1.5 transition-colors ${
+                viewMode === "fixed_pay" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+              }`}
+            >
+              Fixed Pay
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setViewMode("fixed_pay")}
+            onClick={() => setViewMode("hourly")}
             className={`rounded-md px-3 py-1.5 transition-colors ${
-              viewMode === "fixed_pay" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+              viewMode === "hourly" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
             }`}
           >
-            Fixed Pay
+            Hourly
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setViewMode("hourly")}
-          className={`rounded-md px-3 py-1.5 transition-colors ${
-            viewMode === "hourly" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
-          }`}
-        >
-          Hourly
-        </button>
-      </div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">

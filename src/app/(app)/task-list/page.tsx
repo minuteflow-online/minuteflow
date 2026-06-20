@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTask, AssignedTaskStatus, TaskScreenshot } from "@/types/database";
-import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 
@@ -257,6 +256,7 @@ export default function TaskListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [taskView, setTaskView] = useState<"active" | "archived" | "trash">("active");
+  const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [filterStatuses, setFilterStatuses] = useState<AssignedTaskStatus[]>([]);
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
   const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
@@ -327,6 +327,10 @@ export default function TaskListPage() {
     null
   );
   const taskViewOptions = currentRole === "va" ? (["active", "archived"] as const) : (["active", "archived", "trash"] as const);
+
+  useEffect(() => {
+    setSelectedTaskIds([]);
+  }, [taskView]);
 
   const fetchTasks = useCallback(
     async (mode: "my_tasks" | "submitted" = activeView === "submitted" ? "submitted" : "my_tasks"):
@@ -440,27 +444,20 @@ export default function TaskListPage() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("id, role, position, can_see_available_tasks, full_name, username")
+        .select("id, full_name, username")
         .eq("id", data.user.id)
         .single();
 
-      setCurrentRole(profile?.role ?? null);
-      setCurrentPosition(profile?.position ?? null);
       setCurrentUserProfile(
         profile?.id
           ? { id: profile.id, full_name: profile.full_name ?? "", username: profile.username ?? "" }
           : null
       );
-      setCanSeeAvailableTasks(Boolean(profile?.can_see_available_tasks));
     } catch {
       // leave the task list usable for all users if profile lookup fails
     }
   }, [supabase]);
 
-  const isAdmin = currentRole === "admin";
-  const isPerTaskVa = currentPosition === "Per Task VA";
-  const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
-  const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
   const isSubmittedView = activeView === "submitted";
 
   const fetchAttachments = useCallback(async (taskId: number) => {
@@ -565,22 +562,6 @@ export default function TaskListPage() {
   }, [currentUserProfile]);
 
   useEffect(() => {
-    if (!canShowAvailableTasks && !canShowHourlyPool) {
-      setActiveView("my_tasks");
-    }
-  }, [canShowAvailableTasks, canShowHourlyPool]);
-
-  useEffect(() => {
-    if (canShowHourlyPool) {
-      void fetchHourlyPool();
-    } else {
-      setHourlyPoolTasks([]);
-      setHourlyPoolLoading(false);
-      setHourlyPoolError(null);
-    }
-  }, [canShowHourlyPool, fetchHourlyPool]);
-
-  useEffect(() => {
     setFilterStatuses([]);
     setFilterAccounts([]);
     setFilterTaskNames([]);
@@ -589,6 +570,10 @@ export default function TaskListPage() {
     setFilterDueEnd("");
     setTaskNameSearch("");
     setOpenFilter(null);
+  }, [taskView]);
+
+  useEffect(() => {
+    setSelectedTaskIds([]);
   }, [taskView]);
 
   useEffect(() => {
@@ -869,6 +854,26 @@ export default function TaskListPage() {
       return true;
     });
   }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterTaskNames, taskNameSearch, tasks]);
+
+  const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+  const allFilteredTasksSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
+
+  const toggleTaskSelection = useCallback((taskId: number) => {
+    setSelectedTaskIds((prev) => (prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]));
+  }, []);
+
+  const toggleAllFilteredTasks = useCallback(() => {
+    setSelectedTaskIds((prev) => {
+      if (filteredTasks.length === 0) return prev;
+      const filteredIds = filteredTasks.map((task) => task.id);
+      const filteredIdSet = new Set(filteredIds);
+      const allSelected = filteredIds.every((id) => prev.includes(id));
+      if (allSelected) {
+        return prev.filter((id) => !filteredIdSet.has(id));
+      }
+      return Array.from(new Set([...prev, ...filteredIds]));
+    });
+  }, [filteredTasks]);
 
   const startInlineEdit = useCallback(
     (e: React.MouseEvent, taskId: number, field: InlineEditField, value: string) => {
@@ -1682,7 +1687,82 @@ export default function TaskListPage() {
     [fetchAttachments, selectedTask]
   );
 
+  const patchTaskVisibility = useCallback(
+    async (taskId: number, payload: Record<string, string | null>) => {
+      const res = await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    },
+    []
+  );
+
+  const handleArchive = useCallback(
+    async (taskId: number) => {
+      setPanelMsg(null);
+      await patchTaskVisibility(taskId, { archived_at: new Date().toISOString() });
+      if (selectedTask?.id === taskId) closePanel();
+      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
+      await fetchTasks();
+    },
+    [closePanel, fetchTasks, patchTaskVisibility, selectedTask]
+  );
+
+  const handleTrash = useCallback(
+    async (taskId: number) => {
+      setPanelMsg(null);
+      await patchTaskVisibility(taskId, { deleted_at: new Date().toISOString() });
+      if (selectedTask?.id === taskId) closePanel();
+      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
+      await fetchTasks();
+    },
+    [closePanel, fetchTasks, patchTaskVisibility, selectedTask]
+  );
+
+  const handleRestore = useCallback(
+    async (taskId: number) => {
+      setPanelMsg(null);
+      await patchTaskVisibility(taskId, { archived_at: null, deleted_at: null });
+      if (selectedTask?.id === taskId) closePanel();
+      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
+      await fetchTasks();
+    },
+    [closePanel, fetchTasks, patchTaskVisibility, selectedTask]
+  );
+
+  const handlePermanentDelete = useCallback(
+    async (taskId: number) => {
+      if (!confirm("Permanently delete this task? This cannot be undone.")) return;
+      setPanelMsg(null);
+      const res = await fetch(`/api/assigned-tasks/${taskId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (selectedTask?.id === taskId) closePanel();
+      setSelectedTaskIds((prev) => prev.filter((id) => id !== taskId));
+      await fetchTasks();
+    },
+    [closePanel, fetchTasks, selectedTask]
+  );
+
+  const handleBulkArchive = useCallback(async () => {
+    const ids = [...selectedTaskIds];
+    await Promise.all(ids.map((id) => patchTaskVisibility(id, { archived_at: new Date().toISOString() })));
+    setSelectedTaskIds([]);
+    if (selectedTask && ids.includes(selectedTask.id)) closePanel();
+    await fetchTasks();
+  }, [closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds]);
+
+  const handleBulkTrash = useCallback(async () => {
+    const ids = [...selectedTaskIds];
+    await Promise.all(ids.map((id) => patchTaskVisibility(id, { deleted_at: new Date().toISOString() })));
+    setSelectedTaskIds([]);
+    if (selectedTask && ids.includes(selectedTask.id)) closePanel();
+    await fetchTasks();
+  }, [closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds]);
+
   return (
+    <>
     <div className="mx-auto max-w-6xl px-4 py-6">
       <div className="rounded-2xl border border-sand bg-white shadow-sm">
         <div className="border-b border-parchment px-5 py-3">
@@ -1701,24 +1781,6 @@ export default function TaskListPage() {
                 >
                   My Tasks
                 </button>
-                {canShowAvailableTasks && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveView("available_tasks")}
-                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                  >
-                    Available Tasks
-                  </button>
-                )}
-                {canShowHourlyPool && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveView("hourly_pool")}
-                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "hourly_pool" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                  >
-                    Unassigned Tasks
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -1835,74 +1897,30 @@ export default function TaskListPage() {
               </div>
             </div>
           </div>
-        )}
-
         <div className="px-5 py-4">
-          {canShowAvailableTasks && activeView === "available_tasks" ? (
-            <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} currentUserId={currentUserId ?? undefined} />
-          ) : canShowHourlyPool && activeView === "hourly_pool" ? (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-[11px] text-stone">
-                <span className="rounded-full bg-parchment px-2 py-0.5 font-semibold text-walnut">{hourlyPoolTasks.length}</span>
-                <span>task{hourlyPoolTasks.length === 1 ? "" : "s"}</span>
-                <span className="rounded-full bg-sage-soft px-2 py-0.5 font-semibold text-sage">Unassigned Pool</span>
+          {taskView === "active" && selectedTaskIds.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-parchment/40 px-4 py-3 text-sm">
+              <div className="text-stone">
+                {selectedTaskIds.length} task{selectedTaskIds.length === 1 ? "" : "s"} selected
               </div>
-
-              {hourlyPoolError && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{hourlyPoolError}</div>
-              )}
-
-              {hourlyPoolLoading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-20 animate-pulse rounded-xl bg-parchment" />
-                  ))}
-                </div>
-              ) : hourlyPoolTasks.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
-                  No unassigned tasks found.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {hourlyPoolTasks.map((task) => {
-                    const due = formatDueDate(task.due_date);
-                    const isGrabbing = hourlyGrabbingId === task.id;
-                    const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
-
-                    return (
-                      <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
-                        <div className="px-2.5 py-2 bg-parchment/20">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
-                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
-                              {due.label === "—" ? "No due date" : `Due ${due.label}`}
-                            </span>
-                          </div>
-                          <div className="mt-0.5 truncate text-[10px] text-stone">
-                            {task.account ?? ""}
-                            {task.project ? ` / ${task.project}` : ""}
-                          </div>
-                        </div>
-
-                        <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
-                          <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
-                          <button
-                            type="button"
-                            onClick={() => void handleHourlyGrab(task.id)}
-                            disabled={isGrabbing}
-                            className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {isGrabbing ? "Grabbing..." : "Grab"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleBulkArchive()}
+                  className="rounded-lg border border-sand bg-white px-3 py-2 text-xs font-semibold text-espresso transition-colors hover:bg-parchment"
+                >
+                  Archive
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleBulkTrash()}
+                  className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                >
+                  Trash
+                </button>
+              </div>
             </div>
-          ) : (
-            <>
+          )}
               <div className="mb-3 flex items-center gap-2 text-[11px] text-stone">
                 <span className="rounded-full bg-parchment px-2 py-0.5 font-semibold text-walnut">
                   {filteredTasks.length}
@@ -1934,6 +1952,17 @@ export default function TaskListPage() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-sand bg-parchment">
+                        {taskView === "active" && (
+                          <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                            <input
+                              type="checkbox"
+                              checked={allFilteredTasksSelected}
+                              onChange={toggleAllFilteredTasks}
+                              className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                              aria-label="Select all visible tasks"
+                            />
+                          </th>
+                        )}
                         <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut" />
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Task Name</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</th>
@@ -1958,6 +1987,18 @@ export default function TaskListPage() {
                             }`}
                             onClick={() => void openPanel(task)}
                           >
+                            {taskView === "active" && (
+                              <td className="w-8 px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedTaskIdSet.has(task.id)}
+                                  onChange={() => toggleTaskSelection(task.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                                  aria-label={`Select ${detail.task_name}`}
+                                />
+                              </td>
+                            )}
                             <td className="w-8 px-3 py-3" onClick={(e) => e.stopPropagation()}>
                               <button
                                 type="button"
@@ -2049,10 +2090,7 @@ export default function TaskListPage() {
                   </table>
                 </div>
               )}
-            </>
-          )}
         </div>
-      </div>
 
       {isCreating && (
         <div className="fixed inset-0 z-40 flex items-stretch">
@@ -2650,6 +2688,54 @@ export default function TaskListPage() {
               </div>
 
               <div className="flex items-center gap-3">
+                {taskView === "active" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleArchive(selectedTask.assigned_tasks.id)}
+                      disabled={panelSaving}
+                      className="cursor-pointer rounded-lg border border-sand bg-white px-4 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Archive
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleTrash(selectedTask.assigned_tasks.id)}
+                      disabled={panelSaving}
+                      className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Trash
+                    </button>
+                  </>
+                ) : taskView === "archived" ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleRestore(selectedTask.assigned_tasks.id)}
+                    disabled={panelSaving}
+                    className="cursor-pointer rounded-lg border border-sand bg-white px-4 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Restore
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleRestore(selectedTask.assigned_tasks.id)}
+                      disabled={panelSaving}
+                      className="cursor-pointer rounded-lg border border-sand bg-white px-4 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Restore
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handlePermanentDelete(selectedTask.assigned_tasks.id)}
+                      disabled={panelSaving}
+                      className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Permanent Delete
+                    </button>
+                  </>
+                )}
                 <button type="button" onClick={closePanel} className="cursor-pointer text-xs text-stone hover:text-espresso">
                   Cancel
                 </button>
@@ -2678,6 +2764,6 @@ export default function TaskListPage() {
           }}
         />
       )}
-    </div>
+    </>
   );
 }
