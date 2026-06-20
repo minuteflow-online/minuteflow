@@ -136,8 +136,9 @@ export default function AvailableTasksWidget({
 
         if (assignedRes.ok) {
           const assignedJson = await assignedRes.json();
-          const assignedRows = assignedJson.tasks ?? [];
-          setPendingAssigned(assignedRows as VAAssignedTask[]);
+          const assignedRows = (assignedJson.tasks ?? []) as VAAssignedTask[];
+          // Only show fixed pay directly-assigned tasks here; hourly pending tasks appear in My Tasks
+          setPendingAssigned(assignedRows.filter((row) => row.assigned_tasks?.fixed_pay_task_id != null));
         }
 
       } else {
@@ -146,8 +147,9 @@ export default function AvailableTasksWidget({
 
         if (assignedRes.ok) {
           const assignedJson = await assignedRes.json();
-          const assignedRows = assignedJson.tasks ?? [];
-          setPendingAssigned(assignedRows as VAAssignedTask[]);
+          const assignedRows = (assignedJson.tasks ?? []) as VAAssignedTask[];
+          // Only show fixed pay directly-assigned tasks here; hourly pending tasks appear in My Tasks
+          setPendingAssigned(assignedRows.filter((row) => row.assigned_tasks?.fixed_pay_task_id != null));
         }
       }
     } catch {
