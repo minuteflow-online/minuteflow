@@ -97,6 +97,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const body = await request.json();
   const updates: Record<string, unknown> = {};
+  const now = new Date().toISOString();
+  const hasAssignedTo = Object.prototype.hasOwnProperty.call(body, "assigned_to");
+  const nextAssignedTo = hasAssignedTo ? normalizeText(body.assigned_to) : undefined;
+  let currentTaskForAssignment:
+    | { claimed_by: string | null; task_name: string | null; account: string | null; category: string | null }
+    | null = null;
 
   if ("task_name" in body) {
     const taskName = String(body.task_name ?? "").trim();
@@ -122,7 +128,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
     updates.status = status;
   }
-  if ("assigned_to" in body) updates.assigned_to = normalizeText(body.assigned_to);
+  if (hasAssignedTo) updates.assigned_to = nextAssignedTo;
   if ("assigned_by" in body) updates.assigned_by = normalizeText(body.assigned_by);
   if ("is_active" in body) updates.is_active = Boolean(body.is_active);
 
@@ -130,6 +136,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (revokeClaim) {
     updates.claimed_by = null;
     updates.claimed_at = null;
+    updates.assigned_to = null;
   } else if ("claimed_by" in body) {
     const claimedBy = normalizeText(body.claimed_by);
     if (!claimedBy) {
@@ -140,6 +147,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   const admin = makeAdminClient();
+
   if (revokeClaim) {
     const { error: deleteError } = await admin
       .from("assigned_tasks")
@@ -152,6 +160,24 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
   }
 
+  if (nextAssignedTo) {
+    const { data: currentTask, error: currentTaskError } = await admin
+      .from("fixed_pay_tasks")
+      .select("claimed_by, task_name, account, category")
+      .eq("id", taskId)
+      .single();
+
+    if (currentTaskError || !currentTask) {
+      return Response.json({ error: currentTaskError?.message || "Task not found" }, { status: 404 });
+    }
+
+    currentTaskForAssignment = currentTask;
+    if (currentTask.claimed_by !== nextAssignedTo) {
+      updates.claimed_by = nextAssignedTo;
+      updates.claimed_at = now;
+    }
+  }
+
   const { data, error } = await admin
     .from("fixed_pay_tasks")
     .update(updates)
@@ -161,6 +187,59 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  if (nextAssignedTo) {
+    const { error: deleteError } = await admin
+      .from("assigned_tasks")
+      .delete()
+      .eq("fixed_pay_task_id", taskId)
+      .is("deleted_at", null);
+
+    if (deleteError) {
+      return Response.json({ error: deleteError.message }, { status: 500 });
+    }
+
+    const taskForAssignment = currentTaskForAssignment ?? {
+      claimed_by: data.claimed_by,
+      task_name: data.task_name,
+      account: data.account,
+      category: data.category,
+    };
+
+    const { data: assignedTask, error: assignedTaskError } = await admin
+      .from("assigned_tasks")
+      .insert({
+        account: taskForAssignment.account,
+        project: taskForAssignment.category,
+        task_name: taskForAssignment.task_name,
+        task_detail: null,
+        task_notes: null,
+        due_date: null,
+        created_by: auth.userId,
+        fixed_pay_task_id: taskId,
+      })
+      .select("id, account, project, task_name, task_detail, task_notes, due_date, created_by, fixed_pay_task_id, created_at, updated_at")
+      .single();
+
+    if (assignedTaskError || !assignedTask) {
+      return Response.json({ error: assignedTaskError?.message || "Unable to create assigned task" }, { status: 500 });
+    }
+
+    const { error: assigneeError } = await admin
+      .from("assigned_task_assignees")
+      .insert({
+        assigned_task_id: assignedTask.id,
+        va_id: nextAssignedTo,
+        status: "on_queue",
+      })
+      .select("id, assigned_task_id, va_id, status, log_id, notes, assigned_at, updated_at")
+      .single();
+
+    if (assigneeError) {
+      await admin.from("assigned_tasks").delete().eq("id", assignedTask.id);
+      return Response.json({ error: assigneeError.message || "Unable to create task assignment" }, { status: 500 });
+    }
   }
 
   const [task] = await hydrateTaskProfiles(admin, [data as FixedPayTaskWithClaimer]);

@@ -427,6 +427,7 @@ export default function FixedPayTasksTab() {
         );
       }
 
+      setForm((current) => ({ ...current, assigned_to: "" }));
       await fetchTasks();
       setMessage({ type: "ok", text: "Claim revoked." });
     } catch (error) {
