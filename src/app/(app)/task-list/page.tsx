@@ -242,7 +242,7 @@ export default function TaskListPage() {
   const [currentUserProfile, setCurrentUserProfile] = useState<ProfileOption | null>(null);
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "available_tasks" | "hourly_pool">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "assigned_by_me" | "available_tasks" | "hourly_pool">("my_tasks");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
@@ -294,29 +294,37 @@ export default function TaskListPage() {
     null
   );
 
-  const fetchTasks = useCallback(async (): Promise<VATaskRow[]> => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/assigned-tasks?selfOnly=true&view=${taskView}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      const raw = Array.isArray(json) ? json : json.tasks ?? [];
-      const normalized = raw.map((row: VATaskRow) => ({
-        ...row,
-        is_collaborative: Boolean(row.is_collaborative),
-        collaborator_name: row.collaborator_name ?? null,
-      }));
-      const sorted = sortTasks(normalized);
-      setTasks(sorted);
-      return sorted;
-    } catch {
-      setError("Unable to load assigned tasks right now.");
-      return [];
-    } finally {
-      setLoading(false);
-    }
-  }, [taskView]);
+  const fetchTasks = useCallback(
+    async (mode: "my_tasks" | "assigned_by_me" = activeView === "assigned_by_me" ? "assigned_by_me" : "my_tasks"):
+      Promise<VATaskRow[]> => {
+      setLoading(true);
+      setError(null);
+      try {
+        const endpoint =
+          mode === "assigned_by_me"
+            ? `/api/assigned-tasks?asReviewer=true&view=${taskView}`
+            : `/api/assigned-tasks?selfOnly=true&view=${taskView}`;
+        const res = await fetch(endpoint, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const raw = Array.isArray(json) ? json : json.tasks ?? [];
+        const normalized = raw.map((row: VATaskRow) => ({
+          ...row,
+          is_collaborative: Boolean(row.is_collaborative),
+          collaborator_name: row.collaborator_name ?? null,
+        }));
+        const sorted = sortTasks(normalized);
+        setTasks(sorted);
+        return sorted;
+      } catch {
+        setError("Unable to load assigned tasks right now.");
+        return [];
+      } finally {
+        setLoading(false);
+      }
+    },
+    [activeView, taskView]
+  );
 
   const fetchHourlyPool = useCallback(async () => {
     setHourlyPoolLoading(true);
@@ -379,6 +387,7 @@ export default function TaskListPage() {
   const isPerTaskVa = currentPosition === "Per Task VA";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
+  const isAssignedByMeView = activeView === "assigned_by_me";
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -452,8 +461,11 @@ export default function TaskListPage() {
   useEffect(() => {
     void fetchCurrentUser();
     void fetchFormOptions();
+  }, [fetchCurrentUser, fetchFormOptions]);
+
+  useEffect(() => {
     void fetchTasks();
-  }, [fetchCurrentUser, fetchFormOptions, fetchTasks]);
+  }, [fetchTasks]);
 
   useEffect(() => {
     let cancelled = false;
@@ -835,7 +847,7 @@ export default function TaskListPage() {
       try {
         const payloadValue = inlineEdit.field === "due_date" && value === "" ? null : value || null;
         const body: Record<string, unknown> = { [inlineEdit.field]: payloadValue };
-        if (inlineEdit.field === "status" && currentUserId) {
+        if (inlineEdit.field === "status" && currentUserId && !isAssignedByMeView) {
           body.va_id = currentUserId;
         }
         const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
@@ -852,7 +864,7 @@ export default function TaskListPage() {
         setInlineEdit(null);
       }
     },
-    [fetchTasks, inlineEdit, inlineSaving, tasks]
+    [fetchTasks, inlineEdit, inlineSaving, tasks, currentUserId, isAssignedByMeView]
   );
 
   const cancelInlineEdit = useCallback(() => {
@@ -1412,7 +1424,7 @@ export default function TaskListPage() {
       const body: Record<string, unknown> = {};
       if (statusChanged) body.status = nextStatus;
       if (notesChanged) body.notes = nextNotes;
-      if ((statusChanged || notesChanged) && currentUserId) {
+      if ((statusChanged || notesChanged) && currentUserId && !isAssignedByMeView) {
         body.va_id = currentUserId;
       }
       if (metadataChanged) {
@@ -1519,7 +1531,6 @@ export default function TaskListPage() {
     panelTaskName,
     panelTaskNotes,
     selectedTask,
-    currentRole,
     currentUserId,
     requestStream,
     captureTaskScreenshot,
@@ -1612,43 +1623,48 @@ export default function TaskListPage() {
                 ))}
               </div>
 
-              {(canShowAvailableTasks || canShowHourlyPool) && (
-                <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+              <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setActiveView("my_tasks")}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "my_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                >
+                  My Tasks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveView("assigned_by_me")}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "assigned_by_me" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                >
+                  Assigned By Me
+                </button>
+                {canShowAvailableTasks && (
                   <button
                     type="button"
-                    onClick={() => setActiveView("my_tasks")}
-                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "my_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                    onClick={() => setActiveView("available_tasks")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                   >
-                    My Tasks
+                    Available Tasks
                   </button>
-                  {canShowAvailableTasks && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveView("available_tasks")}
-                      className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                    >
-                      Available Tasks
-                    </button>
-                  )}
-                  {canShowHourlyPool && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveView("hourly_pool")}
-                      className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "hourly_pool" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                    >
-                      Unassigned Tasks
-                    </button>
-                  )}
-                </div>
-              )}
+                )}
+                {canShowHourlyPool && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("hourly_pool")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "hourly_pool" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    Unassigned Tasks
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
 
-        {activeView === "my_tasks" && (
+        {(activeView === "my_tasks" || activeView === "assigned_by_me") && (
           <div className="border-b border-parchment bg-cream/50 px-5 py-4">
             <div className="flex flex-wrap items-center gap-2">
-              {taskView === "active" && (
+              {taskView === "active" && activeView === "my_tasks" && (
                 <button
                   type="button"
                   onClick={openCreate}
@@ -1798,7 +1814,7 @@ export default function TaskListPage() {
                 </span>
                 <span>task{filteredTasks.length === 1 ? "" : "s"}</span>
                 <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 font-semibold text-slate-blue">
-                  {taskView === "active" ? "Active" : taskView === "archived" ? "Archived" : "Trash"}
+                  {activeView === "assigned_by_me" ? "Assigned By Me" : taskView === "active" ? "Active" : taskView === "archived" ? "Archived" : "Trash"}
                 </span>
               </div>
 

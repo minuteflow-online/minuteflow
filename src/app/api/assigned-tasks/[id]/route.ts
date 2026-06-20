@@ -409,7 +409,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (log_id !== undefined) updatePayload.log_id = log_id;
     if (notes !== undefined) updatePayload.notes = notes;
 
-    const { data: updatedAssignee, error: assigneeError } = await supabase
+    const assigneeClient = isAdminOrManager ? adminSupabase : supabase;
+    const { data: updatedAssignee, error: assigneeError } = await assigneeClient
       .from("assigned_task_assignees")
       .update(updatePayload)
       .eq("assigned_task_id", id)
