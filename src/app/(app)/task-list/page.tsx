@@ -1726,106 +1726,113 @@ export default function TaskListPage() {
 
         {(activeView === "my_tasks" || activeView === "submitted") && (
           <div className="border-b border-parchment bg-cream/50 px-5 py-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setActiveView("submitted")}
-                className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
-                  activeView === "submitted"
-                    ? "border-sky-200 bg-sky-100 text-sky-700"
-                    : "border-sand bg-parchment/40 text-stone hover:text-espresso"
-                }`}
-              >
-                Submitted
-              </button>
-
-              <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-                {taskViewOptions.map((view) => (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
-                    key={view}
                     type="button"
-                    onClick={() => setTaskView(view)}
-                    className={`rounded-md px-3 py-1.5 capitalize transition-colors ${
-                      taskView === view ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                    onClick={() => setActiveView("submitted")}
+                    className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
+                      activeView === "submitted"
+                        ? "border-sky-200 bg-sky-100 text-sky-700"
+                        : "border-sand bg-parchment/40 text-stone hover:text-espresso"
                     }`}
                   >
-                    {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
+                    Submitted
                   </button>
-                ))}
+
+                  <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+                    {taskViewOptions.map((view) => (
+                      <button
+                        key={view}
+                        type="button"
+                        onClick={() => setTaskView(view)}
+                        className={`rounded-md px-3 py-1.5 capitalize transition-colors ${
+                          taskView === view ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                        }`}
+                      >
+                        {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {taskView === "active" && activeView === "my_tasks" && (
+                  <button
+                    type="button"
+                    onClick={openCreate}
+                    className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                  >
+                    + Create Task
+                  </button>
+                )}
               </div>
 
-              {taskView === "active" && activeView === "my_tasks" && (
-                <button
-                  type="button"
-                  onClick={openCreate}
-                  className="cursor-pointer rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-                >
-                  + Create Task
-                </button>
-              )}
-              <FilterDropdown
-                label="Task Name"
-                options={taskNameFilterOptions.map((taskName) => ({ value: taskName, label: taskName }))}
-                selected={filterTaskNames}
-                onChange={setFilterTaskNames}
-                isOpen={openFilter === "taskname"}
-                onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
-                searchable
-                searchValue={taskNameSearch}
-                onSearchChange={setTaskNameSearch}
-                searchPlaceholder="Search task names..."
-              />
-              <FilterDropdown
-                label="Objective"
-                options={objectiveFilterOptions.map((objective) => ({ value: objective, label: objective }))}
-                selected={filterObjectives}
-                onChange={setFilterObjectives}
-                isOpen={openFilter === "objective"}
-                onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
-              />
-              <DateRangeDropdown
-                label="Due Date"
-                start={filterDueStart}
-                end={filterDueEnd}
-                isOpen={openFilter === "duedate"}
-                onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
-                onStartChange={setFilterDueStart}
-                onEndChange={setFilterDueEnd}
-              />
-              <FilterDropdown
-                label="Status"
-                options={STATUS_FILTERS.filter((option) => option.value !== "all")}
-                selected={filterStatuses.map((status) => status)}
-                onChange={(values) => setFilterStatuses(values as AssignedTaskStatus[])}
-                isOpen={openFilter === "status"}
-                onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
-              />
-              <FilterDropdown
-                label="Account"
-                options={accountFilterOptions.map((account) => ({ value: account, label: account }))}
-                selected={filterAccounts}
-                onChange={setFilterAccounts}
-                isOpen={openFilter === "account"}
-                onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <FilterDropdown
+                  label="Task Name"
+                  options={taskNameFilterOptions.map((taskName) => ({ value: taskName, label: taskName }))}
+                  selected={filterTaskNames}
+                  onChange={setFilterTaskNames}
+                  isOpen={openFilter === "taskname"}
+                  onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
+                  searchable
+                  searchValue={taskNameSearch}
+                  onSearchChange={setTaskNameSearch}
+                  searchPlaceholder="Search task names..."
+                />
+                <FilterDropdown
+                  label="Objective"
+                  options={objectiveFilterOptions.map((objective) => ({ value: objective, label: objective }))}
+                  selected={filterObjectives}
+                  onChange={setFilterObjectives}
+                  isOpen={openFilter === "objective"}
+                  onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
+                />
+                <DateRangeDropdown
+                  label="Due Date"
+                  start={filterDueStart}
+                  end={filterDueEnd}
+                  isOpen={openFilter === "duedate"}
+                  onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
+                  onStartChange={setFilterDueStart}
+                  onEndChange={setFilterDueEnd}
+                />
+                <FilterDropdown
+                  label="Status"
+                  options={STATUS_FILTERS.filter((option) => option.value !== "all")}
+                  selected={filterStatuses.map((status) => status)}
+                  onChange={(values) => setFilterStatuses(values as AssignedTaskStatus[])}
+                  isOpen={openFilter === "status"}
+                  onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
+                />
+                <FilterDropdown
+                  label="Account"
+                  options={accountFilterOptions.map((account) => ({ value: account, label: account }))}
+                  selected={filterAccounts}
+                  onChange={setFilterAccounts}
+                  isOpen={openFilter === "account"}
+                  onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
+                />
 
-              {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFilterStatuses([]);
-                    setFilterAccounts([]);
-                    setFilterTaskNames([]);
-                    setFilterObjectives([]);
-                    setFilterDueStart("");
-                    setFilterDueEnd("");
-                    setTaskNameSearch("");
-                  }}
-                  className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
-                >
-                  Clear all
-                </button>
-              )}
+                {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilterStatuses([]);
+                      setFilterAccounts([]);
+                      setFilterTaskNames([]);
+                      setFilterObjectives([]);
+                      setFilterDueStart("");
+                      setFilterDueEnd("");
+                      setTaskNameSearch("");
+                    }}
+                    className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
