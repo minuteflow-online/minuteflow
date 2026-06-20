@@ -233,9 +233,32 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     .eq("id", user.id)
     .single();
 
+  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
+  const adminSupabase = createAdminClient(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
   const { id } = await params;
   const body = await request.json();
-  const { va_id: bodyVaId, status, log_id, notes, account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, archived_at, deleted_at } = body as {
+  const {
+    va_id: bodyVaId,
+    status,
+    log_id,
+    notes,
+    account,
+    project,
+    task_name,
+    task_detail,
+    task_notes,
+    due_date,
+    assigned_by,
+    instructions,
+    instructions_locked,
+    archived_at,
+    deleted_at,
+  } = body as {
     va_id?: string;
     status?: AssignedTaskStatus;
     log_id?: number;
@@ -253,10 +276,21 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     deleted_at?: string | null;
   };
 
-  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
-  const hasTaskLevelStatusUpdate =
-    status !== undefined && !bodyVaId && isAdminOrManager && log_id === undefined && notes === undefined;
-  const hasAssigneeUpdate = log_id !== undefined || notes !== undefined || (status !== undefined && bodyVaId !== undefined) || (status !== undefined && !isAdminOrManager);
+  const { data: taskContext, error: taskContextError } = await supabase
+    .from("assigned_tasks")
+    .select("assigned_by")
+    .eq("id", id)
+    .single();
+
+  if (taskContextError) {
+    if (taskContextError.code === "PGRST116") {
+      return Response.json({ error: "Task not found" }, { status: 404 });
+    }
+    return Response.json({ error: taskContextError.message }, { status: 500 });
+  }
+
+  const isTaskOwner = taskContext?.assigned_by === user.id;
+
   const hasMetadataUpdate =
     account !== undefined ||
     project !== undefined ||
@@ -269,10 +303,15 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     instructions_locked !== undefined ||
     archived_at !== undefined ||
     deleted_at !== undefined;
-
-  if (!hasAssigneeUpdate && !hasMetadataUpdate && !hasTaskLevelStatusUpdate) {
-    return Response.json({ error: "At least one field is required" }, { status: 400 });
-  }
+  const canUseTaskLevelStatusUpdate = isAdminOrManager || isTaskOwner;
+  const hasTaskLevelStatusUpdate =
+    status !== undefined &&
+    canUseTaskLevelStatusUpdate &&
+    bodyVaId === undefined &&
+    log_id === undefined &&
+    notes === undefined &&
+    !hasMetadataUpdate;
+  const hasAssigneeUpdate = log_id !== undefined || notes !== undefined || status !== undefined;
 
   const validStatuses: AssignedTaskStatus[] = [
     "unassigned",
@@ -295,9 +334,15 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ error: "task_name cannot be empty" }, { status: 400 });
   }
 
-  const now = new Date().toISOString();
+  if (isTaskOwner && (hasMetadataUpdate || bodyVaId !== undefined || log_id !== undefined || notes !== undefined)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-  if (!isAdminOrManager) {
+  if (hasMetadataUpdate && !isAdminOrManager) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (!isAdminOrManager && !isTaskOwner) {
     const { data: assignedTask, error: assignedTaskError } = await supabase
       .from("assigned_task_assignees")
       .select("id")
@@ -315,14 +360,29 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     }
   }
 
+  if (!hasAssigneeUpdate && !hasMetadataUpdate && !hasTaskLevelStatusUpdate) {
+    return Response.json({ error: "At least one field is required" }, { status: 400 });
+  }
+
+  const now = new Date().toISOString();
+
   if (hasTaskLevelStatusUpdate) {
-    const { error: taskStatusError } = await supabase
+    const { error: taskStatusError } = await adminSupabase
       .from("assigned_tasks")
       .update({ status, updated_at: now })
       .eq("id", id);
 
     if (taskStatusError) {
       return Response.json({ error: taskStatusError.message }, { status: 500 });
+    }
+
+    const { error: assigneeStatusError } = await adminSupabase
+      .from("assigned_task_assignees")
+      .update({ status, updated_at: now })
+      .eq("assigned_task_id", id);
+
+    if (assigneeStatusError) {
+      return Response.json({ error: assigneeStatusError.message }, { status: 500 });
     }
 
     return Response.json({ ok: true });
@@ -366,6 +426,17 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
     if (!updatedAssignee) {
       return Response.json({ error: "Assignee row not found" }, { status: 404 });
+    }
+
+    if (status !== undefined && !isAdminOrManager) {
+      const { error: syncError } = await adminSupabase
+        .from("assigned_tasks")
+        .update({ status, updated_at: now })
+        .eq("id", id);
+
+      if (syncError) {
+        return Response.json({ error: syncError.message }, { status: 500 });
+      }
     }
   }
 
@@ -412,35 +483,6 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     }
   }
 
-  if (status === "submitted") {
-    const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-    const { data: taskRow, error: taskRowError } = await supabase
-      .from("assigned_tasks")
-      .select("assigned_by")
-      .eq("id", id)
-      .single();
-
-    if (taskRowError) {
-      return Response.json({ error: taskRowError.message }, { status: 500 });
-    }
-
-    if (taskRow?.assigned_by) {
-      const { error: routeError } = await admin.from("assigned_task_assignees").upsert(
-        {
-          assigned_task_id: Number(id),
-          va_id: taskRow.assigned_by,
-          status: "reviewing",
-          updated_at: now,
-        },
-        { onConflict: "assigned_task_id,va_id" }
-      );
-
-      if (routeError) {
-        return Response.json({ error: routeError.message }, { status: 500 });
-      }
-    }
-  }
-
   return Response.json({ ok: true });
 }
+

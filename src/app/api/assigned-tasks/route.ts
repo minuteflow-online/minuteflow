@@ -83,6 +83,7 @@ export async function GET(request: Request) {
   const viewParam = searchParams.get("view");
   const selfOnly = searchParams.get("selfOnly") === "true";
   const unassignedOnly = searchParams.get("unassigned") === "true";
+  const asReviewer = searchParams.get("asReviewer") === "true";
 
   const assigneeSelect =
     "id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked";
@@ -115,17 +116,17 @@ export async function GET(request: Request) {
     })) as unknown as TaskRow[];
   };
 
+  const serviceRoleClient = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
   if (unassignedOnly) {
     // Use service-role client so VAs can read the open task pool.
     // RLS on assigned_tasks only lets VAs see tasks they're already assigned to,
     // which means unassigned tasks (no assignees yet) would return empty for VAs.
-    const unassignedAdminClient = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
-
-    const { data, error } = await unassignedAdminClient
+    const { data, error } = await serviceRoleClient
       .from("assigned_tasks")
       .select(
         `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
@@ -142,6 +143,32 @@ export async function GET(request: Request) {
     }));
 
     return Response.json({ tasks: result.filter((task) => matchesTaskView(task, viewParam)) });
+  }
+
+  if (asReviewer) {
+    const { data, error } = await serviceRoleClient
+      .from("assigned_tasks")
+      .select(
+        `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
+         assigned_task_assignees(${assigneeSelect})`
+      )
+      .eq("assigned_by", user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+
+    const reviewerRows = await formatAdminTaskRows(data ?? []);
+    const flattened = reviewerRows.flatMap((task) => {
+      const { assigned_task_assignees, ...taskData } = task;
+      return assigned_task_assignees.map((assignee) => ({
+        ...assignee,
+        assigned_tasks: taskData,
+      }));
+    });
+
+    return Response.json({
+      tasks: flattened.filter((task) => matchesTaskView(task.assigned_tasks, viewParam)),
+    });
   }
 
   const isAdminOrManager =
@@ -268,7 +295,6 @@ export async function GET(request: Request) {
 
   return Response.json({ tasks: filtered });
 }
-
 /**
  * POST /api/assigned-tasks
  * Admin/manager only.
