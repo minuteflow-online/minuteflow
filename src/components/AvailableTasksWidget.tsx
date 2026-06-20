@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
-import type { FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
+import { createClient } from "@/lib/supabase/client";
+import type { AssignedTask, FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
 
 function formatClaimedAt(claimedAt: string | null) {
   if (!claimedAt) return "";
@@ -14,6 +15,22 @@ function formatClaimedAt(claimedAt: string | null) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatDueDate(dueDate: string | null) {
+  if (!dueDate) return { label: "—", isOverdue: false };
+
+  const date = new Date(dueDate);
+  if (Number.isNaN(date.getTime())) return { label: dueDate, isOverdue: false };
+
+  return {
+    label: date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }),
+    isOverdue: date.getTime() < Date.now(),
+  };
 }
 
 function renderTextWithLinks(text: string) {
@@ -53,13 +70,23 @@ export default function AvailableTasksWidget({
   canSeeFixedPay?: boolean;
   currentUserId?: string;
 }) {
+  const supabase = useMemo(() => createClient(), []);
+  const [viewMode, setViewMode] = useState<"fixed_pay" | "hourly">(canSeeFixedPay ? "fixed_pay" : "hourly");
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [pendingAssigned, setPendingAssigned] = useState<VAAssignedTask[]>([]);
+  const [hourlyTasks, setHourlyTasks] = useState<AssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [claimingId, setClaimingId] = useState<number | null>(null);
+  const [hourlyGrabbingId, setHourlyGrabbingId] = useState<number | null>(null);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canSeeFixedPay && viewMode === "fixed_pay") {
+      setViewMode("hourly");
+    }
+  }, [canSeeFixedPay, viewMode]);
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -123,7 +150,14 @@ export default function AvailableTasksWidget({
     setLoading(true);
     setError(null);
     try {
-      if (canSeeFixedPay) {
+      if (viewMode === "fixed_pay") {
+        if (!canSeeFixedPay) {
+          setTasks([]);
+          setPendingAssigned([]);
+          setHourlyTasks([]);
+          return;
+        }
+
         const [fixedRes, assignedRes] = await Promise.all([
           fetch("/api/fixed-pay-tasks", { cache: "no-store" }),
           fetch("/api/assigned-tasks?status=pending&selfOnly=true", { cache: "no-store" }),
@@ -141,23 +175,29 @@ export default function AvailableTasksWidget({
           setPendingAssigned(assignedRows.filter((row) => row.assigned_tasks?.fixed_pay_task_id != null));
         }
 
+        setHourlyTasks([]);
       } else {
         setTasks([]);
-        const assignedRes = await fetch("/api/assigned-tasks?status=pending&selfOnly=true", { cache: "no-store" });
+        setPendingAssigned([]);
 
-        if (assignedRes.ok) {
-          const assignedJson = await assignedRes.json();
-          const assignedRows = (assignedJson.tasks ?? []) as VAAssignedTask[];
-          // Only show fixed pay directly-assigned tasks here; hourly pending tasks appear in My Tasks
-          setPendingAssigned(assignedRows.filter((row) => row.assigned_tasks?.fixed_pay_task_id != null));
-        }
+        const { data, error: hourlyError } = await supabase
+          .from("assigned_tasks")
+          .select("id, account, project, task_name, due_date, fixed_pay_task_id, status, archived_at, deleted_at, created_at, updated_at")
+          .eq("status", "unassigned")
+          .is("fixed_pay_task_id", null)
+          .is("deleted_at", null)
+          .is("archived_at", null)
+          .order("created_at", { ascending: false });
+
+        if (hourlyError) throw new Error(hourlyError.message);
+        setHourlyTasks((data ?? []) as AssignedTask[]);
       }
     } catch {
       setError("Unable to load available tasks right now.");
     } finally {
       setLoading(false);
     }
-  }, [canSeeFixedPay]);
+  }, [canSeeFixedPay, supabase, viewMode]);
 
   useEffect(() => {
     void fetchTasks();
@@ -193,6 +233,36 @@ export default function AvailableTasksWidget({
     [fetchTasks, onClaimed]
   );
 
+  const handleHourlyGrab = useCallback(
+    async (taskId: number) => {
+      setHourlyGrabbingId(taskId);
+      setError(null);
+      try {
+        const res = await fetch(`/api/assigned-tasks/${taskId}/grab`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!res.ok) {
+          let message = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            if (data?.error) message = data.error;
+          } catch {
+            // ignore parse failures
+          }
+          throw new Error(message);
+        }
+        await fetchTasks();
+        onClaimed?.();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to grab task.");
+      } finally {
+        setHourlyGrabbingId(null);
+      }
+    },
+    [fetchTasks, onClaimed]
+  );
+
   const handleAccept = useCallback(
     async (task: VAAssignedTask) => {
       const assigneeId = String(task.id);
@@ -223,11 +293,11 @@ export default function AvailableTasksWidget({
         setAcceptingId(null);
       }
     },
-    [onClaimed]
+    [currentUserId, onClaimed]
   );
 
-  const openTasks = canSeeFixedPay ? tasks.filter((t) => !t.claimed_by_me) : [];
-  const totalCount = pendingAssigned.length + openTasks.length;
+  const openTasks = viewMode === "fixed_pay" && canSeeFixedPay ? tasks.filter((t) => !t.claimed_by_me) : [];
+  const totalCount = viewMode === "fixed_pay" ? pendingAssigned.length + openTasks.length : hourlyTasks.length;
 
   return (
     <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
@@ -241,6 +311,29 @@ export default function AvailableTasksWidget({
         <span className="text-stone font-normal normal-case">({totalCount})</span>
       </h3>
 
+      <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+        {canSeeFixedPay && (
+          <button
+            type="button"
+            onClick={() => setViewMode("fixed_pay")}
+            className={`rounded-md px-3 py-1.5 transition-colors ${
+              viewMode === "fixed_pay" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+            }`}
+          >
+            Fixed Pay
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => setViewMode("hourly")}
+          className={`rounded-md px-3 py-1.5 transition-colors ${
+            viewMode === "hourly" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+          }`}
+        >
+          Hourly
+        </button>
+      </div>
+
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700">
           {error}
@@ -251,6 +344,43 @@ export default function AvailableTasksWidget({
         <p className="text-stone text-[11px] text-center py-3">Loading...</p>
       ) : totalCount === 0 ? (
         <p className="text-stone text-[11px] text-center py-3 italic">No available tasks right now.</p>
+      ) : viewMode === "hourly" ? (
+        <div className="space-y-1.5">
+          {hourlyTasks.map((task) => {
+            const isGrabbing = hourlyGrabbingId === task.id;
+            const due = formatDueDate(task.due_date);
+            const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
+
+            return (
+              <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
+                <div className="px-2.5 py-2 bg-parchment/20">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
+                      {due.label === "—" ? "No due date" : `Due ${due.label}`}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-stone mt-0.5 truncate">
+                    {task.account ?? ""}
+                    {task.project ? ` / ${task.project}` : ""}
+                  </div>
+                </div>
+
+                <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
+                  <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
+                  <button
+                    type="button"
+                    onClick={() => void handleHourlyGrab(task.id)}
+                    disabled={isGrabbing}
+                    className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isGrabbing ? "Grabbing..." : "Grab This Task"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <div className="space-y-1.5">
           {/* Pending assigned tasks (admin-assigned, awaiting acceptance) */}

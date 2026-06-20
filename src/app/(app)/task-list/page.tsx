@@ -326,6 +326,7 @@ export default function TaskListPage() {
   const silentCaptureRef = useRef<((logId: number, screenshotType: "start" | "progress") => Promise<boolean>) | null>(
     null
   );
+  const taskViewOptions = currentRole === "va" ? (["active", "archived"] as const) : (["active", "archived", "trash"] as const);
 
   const fetchTasks = useCallback(
     async (mode: "my_tasks" | "submitted" = activeView === "submitted" ? "submitted" : "my_tasks"):
@@ -1693,21 +1694,6 @@ export default function TaskListPage() {
 
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
               <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-                {(["active", "archived", "trash"] as const).map((view) => (
-                  <button
-                    key={view}
-                    type="button"
-                    onClick={() => setTaskView(view)}
-                    className={`rounded-md px-3 py-1.5 capitalize transition-colors ${
-                      taskView === view ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
-                    }`}
-                  >
-                    {view === "active" ? "Active" : view === "archived" ? "Archived" : "Trash"}
-                  </button>
-                ))}
-              </div>
-
-              <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
                 <button
                   type="button"
                   onClick={() => setActiveView("my_tasks")}
@@ -1750,7 +1736,7 @@ export default function TaskListPage() {
             <div className="flex flex-wrap items-center gap-2">
               {activeView !== "submitted" && (
                 <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
-                  {(["active", "archived", "trash"] as const).map((view) => (
+                  {taskViewOptions.map((view) => (
                     <button
                       key={view}
                       type="button"
@@ -1981,17 +1967,21 @@ export default function TaskListPage() {
                               className="px-3 py-3 text-[13px]"
                               disabled={taskView !== "active"}
                               display={
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-medium text-walnut">{detail.task_name}</span>
-                                  {task.is_collaborative && (
-                                    <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
-                                      Collaborative
-                                    </span>
-                                  )}
+                                <div className="flex flex-col gap-0.5">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-medium text-walnut">{detail.task_name}</span>
+                                    {task.is_collaborative && (
+                                      <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
+                                        Collaborative
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="mt-0.5 text-[11px] text-stone">
+                                    Assigned by {detail.assigned_by_profile?.full_name ?? detail.assigned_by_profile?.username ?? "—"}
+                                  </div>
                                 </div>
                               }
                             />
-
                             <InlineCell
                               task={task}
                               field="account"

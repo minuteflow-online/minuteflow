@@ -386,7 +386,7 @@ export async function POST(request: Request) {
       recurring_template_id: recurring_template_id ?? null,
       created_by: user.id,
       // When no VAs are assigned at creation time, mark the task as unassigned
-      status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "on_queue"),
+      status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "pending"),
     })
     .select()
     .single();
@@ -411,7 +411,7 @@ export async function POST(request: Request) {
     const assigneeRows = va_ids.map((va_id) => ({
       assigned_task_id: task.id,
       va_id,
-      status: (initial_status ?? "on_queue") as AssignedTaskStatus,
+      status: (initial_status ?? "pending") as AssignedTaskStatus,
     }));
 
     const { data: insertedAssignees, error: assigneeError } = await adminSupabase
