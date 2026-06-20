@@ -217,12 +217,15 @@ export async function GET(request: Request) {
 
   // VA: return own rows plus collaborative rows from profiles marked visible
   // for collaboration.
+  // Note: we do NOT use the PostgREST join `assigned_by_profile:profiles(...)` here
+  // because the nested join silently returns null under the regular auth client (RLS context).
+  // Instead we do a manual profiles lookup for all assignor IDs after both queries.
+  const vaSelectString = `id, va_id, status, log_id, notes, assigned_at, updated_at,
+     assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate))`;
+
   let assigneeQuery = supabase
     .from("assigned_task_assignees")
-    .select(
-      `id, va_id, status, log_id, notes, assigned_at, updated_at,
-       assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
-    )
+    .select(vaSelectString)
     .eq("va_id", user.id)
     .order("assigned_at", { ascending: false });
 
@@ -254,10 +257,7 @@ export async function GET(request: Request) {
   if (collabVaIds.length > 0) {
     let collabQuery = supabase
       .from("assigned_task_assignees")
-      .select(
-        `id, va_id, status, log_id, notes, assigned_at, updated_at,
-         assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username))`
-      )
+      .select(vaSelectString)
       .in("va_id", collabVaIds)
       .order("assigned_at", { ascending: false });
 
@@ -272,17 +272,39 @@ export async function GET(request: Request) {
     collabData = data ?? [];
   }
 
+  // Manually fetch assignor profiles for all tasks (avoids silent PostgREST join failure).
+  const allVaRows = [...(assigneeData ?? []), ...collabData];
+  const assignedByIds = [
+    ...new Set(
+      allVaRows
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((row) => ((row as any).assigned_tasks?.assigned_by as string | null | undefined))
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+
+  let assignorMap: Record<string, { id: string; full_name: string; username: string }> = {};
+  if (assignedByIds.length > 0) {
+    const { data: assignors } = await supabase
+      .from("profiles")
+      .select("id, full_name, username")
+      .in("id", assignedByIds);
+    assignorMap = Object.fromEntries((assignors ?? []).map((p) => [p.id, p]));
+  }
+
   const combined = [
-    ...((assigneeData ?? []).map((task) => ({
-      ...task,
-      is_collaborative: false,
-      collaborator_name: null,
-    })) as Array<AssigneeRow & { is_collaborative: false; collaborator_name: null }>),
-    ...(collabData.map((task) => ({
-      ...task,
-      is_collaborative: true,
-      collaborator_name: profileNameMap[task.va_id] ?? null,
-    })) as Array<AssigneeRow & { is_collaborative: true; collaborator_name: string | null }>),
+    ...((assigneeData ?? []).map((row) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const task = (row as any).assigned_tasks;
+      if (task) task.assigned_by_profile = assignorMap[task.assigned_by] ?? null;
+      return { ...row, is_collaborative: false, collaborator_name: null };
+    }) as Array<AssigneeRow & { is_collaborative: false; collaborator_name: null }>),
+    ...(collabData.map((row) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const task = (row as any).assigned_tasks;
+      if (task) task.assigned_by_profile = assignorMap[task.assigned_by] ?? null;
+      return { ...row, is_collaborative: true, collaborator_name: profileNameMap[row.va_id] ?? null };
+    }) as Array<AssigneeRow & { is_collaborative: true; collaborator_name: string | null }>),
   ];
 
   const filtered = combined.filter((task) =>
