@@ -2623,7 +2623,10 @@ export default function TaskListPage() {
                   </select>
                 ) : (
                   <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.assigned_by || <span className="text-stone/60">—</span>}
+                    {selectedTask.assigned_tasks.assigned_by_profile?.full_name
+                      || selectedTask.assigned_tasks.assigned_by_profile?.username
+                      || selectedTask.assigned_tasks.assigned_by
+                      || <span className="text-stone/60">—</span>}
                   </div>
                 )}
               </div>
