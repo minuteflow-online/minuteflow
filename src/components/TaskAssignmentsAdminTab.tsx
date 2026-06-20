@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type {
   Profile,
@@ -413,7 +412,6 @@ export default function TaskAssignmentsAdminTab({
   profiles,
   orgTimezone,
 }: TaskAssignmentsAdminTabProps) {
-  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const activeProfiles = profiles.filter((p) => p.is_active !== false);
   const assignedByProfiles = activeProfiles.filter(
@@ -504,6 +502,8 @@ export default function TaskAssignmentsAdminTab({
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [uploadingFile, setUploadingFile] = useState(false);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const pendingFileInputRef = useRef<HTMLInputElement>(null);
 
   // ─── Fetch tasks ─────────────────────────────────────────────────────────────
 
@@ -701,6 +701,17 @@ export default function TaskAssignmentsAdminTab({
     [selectedTask, fetchAttachments]
   );
 
+  const handlePendingFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    setPendingFiles((prev) => [...prev, ...files]);
+    e.target.value = "";
+  }, []);
+
+  const handleRemovePendingFile = useCallback((index: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
   // ─── Delete attachment ────────────────────────────────────────────────────────
 
   const handleDeleteAttachment = useCallback(
@@ -744,11 +755,13 @@ export default function TaskAssignmentsAdminTab({
     setDetailForm(emptyDetailForm());
     setDetailSaveMsg(null);
     setAttachments([]);
+    setPendingFiles([]);
     setPanelScreenshots([]);
     setPanelSignedUrls({});
     setPanelScreenshotsLoading(false);
     setLightboxUrls(null);
     setLightboxIndex(0);
+    if (pendingFileInputRef.current) pendingFileInputRef.current.value = "";
   };
 
   const openEdit = (task: AssignedTaskWithAssignees) => {
@@ -783,6 +796,8 @@ export default function TaskAssignmentsAdminTab({
     setAssignedToEdit(null);
     setDetailSaveMsg(null);
     setAttachments([]);
+    setPendingFiles([]);
+    if (pendingFileInputRef.current) pendingFileInputRef.current.value = "";
   };
 
   const isPanelOpen = isCreating || selectedTask !== null;
@@ -850,15 +865,37 @@ export default function TaskAssignmentsAdminTab({
       if (res.ok) {
         const result = await res.json();
         const newTask = result?.task as AssignedTaskWithAssignees | undefined;
-        setDetailSaveMsg({
-          type: "ok",
-          text: selectedTask ? "Task updated!" : "Task created!",
-        });
+
         if (!selectedTask && newTask) {
+          let uploadError: string | null = null;
+          for (const file of pendingFiles) {
+            const formData = new FormData();
+            formData.append("file", file);
+            const uploadRes = await fetch(`/api/assigned-tasks/${newTask.id}/attachments`, {
+              method: "POST",
+              body: formData,
+            });
+            if (!uploadRes.ok) {
+              uploadError = `Failed to upload ${file.name}`;
+              break;
+            }
+          }
           setIsCreating(false);
           setSelectedTask(newTask);
+          setPendingFiles([]);
+          await fetchTasks();
+          await fetchAttachments(newTask.id);
+          setDetailSaveMsg({
+            type: uploadError ? "err" : "ok",
+            text: uploadError || "Task created!",
+          });
+        } else {
+          setDetailSaveMsg({
+            type: "ok",
+            text: "Task updated!",
+          });
+          await fetchTasks();
         }
-        await fetchTasks();
       } else {
         const e = await res.json();
         setDetailSaveMsg({ type: "err", text: e.error || "Failed to save" });
@@ -868,7 +905,7 @@ export default function TaskAssignmentsAdminTab({
     } finally {
       setDetailSaving(false);
     }
-  }, [detailForm, selectedTask, fetchTasks, router]);
+  }, [detailForm, selectedTask, fetchTasks, pendingFiles, fetchAttachments]);
 
   // ─── Delete ───────────────────────────────────────────────────────────────────
 
@@ -2363,6 +2400,64 @@ export default function TaskAssignmentsAdminTab({
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!selectedTask && (
+                <div className="mb-5">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-[11px] font-semibold text-walnut tracking-wide uppercase">
+                      Attach Files
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer rounded-lg px-3 py-1.5 transition-all bg-parchment border border-sand text-walnut hover:border-walnut">
+                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      Attach Files
+                      <input
+                        ref={pendingFileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={handlePendingFileSelect}
+                      />
+                    </label>
+                  </div>
+
+                  {pendingFiles.length === 0 ? (
+                    <p className="py-2 text-[12px] text-stone/50">No files attached yet.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {pendingFiles.map((file, index) => (
+                        <div
+                          key={`${file.name}-${file.lastModified}-${index}`}
+                          className="flex items-center justify-between gap-2 rounded-lg border border-sand px-3 py-2 bg-parchment/40"
+                        >
+                          <div className="min-w-0">
+                            <span className="text-[12px] text-walnut truncate block max-w-[280px]">
+                              {file.name}
+                            </span>
+                            <span className="text-[10px] text-stone">
+                              {formatFileSize(file.size)}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePendingFile(index)}
+                            className="flex items-center justify-center w-5 h-5 rounded text-stone hover:text-terracotta transition-all cursor-pointer shrink-0"
+                            title="Remove file"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
