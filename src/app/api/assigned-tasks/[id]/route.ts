@@ -336,7 +336,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ error: "task_name cannot be empty" }, { status: 400 });
   }
 
-  if (isTaskOwner && !isAdminOrManager && (hasMetadataUpdate || bodyVaId !== undefined || log_id !== undefined || notes !== undefined)) {
+  // Task owners (non-admin) may pass va_id to target a specific assignee row for
+  // status-only updates (e.g., reviewing a submitted task). Block everything else.
+  if (isTaskOwner && !isAdminOrManager && (hasMetadataUpdate || log_id !== undefined || notes !== undefined)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -400,6 +402,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
         );
       }
       targetVaId = bodyVaId;
+    } else if (isTaskOwner && bodyVaId) {
+      // Non-admin task owner reviewing submitted work: allowed to target a specific
+      // assignee row for status updates only (log_id/notes already blocked above).
+      targetVaId = bodyVaId;
     } else {
       targetVaId = user.id;
     }
@@ -411,7 +417,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (log_id !== undefined) updatePayload.log_id = log_id;
     if (notes !== undefined) updatePayload.notes = notes;
 
-    const assigneeClient = isAdminOrManager ? adminSupabase : supabase;
+    // Task owners targeting another VA's row need the admin client to bypass RLS
+    const assigneeClient = (isAdminOrManager || (isTaskOwner && bodyVaId)) ? adminSupabase : supabase;
     const { data: updatedAssignee, error: assigneeError } = await assigneeClient
       .from("assigned_task_assignees")
       .update(updatePayload)
