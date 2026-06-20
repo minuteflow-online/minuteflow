@@ -547,6 +547,22 @@ export default function TaskListPage() {
   }, [fetchTasks]);
 
   useEffect(() => {
+    if (canShowHourlyPool) {
+      void fetchHourlyPool();
+    } else {
+      setHourlyPoolTasks([]);
+      setHourlyPoolLoading(false);
+      setHourlyPoolError(null);
+    }
+  }, [canShowHourlyPool, fetchHourlyPool]);
+
+  useEffect(() => {
+    if (!canShowAvailableTasks && !canShowHourlyPool) {
+      setActiveView("my_tasks");
+    }
+  }, [canShowAvailableTasks, canShowHourlyPool]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
@@ -578,10 +594,6 @@ export default function TaskListPage() {
     setFilterDueEnd("");
     setTaskNameSearch("");
     setOpenFilter(null);
-  }, [taskView]);
-
-  useEffect(() => {
-    setSelectedTaskIds([]);
   }, [taskView]);
 
   useEffect(() => {
@@ -1923,6 +1935,7 @@ export default function TaskListPage() {
               </div>
             </div>
           </div>
+        )}
         <div className="px-5 py-4">
           {canShowAvailableTasks && activeView === "available_tasks" ? (
             <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} fixedPayOnly={true} currentUserId={currentUserId ?? undefined} />
@@ -2184,6 +2197,8 @@ export default function TaskListPage() {
             </>
           )}
         </div>
+      </div>
+    </div>
 
       {isCreating && (
         <div className="fixed inset-0 z-40 flex items-stretch">
