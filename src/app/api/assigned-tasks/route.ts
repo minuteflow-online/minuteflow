@@ -285,7 +285,7 @@ export async function GET(request: Request) {
 
   let assignorMap: Record<string, { id: string; full_name: string; username: string }> = {};
   if (assignedByIds.length > 0) {
-    const { data: assignors } = await supabase
+    const { data: assignors } = await serviceRoleClient
       .from("profiles")
       .select("id, full_name, username")
       .in("id", assignedByIds);
