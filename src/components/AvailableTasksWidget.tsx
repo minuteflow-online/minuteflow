@@ -20,7 +20,7 @@ function formatClaimedAt(claimedAt: string | null) {
 function formatDueDate(dueDate: string | null) {
   if (!dueDate) return { label: "—", isOverdue: false };
 
-  const date = new Date(dueDate);
+  const date = new Date(dueDate.slice(0, 10) + "T12:00:00Z");
   if (Number.isNaN(date.getTime())) return { label: dueDate, isOverdue: false };
 
   return {
