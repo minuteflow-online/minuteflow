@@ -3,7 +3,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
-type RecurrenceType = "daily" | "weekly" | "monthly" | "custom";
+type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
 
 type TemplateRow = {
   id: string;
@@ -145,8 +145,18 @@ function parseBodyDays(body: Record<string, unknown>): string[] | null {
 }
 
 function parseRecurrenceType(value: unknown): RecurrenceType {
-  if (value === "weekly" || value === "monthly" || value === "custom") return value;
+  if (
+    value === "weekly" || value === "biweekly" || value === "monthly" ||
+    value === "every_2_months" || value === "every_3_months"
+  ) return value;
   return "daily";
+}
+
+function dayOfMonthFromDate(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return d.getUTCDate();
 }
 
 function parseId(request: Request, body?: Record<string, unknown>): string | null {
@@ -198,12 +208,14 @@ export async function POST(request: Request) {
 
   if (!title) return Response.json({ error: "title is required" }, { status: 400 });
   if (assignedToIds.length === 0) return Response.json({ error: "assigned_to_ids is required" }, { status: 400 });
-  if ((recurrence_type === "weekly" || recurrence_type === "custom") && !recurrence_days) {
-    return Response.json({ error: "recurrence_days is required for weekly/custom templates" }, { status: 400 });
-  }
-  if (recurrence_type === "monthly" && !recurrence_day_of_month) {
-    return Response.json({ error: "recurrence_day_of_month is required for monthly templates" }, { status: 400 });
-  }
+
+  // For month-based recurrences, derive day-of-month from start_date if not provided
+  const startDate = stringOrNull(body.start_date);
+  const resolvedDayOfMonth = recurrence_day_of_month ?? (
+    (recurrence_type === "monthly" || recurrence_type === "every_2_months" || recurrence_type === "every_3_months")
+      ? dayOfMonthFromDate(startDate)
+      : null
+  );
 
   const supabase = serviceClient();
   const payload = {
@@ -222,8 +234,8 @@ export async function POST(request: Request) {
     category: stringOrNull(body.category),
     pay_type: stringOrNull(body.pay_type),
     recurrence_type,
-    recurrence_days,
-    recurrence_day_of_month,
+    recurrence_days: null,
+    recurrence_day_of_month: resolvedDayOfMonth,
     is_active: booleanOrDefault(body.is_active, true),
   };
 
@@ -272,14 +284,21 @@ export async function PATCH(request: Request) {
   if (body.category !== undefined) updates.category = stringOrNull(body.category);
   if (body.pay_type !== undefined) updates.pay_type = stringOrNull(body.pay_type);
   if (body.recurrence_type) updates.recurrence_type = parseRecurrenceType(body.recurrence_type);
-  if (body.recurrence_days !== undefined || body.custom_days !== undefined) updates.recurrence_days = parseBodyDays(body);
-  if (body.recurrence_day_of_month !== undefined) {
-    updates.recurrence_day_of_month =
-      typeof body.recurrence_day_of_month === "number"
-        ? body.recurrence_day_of_month
-        : typeof body.recurrence_day_of_month === "string" && body.recurrence_day_of_month.trim()
-          ? Number(body.recurrence_day_of_month)
-          : null;
+  // Always clear recurrence_days — schedule is now driven by start_date + recurrence_type
+  updates.recurrence_days = null;
+  // Derive day-of-month from start_date for month-based recurrences
+  {
+    const patchRecurrenceType = updates.recurrence_type as RecurrenceType | undefined ?? undefined;
+    const patchStartDate = (updates.start_date as string | null | undefined) ?? stringOrNull(body.start_date);
+    const isMonthBased =
+      patchRecurrenceType === "monthly" ||
+      patchRecurrenceType === "every_2_months" ||
+      patchRecurrenceType === "every_3_months";
+    if (isMonthBased && patchStartDate) {
+      updates.recurrence_day_of_month = dayOfMonthFromDate(patchStartDate);
+    } else if (!isMonthBased) {
+      updates.recurrence_day_of_month = null;
+    }
   }
   if (body.is_active !== undefined) updates.is_active = booleanOrDefault(body.is_active, true);
   if (body.is_paused !== undefined) updates.is_active = !booleanOrDefault(body.is_paused, false);

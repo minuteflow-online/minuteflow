@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-type RecurrenceType = "daily" | "weekly" | "monthly" | "custom";
+type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
 
 type TemplateRow = {
   id: string;
@@ -63,35 +63,16 @@ function getTimezoneParts(date: Date, timeZone: string) {
   };
 }
 
-function weekdayToIndex(value: string) {
-  const normalized = value.trim().toLowerCase();
-  const map: Record<string, number> = {
-    sunday: 0,
-    sun: 0,
-    0: 0,
-    monday: 1,
-    mon: 1,
-    1: 1,
-    tuesday: 2,
-    tue: 2,
-    tues: 2,
-    2: 2,
-    wednesday: 3,
-    wed: 3,
-    3: 3,
-    thursday: 4,
-    thu: 4,
-    thur: 4,
-    thurs: 4,
-    4: 4,
-    friday: 5,
-    fri: 5,
-    5: 5,
-    saturday: 6,
-    sat: 6,
-    6: 6,
-  };
-  return map[normalized];
+function daysBetweenDates(startDateStr: string, todayStr: string): number {
+  const start = new Date(startDateStr + "T00:00:00Z");
+  const end = new Date(todayStr + "T00:00:00Z");
+  return Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function monthsBetweenDates(startDateStr: string, todayStr: string): number {
+  const start = new Date(startDateStr + "T00:00:00Z");
+  const end = new Date(todayStr + "T00:00:00Z");
+  return (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + (end.getUTCMonth() - start.getUTCMonth());
 }
 
 function normalizeAssignedToIds(template: TemplateRow) {
@@ -100,23 +81,26 @@ function normalizeAssignedToIds(template: TemplateRow) {
   return template.assigned_to ? [template.assigned_to] : [];
 }
 
-function isTemplateDueToday(template: TemplateRow, weekday: string, weekdayIndex: number, dayOfMonth: number, today: string) {
+function isTemplateDueToday(template: TemplateRow, dayOfMonth: number, today: string) {
   if (!template.is_active) return false;
-  if (template.start_date && today < template.start_date) return false;
+  if (!template.start_date || today < template.start_date) return false;
+
+  const daysSince = daysBetweenDates(template.start_date, today);
+  const monthsSince = monthsBetweenDates(template.start_date, today);
 
   switch (template.recurrence_type) {
     case "daily":
       return true;
-    case "monthly":
-      return template.recurrence_day_of_month === dayOfMonth;
     case "weekly":
-    case "custom": {
-      const days = template.recurrence_days ?? [];
-      return days.some((day) => {
-        const normalized = day.trim().toLowerCase();
-        return normalized === weekday || weekdayToIndex(normalized) === weekdayIndex;
-      });
-    }
+      return daysSince % 7 === 0;
+    case "biweekly":
+      return daysSince % 14 === 0;
+    case "monthly":
+      return template.recurrence_day_of_month === dayOfMonth && monthsSince % 1 === 0;
+    case "every_2_months":
+      return template.recurrence_day_of_month === dayOfMonth && monthsSince >= 0 && monthsSince % 2 === 0;
+    case "every_3_months":
+      return template.recurrence_day_of_month === dayOfMonth && monthsSince >= 0 && monthsSince % 3 === 0;
     default:
       return false;
   }
@@ -127,8 +111,6 @@ async function buildDueDate(timeZone: string) {
   const parts = getTimezoneParts(now, timeZone);
   return {
     today: `${parts.year}-${parts.month}-${parts.day}`,
-    weekday: parts.weekday,
-    weekdayIndex: weekdayToIndex(parts.weekday),
     dayOfMonth: Number(parts.day),
   };
 }
@@ -145,7 +127,7 @@ async function handleCron(request: NextRequest) {
     .limit(1)
     .single();
   const timeZone = settings?.timezone || "UTC";
-  const { today, weekday, weekdayIndex, dayOfMonth } = await buildDueDate(timeZone);
+  const { today, dayOfMonth } = await buildDueDate(timeZone);
 
   const { data: templates, error: templateError } = await supabase
     .from("recurring_task_templates")
@@ -157,7 +139,7 @@ async function handleCron(request: NextRequest) {
   }
 
   const dueTemplates = ((templates ?? []) as TemplateRow[]).filter((template) =>
-    isTemplateDueToday(template, weekday, weekdayIndex, dayOfMonth, today)
+    isTemplateDueToday(template, dayOfMonth, today)
   );
 
   if (dueTemplates.length === 0) {

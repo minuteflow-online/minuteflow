@@ -489,7 +489,7 @@ export interface RecurringTaskTemplate {
   project: string | null;
   category: string | null;
   pay_type: string | null;
-  recurrence_type: 'daily' | 'weekly' | 'monthly' | 'custom';
+  recurrence_type: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'every_2_months' | 'every_3_months';
   recurrence_days: string[] | null;
   recurrence_day_of_month: number | null;
   is_active: boolean;

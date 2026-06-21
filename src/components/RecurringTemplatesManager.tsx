@@ -38,7 +38,7 @@ interface RecurringTemplatesManagerProps {
   onRefresh: () => void;
 }
 
-type RecurrenceType = "daily" | "weekly" | "monthly" | "custom";
+type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
 
 interface FormState {
   account: string;
@@ -54,19 +54,17 @@ interface FormState {
   instructions_locked: boolean;
   assigned_to_ids: string[];
   recurrence_type: RecurrenceType;
-  recurrence_days: string[];
-  recurrence_day_of_month: string;
   is_active: boolean;
 }
 
 const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string; helper: string }[] = [
-  { value: "daily", label: "Daily", helper: "Creates a task every day" },
-  { value: "weekly", label: "Weekly", helper: "Use the days field to pick weekdays" },
-  { value: "monthly", label: "Monthly", helper: "Runs on the selected day of month" },
-  { value: "custom", label: "Custom days", helper: "Use the days field to pick specific weekdays" },
+  { value: "daily", label: "Daily", helper: "Repeats every day from the start date" },
+  { value: "weekly", label: "Weekly", helper: "Repeats every week on the same day as the start date" },
+  { value: "biweekly", label: "Every 2 weeks", helper: "Repeats every two weeks from the start date" },
+  { value: "monthly", label: "Monthly", helper: "Repeats on the same date each month" },
+  { value: "every_2_months", label: "Every 2 months", helper: "Repeats every two months on the same date" },
+  { value: "every_3_months", label: "Every 3 months", helper: "Repeats every three months on the same date" },
 ];
-
-const RECURRENCE_DAY_OPTIONS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function todayLocal() {
   return new Date().toISOString().slice(0, 10);
@@ -91,16 +89,19 @@ function profileLabel(profile: Pick<Profile, "id" | "full_name" | "username">) {
 }
 
 function recurrenceLabel(template: RecurringTaskTemplate): string {
-  const days = (template.recurrence_days ?? []).filter(Boolean);
   switch (template.recurrence_type) {
     case "daily":
       return "Daily";
     case "weekly":
-      return days.length > 0 ? `Weekly (${days.join(", ")})` : "Weekly";
+      return "Weekly";
+    case "biweekly":
+      return "Every 2 weeks";
     case "monthly":
-      return template.recurrence_day_of_month ? `Monthly (day ${template.recurrence_day_of_month})` : "Monthly";
-    case "custom":
-      return days.length > 0 ? `Custom (${days.join(", ")})` : "Custom";
+      return "Monthly";
+    case "every_2_months":
+      return "Every 2 months";
+    case "every_3_months":
+      return "Every 3 months";
     default:
       return template.recurrence_type;
   }
@@ -146,8 +147,6 @@ function defaultForm(): FormState {
     instructions_locked: false,
     assigned_to_ids: [],
     recurrence_type: "daily",
-    recurrence_days: [],
-    recurrence_day_of_month: "",
     is_active: true,
   };
 }
@@ -175,9 +174,9 @@ function templateToForm(
     instructions: template.instructions ?? "",
     instructions_locked: Boolean(template.instructions_locked),
     assigned_to_ids: assignedToIds,
-    recurrence_type: template.recurrence_type,
-    recurrence_days: template.recurrence_days ?? [],
-    recurrence_day_of_month: template.recurrence_day_of_month?.toString() ?? "",
+    recurrence_type: (["daily","weekly","biweekly","monthly","every_2_months","every_3_months"].includes(template.recurrence_type)
+      ? template.recurrence_type
+      : "daily") as RecurrenceType,
     is_active: template.is_active,
   };
 }
@@ -508,12 +507,8 @@ export default function RecurringTemplatesManager({
       setNotice({ type: "error", text: "Assign at least one VA." });
       return;
     }
-    if (form.recurrence_type === "monthly" && !form.recurrence_day_of_month.trim()) {
-      setNotice({ type: "error", text: "Monthly templates need a day of month." });
-      return;
-    }
-    if ((form.recurrence_type === "weekly" || form.recurrence_type === "custom") && form.recurrence_days.length === 0) {
-      setNotice({ type: "error", text: "Weekly/custom templates need at least one day." });
+    if (!form.start_date) {
+      setNotice({ type: "error", text: "Start date is required." });
       return;
     }
 
@@ -537,8 +532,8 @@ export default function RecurringTemplatesManager({
         category: null,
         pay_type: null,
         recurrence_type: form.recurrence_type,
-        recurrence_days: form.recurrence_days.length > 0 ? form.recurrence_days : null,
-        recurrence_day_of_month: form.recurrence_day_of_month.trim() ? Number(form.recurrence_day_of_month.trim()) : null,
+        recurrence_days: null,
+        recurrence_day_of_month: null,
         is_active: form.is_active,
       };
 
@@ -968,53 +963,6 @@ export default function RecurringTemplatesManager({
                   </select>
                   <p className="mt-1 text-[11px] text-stone">{RECURRENCE_OPTIONS.find((option) => option.value === form.recurrence_type)?.helper}</p>
                 </div>
-
-                {(form.recurrence_type === "weekly" || form.recurrence_type === "custom") && (
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Days</label>
-                    <div className="flex flex-wrap gap-2">
-                      {RECURRENCE_DAY_OPTIONS.map((day) => {
-                        const selected = form.recurrence_days.includes(day);
-                        return (
-                          <button
-                            key={day}
-                            type="button"
-                            onClick={() =>
-                              setForm((prev) => ({
-                                ...prev,
-                                recurrence_days: prev.recurrence_days.includes(day)
-                                  ? prev.recurrence_days.filter((value) => value !== day)
-                                  : [...prev.recurrence_days, day],
-                              }))
-                            }
-                            className={`rounded-full border px-3 py-1.5 text-[12px] font-semibold transition-colors ${
-                              selected
-                                ? "border-terracotta bg-terracotta-soft text-terracotta"
-                                : "border-sand bg-parchment text-walnut"
-                            }`}
-                          >
-                            {day}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {form.recurrence_type === "monthly" && (
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Day of month</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="31"
-                      value={form.recurrence_day_of_month}
-                      onChange={(e) => setForm((prev) => ({ ...prev, recurrence_day_of_month: e.target.value }))}
-                      placeholder="e.g. 15"
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
-                    />
-                  </div>
-                )}
 
                 <label className="inline-flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider text-walnut">
                   <input
