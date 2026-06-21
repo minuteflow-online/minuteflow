@@ -84,11 +84,12 @@ export async function GET(request: Request) {
   const selfOnly = searchParams.get("selfOnly") === "true";
   const unassignedOnly = searchParams.get("unassigned") === "true";
   const asReviewer = searchParams.get("asReviewer") === "true";
+  const projectIdParam = searchParams.get("projectId");
 
   const assigneeSelect =
     "id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked";
   const taskSelect =
-    `id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, recurring_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
+    `id, account, project, project_id, pay_type, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, recurring_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
          assigned_task_assignees(${assigneeSelect})`;
 
   const formatAdminTaskRows = async (data: Array<Record<string, unknown>>) => {
@@ -178,10 +179,14 @@ export async function GET(request: Request) {
     profile?.role === "admin" || profile?.role === "manager";
 
   if (isAdminOrManager && !selfOnly) {
-    const query = supabase
+    let query = supabase
       .from("assigned_tasks")
       .select(taskSelect)
       .order("created_at", { ascending: false });
+
+    if (projectIdParam) {
+      query = query.eq("project_id", projectIdParam);
+    }
 
     const { data, error } = await query;
     if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -357,6 +362,8 @@ export async function POST(request: Request) {
     instructions_locked,
     fixed_pay_task_id,
     recurring_template_id,
+    project_id,
+    pay_type,
     va_ids: rawVaIds,
     initial_status,
   } = body as {
@@ -371,6 +378,8 @@ export async function POST(request: Request) {
     instructions_locked?: boolean;
     fixed_pay_task_id?: number | null;
     recurring_template_id?: string | null;
+    project_id?: string | null;
+    pay_type?: string | null;
     va_ids?: string[];
     initial_status?: AssignedTaskStatus;
   };
@@ -406,6 +415,8 @@ export async function POST(request: Request) {
       instructions_locked: Boolean(instructions_locked),
       fixed_pay_task_id: fixed_pay_task_id ?? null,
       recurring_template_id: recurring_template_id ?? null,
+      project_id: project_id ?? null,
+      pay_type: pay_type ?? null,
       created_by: user.id,
       // When no VAs are assigned at creation time, mark the task as unassigned
       status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "pending"),

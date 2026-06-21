@@ -516,6 +516,8 @@ export interface AssignedTask {
   instructions_locked: boolean;
   fixed_pay_task_id: number | null;
   recurring_template_id: string | null;
+  project_id?: string | null;
+  pay_type?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -585,6 +587,15 @@ export interface FixedPayTaskWithClaimer {
   claimed_by_me?: boolean;
   /** The assigned_tasks.id linked to this fixed-pay task for the current VA (VA responses only) */
   assigned_task_id?: number | null;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  created_by: string | null;
+  is_active: boolean;
+  created_at: string;
 }
 
 export interface FixedPayTaskAttachment {
