@@ -858,13 +858,13 @@ export default function TaskListPage() {
   );
 
   const filteredTasks = useMemo(() => {
-    const start = filterDueStart ? new Date(filterDueStart) : null;
-    const end = filterDueEnd ? new Date(`${filterDueEnd}T23:59:59.999`) : null;
+    const start = filterDueStart ? parseDueDateSafe(filterDueStart) : null;
+    const end = filterDueEnd ? new Date(filterDueEnd.slice(0, 10) + "T23:59:59Z") : null;
     const taskNameSearchLower = taskNameSearch.trim().toLowerCase();
 
     return tasks.filter((task) => {
       const detail = task.assigned_tasks;
-      const dueDate = detail.due_date ? new Date(detail.due_date) : null;
+      const dueDate = detail.due_date ? parseDueDateSafe(detail.due_date) : null;
       const dueTime = dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate.getTime() : null;
 
       if (filterStatuses.length > 0 && !filterStatuses.includes(task.status)) return false;
