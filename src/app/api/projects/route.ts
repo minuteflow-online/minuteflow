@@ -11,6 +11,13 @@ function serviceClient() {
   );
 }
 
+async function requireUser() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
+  return { user };
+}
+
 async function requireAdmin() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -20,10 +27,22 @@ async function requireAdmin() {
   return { user };
 }
 
-export async function GET() {
-  const auth = await requireAdmin();
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  const auth = id ? await requireUser() : await requireAdmin();
   if ("error" in auth) return auth.error;
+
   const supabase = serviceClient();
+
+  if (id) {
+    const { data, error } = await supabase.from("projects").select("*").eq("id", id).maybeSingle();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (!data) return Response.json({ error: "Project not found" }, { status: 404 });
+    return Response.json({ project: data });
+  }
+
   const { data, error } = await supabase.from("projects").select("*").order("created_at", { ascending: false });
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ projects: data ?? [] });
@@ -70,7 +89,6 @@ export async function DELETE(request: Request) {
   const id = searchParams.get("id");
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
   const supabase = serviceClient();
-  // Nullify project_id on any assigned tasks in this project
   await supabase.from("assigned_tasks").update({ project_id: null }).eq("project_id", id);
   const { error } = await supabase.from("projects").delete().eq("id", id);
   if (error) return Response.json({ error: error.message }, { status: 400 });
