@@ -174,10 +174,16 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
   );
 }
 
+function parseDueDateSafe(dueDate: string): Date {
+  // Append UTC noon so a date-only string (e.g. "2026-06-21") is never
+  // shifted to the previous day when converted to a local timezone.
+  return new Date(dueDate.slice(0, 10) + "T12:00:00Z");
+}
+
 function formatDueDate(dueDate: string | null) {
   if (!dueDate) return { label: "—", isOverdue: false };
 
-  const date = new Date(dueDate);
+  const date = parseDueDateSafe(dueDate);
   if (Number.isNaN(date.getTime())) return { label: dueDate, isOverdue: false };
 
   return {
@@ -192,11 +198,8 @@ function formatDueDate(dueDate: string | null) {
 
 function formatDateInputValue(dueDate: string | null) {
   if (!dueDate) return "";
-
-  const date = new Date(dueDate);
-  if (Number.isNaN(date.getTime())) return dueDate;
-
-  return date.toISOString().slice(0, 10);
+  // Return the date portion directly — no UTC conversion needed.
+  return dueDate.slice(0, 10);
 }
 
 function formatFileSize(bytes: number | null): string {

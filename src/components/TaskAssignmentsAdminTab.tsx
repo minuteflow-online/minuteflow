@@ -121,10 +121,17 @@ interface AttachmentRow {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function parseDateSafe(iso: string): Date {
+  // Append UTC noon so a date-only string (e.g. "2026-06-21") is never
+  // shifted to the previous day when converted to a local timezone.
+  const datePart = iso.slice(0, 10);
+  return new Date(datePart + "T12:00:00Z");
+}
+
 function fmtDueDate(iso: string | null, tz?: string): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleDateString("en-US", {
+    return parseDateSafe(iso).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
@@ -137,13 +144,13 @@ function fmtDueDate(iso: string | null, tz?: string): string {
 
 function isDueSoon(iso: string | null): boolean {
   if (!iso) return false;
-  const diff = new Date(iso).getTime() - Date.now();
+  const diff = parseDateSafe(iso).getTime() - Date.now();
   return diff >= 0 && diff < 86400 * 3 * 1000;
 }
 
 function isPastDue(iso: string | null): boolean {
   if (!iso) return false;
-  return new Date(iso).getTime() < Date.now();
+  return parseDateSafe(iso).getTime() < Date.now();
 }
 
 function formatFileSize(bytes: number | null): string {
