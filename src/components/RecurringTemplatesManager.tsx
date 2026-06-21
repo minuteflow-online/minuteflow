@@ -67,17 +67,20 @@ const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string; helper: string
 ];
 
 function todayLocal() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function formatDate(iso: string | null | undefined, tz?: string): string {
+function formatDate(iso: string | null | undefined, _tz?: string): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleDateString("en-US", {
+    // Parse the date portion directly to avoid UTC midnight → local day-behind bug
+    const datePart = iso.slice(0, 10);
+    const [year, month, day] = datePart.split("-").map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
-      ...(tz ? { timeZone: tz } : {}),
     });
   } catch {
     return iso;
