@@ -36,6 +36,8 @@ interface RecurringTemplatesManagerProps {
   formTasksByObjective: Record<number, FormTask[]>;
   assignedByOptions: Pick<Profile, "id" | "full_name" | "username">[];
   onRefresh: () => void;
+  vaMode?: boolean;
+  currentUserId?: string;
 }
 
 type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
@@ -341,6 +343,8 @@ export default function RecurringTemplatesManager({
   formTasksByObjective,
   assignedByOptions,
   onRefresh,
+  vaMode,
+  currentUserId,
 }: RecurringTemplatesManagerProps) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<RecurringTaskTemplate | null>(null);
@@ -449,13 +453,17 @@ export default function RecurringTemplatesManager({
 
   const openCreate = useCallback(() => {
     setEditingTemplate(null);
-    setForm(defaultForm());
+    const initial = defaultForm();
+    if (vaMode && currentUserId) {
+      initial.assigned_to_ids = [currentUserId];
+    }
+    setForm(initial);
     setNotice(null);
     setAttachments([]);
     setPendingFiles([]);
     if (pendingFileInputRef.current) pendingFileInputRef.current.value = "";
     setPanelOpen(true);
-  }, []);
+  }, [vaMode, currentUserId]);
 
   const openEdit = useCallback(
     (template: RecurringTaskTemplate) => {
@@ -882,21 +890,23 @@ export default function RecurringTemplatesManager({
                       className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
                     />
                   </div>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Assigned By</label>
-                    <select
-                      value={form.assigned_by_id}
-                      onChange={(e) => setForm((prev) => ({ ...prev, assigned_by_id: e.target.value }))}
-                      className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
-                    >
-                      <option value="">Select assigned by...</option>
-                      {assignedBySorted.map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profileLabel(profile)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {!vaMode && (
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Assigned By</label>
+                      <select
+                        value={form.assigned_by_id}
+                        onChange={(e) => setForm((prev) => ({ ...prev, assigned_by_id: e.target.value }))}
+                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
+                      >
+                        <option value="">Select assigned by...</option>
+                        {assignedBySorted.map((profile) => (
+                          <option key={profile.id} value={profile.id}>
+                            {profileLabel(profile)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -944,11 +954,15 @@ export default function RecurringTemplatesManager({
 
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Assigned To</label>
-                  <TemplateVAMultiSelect
-                    activeProfiles={assigneeOptions}
-                    selectedIds={form.assigned_to_ids}
-                    onChange={(ids) => setForm((prev) => ({ ...prev, assigned_to_ids: ids }))}
-                  />
+                  {vaMode ? (
+                    <p className="text-[13px] text-espresso py-1">You</p>
+                  ) : (
+                    <TemplateVAMultiSelect
+                      activeProfiles={assigneeOptions}
+                      selectedIds={form.assigned_to_ids}
+                      onChange={(ids) => setForm((prev) => ({ ...prev, assigned_to_ids: ids }))}
+                    />
+                  )}
                 </div>
 
                 <div>

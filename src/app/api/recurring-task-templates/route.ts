@@ -80,7 +80,9 @@ function booleanOrDefault(value: unknown, fallback = true): boolean {
   return fallback;
 }
 
-async function requireAdmin() {
+async function requireUser(): Promise<
+  { user: { id: string }; role: string } | { error: Response }
+> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -88,18 +90,12 @@ async function requireAdmin() {
   if (!user) {
     return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-
   const { data: profile } = await supabase
     .from("profiles")
     .select("role")
     .eq("id", user.id)
     .single();
-
-  if (profile?.role !== "admin") {
-    return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
-  }
-
-  return { user };
+  return { user, role: profile?.role ?? "va" };
 }
 
 async function decorateTemplates(rows: TemplateRow[], supabase = serviceClient()) {
@@ -171,15 +167,23 @@ function parseAssignedToIds(body: Record<string, unknown>) {
   return idsFromSingle ?? [];
 }
 
-export async function GET() {
-  const auth = await requireAdmin();
+export async function GET(_request: Request) {
+  const auth = await requireUser();
   if ("error" in auth) return auth.error;
+  const { user, role } = auth;
 
   const supabase = serviceClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("recurring_task_templates")
     .select("*")
     .order("created_at", { ascending: false });
+
+  if (role !== "admin") {
+    // VAs only see templates assigned to them
+    query = query.contains("assigned_to_ids", [user.id]);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });
@@ -190,13 +194,17 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAdmin();
+  const auth = await requireUser();
   if ("error" in auth) return auth.error;
-  const user = auth.user;
+  const { user, role } = auth;
 
   const body = (await request.json()) as Record<string, unknown>;
   const title = stringOrNull(body.title) ?? stringOrNull(body.task_name) ?? "";
-  const assignedToIds = parseAssignedToIds(body);
+  // VAs can only create templates for themselves
+  let assignedToIds = parseAssignedToIds(body);
+  if (role !== "admin") {
+    assignedToIds = [user.id];
+  }
   const recurrence_type = parseRecurrenceType(body.recurrence_type);
   const recurrence_days = parseBodyDays(body);
   const recurrence_day_of_month =
@@ -254,12 +262,27 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const auth = await requireAdmin();
+  const auth = await requireUser();
   if ("error" in auth) return auth.error;
+  const { user, role } = auth;
 
   const body = (await request.json()) as Record<string, unknown>;
   const id = parseId(request, body);
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
+
+  if (role !== "admin") {
+    // Verify VA owns this template
+    const supabase = serviceClient();
+    const { data: existing } = await supabase
+      .from("recurring_task_templates")
+      .select("assigned_to_ids")
+      .eq("id", id)
+      .single();
+    const ids: string[] = (existing?.assigned_to_ids as string[] | null) ?? [];
+    if (!ids.includes(user.id)) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
 
   const updates: Record<string, unknown> = {};
   if (body.title !== undefined || body.task_name !== undefined) {
@@ -320,11 +343,26 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const auth = await requireAdmin();
+  const auth = await requireUser();
   if ("error" in auth) return auth.error;
+  const { user, role } = auth;
 
   const id = parseId(request);
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
+
+  if (role !== "admin") {
+    // Verify VA owns this template before deleting
+    const supabase = serviceClient();
+    const { data: existing } = await supabase
+      .from("recurring_task_templates")
+      .select("assigned_to_ids")
+      .eq("id", id)
+      .single();
+    const ids: string[] = (existing?.assigned_to_ids as string[] | null) ?? [];
+    if (!ids.includes(user.id)) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
 
   const supabase = serviceClient();
   const { error: nullifyError } = await supabase
