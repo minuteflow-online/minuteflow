@@ -1837,13 +1837,15 @@ export default function TaskListPage() {
                     Unassigned Tasks
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => { setActiveView("recurring"); void fetchRecurringTemplates(); }}
-                  className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "recurring" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                >
-                  Recurring
-                </button>
+                {!isPerTaskVa && (
+                  <button
+                    type="button"
+                    onClick={() => { setActiveView("recurring"); void fetchRecurringTemplates(); }}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "recurring" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    Recurring
+                  </button>
+                )}
               </div>
             </div>
           </div>
