@@ -6,6 +6,8 @@ import type { AssignedTask, AssignedTaskStatus, TaskScreenshot } from "@/types/d
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
+import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
+import type { RecurringTaskTemplate } from "@/types/database";
 
 type VATaskRow = {
   id: number;
@@ -279,11 +281,13 @@ export default function TaskListPage() {
   const [currentUserProfile, setCurrentUserProfile] = useState<ProfileOption | null>(null);
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "hourly_pool">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "hourly_pool" | "recurring">("my_tasks");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
   const [hourlyGrabbingId, setHourlyGrabbingId] = useState<number | null>(null);
+  const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
+  const [recurringLoading, setRecurringLoading] = useState(false);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
   const [inlineSaving, setInlineSaving] = useState(false);
 
@@ -425,6 +429,21 @@ export default function TaskListPage() {
       setHourlyPoolLoading(false);
     }
   }, []);
+
+  const fetchRecurringTemplates = useCallback(async () => {
+    if (!currentUserId) return;
+    setRecurringLoading(true);
+    try {
+      const res = await fetch("/api/recurring-task-templates", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json();
+      setRecurringTemplates((d.templates ?? []) as RecurringTaskTemplate[]);
+    } catch {
+      setRecurringTemplates([]);
+    } finally {
+      setRecurringLoading(false);
+    }
+  }, [currentUserId]);
 
   const fetchFormOptions = useCallback(async () => {
     try {
@@ -1818,6 +1837,13 @@ export default function TaskListPage() {
                     Unassigned Tasks
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => { setActiveView("recurring"); void fetchRecurringTemplates(); }}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "recurring" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                >
+                  Recurring
+                </button>
               </div>
             </div>
           </div>
@@ -1998,6 +2024,27 @@ export default function TaskListPage() {
                   })}
                 </div>
               )}
+            </div>
+          ) : activeView === "recurring" ? (
+            <div className="p-4">
+              <RecurringTemplatesManager
+                templates={recurringTemplates}
+                loading={recurringLoading}
+                activeProfiles={[]}
+                accountOptions={formAccounts}
+                projectTagsMap={Object.fromEntries(
+                  formProjects.map((p) => [
+                    p.account ?? "",
+                    formProjects.filter((fp) => fp.account === p.account).map((fp) => fp.project_name),
+                  ])
+                )}
+                formObjectives={formProjects}
+                formTasksByObjective={formTasksByProject}
+                assignedByOptions={currentUserProfile ? [currentUserProfile] : []}
+                onRefresh={fetchRecurringTemplates}
+                vaMode={true}
+                currentUserId={currentUserId ?? ""}
+              />
             </div>
           ) : (
             <>
