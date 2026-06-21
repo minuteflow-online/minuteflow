@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Profile, RecurringTaskTemplate } from "@/types/database";
 
 interface FormObjective {
@@ -12,6 +12,17 @@ interface FormObjective {
 interface FormTask {
   id: number;
   task_name: string;
+}
+
+interface AttachmentRow {
+  id: number;
+  filename: string;
+  storage_path: string;
+  file_size: number | null;
+  mime_type: string | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+  url: string | null;
 }
 
 interface RecurringTemplatesManagerProps {
@@ -193,6 +204,13 @@ function displayObjective(template: RecurringTaskTemplate) {
   return template.project || template.description || template.task_detail || "—";
 }
 
+function formatFileSize(bytes: number | null): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function RecurringTemplatesManager({
   templates,
   loading,
@@ -210,6 +228,10 @@ export default function RecurringTemplatesManager({
   const [form, setForm] = useState<FormState>(defaultForm());
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const pendingFileInputRef = useRef<HTMLInputElement>(null);
 
   const assigneeOptions = useMemo(
     () => [...activeProfiles].sort((a, b) => profileLabel(a).localeCompare(profileLabel(b))),
@@ -259,10 +281,60 @@ export default function RecurringTemplatesManager({
     return Array.from(accounts).sort((a, b) => a.localeCompare(b));
   }, [accountOptions, formObjectives, projectTagsMap]);
 
+  const fetchAttachments = useCallback(async (templateId: string) => {
+    setAttachmentsLoading(true);
+    try {
+      const res = await fetch(`/api/recurring-task-templates/${templateId}/attachments`);
+      if (res.ok) {
+        const data = await res.json();
+        setAttachments(data.attachments || []);
+      } else {
+        setAttachments([]);
+      }
+    } catch {
+      setAttachments([]);
+    } finally {
+      setAttachmentsLoading(false);
+    }
+  }, []);
+
+  const handlePendingFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+    setPendingFiles((prev) => [...prev, ...files]);
+    event.target.value = "";
+  }, []);
+
+  const handleRemovePendingFile = useCallback((index: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const handleDeleteAttachment = useCallback(async (attachmentId: number) => {
+    if (!editingTemplate) return;
+    if (!confirm("Delete this attachment? This cannot be undone.")) return;
+
+    try {
+      const res = await fetch(
+        `/api/recurring-task-templates/${editingTemplate.id}/attachments?attachmentId=${attachmentId}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      await fetchAttachments(editingTemplate.id);
+    } catch (error) {
+      setNotice({ type: "error", text: error instanceof Error ? error.message : "Failed to delete attachment." });
+    }
+  }, [editingTemplate, fetchAttachments]);
+
   const openCreate = useCallback(() => {
     setEditingTemplate(null);
     setForm(defaultForm());
     setNotice(null);
+    setAttachments([]);
+    setPendingFiles([]);
+    if (pendingFileInputRef.current) pendingFileInputRef.current.value = "";
     setPanelOpen(true);
   }, []);
 
@@ -271,6 +343,9 @@ export default function RecurringTemplatesManager({
       setEditingTemplate(template);
       setForm(templateToForm(template, formObjectives, formTasksByObjective));
       setNotice(null);
+      setAttachments([]);
+      setPendingFiles([]);
+      if (pendingFileInputRef.current) pendingFileInputRef.current.value = "";
       setPanelOpen(true);
     },
     [formObjectives, formTasksByObjective]
@@ -280,7 +355,21 @@ export default function RecurringTemplatesManager({
     setPanelOpen(false);
     setEditingTemplate(null);
     setNotice(null);
+    setAttachments([]);
+    setPendingFiles([]);
+    if (pendingFileInputRef.current) pendingFileInputRef.current.value = "";
   }, []);
+
+  useEffect(() => {
+    if (!panelOpen || !editingTemplate) {
+      if (!panelOpen) {
+        setAttachments([]);
+      }
+      return;
+    }
+
+    void fetchAttachments(editingTemplate.id);
+  }, [editingTemplate, fetchAttachments, panelOpen]);
 
   const saveTemplate = useCallback(async () => {
     const taskName = form.task_name_mode === "__custom__" || !form.task_name_mode ? form.task_name_custom.trim() : form.task_name_mode.trim();
@@ -350,8 +439,31 @@ export default function RecurringTemplatesManager({
         throw new Error(data.error || `HTTP ${res.status}`);
       }
 
-      setNotice({ type: "success", text: editingTemplate ? "Template updated." : "Template created." });
+      const templateId = (data.template?.id as string | undefined) ?? editingTemplate?.id ?? null;
       onRefresh();
+
+      if (templateId && pendingFiles.length > 0) {
+        for (const file of pendingFiles) {
+          const formData = new FormData();
+          formData.append("file", file);
+          const uploadRes = await fetch(`/api/recurring-task-templates/${templateId}/attachments`, {
+            method: "POST",
+            body: formData,
+          });
+          if (!uploadRes.ok) {
+            const uploadData = await uploadRes.json().catch(() => ({}));
+            throw new Error(uploadData.error || `Failed to upload ${file.name}`);
+          }
+        }
+      }
+
+      if (templateId) {
+        await fetchAttachments(templateId);
+      }
+
+      setPendingFiles([]);
+      if (pendingFileInputRef.current) pendingFileInputRef.current.value = "";
+      setNotice({ type: "success", text: editingTemplate ? "Template updated." : "Template created." });
       setPanelOpen(false);
       setEditingTemplate(null);
       setForm(defaultForm());
@@ -360,7 +472,7 @@ export default function RecurringTemplatesManager({
     } finally {
       setSaving(false);
     }
-  }, [editingTemplate, form, onRefresh, selectedObjective]);
+  }, [editingTemplate, fetchAttachments, form, onRefresh, pendingFiles, selectedObjective]);
 
   const toggleActive = useCallback(
     async (template: RecurringTaskTemplate) => {
@@ -790,6 +902,96 @@ export default function RecurringTemplatesManager({
                   />
                   Active
                 </label>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-walnut">Attach Files</label>
+                    <label className="inline-flex items-center gap-1.5 rounded-lg border border-sand bg-parchment px-3 py-1.5 text-[11px] font-semibold text-walnut transition-all cursor-pointer hover:border-walnut">
+                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      Attach Files
+                      <input
+                        ref={pendingFileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={handlePendingFileSelect}
+                      />
+                    </label>
+                  </div>
+
+                  {pendingFiles.length === 0 ? (
+                    <p className="py-2 text-[12px] text-stone/50">No files selected yet.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {pendingFiles.map((file, index) => (
+                        <div
+                          key={`${file.name}-${file.lastModified}-${index}`}
+                          className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <span className="block max-w-[280px] truncate text-[12px] text-walnut">{file.name}</span>
+                            <span className="text-[10px] text-stone">{formatFileSize(file.size)}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePendingFile(index)}
+                            className="shrink-0 rounded text-stone transition-all hover:text-terracotta cursor-pointer"
+                            title="Remove file"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {editingTemplate && (
+                  <div>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-walnut">Existing Attachments</label>
+                      {attachmentsLoading && (
+                        <span className="text-[11px] text-stone">Loading...</span>
+                      )}
+                    </div>
+
+                    {attachments.length === 0 ? (
+                      <p className="py-2 text-[12px] text-stone/50">No saved attachments yet.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {attachments.map((attachment) => (
+                          <div
+                            key={attachment.id}
+                            className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-white px-3 py-2"
+                          >
+                            <div className="min-w-0">
+                              <span className="block max-w-[280px] truncate text-[12px] text-walnut">{attachment.filename}</span>
+                              <span className="text-[10px] text-stone">{formatFileSize(attachment.file_size)}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteAttachment(attachment.id)}
+                              className="shrink-0 rounded text-stone transition-all hover:text-terracotta cursor-pointer"
+                              title="Delete attachment"
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between gap-3 border-t border-sand px-6 py-4">

@@ -225,6 +225,37 @@ async function handleCron(request: NextRequest) {
       continue;
     }
 
+    const { data: templateAttachments, error: attachmentFetchError } = await supabase
+      .from("recurring_template_attachments")
+      .select("filename, storage_path, file_size, mime_type, uploaded_by")
+      .eq("template_id", template.id)
+      .order("uploaded_at", { ascending: true });
+
+    if (attachmentFetchError) {
+      await supabase.from("assigned_task_assignees").delete().eq("assigned_task_id", task.id);
+      await supabase.from("assigned_tasks").delete().eq("id", task.id);
+      continue;
+    }
+
+    if ((templateAttachments ?? []).length > 0) {
+      const { error: attachmentInsertError } = await supabase.from("assigned_task_attachments").insert(
+        (templateAttachments ?? []).map((attachment) => ({
+          assigned_task_id: task.id,
+          filename: attachment.filename,
+          storage_path: attachment.storage_path,
+          file_size: attachment.file_size,
+          mime_type: attachment.mime_type,
+          uploaded_by: attachment.uploaded_by ?? template.assigned_by,
+        }))
+      );
+
+      if (attachmentInsertError) {
+        await supabase.from("assigned_task_assignees").delete().eq("assigned_task_id", task.id);
+        await supabase.from("assigned_tasks").delete().eq("id", task.id);
+        continue;
+      }
+    }
+
     created++;
     createdTemplates.push(template.id);
   }
