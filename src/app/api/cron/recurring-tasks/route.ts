@@ -8,8 +8,15 @@ type RecurrenceType = "daily" | "weekly" | "monthly" | "custom";
 type TemplateRow = {
   id: string;
   title: string;
+  task_name?: string | null;
   description: string | null;
+  task_detail?: string | null;
+  task_notes?: string | null;
+  instructions?: string | null;
+  instructions_locked?: boolean;
+  start_date?: string | null;
   assigned_to: string | null;
+  assigned_to_ids?: string[] | null;
   assigned_by: string | null;
   account: string | null;
   project: string | null;
@@ -87,8 +94,16 @@ function weekdayToIndex(value: string) {
   return map[normalized];
 }
 
-function isTemplateDueToday(template: TemplateRow, weekday: string, weekdayIndex: number, dayOfMonth: number) {
+function normalizeAssignedToIds(template: TemplateRow) {
+  const ids = template.assigned_to_ids?.filter(Boolean) ?? [];
+  if (ids.length > 0) return ids;
+  return template.assigned_to ? [template.assigned_to] : [];
+}
+
+function isTemplateDueToday(template: TemplateRow, weekday: string, weekdayIndex: number, dayOfMonth: number, today: string) {
   if (!template.is_active) return false;
+  if (template.start_date && today < template.start_date) return false;
+
   switch (template.recurrence_type) {
     case "daily":
       return true;
@@ -135,7 +150,6 @@ async function handleCron(request: NextRequest) {
   const { data: templates, error: templateError } = await supabase
     .from("recurring_task_templates")
     .select("*")
-    .eq("is_active", true)
     .order("created_at", { ascending: true });
 
   if (templateError) {
@@ -143,7 +157,7 @@ async function handleCron(request: NextRequest) {
   }
 
   const dueTemplates = ((templates ?? []) as TemplateRow[]).filter((template) =>
-    isTemplateDueToday(template, weekday, weekdayIndex, dayOfMonth)
+    isTemplateDueToday(template, weekday, weekdayIndex, dayOfMonth, today)
   );
 
   if (dueTemplates.length === 0) {
@@ -168,18 +182,23 @@ async function handleCron(request: NextRequest) {
   const createdTemplates: string[] = [];
 
   for (const template of createTemplates) {
+    const assigneeIds = normalizeAssignedToIds(template);
+    if (assigneeIds.length === 0) {
+      continue;
+    }
+
     const { data: task, error: taskError } = await supabase
       .from("assigned_tasks")
       .insert({
         account: template.account,
         project: template.project,
         task_name: template.title,
-        task_detail: template.description,
-        task_notes: template.description,
+        task_detail: template.task_detail ?? template.description,
+        task_notes: template.task_notes,
         due_date: today,
         assigned_by: template.assigned_by,
-        instructions: template.description,
-        instructions_locked: false,
+        instructions: template.instructions,
+        instructions_locked: Boolean(template.instructions_locked),
         recurring_template_id: template.id,
         created_by: template.assigned_by,
         status: "pending",
@@ -193,11 +212,13 @@ async function handleCron(request: NextRequest) {
 
     const { error: assigneeError } = await supabase
       .from("assigned_task_assignees")
-      .insert({
-        assigned_task_id: task.id,
-        va_id: template.assigned_to,
-        status: "pending",
-      });
+      .insert(
+        assigneeIds.map((va_id) => ({
+          assigned_task_id: task.id,
+          va_id,
+          status: "pending",
+        }))
+      );
 
     if (assigneeError) {
       await supabase.from("assigned_tasks").delete().eq("id", task.id);

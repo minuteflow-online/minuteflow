@@ -461,11 +461,29 @@ export interface ExtensionUploadStatus {
 
 // ── Assigned Tasks ──────────────────────────────────────────────────────────
 
+export interface RecurringTemplateAttachment {
+  id: number;
+  template_id: string;
+  filename: string;
+  storage_path: string;
+  file_size: number | null;
+  mime_type: string | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
 export interface RecurringTaskTemplate {
   id: string;
   title: string;
+  task_name?: string | null;
   description: string | null;
+  task_detail?: string | null;
+  task_notes?: string | null;
+  instructions?: string | null;
+  instructions_locked?: boolean;
+  start_date?: string | null;
   assigned_to: string | null;
+  assigned_to_ids?: string[] | null;
   assigned_by: string | null;
   account: string | null;
   project: string | null;
@@ -475,9 +493,11 @@ export interface RecurringTaskTemplate {
   recurrence_days: string[] | null;
   recurrence_day_of_month: number | null;
   is_active: boolean;
+  is_paused?: boolean;
   created_at: string;
   updated_at: string;
   assigned_to_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
+  assigned_to_profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>[] | null;
   assigned_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
 }
 

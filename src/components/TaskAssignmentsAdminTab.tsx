@@ -1724,6 +1724,11 @@ export default function TaskAssignmentsAdminTab({
           loading={loading}
           activeProfiles={activeProfiles}
           orgTimezone={orgTimezone}
+          accountOptions={accountsForPanel}
+          projectTagsMap={projectTagsMap}
+          formObjectives={formObjectives}
+          formTasksByObjective={formTasksByObjective}
+          assignedByOptions={assignedByOptions}
           onRefresh={fetchRecurringTemplates}
         />
       )}
