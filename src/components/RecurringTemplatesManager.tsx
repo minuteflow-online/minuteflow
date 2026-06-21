@@ -54,7 +54,7 @@ interface FormState {
   instructions_locked: boolean;
   assigned_to_ids: string[];
   recurrence_type: RecurrenceType;
-  recurrence_days: string;
+  recurrence_days: string[];
   recurrence_day_of_month: string;
   is_active: boolean;
 }
@@ -65,6 +65,8 @@ const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string; helper: string
   { value: "monthly", label: "Monthly", helper: "Runs on the selected day of month" },
   { value: "custom", label: "Custom days", helper: "Use the days field to pick specific weekdays" },
 ];
+
+const RECURRENCE_DAY_OPTIONS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function todayLocal() {
   return new Date().toISOString().slice(0, 10);
@@ -104,13 +106,6 @@ function recurrenceLabel(template: RecurringTaskTemplate): string {
   }
 }
 
-function normalizeDays(raw: string): string[] | null {
-  const days = raw
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  return days.length > 0 ? days : null;
-}
 
 function templateAssignedToIds(template: RecurringTaskTemplate): string[] {
   const ids = template.assigned_to_ids?.filter(Boolean) ?? [];
@@ -151,7 +146,7 @@ function defaultForm(): FormState {
     instructions_locked: false,
     assigned_to_ids: [],
     recurrence_type: "daily",
-    recurrence_days: "",
+    recurrence_days: [],
     recurrence_day_of_month: "",
     is_active: true,
   };
@@ -181,7 +176,7 @@ function templateToForm(
     instructions_locked: Boolean(template.instructions_locked),
     assigned_to_ids: assignedToIds,
     recurrence_type: template.recurrence_type,
-    recurrence_days: (template.recurrence_days ?? []).join(", "),
+    recurrence_days: template.recurrence_days ?? [],
     recurrence_day_of_month: template.recurrence_day_of_month?.toString() ?? "",
     is_active: template.is_active,
   };
@@ -198,6 +193,128 @@ function displayAssignedTo(
     .map((id) => profileLabel(profileMap.get(id) ?? { id, full_name: "", username: id }))
     .filter(Boolean)
     .join(", ");
+}
+
+interface TemplateVAMultiSelectProps {
+  activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}
+
+function TemplateVAMultiSelect({ activeProfiles, selectedIds, onChange }: TemplateVAMultiSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
+        buttonRef.current && !buttonRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const openDropdown = () => {
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+      const maxHeight = Math.min(240, Math.max(spaceBelow, spaceAbove));
+      const showAbove = spaceBelow < 120 && spaceAbove > spaceBelow;
+
+      setDropdownStyle({
+        position: "fixed",
+        ...(showAbove ? { bottom: window.innerHeight - rect.top + 2 } : { top: rect.bottom + 2 }),
+        left: rect.left,
+        width: rect.width,
+        maxHeight,
+        zIndex: 9999,
+      });
+    }
+    setOpen(true);
+  };
+
+  const toggle = (id: string) => {
+    if (selectedIds.includes(id)) {
+      onChange(selectedIds.filter((value) => value !== id));
+    } else {
+      onChange([...selectedIds, id]);
+    }
+  };
+
+  const selectedProfiles = activeProfiles.filter((profile) => selectedIds.includes(profile.id));
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => (open ? setOpen(false) : openDropdown())}
+        className="w-full flex items-center justify-between rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none transition-colors hover:border-walnut/40 focus:border-terracotta"
+      >
+        <span className="flex-1 text-left">
+          {selectedProfiles.length === 0 ? (
+            <span className="text-stone/50">Select team members...</span>
+          ) : (
+            <span className="flex flex-wrap gap-1">
+              {selectedProfiles.map((profile) => (
+                <span
+                  key={profile.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-sand bg-parchment px-2 py-0.5 text-[11px] text-walnut"
+                >
+                  {profileLabel(profile)}
+                </span>
+              ))}
+            </span>
+          )}
+        </span>
+        <svg
+          className={`ml-2 h-4 w-4 shrink-0 text-stone transition-transform ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          ref={dropdownRef}
+          style={dropdownStyle}
+          className="overflow-y-auto rounded-lg border border-sand bg-white shadow-xl"
+        >
+          {activeProfiles.map((profile) => {
+            const checked = selectedIds.includes(profile.id);
+            return (
+              <label
+                key={profile.id}
+                className="flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-parchment"
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(profile.id)}
+                  className="accent-terracotta"
+                />
+                <span className="flex-1 text-[13px] text-walnut">{profileLabel(profile)}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function displayObjective(template: RecurringTaskTemplate) {
@@ -395,7 +512,7 @@ export default function RecurringTemplatesManager({
       setNotice({ type: "error", text: "Monthly templates need a day of month." });
       return;
     }
-    if ((form.recurrence_type === "weekly" || form.recurrence_type === "custom") && !form.recurrence_days.trim()) {
+    if ((form.recurrence_type === "weekly" || form.recurrence_type === "custom") && form.recurrence_days.length === 0) {
       setNotice({ type: "error", text: "Weekly/custom templates need at least one day." });
       return;
     }
@@ -420,7 +537,7 @@ export default function RecurringTemplatesManager({
         category: null,
         pay_type: null,
         recurrence_type: form.recurrence_type,
-        recurrence_days: normalizeDays(form.recurrence_days),
+        recurrence_days: form.recurrence_days.length > 0 ? form.recurrence_days : null,
         recurrence_day_of_month: form.recurrence_day_of_month.trim() ? Number(form.recurrence_day_of_month.trim()) : null,
         is_active: form.is_active,
       };
@@ -829,24 +946,11 @@ export default function RecurringTemplatesManager({
 
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Assigned To</label>
-                  <select
-                    multiple
-                    value={form.assigned_to_ids}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        assigned_to_ids: Array.from(e.target.selectedOptions, (option) => option.value),
-                      }))
-                    }
-                    className="h-40 w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
-                  >
-                    {assigneeOptions.map((profile) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profileLabel(profile)}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[11px] text-stone">Hold Cmd/Ctrl to select multiple VAs.</p>
+                  <TemplateVAMultiSelect
+                    activeProfiles={assigneeOptions}
+                    selectedIds={form.assigned_to_ids}
+                    onChange={(ids) => setForm((prev) => ({ ...prev, assigned_to_ids: ids }))}
+                  />
                 </div>
 
                 <div>
@@ -868,13 +972,32 @@ export default function RecurringTemplatesManager({
                 {(form.recurrence_type === "weekly" || form.recurrence_type === "custom") && (
                   <div>
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Days</label>
-                    <input
-                      value={form.recurrence_days}
-                      onChange={(e) => setForm((prev) => ({ ...prev, recurrence_days: e.target.value }))}
-                      placeholder="Monday, Wednesday, Friday"
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
-                    />
-                    <p className="mt-1 text-[11px] text-stone">Comma-separated weekday names or numbers accepted.</p>
+                    <div className="flex flex-wrap gap-2">
+                      {RECURRENCE_DAY_OPTIONS.map((day) => {
+                        const selected = form.recurrence_days.includes(day);
+                        return (
+                          <button
+                            key={day}
+                            type="button"
+                            onClick={() =>
+                              setForm((prev) => ({
+                                ...prev,
+                                recurrence_days: prev.recurrence_days.includes(day)
+                                  ? prev.recurrence_days.filter((value) => value !== day)
+                                  : [...prev.recurrence_days, day],
+                              }))
+                            }
+                            className={`rounded-full border px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+                              selected
+                                ? "border-terracotta bg-terracotta-soft text-terracotta"
+                                : "border-sand bg-parchment text-walnut"
+                            }`}
+                          >
+                            {day}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 
