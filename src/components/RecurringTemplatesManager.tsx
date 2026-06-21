@@ -669,8 +669,8 @@ export default function RecurringTemplatesManager({
           <p className="mt-1 text-xs text-stone">Create one to start auto-generating tasks on a schedule.</p>
         </div>
       ) : (
-        <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
-          <table className="w-full">
+        <div className="rounded-xl border border-sand bg-white overflow-x-auto shadow-sm">
+          <table className="min-w-full w-full">
             <thead>
               <tr className="bg-parchment border-b border-sand">
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Task Name</th>
