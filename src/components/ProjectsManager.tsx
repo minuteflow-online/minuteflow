@@ -765,6 +765,11 @@ export default function ProjectsManager({
                             <span className="flex-1 text-[13px] font-semibold text-espresso leading-tight truncate">
                               {sub.task_name}
                             </span>
+                            {(sub.project || sub.category) && (
+                              <span className="text-[11px] text-stone shrink-0 hidden sm:block">
+                                {sub.project ?? sub.category}
+                              </span>
+                            )}
                             {assigneeNames && (
                               <span className="text-[11px] text-stone shrink-0 hidden sm:block">
                                 {assigneeNames}
