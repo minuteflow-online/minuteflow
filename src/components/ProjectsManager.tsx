@@ -732,9 +732,13 @@ export default function ProjectsManager({
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                     Description
                   </label>
-                  <div className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso min-h-[3rem]">
-                    {editDescription || <span className="text-stone">No description</span>}
-                  </div>
+                  <textarea
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    rows={3}
+                    placeholder="Optional description"
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
+                  />
                 </div>
 
                 <div>
