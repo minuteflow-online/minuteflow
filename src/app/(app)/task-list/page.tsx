@@ -846,9 +846,9 @@ export default function TaskListPage() {
     [addProjectId, formTasksByProject]
   );
 
-  const panelCanEditFields = Boolean(selectedTask);
-  const panelCanEditAssignedBy = Boolean(selectedTask);
-  const panelCanEditInstructions = Boolean(selectedTask);
+  const panelCanEditFields = Boolean(selectedTask) && isAdmin;
+  const panelCanEditAssignedBy = Boolean(selectedTask) && isAdmin;
+  const panelCanEditInstructions = Boolean(selectedTask) && isAdmin;
 
   const panelProjectsForAccount = useMemo(
     () => formProjects.filter((project) => project.account === panelAccount),
@@ -2623,25 +2623,31 @@ export default function TaskListPage() {
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                <select
-                  value={panelTaskName}
-                  onChange={(e) => setPanelTaskName(e.target.value)}
-                  disabled={!panelProject || panelTasksForProject.length === 0}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                >
-                  <option value="">
-                    {panelProject
-                      ? panelTasksForProject.length > 0
-                        ? "Select task..."
-                        : "No tasks available"
-                      : "Select objective first..."}
-                  </option>
-                  {panelTasksForProject.map((task) => (
-                    <option key={task.id} value={task.task_name}>
-                      {task.task_name}
+                {panelCanEditFields ? (
+                  <select
+                    value={panelTaskName}
+                    onChange={(e) => setPanelTaskName(e.target.value)}
+                    disabled={!panelProject || panelTasksForProject.length === 0}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
+                  >
+                    <option value="">
+                      {panelProject
+                        ? panelTasksForProject.length > 0
+                          ? "Select task..."
+                          : "No tasks available"
+                        : "Select objective first..."}
                     </option>
-                  ))}
-                </select>
+                    {panelTasksForProject.map((task) => (
+                      <option key={task.id} value={task.task_name}>
+                        {task.task_name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.task_name || <span className="text-stone/60">—</span>}
+                  </div>
+                )}
               </div>
 
               <div>

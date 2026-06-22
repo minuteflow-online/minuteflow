@@ -20,6 +20,8 @@ interface SubtaskRow {
   pay_type?: string | null;
   category?: string | null;
   task_detail?: string | null;
+  task_notes?: string | null;
+  instructions?: string | null;
   account?: string | null;
   assigned_by: string | null;
   assigned_task_assignees: Array<{
@@ -423,6 +425,7 @@ export default function ProjectsManager({
         task_name: addForm.task_name.trim(),
         account: selectedProject.account ?? null,
         project_id: selectedProject.id,
+        project: addForm.category.trim() || null,
         due_date: addForm.due_date || null,
         pay_type: addForm.pay_type || "hourly",
         category: addForm.category.trim() || null,
@@ -467,6 +470,8 @@ export default function ProjectsManager({
         body: JSON.stringify({
           task_name: editSubForm.task_name.trim(),
           task_detail: editSubForm.task_detail.trim() || null,
+          task_notes: editSubForm.task_notes.trim() || null,
+          instructions: editSubForm.instructions.trim() || null,
           due_date: editSubForm.due_date || null,
           assigned_by: editSubForm.assigned_by_id || null,
           va_ids: editSubForm.va_id ? [editSubForm.va_id] : [],
@@ -846,8 +851,8 @@ export default function ProjectsManager({
                                     pay_type: sub.pay_type ?? "hourly",
                                     category: sub.category ?? "",
                                     task_detail: sub.task_detail ?? "",
-                                    task_notes: "",
-                                    instructions: "",
+                                    task_notes: sub.task_notes ?? "",
+                                    instructions: sub.instructions ?? "",
                                     status: sub.status ?? "pending",
                                   });
                                   setEditSubError(null);
@@ -919,6 +924,32 @@ export default function ProjectsManager({
                                   onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_detail: e.target.value }))}
                                   rows={1}
                                   placeholder="Task detail"
+                                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                  Notes
+                                </label>
+                                <textarea
+                                  value={editSubForm.task_notes}
+                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_notes: e.target.value }))}
+                                  rows={2}
+                                  placeholder="Task notes"
+                                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                  Instructions
+                                </label>
+                                <textarea
+                                  value={editSubForm.instructions}
+                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, instructions: e.target.value }))}
+                                  rows={2}
+                                  placeholder="Instructions for VA"
                                   className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
                                 />
                               </div>
