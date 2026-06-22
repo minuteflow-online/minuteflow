@@ -446,6 +446,7 @@ export default function ProjectsManager({
 
       setEditingSubId(null);
       void fetchSubtasks(selectedProject.id);
+      onRefresh();
     } catch (e) {
       setEditSubError(e instanceof Error ? e.message : "Failed to save.");
     } finally {

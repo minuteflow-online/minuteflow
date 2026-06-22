@@ -1766,7 +1766,7 @@ export default function TaskAssignmentsAdminTab({
           projects={projectsList}
           loading={projectsLoading}
           activeProfiles={activeProfiles}
-          onRefresh={fetchProjects}
+          onRefresh={() => { void fetchProjects(); void fetchTasks(); }}
         />
       )}
 

@@ -586,6 +586,14 @@ export default function TaskListPage() {
   }, [canShowHourlyPool, fetchHourlyPool]);
 
   useEffect(() => {
+    const id = setInterval(() => {
+      void fetchTasks();
+      if (canShowHourlyPool) void fetchHourlyPool();
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [fetchTasks, fetchHourlyPool, canShowHourlyPool]);
+
+  useEffect(() => {
     if (!canShowAvailableTasks && !canShowHourlyPool) {
       setActiveView("my_tasks");
     }
