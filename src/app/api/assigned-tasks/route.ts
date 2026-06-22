@@ -226,7 +226,7 @@ export async function GET(request: Request) {
   // because the nested join silently returns null under the regular auth client (RLS context).
   // Instead we do a manual profiles lookup for all assignor IDs after both queries.
   const vaSelectString = `id, va_id, status, log_id, notes, assigned_at, updated_at,
-     assigned_tasks(id, account, project, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate))`;
+     assigned_tasks(id, account, project, project_id, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate))`;
 
   let assigneeQuery = supabase
     .from("assigned_task_assignees")
