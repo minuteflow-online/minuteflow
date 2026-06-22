@@ -2323,7 +2323,7 @@ export default function TaskAssignmentsAdminTab({
                 <textarea
                   value={detailForm.task_notes}
                   onChange={(e) => setDetailForm((f) => ({ ...f, task_notes: e.target.value }))}
-                  rows={5}
+                  rows={2}
                   placeholder="Detailed instructions, context, links, or anything the VA needs to know..."
                   className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
                 />
@@ -2345,7 +2345,7 @@ export default function TaskAssignmentsAdminTab({
                 <textarea
                   value={detailForm.instructions}
                   onChange={(e) => setDetailForm((f) => ({ ...f, instructions: e.target.value }))}
-                  rows={5}
+                  rows={2}
                   placeholder="Add instructions for the assignee..."
                   className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
                 />

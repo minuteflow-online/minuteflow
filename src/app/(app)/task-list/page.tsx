@@ -2479,7 +2479,7 @@ export default function TaskListPage() {
                 <textarea
                   value={addForm.task_notes}
                   onChange={(e) => setAddForm((form) => ({ ...form, task_notes: e.target.value }))}
-                  rows={5}
+                  rows={2}
                   placeholder="Add any helpful notes for this task..."
                   className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta resize-none"
                 />
@@ -2523,7 +2523,7 @@ export default function TaskListPage() {
                 <textarea
                   value={addForm.instructions}
                   onChange={(e) => setAddForm((form) => ({ ...form, instructions: e.target.value }))}
-                  rows={4}
+                  rows={2}
                   placeholder="Add task instructions..."
                   className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta resize-none"
                 />
@@ -2690,7 +2690,7 @@ export default function TaskListPage() {
                   <textarea
                     value={panelDetail}
                     onChange={(e) => setPanelDetail(e.target.value)}
-                    rows={4}
+                    rows={2}
                     placeholder="Added to client memo — keep it short and sensible"
                     className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                   />
@@ -2707,7 +2707,7 @@ export default function TaskListPage() {
                   <textarea
                     value={panelTaskNotes}
                     onChange={(e) => setPanelTaskNotes(e.target.value)}
-                    rows={5}
+                    rows={2}
                     placeholder="Add task notes..."
                     className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                   />
@@ -2762,7 +2762,7 @@ export default function TaskListPage() {
                   <textarea
                     value={panelInstructions}
                     onChange={(e) => setPanelInstructions(e.target.value)}
-                    rows={4}
+                    rows={2}
                     placeholder="Add task instructions..."
                     className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                   />
@@ -2778,7 +2778,7 @@ export default function TaskListPage() {
                 <textarea
                   value={panelNotes}
                   onChange={(e) => setPanelNotes(e.target.value)}
-                  rows={5}
+                  rows={2}
                   placeholder="Add your private notes for this task..."
                   className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                 />
