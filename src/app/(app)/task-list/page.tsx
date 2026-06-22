@@ -2068,7 +2068,7 @@ export default function TaskListPage() {
               <RecurringTemplatesManager
                 templates={recurringTemplates}
                 loading={recurringLoading}
-                activeProfiles={[]}
+                activeProfiles={assignedByProfiles}
                 accountOptions={formAccounts}
                 projectTagsMap={Object.fromEntries(
                   formProjects.map((p) => [
