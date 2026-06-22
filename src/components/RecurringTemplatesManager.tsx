@@ -28,7 +28,7 @@ interface AttachmentRow {
 interface RecurringTemplatesManagerProps {
   templates: RecurringTaskTemplate[];
   loading: boolean;
-  activeProfiles: Profile[];
+  activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
   orgTimezone?: string;
   accountOptions: string[];
   projectTagsMap: Record<string, string[]>;
@@ -188,7 +188,7 @@ function templateToForm(
 
 function displayAssignedTo(
   template: RecurringTaskTemplate,
-  activeProfiles: Profile[]
+  activeProfiles: Pick<Profile, "id" | "full_name" | "username">[]
 ): string {
   const ids = templateAssignedToIds(template);
   if (ids.length === 0) return "—";
