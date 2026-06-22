@@ -22,15 +22,39 @@ interface SubtaskRow {
   }>;
 }
 
+interface AccountOption {
+  id: number;
+  name: string;
+}
+
+interface TaskCategoryOption {
+  id: number;
+  category_name: string;
+  is_active?: boolean;
+}
+
 interface AddSubtaskForm {
   task_name: string;
   va_id: string;
   due_date: string;
   pay_type: string;
+  category: string;
+  task_detail: string;
+  task_notes: string;
+  instructions: string;
 }
 
 function defaultSubtaskForm(): AddSubtaskForm {
-  return { task_name: "", va_id: "", due_date: "", pay_type: "hourly" };
+  return {
+    task_name: "",
+    va_id: "",
+    due_date: "",
+    pay_type: "hourly",
+    category: "",
+    task_detail: "",
+    task_notes: "",
+    instructions: "",
+  };
 }
 
 function profileLabel(p: Pick<Profile, "id" | "full_name" | "username">): string {
@@ -82,16 +106,25 @@ export default function ProjectsManager({
 }: ProjectsManagerProps) {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [editName, setEditName] = useState("");
+  const [editAccount, setEditAccount] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editDetails, setEditDetails] = useState("");
+  const [editNotes, setEditNotes] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [editNotice, setEditNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Create project form
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
+  const [createAccount, setCreateAccount] = useState("");
   const [createDescription, setCreateDescription] = useState("");
+  const [createDetails, setCreateDetails] = useState("");
+  const [createNotes, setCreateNotes] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [taskCategories, setTaskCategories] = useState<TaskCategoryOption[]>([]);
 
   // Subtasks
   const [subtasks, setSubtasks] = useState<SubtaskRow[]>([]);
@@ -104,7 +137,10 @@ export default function ProjectsManager({
   useEffect(() => {
     if (!selectedProject) return;
     setEditName(selectedProject.name);
+    setEditAccount(selectedProject.account ?? "");
     setEditDescription(selectedProject.description ?? "");
+    setEditDetails(selectedProject.details ?? "");
+    setEditNotes(selectedProject.notes ?? "");
     setEditNotice(null);
     setSubtasks([]);
     setAddForm(defaultSubtaskForm());
@@ -127,6 +163,49 @@ export default function ProjectsManager({
     }
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const [accountsRes, categoriesRes] = await Promise.all([
+          fetch("/api/accounts", { cache: "no-store" }),
+          fetch("/api/task-categories", { cache: "no-store" }),
+        ]);
+
+        if (accountsRes.ok) {
+          const data = await accountsRes.json();
+          const nextAccounts = Array.isArray(data.accounts)
+            ? data.accounts
+                .map((account: AccountOption) => ({ id: account.id, name: account.name }))
+                .filter((account: AccountOption) => Boolean(account.name?.trim()))
+            : [];
+          if (!cancelled) setAccounts(nextAccounts);
+        }
+
+        if (categoriesRes.ok) {
+          const data = await categoriesRes.json();
+          const nextCategories = Array.isArray(data.categories)
+            ? data.categories
+                .filter((category: TaskCategoryOption) => category.is_active !== false)
+                .map((category: TaskCategoryOption) => ({
+                  id: category.id,
+                  category_name: category.category_name,
+                  is_active: category.is_active,
+                }))
+            : [];
+          if (!cancelled) setTaskCategories(nextCategories);
+        }
+      } catch {
+        // leave dropdowns empty if option fetch fails
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleSelectProject = (project: Project) => {
     setSelectedProject(project);
     setShowCreate(false);
@@ -144,11 +223,29 @@ export default function ProjectsManager({
       const res = await fetch(`/api/projects?id=${selectedProject.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: editName.trim(), description: editDescription.trim() || null }),
+        body: JSON.stringify({
+          name: editName.trim(),
+          account: editAccount.trim() || null,
+          description: editDescription.trim() || null,
+          details: editDetails.trim() || null,
+          notes: editNotes.trim() || null,
+        }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
       setEditNotice({ type: "success", text: "Project saved." });
+      setSelectedProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              name: editName.trim(),
+              account: editAccount.trim() || null,
+              description: editDescription.trim() || null,
+              details: editDetails.trim() || null,
+              notes: editNotes.trim() || null,
+            }
+          : prev
+      );
       onRefresh();
     } catch (e) {
       setEditNotice({ type: "error", text: e instanceof Error ? e.message : "Failed to save." });
@@ -204,12 +301,21 @@ export default function ProjectsManager({
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: createName.trim(), description: createDescription.trim() || null }),
+        body: JSON.stringify({
+          name: createName.trim(),
+          account: createAccount.trim() || null,
+          description: createDescription.trim() || null,
+          details: createDetails.trim() || null,
+          notes: createNotes.trim() || null,
+        }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
       setCreateName("");
+      setCreateAccount("");
       setCreateDescription("");
+      setCreateDetails("");
+      setCreateNotes("");
       setShowCreate(false);
       onRefresh();
       // Select the newly created project
@@ -232,9 +338,14 @@ export default function ProjectsManager({
     try {
       const body: Record<string, unknown> = {
         task_name: addForm.task_name.trim(),
+        account: selectedProject.account ?? null,
         project_id: selectedProject.id,
         due_date: addForm.due_date || null,
         pay_type: addForm.pay_type || "hourly",
+        category: addForm.category.trim() || null,
+        task_detail: addForm.task_detail.trim() || null,
+        task_notes: addForm.task_notes.trim() || null,
+        instructions: addForm.instructions.trim() || null,
         status: "pending",
       };
       if (addForm.va_id) {
@@ -264,7 +375,16 @@ export default function ProjectsManager({
           <p className="text-xs text-stone">Create projects and add subtasks that auto-appear as assigned tasks for VAs.</p>
         </div>
         <button
-          onClick={() => { setShowCreate(true); setSelectedProject(null); setCreateName(""); setCreateDescription(""); setCreateError(null); }}
+          onClick={() => {
+            setShowCreate(true);
+            setSelectedProject(null);
+            setCreateName("");
+            setCreateAccount("");
+            setCreateDescription("");
+            setCreateDetails("");
+            setCreateNotes("");
+            setCreateError(null);
+          }}
           className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
         >
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -341,6 +461,24 @@ export default function ProjectsManager({
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                  Account
+                </label>
+                <select
+                  value={createAccount}
+                  onChange={(e) => setCreateAccount(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                >
+                  <option value="">Select account...</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.name}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                   Description
                 </label>
                 <textarea
@@ -348,6 +486,32 @@ export default function ProjectsManager({
                   onChange={(e) => setCreateDescription(e.target.value)}
                   placeholder="Optional description"
                   rows={3}
+                  className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                  Details
+                </label>
+                <textarea
+                  value={createDetails}
+                  onChange={(e) => setCreateDetails(e.target.value)}
+                  placeholder="Optional details"
+                  rows={4}
+                  className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                  Notes
+                </label>
+                <textarea
+                  value={createNotes}
+                  onChange={(e) => setCreateNotes(e.target.value)}
+                  placeholder="Optional notes"
+                  rows={4}
                   className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
                 />
               </div>
@@ -410,6 +574,24 @@ export default function ProjectsManager({
 
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                    Account
+                  </label>
+                  <select
+                    value={editAccount}
+                    onChange={(e) => setEditAccount(e.target.value)}
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                  >
+                    <option value="">Select account...</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.name}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                     Description
                   </label>
                   <textarea
@@ -417,6 +599,32 @@ export default function ProjectsManager({
                     onChange={(e) => setEditDescription(e.target.value)}
                     rows={3}
                     placeholder="Optional description"
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                    Details
+                  </label>
+                  <textarea
+                    value={editDetails}
+                    onChange={(e) => setEditDetails(e.target.value)}
+                    rows={4}
+                    placeholder="Optional details"
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                    Notes
+                  </label>
+                  <textarea
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    rows={4}
+                    placeholder="Optional notes"
                     className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
                   />
                 </div>
@@ -499,6 +707,74 @@ export default function ProjectsManager({
                       onChange={(e) => setAddForm((prev) => ({ ...prev, task_name: e.target.value }))}
                       placeholder="Task name"
                       className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                        Category
+                      </label>
+                      <select
+                        value={addForm.category}
+                        onChange={(e) => setAddForm((prev) => ({ ...prev, category: e.target.value }))}
+                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
+                      >
+                        <option value="">Select category...</option>
+                        {taskCategories.map((category) => (
+                          <option key={category.id} value={category.category_name}>
+                            {category.category_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                        Account
+                      </label>
+                      <div className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso">
+                        {selectedProject.account || "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Task Detail
+                    </label>
+                    <textarea
+                      value={addForm.task_detail}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_detail: e.target.value }))}
+                      rows={3}
+                      placeholder="Task detail"
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Notes
+                    </label>
+                    <textarea
+                      value={addForm.task_notes}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_notes: e.target.value }))}
+                      rows={3}
+                      placeholder="Task notes"
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Instructions
+                    </label>
+                    <textarea
+                      value={addForm.instructions}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, instructions: e.target.value }))}
+                      rows={3}
+                      placeholder="Instructions"
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
                     />
                   </div>
 

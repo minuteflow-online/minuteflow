@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTask, AssignedTaskStatus, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
+import ProjectInfoModal from "@/components/ProjectInfoModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
@@ -23,6 +24,7 @@ type VATaskRow = {
     id: number;
     account: string | null;
     project: string | null;
+    project_id: string | null;
     task_name: string;
     task_detail: string | null;
     task_notes: string | null;
@@ -95,6 +97,7 @@ type AdminTaskFlat = {
   id: number;
   account: string | null;
   project: string | null;
+  project_id: string | null;
   task_name: string;
   task_detail: string | null;
   task_notes: string | null;
@@ -286,6 +289,7 @@ export default function TaskListPage() {
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
   const [hourlyGrabbingId, setHourlyGrabbingId] = useState<number | null>(null);
+  const [hourlyExpandedIds, setHourlyExpandedIds] = useState<number[]>([]);
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(false);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -322,6 +326,7 @@ export default function TaskListPage() {
   const [panelUploadSaving, setPanelUploadSaving] = useState(false);
   const [panelMsg, setPanelMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
+  const [projectModalId, setProjectModalId] = useState<string | null>(null);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [panelScreenshots, setPanelScreenshots] = useState<TaskScreenshot[]>([]);
   const [panelSignedUrls, setPanelSignedUrls] = useState<Record<number, string>>({});
@@ -375,6 +380,7 @@ export default function TaskListPage() {
                 id: task.id,
                 account: task.account,
                 project: task.project,
+                project_id: task.project_id,
                 task_name: task.task_name,
                 task_detail: task.task_detail,
                 task_notes: task.task_notes,
@@ -1995,14 +2001,28 @@ export default function TaskListPage() {
                     const isGrabbing = hourlyGrabbingId === task.id;
                     const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
 
+                    const isExpanded = hourlyExpandedIds.includes(task.id);
+
                     return (
                       <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
                         <div className="px-2.5 py-2 bg-parchment/20">
                           <div className="flex items-start justify-between gap-2">
                             <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
-                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
-                              {due.label === "—" ? "No due date" : `Due ${due.label}`}
-                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
+                                {due.label === "—" ? "No due date" : `Due ${due.label}`}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setHourlyExpandedIds((current) => current.includes(task.id) ? current.filter((id) => id !== task.id) : [...current, task.id])}
+                                className="flex h-5 w-5 items-center justify-center rounded-full border border-sand bg-white text-stone transition-colors hover:bg-parchment"
+                                aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
+                              >
+                                <svg className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M6 9l6 6 6-6" />
+                                </svg>
+                              </button>
+                            </div>
                           </div>
                           <div className="mt-0.5 truncate text-[10px] text-stone">
                             {task.account ?? ""}
@@ -2011,6 +2031,22 @@ export default function TaskListPage() {
                         </div>
 
                         <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
+                          {isExpanded && (
+                            <div className="space-y-1 rounded-lg border border-sand bg-white px-2.5 py-2 text-[11px] text-stone">
+                              <div>
+                                <span className="font-semibold text-espresso">Detail: </span>
+                                {task.task_detail || "—"}
+                              </div>
+                              <div>
+                                <span className="font-semibold text-espresso">Notes: </span>
+                                {task.task_notes || "—"}
+                              </div>
+                              <div>
+                                <span className="font-semibold text-espresso">Instructions: </span>
+                                {task.instructions || "—"}
+                              </div>
+                            </div>
+                          )}
                           <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
                           <button
                             type="button"
@@ -2201,6 +2237,18 @@ export default function TaskListPage() {
                                         Collaborative
                                       </span>
                                     )}
+                                    {(detail.project || detail.project_id) && (
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          if (detail.project_id) setProjectModalId(detail.project_id);
+                                        }}
+                                        className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-plum-soft text-plum border border-plum/20 cursor-pointer"
+                                      >
+                                        Project: {detail.project || "Linked project"}
+                                      </button>
+                                    )}
                                   </div>
                                   <div className="mt-0.5 text-[11px] text-stone">
                                     Assigned by {detail.assigned_by_profile?.full_name ?? detail.assigned_by_profile?.username ?? "—"}
@@ -2292,6 +2340,14 @@ export default function TaskListPage() {
         </div>
       </div>
     </div>
+
+    {projectModalId && (
+      <ProjectInfoModal
+        projectId={projectModalId}
+        isOpen={Boolean(projectModalId)}
+        onClose={() => setProjectModalId(null)}
+      />
+    )}
 
       {isCreating && (
         <div className="fixed right-0 top-0 h-full z-40 w-[520px] max-w-full flex flex-col overflow-hidden border-l border-sand bg-white shadow-2xl">

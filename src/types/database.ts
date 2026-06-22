@@ -592,7 +592,10 @@ export interface FixedPayTaskWithClaimer {
 export interface Project {
   id: string;
   name: string;
+  account: string | null;
   description: string | null;
+  details: string | null;
+  notes: string | null;
   created_by: string | null;
   is_active: boolean;
   created_at: string;

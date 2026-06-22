@@ -52,12 +52,21 @@ export async function POST(request: Request) {
   const auth = await requireAdmin();
   if ("error" in auth) return auth.error;
   const { user } = auth;
-  const body = (await request.json()) as { name?: string; description?: string };
+  const body = (await request.json()) as {
+    name?: string;
+    description?: string;
+    account?: string;
+    details?: string;
+    notes?: string;
+  };
   if (!body.name?.trim()) return Response.json({ error: "name is required" }, { status: 400 });
   const supabase = serviceClient();
   const { data, error } = await supabase.from("projects").insert({
     name: body.name.trim(),
+    account: body.account?.trim() || null,
     description: body.description?.trim() || null,
+    details: body.details?.trim() || null,
+    notes: body.notes?.trim() || null,
     created_by: user.id,
     is_active: true,
   }).select("*").single();
@@ -71,10 +80,20 @@ export async function PATCH(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
-  const body = (await request.json()) as { name?: string; description?: string; is_active?: boolean };
+  const body = (await request.json()) as {
+    name?: string;
+    description?: string;
+    account?: string;
+    details?: string;
+    notes?: string;
+    is_active?: boolean;
+  };
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name.trim();
+  if (body.account !== undefined) updates.account = body.account?.trim() || null;
   if (body.description !== undefined) updates.description = body.description?.trim() || null;
+  if (body.details !== undefined) updates.details = body.details?.trim() || null;
+  if (body.notes !== undefined) updates.notes = body.notes?.trim() || null;
   if (body.is_active !== undefined) updates.is_active = Boolean(body.is_active);
   const supabase = serviceClient();
   const { data, error } = await supabase.from("projects").update(updates).eq("id", id).select("*").single();
