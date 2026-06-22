@@ -1522,6 +1522,11 @@ interface PaystubRecord {
   gross_pay: number;
   payment_method: string | null;
   paystub_link: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  total_hours_ms: number | null;
+  pay_rate: number | null;
+  confirmation_number: string | null;
 }
 
 interface PerTaskEarning {
@@ -1555,7 +1560,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
         const [paystubRes, perTaskRes] = await Promise.all([
           supabase
             .from("paystub_snapshots")
-            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link")
+            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link, period_start, period_end, total_hours_ms, pay_rate, confirmation_number")
             .eq("user_id", currentUserId)
             .order("sent_at", { ascending: false }),
           supabase
@@ -1663,45 +1668,115 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
           <p className="text-sm text-stone italic py-2">No paystubs yet.</p>
         ) : (
           <div className="space-y-3">
-            {paystubs.map((p) => (
-              <div key={p.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-espresso truncate">{p.pay_period_label}</p>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="text-xs text-stone">
-                      {new Date(p.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            {paystubs.map((p) => {
+              const fmtCurrency = (v: number | null | undefined) =>
+                v != null
+                  ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v)
+                  : "—";
+              const fmtDate = (d: string | null) =>
+                d
+                  ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                  : null;
+              const periodLabel =
+                p.period_start && p.period_end
+                  ? `${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}`
+                  : null;
+              const hoursLabel =
+                p.total_hours_ms != null
+                  ? `${(p.total_hours_ms / 3600000).toFixed(2)}h`
+                  : "—";
+              return (
+                <div key={p.id} className="rounded-xl border border-sand bg-white shadow-sm overflow-hidden">
+                  {/* Header */}
+                  <div className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-espresso truncate">{p.pay_period_label}</p>
+                      <div className="flex items-center gap-3 mt-0.5">
+                        <span className="text-xs text-stone">
+                          {new Date(p.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        </span>
+                        {p.payment_method && (
+                          <span className="text-[11px] capitalize rounded-full bg-parchment px-2 py-0.5 text-walnut font-medium">
+                            {p.payment_method.replace(/_/g, " ")}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-sm font-bold text-terracotta shrink-0">
+                      {fmtCurrency(p.amount_paid)}
                     </span>
-                    {p.payment_method && (
-                      <span className="text-[11px] capitalize rounded-full bg-parchment px-2 py-0.5 text-walnut font-medium">
-                        {p.payment_method.replace(/_/g, " ")}
-                      </span>
-                    )}
                   </div>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-sm font-bold text-terracotta">
-                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(p.amount_paid)}
-                  </span>
-                  {p.paystub_link ? (
-                    <a
-                      href={p.paystub_link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-terracotta px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a85840] transition-colors"
-                    >
-                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                        <polyline points="15 3 21 3 21 9" />
-                        <line x1="10" y1="14" x2="21" y2="3" />
-                      </svg>
-                      View
-                    </a>
-                  ) : (
-                    <span className="text-[11px] text-stone italic">No link yet</span>
+
+                  {/* Details grid */}
+                  <div className="border-t border-sand px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                    {periodLabel && (
+                      <>
+                        <div>
+                          <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Period</p>
+                          <p className="text-[13px] text-espresso">{periodLabel}</p>
+                        </div>
+                        <div />
+                      </>
+                    )}
+                    <div>
+                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Hours</p>
+                      <p className="text-[13px] text-espresso">{hoursLabel}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Pay Rate</p>
+                      <p className="text-[13px] text-espresso">
+                        {p.pay_rate != null ? `${fmtCurrency(p.pay_rate)}/hr` : "—"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Gross Pay</p>
+                      <p className="text-[13px] text-espresso">{fmtCurrency(p.gross_pay)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Amount Paid</p>
+                      <p className="text-[13px] text-espresso">{fmtCurrency(p.amount_paid)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Confirmation #</p>
+                      <p className="text-[13px] text-espresso">{p.confirmation_number || "—"}</p>
+                    </div>
+                  </div>
+
+                  {/* Footer: Download / View buttons */}
+                  {p.paystub_link && (
+                    <div className="border-t border-sand px-4 py-3 flex items-center gap-3">
+                      <a
+                        href={p.paystub_link}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-sage px-3 py-1.5 text-xs font-semibold text-white hover:bg-sage/90 transition-colors"
+                      >
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        Download PDF
+                      </a>
+                      <a
+                        href={p.paystub_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-parchment border border-sand px-3 py-1.5 text-xs font-semibold text-walnut hover:bg-sand transition-colors"
+                      >
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        View
+                      </a>
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

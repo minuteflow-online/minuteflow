@@ -16,11 +16,25 @@ interface SubtaskRow {
   due_date: string | null;
   status: string;
   pay_type?: string | null;
+  category?: string | null;
+  task_detail?: string | null;
+  account?: string | null;
   assigned_task_assignees: Array<{
     va_id: string;
     profiles?: { id: string; full_name: string; username: string } | null;
   }>;
 }
+
+interface TaskLibraryEntry {
+  id: number;
+  task_name: string;
+  category_id: number;
+  is_active: boolean;
+}
+
+const HARDCODED_CATEGORIES = [
+  "Task", "Message", "Meeting", "Sorting Tasks", "Collaboration", "Personal", "Break",
+];
 
 interface AccountOption {
   id: number;
@@ -42,6 +56,7 @@ interface AddSubtaskForm {
   task_detail: string;
   task_notes: string;
   instructions: string;
+  status: string;
 }
 
 function defaultSubtaskForm(): AddSubtaskForm {
@@ -54,6 +69,7 @@ function defaultSubtaskForm(): AddSubtaskForm {
     task_detail: "",
     task_notes: "",
     instructions: "",
+    status: "pending",
   };
 }
 
@@ -125,6 +141,7 @@ export default function ProjectsManager({
 
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [taskCategories, setTaskCategories] = useState<TaskCategoryOption[]>([]);
+  const [taskLibrary, setTaskLibrary] = useState<Record<number, string[]>>({});
 
   // Subtasks
   const [subtasks, setSubtasks] = useState<SubtaskRow[]>([]);
@@ -132,6 +149,12 @@ export default function ProjectsManager({
   const [addForm, setAddForm] = useState<AddSubtaskForm>(defaultSubtaskForm());
   const [addingSub, setAddingSub] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+
+  // Edit subtask
+  const [editingSubId, setEditingSubId] = useState<number | null>(null);
+  const [editSubForm, setEditSubForm] = useState<AddSubtaskForm>(defaultSubtaskForm());
+  const [savingSub, setSavingSub] = useState(false);
+  const [editSubError, setEditSubError] = useState<string | null>(null);
 
   // When a project is selected, populate the edit fields and fetch subtasks
   useEffect(() => {

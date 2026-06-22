@@ -129,6 +129,16 @@ async function handleCron(request: NextRequest) {
   const timeZone = settings?.timezone || "UTC";
   const { today, dayOfMonth } = await buildDueDate(timeZone);
 
+  // Generate tasks 1 day BEFORE the scheduled date
+  const tomorrowDate = new Date();
+  tomorrowDate.setUTCDate(tomorrowDate.getUTCDate() + 1);
+  const tomorrowParts = getTimezoneParts(tomorrowDate, timeZone);
+  const tomorrow = `${tomorrowParts.year}-${tomorrowParts.month}-${tomorrowParts.day}`;
+  const tomorrowDayOfMonth = Number(tomorrowParts.day);
+
+  // Suppress unused-variable warnings — today/dayOfMonth kept for reference
+  void today; void dayOfMonth;
+
   const { data: templates, error: templateError } = await supabase
     .from("recurring_task_templates")
     .select("*")
@@ -139,7 +149,7 @@ async function handleCron(request: NextRequest) {
   }
 
   const dueTemplates = ((templates ?? []) as TemplateRow[]).filter((template) =>
-    isTemplateDueToday(template, dayOfMonth, today)
+    isTemplateDueToday(template, tomorrowDayOfMonth, tomorrow)
   );
 
   if (dueTemplates.length === 0) {
@@ -151,7 +161,7 @@ async function handleCron(request: NextRequest) {
     .from("assigned_tasks")
     .select("id, recurring_template_id, due_date")
     .in("recurring_template_id", templateIds)
-    .eq("due_date", today);
+    .eq("due_date", tomorrow);
 
   if (existingError) {
     return Response.json({ error: existingError.message }, { status: 500 });
@@ -177,7 +187,7 @@ async function handleCron(request: NextRequest) {
         task_name: template.title,
         task_detail: template.task_detail ?? template.description,
         task_notes: template.task_notes,
-        due_date: today,
+        due_date: tomorrow,
         assigned_by: template.assigned_by,
         instructions: template.instructions,
         instructions_locked: Boolean(template.instructions_locked),
@@ -247,7 +257,7 @@ async function handleCron(request: NextRequest) {
     skipped: dueTemplates.length - created,
     dueTemplates: dueTemplates.length,
     createdTemplateIds: createdTemplates,
-    date: today,
+    date: tomorrow,
   });
 }
 
