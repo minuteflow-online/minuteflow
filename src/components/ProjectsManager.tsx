@@ -15,11 +15,13 @@ interface SubtaskRow {
   id: number;
   task_name: string;
   due_date: string | null;
+  created_at: string | null;
   status: string;
   pay_type?: string | null;
   category?: string | null;
   task_detail?: string | null;
   account?: string | null;
+  assigned_by: string | null;
   assigned_task_assignees: Array<{
     va_id: string;
     profiles?: { id: string; full_name: string; username: string } | null;
@@ -40,6 +42,7 @@ interface TaskCategoryOption {
 interface AddSubtaskForm {
   task_name: string;
   va_id: string;
+  assigned_by_id: string;
   due_date: string;
   pay_type: string;
   category: string;
@@ -53,6 +56,7 @@ function defaultSubtaskForm(): AddSubtaskForm {
   return {
     task_name: "",
     va_id: "",
+    assigned_by_id: "",
     due_date: "",
     pay_type: "hourly",
     category: "",
@@ -218,21 +222,6 @@ export default function ProjectsManager({
           setTaskCategories(nextCategories);
         }
 
-        // Task library from Supabase directly — grouped by category_id
-        const { data: libData } = await supabase
-          .from("task_library")
-          .select("id, task_name, category_id")
-          .eq("is_active", true)
-          .order("sort_order", { ascending: true });
-
-        if (!cancelled && libData) {
-          const grouped: Record<number, string[]> = {};
-          for (const entry of libData as Array<{ id: number; task_name: string; category_id: number }>) {
-            if (!grouped[entry.category_id]) grouped[entry.category_id] = [];
-            grouped[entry.category_id].push(entry.task_name);
-          }
-          setTaskLibrary(grouped);
-        }
       } catch {
         // leave dropdowns empty if fetch fails
       }
@@ -242,6 +231,55 @@ export default function ProjectsManager({
       cancelled = true;
     };
   }, []);
+
+  // Task library filtered to the selected project's account
+  useEffect(() => {
+    const account = selectedProject?.account;
+    if (!account) {
+      setTaskLibrary({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data: tagData } = await supabase
+          .from("project_tags")
+          .select("id")
+          .eq("account", account)
+          .eq("is_active", true);
+
+        if (cancelled) return;
+        const tagIds = (tagData ?? []).map((t: { id: number }) => t.id);
+        if (tagIds.length === 0) {
+          setTaskLibrary({});
+          return;
+        }
+
+        const { data: assignmentData } = await supabase
+          .from("project_task_assignments")
+          .select("task_library(id, task_name, category_id, is_active)")
+          .in("project_tag_id", tagIds);
+
+        if (cancelled) return;
+        const grouped: Record<number, string[]> = {};
+        for (const row of (assignmentData ?? []) as Array<{ task_library: Array<{ id: number; task_name: string; category_id: number; is_active: boolean }> | null }>) {
+          const libs = Array.isArray(row.task_library) ? row.task_library : (row.task_library ? [row.task_library] : []);
+          for (const lib of libs) {
+            if (!lib || lib.is_active === false) continue;
+            if (!grouped[lib.category_id]) grouped[lib.category_id] = [];
+            if (!grouped[lib.category_id].includes(lib.task_name)) {
+              grouped[lib.category_id].push(lib.task_name);
+            }
+          }
+        }
+        setTaskLibrary(grouped);
+      } catch {
+        setTaskLibrary({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedProject?.account]);
 
   // Derive display categories — use DB rows if non-empty, else hardcoded fallback
   const displayCategories: string[] = taskCategories.length > 0
@@ -275,7 +313,6 @@ export default function ProjectsManager({
         body: JSON.stringify({
           name: editName.trim(),
           account: editAccount.trim() || null,
-          description: editDescription.trim() || null,
           details: editDetails.trim() || null,
           notes: editNotes.trim() || null,
         }),
@@ -289,7 +326,6 @@ export default function ProjectsManager({
               ...prev,
               name: editName.trim(),
               account: editAccount.trim() || null,
-              description: editDescription.trim() || null,
               details: editDetails.trim() || null,
               notes: editNotes.trim() || null,
             }
@@ -394,6 +430,7 @@ export default function ProjectsManager({
         task_notes: addForm.task_notes.trim() || null,
         instructions: addForm.instructions.trim() || null,
         status: addForm.status || "pending",
+        assigned_by: addForm.assigned_by_id || null,
       };
       if (addForm.va_id) {
         body.va_ids = [addForm.va_id];
@@ -423,14 +460,16 @@ export default function ProjectsManager({
     setSavingSub(true);
     setEditSubError(null);
     try {
-      // Save metadata (task_name, task_detail, due_date) — separate from status
+      // Save metadata (task_name, task_detail, due_date, assigned_by, va_ids) — separate from status
       const metaRes = await fetch(`/api/assigned-tasks/${editingSubId}`, {
-        method: "PATCH",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           task_name: editSubForm.task_name.trim(),
           task_detail: editSubForm.task_detail.trim() || null,
           due_date: editSubForm.due_date || null,
+          assigned_by: editSubForm.assigned_by_id || null,
+          va_ids: editSubForm.va_id ? [editSubForm.va_id] : [],
         }),
       });
       if (!metaRes.ok) {
@@ -527,6 +566,7 @@ export default function ProjectsManager({
                   {project.description && (
                     <p className="text-[11px] text-stone/80 truncate">{project.description}</p>
                   )}
+                  <p className="text-[10px] text-stone/60">{formatDate(project.created_at)}</p>
                 </div>
               ))}
             </div>
@@ -687,13 +727,9 @@ export default function ProjectsManager({
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                     Description
                   </label>
-                  <textarea
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                    rows={3}
-                    placeholder="Optional description"
-                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
-                  />
+                  <div className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso min-h-[3rem]">
+                    {editDescription || <span className="text-stone">No description</span>}
+                  </div>
                 </div>
 
                 <div>
@@ -783,7 +819,12 @@ export default function ProjectsManager({
                             )}
                             {sub.due_date && (
                               <span className="text-[11px] text-stone shrink-0 hidden md:block">
-                                {formatDate(sub.due_date)}
+                                Due: {formatDate(sub.due_date)}
+                              </span>
+                            )}
+                            {sub.created_at && (
+                              <span className="text-[11px] text-stone/60 shrink-0 hidden lg:block">
+                                {formatDate(sub.created_at)}
                               </span>
                             )}
                             {sub.pay_type && (
@@ -800,6 +841,7 @@ export default function ProjectsManager({
                                   setEditSubForm({
                                     task_name: sub.task_name,
                                     va_id: assignees[0]?.va_id ?? "",
+                                    assigned_by_id: sub.assigned_by ?? "",
                                     due_date: sub.due_date ?? "",
                                     pay_type: sub.pay_type ?? "hourly",
                                     category: sub.category ?? "",
@@ -879,6 +921,40 @@ export default function ProjectsManager({
                                   placeholder="Task detail"
                                   className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
                                 />
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                    Assign To
+                                  </label>
+                                  <select
+                                    value={editSubForm.va_id}
+                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, va_id: e.target.value }))}
+                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                  >
+                                    <option value="">Unassigned</option>
+                                    {activeProfiles.map((p) => (
+                                      <option key={p.id} value={p.id}>{profileLabel(p)}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                    Assigned By
+                                  </label>
+                                  <select
+                                    value={editSubForm.assigned_by_id}
+                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, assigned_by_id: e.target.value }))}
+                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                  >
+                                    <option value="">—</option>
+                                    {activeProfiles.map((p) => (
+                                      <option key={p.id} value={p.id}>{profileLabel(p)}</option>
+                                    ))}
+                                  </select>
+                                </div>
                               </div>
 
                               <div className="grid grid-cols-3 gap-3">
@@ -1047,7 +1123,7 @@ export default function ProjectsManager({
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                         Assign To
@@ -1058,6 +1134,22 @@ export default function ProjectsManager({
                         className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
                       >
                         <option value="">Unassigned</option>
+                        {activeProfiles.map((p) => (
+                          <option key={p.id} value={p.id}>{profileLabel(p)}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                        Assigned By
+                      </label>
+                      <select
+                        value={addForm.assigned_by_id}
+                        onChange={(e) => setAddForm((prev) => ({ ...prev, assigned_by_id: e.target.value }))}
+                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
+                      >
+                        <option value="">—</option>
                         {activeProfiles.map((p) => (
                           <option key={p.id} value={p.id}>{profileLabel(p)}</option>
                         ))}

@@ -1856,6 +1856,8 @@ export default function TaskAssignmentsAdminTab({
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Status</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Due Date</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Created</th>
                 <th className="w-8"></th>
               </tr>
             </thead>
@@ -2068,6 +2070,18 @@ export default function TaskAssignmentsAdminTab({
                       }
                       inputType="date"
                     />
+
+                    {/* Project (linked Projects entity) */}
+                    <td className="px-3 py-3 text-[12px] text-stone whitespace-nowrap" onClick={() => openEdit(task)}>
+                      {task.project_id
+                        ? (projectsList.find((p) => p.id === task.project_id)?.name ?? <span className="text-stone/30">—</span>)
+                        : <span className="text-stone/30">—</span>}
+                    </td>
+
+                    {/* Created */}
+                    <td className="px-3 py-3 text-[12px] text-stone/70 whitespace-nowrap" onClick={() => openEdit(task)}>
+                      {task.created_at ? fmtDueDate(task.created_at, orgTimezone) : <span className="text-stone/30">—</span>}
+                    </td>
 
                     {/* Archive / Trash / Restore / Permanent Delete */}
                     <td className="px-2 py-3 w-16 text-right" onClick={(e) => e.stopPropagation()}>
