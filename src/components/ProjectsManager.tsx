@@ -417,7 +417,7 @@ export default function ProjectsManager({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           task_name: editSubForm.task_name.trim(),
-          category: editSubForm.category.trim() || null,
+          project: editSubForm.category.trim() || null,
           task_detail: editSubForm.task_detail.trim() || null,
           task_notes: editSubForm.task_notes.trim() || null,
           instructions: editSubForm.instructions.trim() || null,
