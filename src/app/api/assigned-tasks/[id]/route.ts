@@ -58,9 +58,10 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, recurring_template_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, recurring_template_id, va_ids } = body as {
     account?: string;
     project?: string;
+    category?: string | null;
     task_name?: string;
     task_detail?: string;
     task_notes?: string;
@@ -78,6 +79,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   };
   if (account !== undefined) updatePayload.account = account;
   if (project !== undefined) updatePayload.project = project;
+  if (category !== undefined) updatePayload.category = category;
   if (task_name !== undefined) updatePayload.task_name = task_name.trim();
   if (task_detail !== undefined) updatePayload.task_detail = task_detail;
   if (task_notes !== undefined) updatePayload.task_notes = task_notes;

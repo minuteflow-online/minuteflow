@@ -234,45 +234,24 @@ export default function ProjectsManager({
     };
   }, []);
 
-  // Task library filtered to the selected project's account
+  // Task library — all active items grouped by category_id (not filtered by account)
   useEffect(() => {
-    const account = selectedProject?.account;
-    if (!account) {
-      setTaskLibrary({});
-      return;
-    }
     let cancelled = false;
     (async () => {
       try {
         const supabase = createClient();
-        const { data: tagData } = await supabase
-          .from("project_tags")
-          .select("id")
-          .eq("account", account)
+        const { data: libData } = await supabase
+          .from("task_library")
+          .select("id, task_name, category_id, is_active")
           .eq("is_active", true);
 
         if (cancelled) return;
-        const tagIds = (tagData ?? []).map((t: { id: number }) => t.id);
-        if (tagIds.length === 0) {
-          setTaskLibrary({});
-          return;
-        }
-
-        const { data: assignmentData } = await supabase
-          .from("project_task_assignments")
-          .select("task_library(id, task_name, category_id, is_active)")
-          .in("project_tag_id", tagIds);
-
-        if (cancelled) return;
         const grouped: Record<number, string[]> = {};
-        for (const row of (assignmentData ?? []) as Array<{ task_library: Array<{ id: number; task_name: string; category_id: number; is_active: boolean }> | null }>) {
-          const libs = Array.isArray(row.task_library) ? row.task_library : (row.task_library ? [row.task_library] : []);
-          for (const lib of libs) {
-            if (!lib || lib.is_active === false) continue;
-            if (!grouped[lib.category_id]) grouped[lib.category_id] = [];
-            if (!grouped[lib.category_id].includes(lib.task_name)) {
-              grouped[lib.category_id].push(lib.task_name);
-            }
+        for (const lib of (libData ?? []) as Array<{ id: number; task_name: string; category_id: number | null; is_active: boolean }>) {
+          if (!lib.category_id) continue;
+          if (!grouped[lib.category_id]) grouped[lib.category_id] = [];
+          if (!grouped[lib.category_id].includes(lib.task_name)) {
+            grouped[lib.category_id].push(lib.task_name);
           }
         }
         setTaskLibrary(grouped);
@@ -281,7 +260,7 @@ export default function ProjectsManager({
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedProject?.account]);
+  }, []);
 
   // Derive display categories — use DB rows if non-empty, else hardcoded fallback
   const displayCategories: string[] = taskCategories.length > 0
@@ -425,7 +404,7 @@ export default function ProjectsManager({
         task_name: addForm.task_name.trim(),
         account: selectedProject.account ?? null,
         project_id: selectedProject.id,
-        project: addForm.category.trim() || null,
+        project: selectedProject.name,
         due_date: addForm.due_date || null,
         pay_type: addForm.pay_type || "hourly",
         category: addForm.category.trim() || null,
@@ -463,12 +442,13 @@ export default function ProjectsManager({
     setSavingSub(true);
     setEditSubError(null);
     try {
-      // Save metadata (task_name, task_detail, due_date, assigned_by, va_ids) — separate from status
+      // Save metadata (task_name, category, task_detail, due_date, assigned_by, va_ids) — separate from status
       const metaRes = await fetch(`/api/assigned-tasks/${editingSubId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           task_name: editSubForm.task_name.trim(),
+          category: editSubForm.category.trim() || null,
           task_detail: editSubForm.task_detail.trim() || null,
           task_notes: editSubForm.task_notes.trim() || null,
           instructions: editSubForm.instructions.trim() || null,

@@ -89,7 +89,7 @@ export async function GET(request: Request) {
   const assigneeSelect =
     "id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked";
   const taskSelect =
-    `id, account, project, project_id, pay_type, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, recurring_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
+    `id, account, project, project_id, pay_type, category, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, recurring_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username),
          assigned_task_assignees(${assigneeSelect})`;
 
   const formatAdminTaskRows = async (data: Array<Record<string, unknown>>) => {
@@ -354,6 +354,7 @@ export async function POST(request: Request) {
     account,
     project,
     task_name,
+    category,
     task_detail,
     task_notes,
     due_date,
@@ -370,6 +371,7 @@ export async function POST(request: Request) {
     account: string;
     project: string;
     task_name: string;
+    category?: string | null;
     task_detail?: string;
     task_notes?: string;
     due_date?: string;
@@ -407,6 +409,7 @@ export async function POST(request: Request) {
       account: account ?? null,
       project: project ?? null,
       task_name: task_name.trim(),
+      category: category ?? null,
       task_detail: task_detail ?? null,
       task_notes: task_notes ?? null,
       due_date: due_date ?? null,
