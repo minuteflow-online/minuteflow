@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import type { Profile, Project } from "@/types/database";
 
 interface ProjectsManagerProps {
@@ -19,6 +18,7 @@ interface SubtaskRow {
   status: string;
   pay_type?: string | null;
   category?: string | null;
+  project?: string | null;
   task_detail?: string | null;
   task_notes?: string | null;
   instructions?: string | null;
@@ -35,10 +35,10 @@ interface AccountOption {
   name: string;
 }
 
-interface TaskCategoryOption {
+interface ObjectiveOption {
   id: number;
-  category_name: string;
-  is_active?: boolean;
+  account: string;
+  project_name: string;
 }
 
 interface AddSubtaskForm {
@@ -68,10 +68,6 @@ function defaultSubtaskForm(): AddSubtaskForm {
     status: "pending",
   };
 }
-
-const HARDCODED_CATEGORIES = [
-  "Task", "Message", "Meeting", "Sorting Tasks", "Collaboration", "Personal", "Break",
-];
 
 const STATUS_OPTIONS = [
   "unassigned", "pending", "on_queue", "in_progress", "submitted",
@@ -145,8 +141,8 @@ export default function ProjectsManager({
   const [createError, setCreateError] = useState<string | null>(null);
 
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
-  const [taskCategories, setTaskCategories] = useState<TaskCategoryOption[]>([]);
-  const [taskLibrary, setTaskLibrary] = useState<Record<number, string[]>>({});
+  const [formProjects, setFormProjects] = useState<ObjectiveOption[]>([]);
+  const [formTasksByObjective, setFormTasksByObjective] = useState<Record<number, Array<{ id: number; task_name: string }>>>({});
 
   // Subtasks
   const [subtasks, setSubtasks] = useState<SubtaskRow[]>([]);
@@ -192,13 +188,11 @@ export default function ProjectsManager({
     }
   }, []);
 
-  // Load accounts from API and task categories + task library from Supabase directly
+  // Load accounts from API
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       try {
-        // Accounts from API
         const accountsRes = await fetch("/api/accounts", { cache: "no-store" });
         if (accountsRes.ok && !cancelled) {
           const data = await accountsRes.json();
@@ -209,69 +203,44 @@ export default function ProjectsManager({
             : [];
           setAccounts(nextAccounts);
         }
-
-        // Task categories from Supabase directly
-        const supabase = createClient();
-        const { data: catData } = await supabase
-          .from("task_categories")
-          .select("id, category_name, is_active")
-          .order("sort_order", { ascending: true });
-
-        if (!cancelled) {
-          const nextCategories = (catData ?? []).filter(
-            (c: TaskCategoryOption) => c.is_active !== false
-          );
-          setTaskCategories(nextCategories);
-        }
-
       } catch {
         // leave dropdowns empty if fetch fails
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Task library — all active items grouped by category_id (not filtered by account)
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const supabase = createClient();
-        const { data: libData } = await supabase
-          .from("task_library")
-          .select("id, task_name, category_id, is_active")
-          .eq("is_active", true);
-
-        if (cancelled) return;
-        const grouped: Record<number, string[]> = {};
-        for (const lib of (libData ?? []) as Array<{ id: number; task_name: string; category_id: number | null; is_active: boolean }>) {
-          if (!lib.category_id) continue;
-          if (!grouped[lib.category_id]) grouped[lib.category_id] = [];
-          if (!grouped[lib.category_id].includes(lib.task_name)) {
-            grouped[lib.category_id].push(lib.task_name);
-          }
-        }
-        setTaskLibrary(grouped);
-      } catch {
-        setTaskLibrary({});
       }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // Derive display categories — use DB rows if non-empty, else hardcoded fallback
-  const displayCategories: string[] = taskCategories.length > 0
-    ? taskCategories.map((c) => c.category_name)
-    : HARDCODED_CATEGORIES;
+  // Load objectives + tasks for the selected project's account
+  useEffect(() => {
+    if (!selectedProject?.account) {
+      setFormProjects([]);
+      setFormTasksByObjective({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/task-form-options?account=${encodeURIComponent(selectedProject.account ?? "")}`,
+          { cache: "no-store" }
+        );
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setFormProjects(data.projects ?? []);
+          setFormTasksByObjective(data.tasksByProject ?? {});
+        }
+      } catch {
+        // leave dropdowns empty
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedProject?.id]);
 
-  // Given a selected category name, find the matching task_library entries
-  function getTaskOptions(category: string): string[] {
-    const catRow = taskCategories.find((c) => c.category_name === category);
-    if (!catRow) return [];
-    return taskLibrary[catRow.id] ?? [];
+  // Given a selected objective name, return task names for that objective
+  function getObjectiveTaskOptions(objectiveName: string): string[] {
+    const proj = formProjects.find((p) => p.project_name === objectiveName);
+    if (!proj) return [];
+    return (formTasksByObjective[proj.id] ?? []).map((t) => t.task_name);
   }
 
   const handleSelectProject = (project: Project) => {
@@ -404,7 +373,7 @@ export default function ProjectsManager({
         task_name: addForm.task_name.trim(),
         account: selectedProject.account ?? null,
         project_id: selectedProject.id,
-        project: selectedProject.name,
+        project: addForm.category.trim() || null,
         due_date: addForm.due_date || null,
         pay_type: addForm.pay_type || "hourly",
         category: addForm.category.trim() || null,
@@ -833,7 +802,7 @@ export default function ProjectsManager({
                                     assigned_by_id: sub.assigned_by ?? "",
                                     due_date: sub.due_date ?? "",
                                     pay_type: sub.pay_type ?? "hourly",
-                                    category: sub.category ?? "",
+                                    category: sub.project ?? sub.category ?? "",
                                     task_detail: sub.task_detail ?? "",
                                     task_notes: sub.task_notes ?? "",
                                     instructions: sub.instructions ?? "",
@@ -854,7 +823,7 @@ export default function ProjectsManager({
                               <div className="grid grid-cols-2 gap-3">
                                 <div>
                                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                    Category
+                                    Objective
                                   </label>
                                   <select
                                     value={editSubForm.category}
@@ -865,9 +834,9 @@ export default function ProjectsManager({
                                     }))}
                                     className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
                                   >
-                                    <option value="">Select category...</option>
-                                    {displayCategories.map((cat) => (
-                                      <option key={cat} value={cat}>{cat}</option>
+                                    <option value="">Select objective...</option>
+                                    {formProjects.map((p) => (
+                                      <option key={p.id} value={p.project_name}>{p.project_name}</option>
                                     ))}
                                   </select>
                                 </div>
@@ -876,14 +845,14 @@ export default function ProjectsManager({
                                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
                                     Task Name
                                   </label>
-                                  {getTaskOptions(editSubForm.category).length > 0 ? (
+                                  {getObjectiveTaskOptions(editSubForm.category).length > 0 ? (
                                     <select
                                       value={editSubForm.task_name}
                                       onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_name: e.target.value }))}
                                       className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
                                     >
                                       <option value="">Select task...</option>
-                                      {getTaskOptions(editSubForm.category).map((t) => (
+                                      {getObjectiveTaskOptions(editSubForm.category).map((t) => (
                                         <option key={t} value={t}>{t}</option>
                                       ))}
                                     </select>
@@ -893,7 +862,7 @@ export default function ProjectsManager({
                                       onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_name: e.target.value }))}
                                       className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
                                     >
-                                      <option value={editSubForm.task_name}>{editSubForm.task_name || "No tasks in this category yet"}</option>
+                                      <option value={editSubForm.task_name}>{editSubForm.task_name || "No tasks for this objective yet"}</option>
                                     </select>
                                   )}
                                 </div>
@@ -1049,7 +1018,7 @@ export default function ProjectsManager({
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                        Category
+                        Objective
                       </label>
                       <select
                         value={addForm.category}
@@ -1060,9 +1029,9 @@ export default function ProjectsManager({
                         }))}
                         className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
                       >
-                        <option value="">Select category...</option>
-                        {displayCategories.map((cat) => (
-                          <option key={cat} value={cat}>{cat}</option>
+                        <option value="">Select objective...</option>
+                        {formProjects.map((p) => (
+                          <option key={p.id} value={p.project_name}>{p.project_name}</option>
                         ))}
                       </select>
                     </div>
@@ -1088,12 +1057,12 @@ export default function ProjectsManager({
                     >
                       <option value="">
                         {addForm.category
-                          ? getTaskOptions(addForm.category).length > 0
+                          ? getObjectiveTaskOptions(addForm.category).length > 0
                             ? "Select task..."
-                            : "No tasks in this category yet"
-                          : "Select a category first..."}
+                            : "No tasks for this objective yet"
+                          : "Select an objective first..."}
                       </option>
-                      {getTaskOptions(addForm.category).map((t) => (
+                      {getObjectiveTaskOptions(addForm.category).map((t) => (
                         <option key={t} value={t}>{t}</option>
                       ))}
                     </select>

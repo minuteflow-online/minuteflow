@@ -123,6 +123,9 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
   const [vaList, setVaList] = useState<VAProfile[]>([]);
   const [addTaskId, setAddTaskId] = useState<string>("");
   const [addProjectId, setAddProjectId] = useState<string>("");
+  const [addAccount, setAddAccount] = useState<string>("");
+  const [formAccounts, setFormAccounts] = useState<string[]>([]);
+  const [formTasksByProject, setFormTasksByProject] = useState<Record<number, Array<{ id: number; task_library_id: number; task_name: string }>>>({});
   const [addBillingType, setAddBillingType] = useState<BillingType>("fixed");
   const [addRate, setAddRate] = useState<string>("");
   const [addVaId, setAddVaId] = useState<string>(""); // empty = up for grabs
@@ -194,18 +197,18 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
   const fetchAddOptions = useCallback(async () => {
     setLoadingOptions(true);
     try {
-      const [tasksRes, projectsRes, vasRes] = await Promise.all([
-        fetch("/api/task-library"),
-        fetch("/api/project-tags"),
+      const [formOptionsRes, vasRes] = await Promise.all([
+        fetch("/api/task-form-options"),
         fetch("/api/profiles?role=va"),
       ]);
-      const [tasksData, projectsData, vasData] = await Promise.all([
-        tasksRes.json(),
-        projectsRes.json(),
+      const [formOptionsData, vasData] = await Promise.all([
+        formOptionsRes.json(),
         vasRes.json(),
       ]);
-      setTaskLibrary(tasksData.tasks ?? []);
-      setProjects(projectsData.tags ?? projectsData.projects ?? []);
+      setFormAccounts(formOptionsData.accounts ?? []);
+      setProjects(formOptionsData.projects ?? []);
+      setFormTasksByProject(formOptionsData.tasksByProject ?? {});
+      setTaskLibrary([]);
       setVaList(vasData.profiles ?? []);
     } catch {
       console.error("Failed to fetch add-task options");
@@ -324,6 +327,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
       setShowAddForm(false);
       setAddTaskId("");
       setAddProjectId("");
+      setAddAccount("");
       setAddBillingType("fixed");
       setAddRate("");
       setAddVaId("");
@@ -705,7 +709,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
           <button
             onClick={() => {
               setShowAddForm(!showAddForm);
-              if (showAddForm) { setAddTaskMode("library"); setAddCustomTaskName(""); }
+              if (showAddForm) { setAddTaskMode("library"); setAddCustomTaskName(""); setAddAccount(""); setAddProjectId(""); setAddTaskId(""); }
             }}
             className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-[#5a7a5e] cursor-pointer transition-colors"
           >
@@ -775,10 +779,50 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                {/* Task */}
+              <div className="grid grid-cols-3 gap-2">
+                {/* Account */}
                 <div>
-                  <label className="text-[10px] text-stone font-semibold block mb-0.5">Task</label>
+                  <label className="text-[10px] text-stone font-semibold block mb-0.5">Account</label>
+                  <select
+                    value={addAccount}
+                    onChange={(e) => {
+                      setAddAccount(e.target.value);
+                      setAddProjectId("");
+                      setAddTaskId("");
+                    }}
+                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                  >
+                    <option value="">Select account...</option>
+                    {formAccounts.map((a) => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+                {/* Objective / Project */}
+                <div>
+                  <label className="text-[10px] text-stone font-semibold block mb-0.5">Objective / Project</label>
+                  <select
+                    value={addProjectId}
+                    onChange={(e) => {
+                      setAddProjectId(e.target.value);
+                      setAddTaskId("");
+                    }}
+                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                    disabled={!addAccount}
+                  >
+                    <option value="">
+                      {addAccount ? "Select objective..." : "Select account first..."}
+                    </option>
+                    {projects
+                      .filter((p) => p.account === addAccount)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>{p.project_name}</option>
+                      ))}
+                  </select>
+                </div>
+                {/* Task Name */}
+                <div>
+                  <label className="text-[10px] text-stone font-semibold block mb-0.5">Task Name</label>
                   {addTaskMode === "custom" ? (
                     <input
                       type="text"
@@ -792,27 +836,20 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                       value={addTaskId}
                       onChange={(e) => setAddTaskId(e.target.value)}
                       className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                      disabled={!addProjectId}
                     >
-                      <option value="">Select task...</option>
-                      {taskLibrary.map((t) => (
-                        <option key={t.id} value={t.id}>{t.task_name}</option>
+                      <option value="">
+                        {addProjectId
+                          ? (formTasksByProject[parseInt(addProjectId)] ?? []).length > 0
+                            ? "Select task..."
+                            : "No tasks for this objective"
+                          : "Select objective first..."}
+                      </option>
+                      {(formTasksByProject[parseInt(addProjectId)] ?? []).map((t) => (
+                        <option key={t.task_library_id} value={String(t.task_library_id)}>{t.task_name}</option>
                       ))}
                     </select>
                   )}
-                </div>
-                {/* Project */}
-                <div>
-                  <label className="text-[10px] text-stone font-semibold block mb-0.5">Account / Project</label>
-                  <select
-                    value={addProjectId}
-                    onChange={(e) => setAddProjectId(e.target.value)}
-                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
-                  >
-                    <option value="">Select project...</option>
-                    {projects.map((p) => (
-                      <option key={p.id} value={p.id}>{p.account} / {p.project_name}</option>
-                    ))}
-                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-4 gap-2">
@@ -880,7 +917,7 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
               {/* Submit */}
               <button
                 onClick={handleAddTask}
-                disabled={addingTask || !addProjectId || (addTaskMode === "library" ? !addTaskId : !addCustomTaskName.trim())}
+                disabled={addingTask || !addAccount || !addProjectId || (addTaskMode === "library" ? !addTaskId : !addCustomTaskName.trim())}
                 className="px-4 py-1.5 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-[#5a7a5e] disabled:opacity-50 cursor-pointer transition-colors"
               >
                 {addingTask ? "Adding..." : "Add to Task List"}
