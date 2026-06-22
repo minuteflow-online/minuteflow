@@ -2237,7 +2237,7 @@ export default function TaskListPage() {
                                         Collaborative
                                       </span>
                                     )}
-                                    {(detail.project || detail.project_id) && (
+                                    {detail.project_id && (
                                       <button
                                         type="button"
                                         onClick={(event) => {
