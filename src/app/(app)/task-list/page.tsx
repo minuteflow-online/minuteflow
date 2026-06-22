@@ -2048,15 +2048,21 @@ export default function TaskListPage() {
                               </div>
                             </div>
                           )}
-                          <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
-                          <button
-                            type="button"
-                            onClick={() => void handleHourlyGrab(task.id)}
-                            disabled={isGrabbing}
-                            className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {isGrabbing ? "Grabbing..." : "Grab"}
-                          </button>
+                          {isAdmin ? (
+                            <div className="text-[11px] text-stone">Unassigned — awaiting a VA to claim this task.</div>
+                          ) : (
+                            <>
+                              <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
+                              <button
+                                type="button"
+                                onClick={() => void handleHourlyGrab(task.id)}
+                                disabled={isGrabbing}
+                                className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isGrabbing ? "Grabbing..." : "Grab"}
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     );
