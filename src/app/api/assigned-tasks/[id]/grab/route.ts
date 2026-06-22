@@ -33,7 +33,7 @@ export async function POST(_request: Request, { params }: RouteContext) {
     .eq("id", user.id)
     .single();
 
-  if (profile?.role !== "va") {
+  if (!profile || (profile.role !== "va" && profile.role !== "admin")) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
