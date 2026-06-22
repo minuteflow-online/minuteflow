@@ -2520,8 +2520,8 @@ export default function DashboardPage() {
       account: detail.account || "",
       client_name: "",
       project: detail.project || "",
-      client_memo: "",
-      internal_memo: detail.task_detail || "",
+      client_memo: detail.task_detail || "",
+      internal_memo: "",
       _skipClockIn: isFixedPay,
       ...(isFixedPay
         ? {
