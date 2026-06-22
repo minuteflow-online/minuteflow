@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import type { Profile, Project } from "@/types/database";
 
 interface ProjectsManagerProps {
@@ -24,17 +25,6 @@ interface SubtaskRow {
     profiles?: { id: string; full_name: string; username: string } | null;
   }>;
 }
-
-interface TaskLibraryEntry {
-  id: number;
-  task_name: string;
-  category_id: number;
-  is_active: boolean;
-}
-
-const HARDCODED_CATEGORIES = [
-  "Task", "Message", "Meeting", "Sorting Tasks", "Collaboration", "Personal", "Break",
-];
 
 interface AccountOption {
   id: number;
@@ -72,6 +62,15 @@ function defaultSubtaskForm(): AddSubtaskForm {
     status: "pending",
   };
 }
+
+const HARDCODED_CATEGORIES = [
+  "Task", "Message", "Meeting", "Sorting Tasks", "Collaboration", "Personal", "Break",
+];
+
+const STATUS_OPTIONS = [
+  "unassigned", "pending", "on_queue", "in_progress", "submitted",
+  "reviewing", "revision_needed", "approved", "completed", "paid", "cancelled",
+];
 
 function profileLabel(p: Pick<Profile, "id" | "full_name" | "username">): string {
   return p.full_name || p.username || p.id;
@@ -168,6 +167,7 @@ export default function ProjectsManager({
     setSubtasks([]);
     setAddForm(defaultSubtaskForm());
     setAddError(null);
+    setEditingSubId(null);
     void fetchSubtasks(selectedProject.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
@@ -186,41 +186,55 @@ export default function ProjectsManager({
     }
   }, []);
 
+  // Load accounts from API and task categories + task library from Supabase directly
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       try {
-        const [accountsRes, categoriesRes] = await Promise.all([
-          fetch("/api/accounts", { cache: "no-store" }),
-          fetch("/api/task-categories", { cache: "no-store" }),
-        ]);
-
-        if (accountsRes.ok) {
+        // Accounts from API
+        const accountsRes = await fetch("/api/accounts", { cache: "no-store" });
+        if (accountsRes.ok && !cancelled) {
           const data = await accountsRes.json();
           const nextAccounts = Array.isArray(data.accounts)
             ? data.accounts
                 .map((account: AccountOption) => ({ id: account.id, name: account.name }))
                 .filter((account: AccountOption) => Boolean(account.name?.trim()))
             : [];
-          if (!cancelled) setAccounts(nextAccounts);
+          setAccounts(nextAccounts);
         }
 
-        if (categoriesRes.ok) {
-          const data = await categoriesRes.json();
-          const nextCategories = Array.isArray(data.categories)
-            ? data.categories
-                .filter((category: TaskCategoryOption) => category.is_active !== false)
-                .map((category: TaskCategoryOption) => ({
-                  id: category.id,
-                  category_name: category.category_name,
-                  is_active: category.is_active,
-                }))
-            : [];
-          if (!cancelled) setTaskCategories(nextCategories);
+        // Task categories from Supabase directly
+        const supabase = createClient();
+        const { data: catData } = await supabase
+          .from("task_categories")
+          .select("id, category_name, is_active")
+          .order("sort_order", { ascending: true });
+
+        if (!cancelled) {
+          const nextCategories = (catData ?? []).filter(
+            (c: TaskCategoryOption) => c.is_active !== false
+          );
+          setTaskCategories(nextCategories);
+        }
+
+        // Task library from Supabase directly — grouped by category_id
+        const { data: libData } = await supabase
+          .from("task_library")
+          .select("id, task_name, category_id")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true });
+
+        if (!cancelled && libData) {
+          const grouped: Record<number, string[]> = {};
+          for (const entry of libData as Array<{ id: number; task_name: string; category_id: number }>) {
+            if (!grouped[entry.category_id]) grouped[entry.category_id] = [];
+            grouped[entry.category_id].push(entry.task_name);
+          }
+          setTaskLibrary(grouped);
         }
       } catch {
-        // leave dropdowns empty if option fetch fails
+        // leave dropdowns empty if fetch fails
       }
     })();
 
@@ -228,6 +242,18 @@ export default function ProjectsManager({
       cancelled = true;
     };
   }, []);
+
+  // Derive display categories — use DB rows if non-empty, else hardcoded fallback
+  const displayCategories: string[] = taskCategories.length > 0
+    ? taskCategories.map((c) => c.category_name)
+    : HARDCODED_CATEGORIES;
+
+  // Given a selected category name, find the matching task_library entries
+  function getTaskOptions(category: string): string[] {
+    const catRow = taskCategories.find((c) => c.category_name === category);
+    if (!catRow) return [];
+    return taskLibrary[catRow.id] ?? [];
+  }
 
   const handleSelectProject = (project: Project) => {
     setSelectedProject(project);
@@ -288,7 +314,6 @@ export default function ProjectsManager({
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || `HTTP ${res.status}`);
       }
-      // If this is the currently selected project, update selectedProject state
       if (selectedProject?.id === project.id) {
         setSelectedProject((prev) => prev ? { ...prev, is_active: !prev.is_active } : null);
       }
@@ -341,7 +366,6 @@ export default function ProjectsManager({
       setCreateNotes("");
       setShowCreate(false);
       onRefresh();
-      // Select the newly created project
       if (d.project) setSelectedProject(d.project as Project);
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : "Failed to create project.");
@@ -369,7 +393,7 @@ export default function ProjectsManager({
         task_detail: addForm.task_detail.trim() || null,
         task_notes: addForm.task_notes.trim() || null,
         instructions: addForm.instructions.trim() || null,
-        status: "pending",
+        status: addForm.status || "pending",
       };
       if (addForm.va_id) {
         body.va_ids = [addForm.va_id];
@@ -387,6 +411,52 @@ export default function ProjectsManager({
       setAddError(e instanceof Error ? e.message : "Failed to add subtask.");
     } finally {
       setAddingSub(false);
+    }
+  };
+
+  const handleSaveSubEdit = async () => {
+    if (!editingSubId || !selectedProject) return;
+    if (!editSubForm.task_name.trim()) {
+      setEditSubError("Task name is required.");
+      return;
+    }
+    setSavingSub(true);
+    setEditSubError(null);
+    try {
+      // Save metadata (task_name, task_detail, due_date) — separate from status
+      const metaRes = await fetch(`/api/assigned-tasks/${editingSubId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_name: editSubForm.task_name.trim(),
+          task_detail: editSubForm.task_detail.trim() || null,
+          due_date: editSubForm.due_date || null,
+        }),
+      });
+      if (!metaRes.ok) {
+        const d = await metaRes.json().catch(() => ({}));
+        throw new Error(d.error || `HTTP ${metaRes.status}`);
+      }
+
+      // Save status separately (PATCH handler handles status-only updates differently)
+      if (editSubForm.status) {
+        const statusRes = await fetch(`/api/assigned-tasks/${editingSubId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: editSubForm.status }),
+        });
+        if (!statusRes.ok) {
+          const d = await statusRes.json().catch(() => ({}));
+          throw new Error(d.error || `HTTP ${statusRes.status}`);
+        }
+      }
+
+      setEditingSubId(null);
+      void fetchSubtasks(selectedProject.id);
+    } catch (e) {
+      setEditSubError(e instanceof Error ? e.message : "Failed to save.");
+    } finally {
+      setSavingSub(false);
     }
   };
 
@@ -691,26 +761,190 @@ export default function ProjectsManager({
                       const assigneeNames = assignees
                         .map((a) => a.profiles?.full_name || a.profiles?.username || a.va_id)
                         .join(", ");
+                      const isEditing = editingSubId === sub.id;
+
                       return (
-                        <div
-                          key={sub.id}
-                          className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="text-[13px] font-semibold text-espresso leading-tight">
+                        <div key={sub.id} className="space-y-1">
+                          {/* Row */}
+                          <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
+                            <StatusBadge status={sub.status} />
+                            <span className="flex-1 text-[13px] font-semibold text-espresso leading-tight truncate">
                               {sub.task_name}
                             </span>
-                            <StatusBadge status={sub.status} />
-                          </div>
-                          <div className="text-[11px] text-stone/80 flex items-center gap-2 flex-wrap">
-                            {assigneeNames && <span>Assigned to: {assigneeNames}</span>}
-                            {sub.due_date && <span>· Due: {formatDate(sub.due_date)}</span>}
-                            {sub.pay_type && (
-                              <span className="capitalize">
-                                · {sub.pay_type.replace(/_/g, " ")}
+                            {assigneeNames && (
+                              <span className="text-[11px] text-stone shrink-0 hidden sm:block">
+                                {assigneeNames}
                               </span>
                             )}
+                            {sub.account && (
+                              <span className="text-[11px] text-stone shrink-0 hidden md:block">
+                                {sub.account}
+                              </span>
+                            )}
+                            {sub.due_date && (
+                              <span className="text-[11px] text-stone shrink-0 hidden md:block">
+                                {formatDate(sub.due_date)}
+                              </span>
+                            )}
+                            {sub.pay_type && (
+                              <span className="text-[11px] text-stone capitalize shrink-0 hidden lg:block">
+                                {sub.pay_type.replace(/_/g, " ")}
+                              </span>
+                            )}
+                            <button
+                              onClick={() => {
+                                if (isEditing) {
+                                  setEditingSubId(null);
+                                } else {
+                                  setEditingSubId(sub.id);
+                                  setEditSubForm({
+                                    task_name: sub.task_name,
+                                    va_id: assignees[0]?.va_id ?? "",
+                                    due_date: sub.due_date ?? "",
+                                    pay_type: sub.pay_type ?? "hourly",
+                                    category: sub.category ?? "",
+                                    task_detail: sub.task_detail ?? "",
+                                    task_notes: "",
+                                    instructions: "",
+                                    status: sub.status ?? "pending",
+                                  });
+                                  setEditSubError(null);
+                                }
+                              }}
+                              className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
+                            >
+                              {isEditing ? "Cancel" : "Edit"}
+                            </button>
                           </div>
+
+                          {/* Inline edit form */}
+                          {isEditing && (
+                            <div className="ml-3 rounded-lg border border-sand bg-parchment p-3 space-y-3">
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                    Category
+                                  </label>
+                                  <select
+                                    value={editSubForm.category}
+                                    onChange={(e) => setEditSubForm((prev) => ({
+                                      ...prev,
+                                      category: e.target.value,
+                                      task_name: "",
+                                    }))}
+                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                  >
+                                    <option value="">Select category...</option>
+                                    {displayCategories.map((cat) => (
+                                      <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                    Task Name
+                                  </label>
+                                  {getTaskOptions(editSubForm.category).length > 0 ? (
+                                    <select
+                                      value={editSubForm.task_name}
+                                      onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_name: e.target.value }))}
+                                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                    >
+                                      <option value="">Select task...</option>
+                                      {getTaskOptions(editSubForm.category).map((t) => (
+                                        <option key={t} value={t}>{t}</option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <select
+                                      value={editSubForm.task_name}
+                                      onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_name: e.target.value }))}
+                                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                    >
+                                      <option value={editSubForm.task_name}>{editSubForm.task_name || "No tasks in this category yet"}</option>
+                                    </select>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                  Detail
+                                </label>
+                                <textarea
+                                  value={editSubForm.task_detail}
+                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_detail: e.target.value }))}
+                                  rows={1}
+                                  placeholder="Task detail"
+                                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
+                                />
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-3">
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                    Status
+                                  </label>
+                                  <select
+                                    value={editSubForm.status}
+                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, status: e.target.value }))}
+                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                  >
+                                    {STATUS_OPTIONS.map((s) => (
+                                      <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                    Due Date
+                                  </label>
+                                  <input
+                                    type="date"
+                                    value={editSubForm.due_date}
+                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, due_date: e.target.value }))}
+                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                    Pay Type
+                                  </label>
+                                  <select
+                                    value={editSubForm.pay_type}
+                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, pay_type: e.target.value }))}
+                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                  >
+                                    <option value="hourly">Hourly</option>
+                                    <option value="fixed_pay">Fixed Pay</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              {editSubError && (
+                                <p className="text-[11px] text-red-600">{editSubError}</p>
+                              )}
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => void handleSaveSubEdit()}
+                                  disabled={savingSub}
+                                  className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+                                >
+                                  {savingSub ? "Saving..." : "Save"}
+                                </button>
+                                <button
+                                  onClick={() => setEditingSubId(null)}
+                                  className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -721,18 +955,6 @@ export default function ProjectsManager({
                 <div className="border-t border-sand pt-4 space-y-3">
                   <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Add Subtask</p>
 
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                      Task Name
-                    </label>
-                    <input
-                      value={addForm.task_name}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_name: e.target.value }))}
-                      placeholder="Task name"
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
-                    />
-                  </div>
-
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
@@ -740,14 +962,16 @@ export default function ProjectsManager({
                       </label>
                       <select
                         value={addForm.category}
-                        onChange={(e) => setAddForm((prev) => ({ ...prev, category: e.target.value }))}
+                        onChange={(e) => setAddForm((prev) => ({
+                          ...prev,
+                          category: e.target.value,
+                          task_name: "",
+                        }))}
                         className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
                       >
                         <option value="">Select category...</option>
-                        {taskCategories.map((category) => (
-                          <option key={category.id} value={category.category_name}>
-                            {category.category_name}
-                          </option>
+                        {displayCategories.map((cat) => (
+                          <option key={cat} value={cat}>{cat}</option>
                         ))}
                       </select>
                     </div>
@@ -764,12 +988,34 @@ export default function ProjectsManager({
 
                   <div>
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                      Task Detail
+                      Task Name
+                    </label>
+                    <select
+                      value={addForm.task_name}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_name: e.target.value }))}
+                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
+                    >
+                      <option value="">
+                        {addForm.category
+                          ? getTaskOptions(addForm.category).length > 0
+                            ? "Select task..."
+                            : "No tasks in this category yet"
+                          : "Select a category first..."}
+                      </option>
+                      {getTaskOptions(addForm.category).map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Detail
                     </label>
                     <textarea
                       value={addForm.task_detail}
                       onChange={(e) => setAddForm((prev) => ({ ...prev, task_detail: e.target.value }))}
-                      rows={3}
+                      rows={1}
                       placeholder="Task detail"
                       className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
                     />
@@ -801,7 +1047,7 @@ export default function ProjectsManager({
                     />
                   </div>
 
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                         Assign To
@@ -818,6 +1064,23 @@ export default function ProjectsManager({
                       </select>
                     </div>
 
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                        Status
+                      </label>
+                      <select
+                        value={addForm.status}
+                        onChange={(e) => setAddForm((prev) => ({ ...prev, status: e.target.value }))}
+                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
+                      >
+                        {STATUS_OPTIONS.map((s) => (
+                          <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                         Due Date
