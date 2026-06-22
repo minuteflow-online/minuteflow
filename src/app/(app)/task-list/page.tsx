@@ -283,6 +283,7 @@ export default function TaskListPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<ProfileOption | null>(null);
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
+  const [assignedByProfilesLoaded, setAssignedByProfilesLoaded] = useState(false);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
   const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "hourly_pool" | "recurring">("my_tasks");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
@@ -602,9 +603,9 @@ export default function TaskListPage() {
           full_name: member.full_name ?? "",
           username: member.username ?? "",
         }));
-        if (!cancelled) setAssignedByProfiles(members);
+        if (!cancelled) { setAssignedByProfiles(members); setAssignedByProfilesLoaded(true); }
       } catch {
-        if (!cancelled) setAssignedByProfiles(currentUserProfile ? [currentUserProfile] : []);
+        if (!cancelled) { setAssignedByProfiles(currentUserProfile ? [currentUserProfile] : []); setAssignedByProfilesLoaded(true); }
       }
     })();
 
@@ -2069,6 +2070,7 @@ export default function TaskListPage() {
                 templates={recurringTemplates}
                 loading={recurringLoading}
                 activeProfiles={assignedByProfiles}
+                profilesLoaded={assignedByProfilesLoaded}
                 accountOptions={formAccounts}
                 projectTagsMap={Object.fromEntries(
                   formProjects.map((p) => [

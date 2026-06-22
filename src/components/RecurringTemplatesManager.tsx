@@ -29,6 +29,7 @@ interface RecurringTemplatesManagerProps {
   templates: RecurringTaskTemplate[];
   loading: boolean;
   activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
+  profilesLoaded?: boolean;
   orgTimezone?: string;
   accountOptions: string[];
   projectTagsMap: Record<string, string[]>;
@@ -188,8 +189,10 @@ function templateToForm(
 
 function displayAssignedTo(
   template: RecurringTaskTemplate,
-  activeProfiles: Pick<Profile, "id" | "full_name" | "username">[]
+  activeProfiles: Pick<Profile, "id" | "full_name" | "username">[],
+  profilesLoaded = true
 ): string {
+  if (!profilesLoaded) return "—";
   const ids = templateAssignedToIds(template);
   if (ids.length === 0) return "—";
   const profileMap = new Map(activeProfiles.map((profile) => [profile.id, profile]));
@@ -336,6 +339,7 @@ export default function RecurringTemplatesManager({
   templates,
   loading,
   activeProfiles,
+  profilesLoaded = true,
   orgTimezone,
   accountOptions,
   projectTagsMap,
@@ -686,7 +690,7 @@ export default function RecurringTemplatesManager({
             </thead>
             <tbody>
               {templates.map((template) => {
-                const assignedTo = displayAssignedTo(template, activeProfiles);
+                const assignedTo = displayAssignedTo(template, activeProfiles, profilesLoaded);
                 const statusClass = template.is_active ? "bg-sage-soft text-sage" : "bg-stone/10 text-stone";
                 return (
                   <tr key={template.id} className="border-b border-sand last:border-0 hover:bg-parchment/30 transition-colors">
