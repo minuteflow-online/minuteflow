@@ -338,8 +338,11 @@ export default function TaskListPage() {
   const [panelScreenshotsLoading, setPanelScreenshotsLoading] = useState(false);
   const [lightboxUrls, setLightboxUrls] = useState<string[] | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [pendingCreateFiles, setPendingCreateFiles] = useState<File[]>([]);
+  const [createUploadSaving, setCreateUploadSaving] = useState(false);
   const activeLogIdRef = useRef<number | null>(null);
   const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const createAttachmentInputRef = useRef<HTMLInputElement | null>(null);
   const captureWorkerRef = useRef<Worker | null>(null);
   const silentCaptureRef = useRef<((logId: number, screenshotType: "start" | "progress") => Promise<boolean>) | null>(
     null
@@ -1355,6 +1358,8 @@ export default function TaskListPage() {
     setIsCreating(true);
     setAddError(null);
     setAddSaving(false);
+    setPendingCreateFiles([]);
+    setCreateUploadSaving(false);
     setAddForm({
       account: "",
       project: "",
@@ -1372,6 +1377,8 @@ export default function TaskListPage() {
     setIsCreating(false);
     setAddError(null);
     setAddSaving(false);
+    setPendingCreateFiles([]);
+    setCreateUploadSaving(false);
     setAddForm({
       account: "",
       project: "",
@@ -1478,6 +1485,26 @@ export default function TaskListPage() {
 
       const responseData = await res.json();
       const newTaskId: number | undefined = responseData?.task?.id;
+
+      // Upload any pending files before transitioning to the detail panel
+      if (newTaskId && pendingCreateFiles.length > 0) {
+        setCreateUploadSaving(true);
+        for (const file of pendingCreateFiles) {
+          const formData = new FormData();
+          formData.append("file", file);
+          try {
+            await fetch(`/api/assigned-tasks/${newTaskId}/attachments`, {
+              method: "POST",
+              body: formData,
+            });
+          } catch {
+            // best-effort — don't block task creation if an upload fails
+          }
+        }
+        setCreateUploadSaving(false);
+        setPendingCreateFiles([]);
+      }
+
       const freshTasks = await fetchTasks();
       if (newTaskId) {
         const newTask = freshTasks.find((t) => t.assigned_tasks?.id === newTaskId);
@@ -1492,7 +1519,7 @@ export default function TaskListPage() {
     } finally {
       setAddSaving(false);
     }
-  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel]);
+  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
 
   const handleClaimedTaskRefresh = useCallback(async () => {
     await Promise.all([fetchTasks(), canShowHourlyPool ? fetchHourlyPool() : Promise.resolve()]);
@@ -2560,6 +2587,56 @@ export default function TaskListPage() {
                 />
               </div>
 
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
+                  <button
+                    type="button"
+                    onClick={() => createAttachmentInputRef.current?.click()}
+                    className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment"
+                  >
+                    Attach File
+                  </button>
+                  <input
+                    ref={createAttachmentInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const picked = Array.from(e.target.files ?? []);
+                      e.target.value = "";
+                      if (picked.length > 0) setPendingCreateFiles((prev) => [...prev, ...picked]);
+                    }}
+                  />
+                </div>
+                {pendingCreateFiles.length === 0 ? (
+                  <p className="py-2 text-[12px] text-stone/50">No files selected — will upload after task is created.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {pendingCreateFiles.map((file, idx) => (
+                      <div key={idx} className="flex items-center gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
+                        <svg className="h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                        </svg>
+                        <span className="min-w-0 flex-1 truncate text-[12px] text-walnut">{file.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setPendingCreateFiles((prev) => prev.filter((_, i) => i !== idx))}
+                          className="shrink-0 text-stone/50 hover:text-terracotta"
+                          aria-label="Remove file"
+                        >
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {addError && <p className="text-xs font-medium text-red-500">{addError}</p>}
             </div>
 
@@ -2570,10 +2647,10 @@ export default function TaskListPage() {
               <button
                 type="button"
                 onClick={() => void handleAddTask()}
-                disabled={addSaving || !addForm.task_name.trim()}
+                disabled={addSaving || createUploadSaving || !addForm.task_name.trim()}
                 className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {addSaving ? "Saving..." : "Create Task"}
+                {createUploadSaving ? "Uploading files..." : addSaving ? "Saving..." : "Create Task"}
               </button>
             </div>
           </div>
