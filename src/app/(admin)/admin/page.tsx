@@ -43,6 +43,7 @@ import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
 import EmailStatusTab from "@/components/EmailStatusTab";
 import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
 import FixedPayTasksTab from "@/components/FixedPayTasksTab";
+import TeamProfilePanel from "@/components/TeamProfilePanel";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -2091,6 +2092,7 @@ function TeamManagementTab({
 
   // Expandable row state
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedTab, setExpandedTab] = useState<"overview" | "profile">("overview");
 
   // Unique values per column for filter dropdowns
   const uniqueValues = useMemo(() => {
@@ -2894,7 +2896,7 @@ function TeamManagementTab({
               )}
               {filteredProfiles.map((p) => (
                 <React.Fragment key={p.id}>
-                <tr className="hover:bg-parchment/20 transition-colors cursor-pointer" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}>
+                <tr className="hover:bg-parchment/20 transition-colors cursor-pointer" onClick={() => { const next = expandedId === p.id ? null : p.id; setExpandedId(next); if (next !== expandedId) setExpandedTab("overview"); }}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <svg className={`h-3 w-3 text-bark shrink-0 transition-transform ${expandedId === p.id ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3202,99 +3204,127 @@ function TeamManagementTab({
                 </tr>
                 {expandedId === p.id && (
                   <tr className="bg-parchment/10">
-                    <td colSpan={12} className="px-6 py-4">
-                      <div className="grid grid-cols-3 gap-6 text-[12px]">
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Email</span>
-                          <p className="mt-0.5 text-espresso font-medium">{emailMap[p.id] || "—"}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Username</span>
-                          <p className="mt-0.5 text-espresso font-medium">{p.username}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Department</span>
-                          <p className="mt-0.5 text-espresso font-medium">{p.department || "—"}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Position</span>
-                          <p className="mt-0.5 text-espresso font-medium">{p.position || "—"}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Pay Rate</span>
-                          <p className="mt-0.5 text-espresso font-medium">${(p.pay_rate || 0).toFixed(2)} / {p.pay_rate_type || "hourly"}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Role</span>
-                          <p className="mt-0.5 text-espresso font-medium capitalize">{p.role}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Joined</span>
-                          <p className="mt-0.5 text-espresso font-medium">{new Date(p.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Status</span>
-                          <p className="mt-0.5 text-espresso font-medium">{p.is_active !== false ? "Active" : "Inactive"}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Available Tasks</span>
-                          <p className="mt-0.5 text-espresso font-medium">{p.can_see_available_tasks ? "Enabled" : "Disabled"}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Employment Type</span>
-                          <p className="mt-0.5 text-espresso font-medium capitalize">{p.employment_type ? p.employment_type.replace(/_/g, " ") : "—"}</p>
-                        </div>
-                        <div>
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Extension Required</span>
-                          <div className="mt-0.5 flex items-center gap-2">
-                            <p className="text-espresso font-medium">{p.requires_extension ? "Yes" : "No"}</p>
-                            <button
-                              onClick={async () => {
-                                const newVal = !p.requires_extension;
-                                const payload: Record<string, unknown> = {
-                                  user_id: p.id,
-                                  requires_extension: newVal,
-                                };
-                                if (newVal) payload.extension_popup_shown = false;
-                                await fetch("/api/users", {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify(payload),
-                                });
-                                fetchData();
-                              }}
-                              className="text-[11px] text-terracotta hover:underline font-medium cursor-pointer"
-                            >
-                              {p.requires_extension ? "Remove" : "Require"}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                      {/* Payment Accounts */}
-                      <div className="mt-4 pt-4 border-t border-sand/50">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Payment Accounts</span>
+                    <td colSpan={12} className="px-0 py-0">
+                      {/* Tab Strip */}
+                      <div className="flex border-b border-parchment px-6">
+                        {(["overview", "profile"] as const).map((tab) => (
                           <button
-                            onClick={() => openPaymentAccountsModal(p)}
-                            className="text-[11px] text-terracotta hover:underline font-medium"
+                            key={tab}
+                            onClick={(e) => { e.stopPropagation(); setExpandedTab(tab); }}
+                            className={`py-3 px-4 text-[12px] font-semibold transition-colors cursor-pointer border-b-2 -mb-px ${
+                              expandedTab === tab
+                                ? "border-terracotta text-terracotta"
+                                : "border-transparent text-bark hover:text-espresso"
+                            }`}
                           >
-                            Edit
+                            {tab === "overview" ? "Overview" : "Profile"}
                           </button>
-                        </div>
-                        {p.payment_accounts && Object.keys(p.payment_accounts).length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {Object.entries(p.payment_accounts as Record<string, Record<string, string>>).map(([method, details]) => (
-                              <div key={method} className="text-[11px] bg-parchment border border-sand rounded-lg px-2 py-1">
-                                <span className="font-semibold capitalize">{method.replace(/_/g, " ")}</span>
-                                {" · "}
-                                {Object.values(details).filter(Boolean).join(" · ")}
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-[11px] text-bark/40 italic">No payment accounts set. Click Edit to add.</p>
-                        )}
+                        ))}
                       </div>
+
+                      {/* Overview Tab */}
+                      {expandedTab === "overview" && (
+                        <div className="px-6 py-4">
+                          <div className="grid grid-cols-3 gap-6 text-[12px]">
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Email</span>
+                              <p className="mt-0.5 text-espresso font-medium">{emailMap[p.id] || "—"}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Username</span>
+                              <p className="mt-0.5 text-espresso font-medium">{p.username}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Department</span>
+                              <p className="mt-0.5 text-espresso font-medium">{p.department || "—"}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Position</span>
+                              <p className="mt-0.5 text-espresso font-medium">{p.position || "—"}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Pay Rate</span>
+                              <p className="mt-0.5 text-espresso font-medium">${(p.pay_rate || 0).toFixed(2)} / {p.pay_rate_type || "hourly"}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Role</span>
+                              <p className="mt-0.5 text-espresso font-medium capitalize">{p.role}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Joined</span>
+                              <p className="mt-0.5 text-espresso font-medium">{new Date(p.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Status</span>
+                              <p className="mt-0.5 text-espresso font-medium">{p.is_active !== false ? "Active" : "Inactive"}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Available Tasks</span>
+                              <p className="mt-0.5 text-espresso font-medium">{p.can_see_available_tasks ? "Enabled" : "Disabled"}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Employment Type</span>
+                              <p className="mt-0.5 text-espresso font-medium capitalize">{p.employment_type ? p.employment_type.replace(/_/g, " ") : "—"}</p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Extension Required</span>
+                              <div className="mt-0.5 flex items-center gap-2">
+                                <p className="text-espresso font-medium">{p.requires_extension ? "Yes" : "No"}</p>
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const newVal = !p.requires_extension;
+                                    const payload: Record<string, unknown> = {
+                                      user_id: p.id,
+                                      requires_extension: newVal,
+                                    };
+                                    if (newVal) payload.extension_popup_shown = false;
+                                    await fetch("/api/users", {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify(payload),
+                                    });
+                                    fetchData();
+                                  }}
+                                  className="text-[11px] text-terracotta hover:underline font-medium cursor-pointer"
+                                >
+                                  {p.requires_extension ? "Remove" : "Require"}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                          {/* Payment Accounts */}
+                          <div className="mt-4 pt-4 border-t border-sand/50">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Payment Accounts</span>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); openPaymentAccountsModal(p); }}
+                                className="text-[11px] text-terracotta hover:underline font-medium"
+                              >
+                                Edit
+                              </button>
+                            </div>
+                            {p.payment_accounts && Object.keys(p.payment_accounts).length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {Object.entries(p.payment_accounts as Record<string, Record<string, string>>).map(([method, details]) => (
+                                  <div key={method} className="text-[11px] bg-parchment border border-sand rounded-lg px-2 py-1">
+                                    <span className="font-semibold capitalize">{method.replace(/_/g, " ")}</span>
+                                    {" · "}
+                                    {Object.values(details).filter(Boolean).join(" · ")}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-bark/40 italic">No payment accounts set. Click Edit to add.</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Profile Tab */}
+                      {expandedTab === "profile" && (
+                        <TeamProfilePanel userId={p.id} isAdmin={true} />
+                      )}
                     </td>
                   </tr>
                 )}
