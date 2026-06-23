@@ -36,6 +36,7 @@ type VATaskRow = {
     instructions_locked: boolean;
     fixed_pay_task_id: number | null;
     fixed_pay_tasks?: { rate: number } | null;
+    projects?: { id: string; name: string } | null;
     created_by: string | null;
     created_at: string;
     updated_at: string;
@@ -112,6 +113,7 @@ type AdminTaskFlat = {
   instructions_locked?: boolean;
   fixed_pay_task_id?: number | null;
   fixed_pay_tasks?: { rate: number } | null;
+  projects?: { id: string; name: string } | null;
   assigned_task_assignees: AdminAssigneeFlat[];
 };
 
@@ -394,6 +396,7 @@ export default function TaskListPage() {
                 instructions_locked: Boolean(task.instructions_locked),
                 fixed_pay_task_id: task.fixed_pay_task_id ?? null,
                 fixed_pay_tasks: task.fixed_pay_tasks ?? null,
+                projects: task.projects ?? null,
                 created_by: task.created_by,
                 created_at: task.created_at,
                 updated_at: task.updated_at,
@@ -2276,7 +2279,7 @@ export default function TaskListPage() {
                                         }}
                                         className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-plum-soft text-plum border border-plum/20 cursor-pointer"
                                       >
-                                        Project: {detail.project || "Linked project"}
+                                        Project: {detail.projects?.name || detail.project || "Linked project"}
                                       </button>
                                     )}
                                   </div>
