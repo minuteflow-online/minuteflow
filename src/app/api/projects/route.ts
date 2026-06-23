@@ -27,21 +27,44 @@ async function requireAdmin() {
   return { user };
 }
 
+async function getUserAndRole() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
+  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+  return { user, isAdmin: profile?.role === "admin" };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
-
-  const auth = id ? await requireUser() : await requireAdmin();
-  if ("error" in auth) return auth.error;
+  const mine = searchParams.get("mine") === "true";
 
   const supabase = serviceClient();
 
   if (id) {
+    const auth = await requireUser();
+    if ("error" in auth) return auth.error;
     const { data, error } = await supabase.from("projects").select("*").eq("id", id).maybeSingle();
     if (error) return Response.json({ error: error.message }, { status: 500 });
     if (!data) return Response.json({ error: "Project not found" }, { status: 404 });
     return Response.json({ project: data });
   }
+
+  if (mine) {
+    const auth = await requireUser();
+    if ("error" in auth) return auth.error;
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("created_by", auth.user.id)
+      .order("created_at", { ascending: false });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ projects: data ?? [] });
+  }
+
+  const auth = await requireAdmin();
+  if ("error" in auth) return auth.error;
 
   const { data, error } = await supabase.from("projects").select("*").order("created_at", { ascending: false });
   if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -49,7 +72,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireAdmin();
+  const auth = await requireUser();
   if ("error" in auth) return auth.error;
   const { user } = auth;
   const body = (await request.json()) as {
@@ -75,11 +98,22 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const auth = await requireAdmin();
-  if ("error" in auth) return auth.error;
+  const authResult = await getUserAndRole();
+  if ("error" in authResult) return authResult.error;
+  const { user, isAdmin } = authResult;
+
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
+
+  const supabase = serviceClient();
+
+  if (!isAdmin) {
+    const { data: project } = await supabase.from("projects").select("created_by").eq("id", id).maybeSingle();
+    if (!project) return Response.json({ error: "Project not found" }, { status: 404 });
+    if (project.created_by !== user.id) return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const body = (await request.json()) as {
     name?: string;
     description?: string;
@@ -95,19 +129,28 @@ export async function PATCH(request: Request) {
   if (body.details !== undefined) updates.details = body.details?.trim() || null;
   if (body.notes !== undefined) updates.notes = body.notes?.trim() || null;
   if (body.is_active !== undefined) updates.is_active = Boolean(body.is_active);
-  const supabase = serviceClient();
   const { data, error } = await supabase.from("projects").update(updates).eq("id", id).select("*").single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
   return Response.json({ project: data });
 }
 
 export async function DELETE(request: Request) {
-  const auth = await requireAdmin();
-  if ("error" in auth) return auth.error;
+  const authResult = await getUserAndRole();
+  if ("error" in authResult) return authResult.error;
+  const { user, isAdmin } = authResult;
+
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
+
   const supabase = serviceClient();
+
+  if (!isAdmin) {
+    const { data: project } = await supabase.from("projects").select("created_by").eq("id", id).maybeSingle();
+    if (!project) return Response.json({ error: "Project not found" }, { status: 404 });
+    if (project.created_by !== user.id) return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   await supabase.from("assigned_tasks").update({ project_id: null }).eq("project_id", id);
   const { error } = await supabase.from("projects").delete().eq("id", id);
   if (error) return Response.json({ error: error.message }, { status: 400 });

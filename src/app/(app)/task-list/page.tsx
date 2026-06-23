@@ -9,6 +9,7 @@ import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import type { RecurringTaskTemplate } from "@/types/database";
+import VAProjectsTab from "@/components/VAProjectsTab";
 
 type VATaskRow = {
   id: number;
@@ -280,12 +281,13 @@ export default function TaskListPage() {
   const [formTasksByProject, setFormTasksByProject] = useState<Record<number, FormTask[]>>({});
   const [currentRole, setCurrentRole] = useState<string | null>(null);
   const [currentPosition, setCurrentPosition] = useState<string | null>(null);
+  const [currentPayRateType, setCurrentPayRateType] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<ProfileOption | null>(null);
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [assignedByProfilesLoaded, setAssignedByProfilesLoaded] = useState(false);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "hourly_pool" | "recurring">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "hourly_pool" | "recurring" | "projects">("my_tasks");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
@@ -474,12 +476,13 @@ export default function TaskListPage() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("id, role, position, can_see_available_tasks, full_name, username")
+        .select("id, role, position, pay_rate_type, can_see_available_tasks, full_name, username")
         .eq("id", data.user.id)
         .single();
 
       setCurrentRole(profile?.role ?? null);
       setCurrentPosition(profile?.position ?? null);
+      setCurrentPayRateType(profile?.pay_rate_type ?? null);
       setCurrentUserProfile(
         profile?.id
           ? { id: profile.id, full_name: profile.full_name ?? "", username: profile.username ?? "" }
@@ -496,6 +499,7 @@ export default function TaskListPage() {
   const isPerTaskVa = currentPosition === "Per Task VA";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
+  const canShowProjects = currentRole === "va" && currentPayRateType === "hourly";
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -1861,6 +1865,15 @@ export default function TaskListPage() {
                     Recurring
                   </button>
                 )}
+                {canShowProjects && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("projects")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "projects" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    Projects
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -2071,6 +2084,13 @@ export default function TaskListPage() {
                   })}
                 </div>
               )}
+            </div>
+          ) : canShowProjects && activeView === "projects" ? (
+            <div className="p-4">
+              <VAProjectsTab
+                activeProfiles={assignedByProfiles}
+                currentUserId={currentUserId ?? ""}
+              />
             </div>
           ) : activeView === "recurring" ? (
             <div className="p-4">
