@@ -167,10 +167,13 @@ function parseAssignedToIds(body: Record<string, unknown>) {
   return idsFromSingle ?? [];
 }
 
-export async function GET(_request: Request) {
+export async function GET(request: Request) {
   const auth = await requireUser();
   if ("error" in auth) return auth.error;
   const { user, role } = auth;
+
+  const { searchParams } = new URL(request.url);
+  const mineOnly = searchParams.get("mine") === "true";
 
   const supabase = serviceClient();
   let query = supabase
@@ -178,8 +181,9 @@ export async function GET(_request: Request) {
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (role !== "admin") {
-    // VAs only see templates assigned to them
+  if (role !== "admin" || mineOnly) {
+    // VAs always see only their own templates.
+    // Admins also see only their own when ?mine=true (VA task-list context).
     query = query.contains("assigned_to_ids", [user.id]);
   }
 

@@ -449,7 +449,7 @@ export default function TaskListPage() {
     if (!currentUserId) return;
     setRecurringLoading(true);
     try {
-      const res = await fetch("/api/recurring-task-templates", { cache: "no-store" });
+      const res = await fetch("/api/recurring-task-templates?mine=true", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
       setRecurringTemplates((d.templates ?? []) as RecurringTaskTemplate[]);
