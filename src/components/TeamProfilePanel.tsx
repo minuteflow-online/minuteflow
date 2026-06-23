@@ -2,17 +2,23 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import type { PaymentAccountDetails } from "@/types/database";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type ExtendedProfile = {
   id: string;
+  full_name: string;
+  username: string;
+  department: string | null;
+  position: string | null;
   phone: string | null;
   address: string | null;
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   birthday: string | null;
   date_started: string | null;
+  payment_accounts: PaymentAccountDetails | null;
 };
 
 type ProfileMilestone = {
@@ -82,7 +88,7 @@ export default function TeamProfilePanel({ userId, isAdmin }: { userId: string; 
       supabase.auth.getUser(),
       supabase
         .from("profiles")
-        .select("id,phone,address,emergency_contact_name,emergency_contact_phone,birthday,date_started")
+        .select("id,full_name,username,department,position,phone,address,emergency_contact_name,emergency_contact_phone,birthday,date_started,payment_accounts")
         .eq("id", userId)
         .single(),
       supabase.from("profile_milestones").select("*").eq("user_id", userId).order("milestone_date", { ascending: false }),
@@ -117,7 +123,19 @@ export default function TeamProfilePanel({ userId, isAdmin }: { userId: string; 
 
   return (
     <div className="px-6 py-5 space-y-5">
+      <BasicInfoSection
+        profile={profile}
+        userId={userId}
+        isAdmin={isAdmin}
+        onRefresh={load}
+      />
       <PersonalInfoSection
+        profile={profile}
+        userId={userId}
+        isAdmin={isAdmin}
+        onRefresh={load}
+      />
+      <PaymentInfoSection
         profile={profile}
         userId={userId}
         isAdmin={isAdmin}
@@ -148,6 +166,120 @@ export default function TeamProfilePanel({ userId, isAdmin }: { userId: string; 
         isAdmin={isAdmin}
         onRefresh={load}
       />
+    </div>
+  );
+}
+
+// ── Basic Info Section ─────────────────────────────────────────────────────
+
+function BasicInfoSection({
+  profile,
+  userId,
+  isAdmin,
+  onRefresh,
+}: {
+  profile: ExtendedProfile | null;
+  userId: string;
+  isAdmin: boolean;
+  onRefresh: () => void;
+}) {
+  const supabase = createClient();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    full_name: profile?.full_name || "",
+    username: profile?.username || "",
+    department: profile?.department || "",
+    position: profile?.position || "",
+  });
+
+  useEffect(() => {
+    setForm({
+      full_name: profile?.full_name || "",
+      username: profile?.username || "",
+      department: profile?.department || "",
+      position: profile?.position || "",
+    });
+  }, [profile]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await supabase
+      .from("profiles")
+      .update({
+        full_name: form.full_name.trim(),
+        username: form.username.trim(),
+        department: form.department.trim() || null,
+        position: form.position.trim() || null,
+      })
+      .eq("id", userId);
+    setSaving(false);
+    setEditing(false);
+    onRefresh();
+  };
+
+  const fields: { label: string; key: keyof typeof form }[] = [
+    { label: "Full Name", key: "full_name" },
+    { label: "Username", key: "username" },
+    { label: "Department", key: "department" },
+    { label: "Position", key: "position" },
+  ];
+
+  return (
+    <div className="rounded-xl border border-sand bg-white p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Basic Information</h3>
+        {isAdmin && !editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {fields.map(({ label, key }) => (
+              <div key={key}>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">{label}</p>
+                <input
+                  type="text"
+                  value={form[key]}
+                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {fields.map(({ label, key }) => (
+            <div key={key}>
+              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">{label}</p>
+              <p className="text-[13px] text-espresso mt-0.5">{form[key] || "—"}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -267,6 +399,218 @@ function PersonalInfoSection({
               </p>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Payment Info Section ───────────────────────────────────────────────────
+
+function PaymentInfoSection({
+  profile,
+  userId,
+  isAdmin,
+  onRefresh,
+}: {
+  profile: ExtendedProfile | null;
+  userId: string;
+  isAdmin: boolean;
+  onRefresh: () => void;
+}) {
+  const supabase = createClient();
+  const pa = profile?.payment_accounts || {};
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [gcashNumber, setGcashNumber] = useState(pa.gcash?.number || "");
+  const [gcashName, setGcashName] = useState(pa.gcash?.name || "");
+  const [bankName, setBankName] = useState(pa.bank_transfer?.bank || pa.bank_deposit?.bank || "");
+  const [bankAccount, setBankAccount] = useState(pa.bank_transfer?.account || pa.bank_deposit?.account || "");
+  const [bankHolder, setBankHolder] = useState(pa.bank_transfer?.name || pa.bank_deposit?.name || "");
+  const [paypalEmail, setPaypalEmail] = useState(pa.paypal?.email || "");
+
+  useEffect(() => {
+    const p = profile?.payment_accounts || {};
+    setGcashNumber(p.gcash?.number || "");
+    setGcashName(p.gcash?.name || "");
+    setBankName(p.bank_transfer?.bank || p.bank_deposit?.bank || "");
+    setBankAccount(p.bank_transfer?.account || p.bank_deposit?.account || "");
+    setBankHolder(p.bank_transfer?.name || p.bank_deposit?.name || "");
+    setPaypalEmail(p.paypal?.email || "");
+  }, [profile]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    const payment_accounts: PaymentAccountDetails = {};
+    if (gcashNumber || gcashName) {
+      payment_accounts.gcash = { number: gcashNumber || undefined, name: gcashName || undefined };
+    }
+    if (bankName || bankAccount || bankHolder) {
+      payment_accounts.bank_transfer = {
+        bank: bankName || undefined,
+        account: bankAccount || undefined,
+        name: bankHolder || undefined,
+      };
+    }
+    if (paypalEmail) {
+      payment_accounts.paypal = { email: paypalEmail };
+    }
+    await supabase
+      .from("profiles")
+      .update({ payment_accounts: Object.keys(payment_accounts).length > 0 ? payment_accounts : null })
+      .eq("id", userId);
+    setSaving(false);
+    setEditing(false);
+    onRefresh();
+  };
+
+  const hasPayment = !!(pa.gcash?.number || pa.bank_transfer?.bank || pa.bank_deposit?.bank || pa.paypal?.email);
+
+  return (
+    <div className="rounded-xl border border-sand bg-white p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Payment Information</h3>
+        {isAdmin && !editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      {!editing && (
+        <>
+          {!hasPayment ? (
+            <p className="text-[13px] text-stone">No payment info added yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {(pa.gcash?.number || pa.gcash?.name) && (
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">GCash</p>
+                  <p className="text-[13px] text-espresso">{pa.gcash?.number}{pa.gcash?.name ? ` — ${pa.gcash.name}` : ""}</p>
+                </div>
+              )}
+              {(pa.bank_transfer?.bank || pa.bank_deposit?.bank) && (
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Bank Transfer</p>
+                  <p className="text-[13px] text-espresso">
+                    {pa.bank_transfer?.bank || pa.bank_deposit?.bank}
+                    {(pa.bank_transfer?.account || pa.bank_deposit?.account) ? ` · ${pa.bank_transfer?.account || pa.bank_deposit?.account}` : ""}
+                    {(pa.bank_transfer?.name || pa.bank_deposit?.name) ? ` · ${pa.bank_transfer?.name || pa.bank_deposit?.name}` : ""}
+                  </p>
+                </div>
+              )}
+              {pa.paypal?.email && (
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">PayPal</p>
+                  <p className="text-[13px] text-espresso">{pa.paypal.email}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {editing && (
+        <div className="space-y-4">
+          <p className="text-[11px] text-stone">Fill in what applies to this VA.</p>
+
+          {/* GCash */}
+          <div className="pb-3 border-b border-parchment">
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-2">GCash</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Number</p>
+                <input
+                  type="text"
+                  value={gcashNumber}
+                  onChange={(e) => setGcashNumber(e.target.value)}
+                  placeholder="09XX XXX XXXX"
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                />
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Registered Name</p>
+                <input
+                  type="text"
+                  value={gcashName}
+                  onChange={(e) => setGcashName(e.target.value)}
+                  placeholder="Name on GCash"
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Bank Transfer */}
+          <div className="pb-3 border-b border-parchment">
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-2">Bank Transfer</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Bank</p>
+                <input
+                  type="text"
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  placeholder="e.g. BDO, BPI"
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                />
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Account Number</p>
+                <input
+                  type="text"
+                  value={bankAccount}
+                  onChange={(e) => setBankAccount(e.target.value)}
+                  placeholder="Account number"
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                />
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Account Holder</p>
+                <input
+                  type="text"
+                  value={bankHolder}
+                  onChange={(e) => setBankHolder(e.target.value)}
+                  placeholder="Name on account"
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* PayPal */}
+          <div>
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-2">PayPal</p>
+            <div className="max-w-xs">
+              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Email</p>
+              <input
+                type="email"
+                value={paypalEmail}
+                onChange={(e) => setPaypalEmail(e.target.value)}
+                placeholder="your@paypal.com"
+                className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
     </div>
