@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
-import TeamProfilePanel from "@/components/TeamProfilePanel";
 import {
   formatDuration,
   getInitials,
@@ -1160,7 +1159,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   const { profile, status, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<"activity" | "ratings" | "profile">("activity");
+  const [activeTab, setActiveTab] = useState<"activity" | "ratings">("activity");
 
   const toggleDate = useCallback((dateLabel: string) => {
     setExpandedDates(prev => {
@@ -1320,7 +1319,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
 
       {/* Tab Strip */}
       <div className="flex border-b border-parchment px-6">
-        {(["activity", "ratings", "profile"] as const).map((tab) => (
+        {(["activity", "ratings"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -1330,7 +1329,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
                 : "border-transparent text-bark hover:text-espresso"
             }`}
           >
-            {tab === "activity" ? "Activity" : tab === "ratings" ? "Daily Ratings" : "Profile"}
+            {tab === "activity" ? "Activity" : "Daily Ratings"}
           </button>
         ))}
       </div>
@@ -1338,11 +1337,6 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
       {/* Daily Ratings Tab */}
       {activeTab === "ratings" && (
         <DailyRatingsPanel vaId={profile.id} isAdmin={isAdmin} timezone={timezone} />
-      )}
-
-      {/* Profile Tab */}
-      {activeTab === "profile" && (
-        <TeamProfilePanel userId={profile.id} isAdmin={isAdmin} />
       )}
 
       {/* Summary + Category Totals */}
