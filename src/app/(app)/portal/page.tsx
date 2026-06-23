@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, PaymentAccountDetails } from "@/types/database";
 import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
+import VAProfileTab from "@/components/VAProfileTab";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -1982,7 +1983,7 @@ export default function VaPortalPage() {
 
         {/* Tab content */}
         {activeTab === "profile" && profile && (
-          <ProfileTab profile={profile} onSaved={setProfile} />
+          <VAProfileTab profile={profile} onSaved={setProfile} />
         )}
         {activeTab === "onboarding" && (
           <VaBroadcastsPortalTab category="onboarding" />

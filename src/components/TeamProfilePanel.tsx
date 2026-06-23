@@ -514,7 +514,7 @@ function NotesSection({
     <div className="rounded-xl border border-sand bg-white p-4">
       <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide mb-3">Notes</h3>
       <div className="space-y-3">
-        {NOTE_GROUPS.map((group) => {
+        {NOTE_GROUPS.filter((g) => g.key !== "va_only").map((group) => {
           const groupNotes = notes.filter((n) => n.visibility === group.key);
           const isExpanded = expandedGroups.has(group.key);
           const canAdd = group.canAdd(isAdmin);
