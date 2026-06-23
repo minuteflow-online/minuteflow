@@ -21,6 +21,7 @@ type VATaskRow = {
   updated_at: string | null;
   is_collaborative?: boolean;
   collaborator_name?: string | null;
+  profiles?: { id: string; full_name: string; username: string } | null;
   assigned_tasks: {
     id: number;
     account: string | null;
@@ -384,6 +385,7 @@ export default function TaskListPage() {
               updated_at: assignee.updated_at,
               is_collaborative: false,
               collaborator_name: null,
+              profiles: assignee.profiles ?? null,
               assigned_tasks: {
                 id: task.id,
                 account: task.account,
@@ -2676,6 +2678,14 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+              {isSubmittedView && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Submitted By</label>
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.profiles?.full_name || selectedTask.profiles?.username || <span className="text-stone/60">—</span>}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
                 {panelCanEditFields ? (
