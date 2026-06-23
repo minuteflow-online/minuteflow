@@ -120,7 +120,7 @@ export default function VAProfileTab({
       <PaymentInfoSection profile={profile} onSaved={onSaved} />
       <LinksSection links={links} userId={userId} onRefresh={load} />
       <FilesSection files={files} userId={userId} onRefresh={load} />
-      <MilestonesSection milestones={milestones} />
+      <MilestonesSection milestones={milestones} userId={userId} onRefresh={load} />
       <VANotesSection
         notes={notes}
         userId={userId}
@@ -862,22 +862,137 @@ function FilesSection({
   );
 }
 
-// ── Milestones Section (read-only for VA) ─────────────────────────────────
+// ── Milestones Section (full CRUD for VA) ─────────────────────────────────
 
-function MilestonesSection({ milestones }: { milestones: ProfileMilestone[] }) {
+function MilestonesSection({
+  milestones,
+  userId,
+  onRefresh,
+}: {
+  milestones: ProfileMilestone[];
+  userId: string;
+  onRefresh: () => void;
+}) {
+  const supabase = createClient();
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ title: "", milestone_date: "", note: "" });
+
+  const resetForm = () => {
+    setForm({ title: "", milestone_date: "", note: "" });
+    setEditingId(null);
+    setShowForm(false);
+  };
+
+  const handleEdit = (m: ProfileMilestone) => {
+    setEditingId(m.id);
+    setForm({ title: m.title, milestone_date: m.milestone_date || "", note: m.note || "" });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this milestone?")) return;
+    await supabase.from("profile_milestones").delete().eq("id", id);
+    onRefresh();
+  };
+
+  const handleSave = async () => {
+    if (!form.title.trim()) return;
+    setSaving(true);
+    if (editingId) {
+      await supabase.from("profile_milestones").update({
+        title: form.title.trim(),
+        milestone_date: form.milestone_date || null,
+        note: form.note.trim() || null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", editingId);
+    } else {
+      await supabase.from("profile_milestones").insert({
+        user_id: userId,
+        title: form.title.trim(),
+        milestone_date: form.milestone_date || null,
+        note: form.note.trim() || null,
+      });
+    }
+    setSaving(false);
+    resetForm();
+    onRefresh();
+  };
+
   return (
     <div className="rounded-xl border border-sand bg-white p-4">
-      <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide mb-3">Milestones</h3>
-      {milestones.length === 0 ? (
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Milestones</h3>
+        {!showForm && (
+          <button
+            onClick={() => setShowForm(true)}
+            className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors"
+          >
+            + Add Milestone
+          </button>
+        )}
+      </div>
+
+      {showForm && (
+        <div className="mb-4 rounded-lg border border-sand bg-parchment/30 p-3 space-y-2">
+          <div>
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Title *</p>
+            <input
+              type="text"
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder="e.g. Completed onboarding"
+              className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Date</p>
+              <input
+                type="date"
+                value={form.milestone_date}
+                onChange={(e) => setForm((f) => ({ ...f, milestone_date: e.target.value }))}
+                className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+              />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Note (optional)</p>
+              <input
+                type="text"
+                value={form.note}
+                onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+                placeholder="Brief note"
+                className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleSave}
+              disabled={saving || !form.title.trim()}
+              className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+            >
+              {saving ? "Saving…" : editingId ? "Update" : "Add"}
+            </button>
+            <button onClick={resetForm} className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {milestones.length === 0 && !showForm ? (
         <p className="text-[13px] text-stone py-2">No milestones yet.</p>
-      ) : (
+      ) : milestones.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
               <tr className="border-b border-parchment">
                 <th className="text-left py-2 pr-3 text-[10px] font-semibold text-walnut uppercase tracking-wide">Title</th>
                 <th className="text-left py-2 pr-3 text-[10px] font-semibold text-walnut uppercase tracking-wide">Date</th>
-                <th className="text-left py-2 text-[10px] font-semibold text-walnut uppercase tracking-wide">Note</th>
+                <th className="text-left py-2 pr-3 text-[10px] font-semibold text-walnut uppercase tracking-wide">Note</th>
+                <th className="py-2 text-right text-[10px] font-semibold text-walnut uppercase tracking-wide">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -885,13 +1000,17 @@ function MilestonesSection({ milestones }: { milestones: ProfileMilestone[] }) {
                 <tr key={m.id} className="border-b border-parchment/50 last:border-0">
                   <td className="py-2 pr-3 font-semibold text-espresso">{m.title}</td>
                   <td className="py-2 pr-3 text-bark">{formatDate(m.milestone_date)}</td>
-                  <td className="py-2 text-stone">{m.note || "—"}</td>
+                  <td className="py-2 pr-3 text-stone">{m.note || "—"}</td>
+                  <td className="py-2 text-right">
+                    <button onClick={() => handleEdit(m)} className="text-[11px] text-walnut hover:text-sage cursor-pointer font-semibold mr-2">Edit</button>
+                    <button onClick={() => handleDelete(m.id)} className="text-[11px] text-walnut hover:text-terracotta cursor-pointer font-semibold">Delete</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
