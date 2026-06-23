@@ -178,6 +178,21 @@ export async function GET(request: Request) {
   const isAdminOrManager =
     profile?.role === "admin" || profile?.role === "manager";
 
+  // VA fetching subtasks for a specific project: return tasks in admin-compatible format
+  // so VAProjectsTab gets the same structure as admin's ProjectsManager.
+  // The default VA path queries assigned_task_assignees (a different structure) and
+  // ignores projectIdParam entirely — this special case bypasses that.
+  if (!isAdminOrManager && !selfOnly && projectIdParam) {
+    const { data, error } = await serviceRoleClient
+      .from("assigned_tasks")
+      .select(taskSelect)
+      .eq("project_id", projectIdParam)
+      .order("created_at", { ascending: false });
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    const result = await formatAdminTaskRows(data ?? []);
+    return Response.json({ tasks: result.filter((task) => matchesTaskView(task, viewParam)) });
+  }
+
   if (isAdminOrManager && !selfOnly) {
     let query = supabase
       .from("assigned_tasks")

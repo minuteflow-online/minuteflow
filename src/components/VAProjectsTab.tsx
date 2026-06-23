@@ -387,7 +387,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
         task_detail: addForm.task_detail.trim() || null,
         task_notes: addForm.task_notes.trim() || null,
         instructions: addForm.instructions.trim() || null,
-        status: addForm.status || "pending",
+        initial_status: addForm.status || "pending",
         assigned_by: addForm.assigned_by_id || null,
       };
       if (addForm.va_id) {
@@ -854,26 +854,13 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
                                     Task Name
                                   </label>
-                                  {getObjectiveTaskOptions(editSubForm.category).length > 0 ? (
-                                    <select
-                                      value={editSubForm.task_name}
-                                      onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_name: e.target.value }))}
-                                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                    >
-                                      <option value="">Select task...</option>
-                                      {getObjectiveTaskOptions(editSubForm.category).map((t) => (
-                                        <option key={t} value={t}>{t}</option>
-                                      ))}
-                                    </select>
-                                  ) : (
-                                    <select
-                                      value={editSubForm.task_name}
-                                      onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_name: e.target.value }))}
-                                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                    >
-                                      <option value={editSubForm.task_name}>{editSubForm.task_name || "No tasks for this objective yet"}</option>
-                                    </select>
-                                  )}
+                                  <input
+                                    type="text"
+                                    value={editSubForm.task_name}
+                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_name: e.target.value }))}
+                                    placeholder="Enter task name..."
+                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                  />
                                 </div>
                               </div>
 
@@ -1059,22 +1046,13 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                       Task Name
                     </label>
-                    <select
+                    <input
+                      type="text"
                       value={addForm.task_name}
                       onChange={(e) => setAddForm((prev) => ({ ...prev, task_name: e.target.value }))}
-                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
-                    >
-                      <option value="">
-                        {addForm.category
-                          ? getObjectiveTaskOptions(addForm.category).length > 0
-                            ? "Select task..."
-                            : "No tasks for this objective yet"
-                          : "Select an objective first..."}
-                      </option>
-                      {getObjectiveTaskOptions(addForm.category).map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
+                      placeholder="Enter task name..."
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                    />
                   </div>
 
                   <div>

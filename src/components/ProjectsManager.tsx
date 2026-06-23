@@ -380,7 +380,7 @@ export default function ProjectsManager({
         task_detail: addForm.task_detail.trim() || null,
         task_notes: addForm.task_notes.trim() || null,
         instructions: addForm.instructions.trim() || null,
-        status: addForm.status || "pending",
+        initial_status: addForm.status || "pending",
         assigned_by: addForm.assigned_by_id || null,
       };
       if (addForm.va_id) {
