@@ -2910,7 +2910,7 @@ export default function TaskListPage() {
               </div>
 
               <div>
-                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned To</label>
+                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
                 {selectedTask.is_collaborative ? (
                   <div className="space-y-3 rounded-xl border border-slate-blue/20 bg-slate-blue-soft px-3 py-3 text-sm text-slate-blue">
                     <StatusBadge status={selectedTask.status} />
