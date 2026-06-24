@@ -158,7 +158,7 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "tokens",
-    label: "Tokens",
+    label: "Tokens & Ratings",
     icon: (
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <circle cx="12" cy="12" r="10" />
