@@ -2678,14 +2678,6 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-              {isSubmittedView && (
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Submitted By</label>
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.profiles?.full_name || selectedTask.profiles?.username || <span className="text-stone/60">—</span>}
-                  </div>
-                </div>
-              )}
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
                 {panelCanEditFields ? (
@@ -2866,6 +2858,15 @@ export default function TaskListPage() {
                   </div>
                 )}
               </div>
+
+              {isSubmittedView && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Submitted By</label>
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.profiles?.full_name || selectedTask.profiles?.username || <span className="text-stone/60">—</span>}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <div className="mb-1 flex items-center justify-between gap-3">
