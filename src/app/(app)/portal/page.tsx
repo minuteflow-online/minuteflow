@@ -1180,6 +1180,7 @@ function TokensTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmin:
   const [tokens, setTokens] = useState<VaToken[]>([]);
   const [ratings, setRatings] = useState<VaDailyRating[]>([]);
   const [loading, setLoading] = useState(true);
+  const [innerTab, setInnerTab] = useState<"tokens" | "ratings">("tokens");
 
   useEffect(() => {
     Promise.all([
@@ -1207,88 +1208,130 @@ function TokensTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmin:
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
-          <p className="text-3xl font-bold text-terracotta">{totalTokens}</p>
-          <p className="text-[11px] font-semibold text-walnut mt-1 tracking-wide">TOTAL TOKENS</p>
-        </div>
-        <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
-          {avgRating ? (
-            <>
-              <p className="text-3xl font-bold text-terracotta">{avgRating}</p>
-              <div className="flex justify-center gap-0.5 mt-1">
-                {[1,2,3,4,5].map((s) => (
-                  <svg key={s} className={`h-3.5 w-3.5 ${s <= Math.round(parseFloat(avgRating)) ? "text-amber fill-current" : "text-sand"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                  </svg>
-                ))}
-              </div>
-              <p className="text-[11px] font-semibold text-walnut mt-1 tracking-wide">AVG RATING</p>
-            </>
-          ) : (
-            <>
-              <p className="text-2xl font-bold text-stone">—</p>
-              <p className="text-[11px] font-semibold text-walnut mt-1 tracking-wide">AVG RATING</p>
-            </>
-          )}
-        </div>
+    <div className="max-w-3xl space-y-5">
+      {/* Inner Tab Switcher */}
+      <div className="flex gap-1 p-1 rounded-xl bg-parchment w-fit">
+        <button
+          onClick={() => setInnerTab("tokens")}
+          className={`px-4 py-1.5 rounded-lg text-[13px] font-semibold transition-colors ${
+            innerTab === "tokens"
+              ? "bg-white text-espresso shadow-sm"
+              : "text-walnut hover:text-espresso"
+          }`}
+        >
+          Tokens
+        </button>
+        <button
+          onClick={() => setInnerTab("ratings")}
+          className={`px-4 py-1.5 rounded-lg text-[13px] font-semibold transition-colors ${
+            innerTab === "ratings"
+              ? "bg-white text-espresso shadow-sm"
+              : "text-walnut hover:text-espresso"
+          }`}
+        >
+          Ratings
+        </button>
       </div>
 
-      {/* Token History */}
-      {tokens.length > 0 && (
-        <section>
-          <h2 className="text-sm font-bold text-espresso mb-3">Token Awards</h2>
-          <div className="space-y-2">
-            {tokens.map((t) => (
-              <div key={t.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  {isAdmin && <p className="text-xs font-semibold text-espresso">{t.va_name}</p>}
-                  <p className="text-sm font-medium text-espresso truncate">{t.reason}</p>
-                  <p className="text-[11px] text-stone mt-0.5">{fmtDate(t.awarded_at)}</p>
-                </div>
-                <span className="shrink-0 rounded-full bg-terracotta px-3 py-1 text-sm font-bold text-white">+{t.amount}</span>
-              </div>
-            ))}
+      {/* ── Tokens Tab ── */}
+      {innerTab === "tokens" && (
+        <div className="space-y-5">
+          {/* Total Tokens summary card */}
+          <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center w-full max-w-xs">
+            <p className="text-3xl font-bold text-terracotta">{totalTokens}</p>
+            <p className="text-[11px] font-semibold text-walnut mt-1 tracking-wide">TOTAL TOKENS</p>
           </div>
-        </section>
+
+          {/* Itemized token awards */}
+          {tokens.length > 0 ? (
+            <section>
+              <h2 className="text-sm font-bold text-espresso mb-3">Token Awards</h2>
+              <div className="space-y-2">
+                {tokens.map((t) => (
+                  <div key={t.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      {isAdmin && <p className="text-xs font-semibold text-espresso">{t.va_name}</p>}
+                      <p className="text-sm font-medium text-espresso truncate">{t.reason}</p>
+                      <p className="text-[11px] text-stone mt-0.5">{fmtDate(t.awarded_at)}</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-terracotta px-3 py-1 text-sm font-bold text-white">+{t.amount}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="mb-3 h-12 w-12 rounded-full bg-parchment flex items-center justify-center">
+                <svg className="h-5 w-5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="12" cy="8" r="6" /><path d="M8.21 13.89L7 23l5-3 5 3-1.21-9.12" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-espresso">No tokens yet</p>
+              <p className="mt-1 text-xs text-stone">Token awards will appear here when granted.</p>
+            </div>
+          )}
+        </div>
       )}
 
-      {/* Ratings History */}
-      {ratings.length > 0 && (
-        <section>
-          <h2 className="text-sm font-bold text-espresso mb-3">Performance Ratings</h2>
-          <div className="space-y-2">
-            {ratings.map((r) => (
-              <div key={r.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  {isAdmin && <p className="text-xs font-semibold text-espresso">{r.va_name}</p>}
-                  <p className="text-sm font-medium text-espresso">{new Date(r.rating_date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</p>
-                  {r.notes && <p className="text-xs text-stone mt-0.5 truncate">{r.notes}</p>}
-                </div>
-                <div className="flex items-center gap-0.5 shrink-0">
+      {/* ── Ratings Tab ── */}
+      {innerTab === "ratings" && (
+        <div className="space-y-5">
+          {/* Avg Rating summary card */}
+          <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center w-full max-w-xs">
+            {avgRating ? (
+              <>
+                <p className="text-3xl font-bold text-terracotta">{avgRating}</p>
+                <div className="flex justify-center gap-0.5 mt-1">
                   {[1,2,3,4,5].map((s) => (
-                    <svg key={s} className={`h-4 w-4 ${s <= r.score ? "text-amber fill-current" : "text-sand"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                    <svg key={s} className={`h-3.5 w-3.5 ${s <= Math.round(parseFloat(avgRating)) ? "text-amber fill-current" : "text-sand"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
                       <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                     </svg>
                   ))}
                 </div>
-              </div>
-            ))}
+                <p className="text-[11px] font-semibold text-walnut mt-1 tracking-wide">AVG RATING</p>
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-bold text-stone">—</p>
+                <p className="text-[11px] font-semibold text-walnut mt-1 tracking-wide">AVG RATING</p>
+              </>
+            )}
           </div>
-        </section>
-      )}
 
-      {tokens.length === 0 && ratings.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="mb-3 h-12 w-12 rounded-full bg-parchment flex items-center justify-center">
-            <svg className="h-5 w-5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" />
-            </svg>
-          </div>
-          <p className="text-sm font-medium text-espresso">No tokens or ratings yet</p>
-          <p className="mt-1 text-xs text-stone">Awards and performance ratings will appear here.</p>
+          {/* Daily ratings list */}
+          {ratings.length > 0 ? (
+            <section>
+              <h2 className="text-sm font-bold text-espresso mb-3">Performance Ratings</h2>
+              <div className="space-y-2">
+                {ratings.map((r) => (
+                  <div key={r.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      {isAdmin && <p className="text-xs font-semibold text-espresso">{r.va_name}</p>}
+                      <p className="text-sm font-medium text-espresso">{new Date(r.rating_date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</p>
+                      {r.notes && <p className="text-xs text-stone mt-0.5 truncate">{r.notes}</p>}
+                    </div>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {[1,2,3,4,5].map((s) => (
+                        <svg key={s} className={`h-4 w-4 ${s <= r.score ? "text-amber fill-current" : "text-sand"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                        </svg>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="mb-3 h-12 w-12 rounded-full bg-parchment flex items-center justify-center">
+                <svg className="h-5 w-5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-espresso">No ratings yet</p>
+              <p className="mt-1 text-xs text-stone">Performance ratings will appear here.</p>
+            </div>
+          )}
         </div>
       )}
     </div>
