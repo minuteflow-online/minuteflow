@@ -524,7 +524,7 @@ export default function TaskAssignmentsAdminTab({
     setFetchError(null);
     try {
       const endpoint = taskView === "submitted"
-        ? "/api/assigned-tasks?asReviewer=true"
+        ? "/api/assigned-tasks?status=submitted"
         : `/api/assigned-tasks${taskView === "active" ? "" : `?view=${taskView}`}`;
       const res = await fetch(endpoint, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
