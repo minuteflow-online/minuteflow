@@ -1371,53 +1371,6 @@ function TokensTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmin:
         </button>
       </div>
 
-      {/* Token Awards list */}
-      <section>
-        <h2 className="text-xs font-bold text-espresso uppercase tracking-wide mb-3">Token Awards</h2>
-        {tokens.length > 0 ? (
-          <div className="space-y-2">
-            {tokens.map((t) => (
-              <div key={t.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  {isAdmin && <p className="text-xs font-semibold text-espresso">{t.va_name}</p>}
-                  <p className="text-sm font-medium text-espresso truncate">{t.reason}</p>
-                  <p className="text-[11px] text-stone mt-0.5">{fmtDate(t.awarded_at)}</p>
-                </div>
-                <span className="shrink-0 rounded-full bg-terracotta px-3 py-1 text-sm font-bold text-white">+{t.amount}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-stone">No token awards yet.</p>
-        )}
-      </section>
-
-      {/* Performance Ratings list */}
-      <section>
-        <h2 className="text-xs font-bold text-espresso uppercase tracking-wide mb-3">Performance Ratings</h2>
-        {ratings.length > 0 ? (
-          <div className="space-y-2">
-            {ratings.map((r) => (
-              <div key={r.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  {isAdmin && <p className="text-xs font-semibold text-espresso">{r.va_name}</p>}
-                  <p className="text-sm font-medium text-espresso">{new Date(r.rating_date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</p>
-                  {r.notes && <p className="text-xs text-stone mt-0.5 truncate">{r.notes}</p>}
-                </div>
-                <div className="flex items-center gap-0.5 shrink-0">
-                  {[1,2,3,4,5].map((s) => (
-                    <svg key={s} className={`h-4 w-4 ${s <= r.score ? "text-amber fill-current" : "text-sand"}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
-                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                    </svg>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-stone">No ratings yet.</p>
-        )}
-      </section>
     </div>
   );
 }
