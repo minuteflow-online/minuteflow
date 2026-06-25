@@ -27,6 +27,7 @@ type TeamMember = {
   currentTaskName: string | null;
   currentTaskMeta: string | null;
   status: "working" | "personal" | "on-break" | "away";
+  activeCategory: string | null;
   // Time allocation breakdown (ms)
   personalMs: number;
   sortingMs: number;
@@ -247,6 +248,7 @@ export default function TeamPage() {
         session?.updated_at &&
         Date.now() - new Date(session.updated_at).getTime() > STALE_THRESHOLD_MS;
 
+      let activeCategory: string | null = null;
       if (isSessionStale) {
         status = "away";
         currentTaskName = null;
@@ -259,6 +261,7 @@ export default function TeamPage() {
           currentTaskMeta = "";
         } else {
           status = task.category === "Personal" ? "personal" : "working";
+          activeCategory = task.category || null;
           currentTaskName = task.task_name || null;
           const parts = [task.account, task.client_name].filter(Boolean);
           currentTaskMeta = parts.join(" \u00b7 ") || null;
@@ -279,6 +282,7 @@ export default function TeamPage() {
         currentTaskName,
         currentTaskMeta,
         status,
+        activeCategory,
         personalMs,
         sortingMs,
         taskMs,
@@ -737,12 +741,12 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
   timezone?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { profile, status, currentTaskName, currentTaskMeta } = member;
+  const { profile, status, activeCategory, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
 
   const statusConfig = {
     working: {
-      label: "Working",
+      label: activeCategory || "Working",
       bgClass: "bg-sage-soft",
       textClass: "text-sage",
     },
@@ -1163,7 +1167,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   userMoods: Record<string, string>; // { "YYYY-MM-DD": mood }
   timezone: string;
 }) {
-  const { profile, status, currentTaskName, currentTaskMeta } = member;
+  const { profile, status, activeCategory, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"activity" | "ratings">("activity");
@@ -1178,7 +1182,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   }, []);
 
   const statusConfig = {
-    working: { label: "Working", bgClass: "bg-sage-soft", textClass: "text-sage" },
+    working: { label: activeCategory || "Working", bgClass: "bg-sage-soft", textClass: "text-sage" },
     personal: { label: "Personal", bgClass: "bg-clay-rose-soft", textClass: "text-clay-rose" },
     "on-break": { label: "On Break", bgClass: "bg-amber-soft", textClass: "text-amber" },
     away: { label: "Offline", bgClass: "bg-parchment", textClass: "text-stone" },

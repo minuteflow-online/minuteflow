@@ -675,6 +675,7 @@ export default function AdminPage() {
       );
 
       let status: "live" | "personal" | "break" | "off" = "off";
+      let activeCategory: string | null = null;
       let currentTask = "No activity today";
 
       if (session?.clocked_in && session.active_task) {
@@ -687,6 +688,7 @@ export default function AdminPage() {
           currentTask = parts.join(" -- ") || "Personal";
         } else {
           status = "live";
+          activeCategory = session.active_task.category || null;
           const parts = [session.active_task.task_name, session.active_task.account].filter(Boolean);
           currentTask = parts.join(" -- ") || "Working";
         }
@@ -709,6 +711,7 @@ export default function AdminPage() {
         profile,
         session,
         status,
+        activeCategory,
         currentTask,
         hasExtension: !!hasExtension,
         latestScreenshot,
@@ -1623,6 +1626,7 @@ function OverviewTab({
     profile: Profile;
     session: Session | null;
     status: "live" | "personal" | "break" | "off";
+    activeCategory: string | null;
     currentTask: string;
     hasExtension: boolean;
     latestScreenshot: TaskScreenshot | null;
@@ -6260,6 +6264,7 @@ function TeamMemberCard({
     profile: Profile;
     session: Session | null;
     status: "live" | "personal" | "break" | "off";
+    activeCategory: string | null;
     currentTask: string;
     hasExtension: boolean;
     latestScreenshot: TaskScreenshot | null;
@@ -6286,12 +6291,12 @@ function TeamMemberCard({
     prevScreenshotIdRef.current = newId;
   }, [member.latestScreenshot?.id]);
 
-  const { profile, status, currentTask, hasExtension, latestScreenshot, todayScreenshots, todayHoursMs, todayTasks, wizardTimeMs } = member;
+  const { profile, status, activeCategory, currentTask, hasExtension, latestScreenshot, todayScreenshots, todayHoursMs, todayTasks, wizardTimeMs } = member;
   const avatarColor = getAvatarColor(profile.id);
   const isOffline = status === "off";
 
   const statusConfig = {
-    live: { label: "Live", bg: "bg-sage-soft", text: "text-sage", dot: "bg-sage" },
+    live: { label: activeCategory || "Live", bg: "bg-sage-soft", text: "text-sage", dot: "bg-sage" },
     personal: { label: "Personal", bg: "bg-clay-rose-soft", text: "text-clay-rose", dot: "bg-clay-rose" },
     break: { label: "Break", bg: "bg-amber-soft", text: "text-amber", dot: "bg-amber" },
     off: { label: "Offline", bg: "bg-parchment", text: "text-stone", dot: "bg-stone" },
