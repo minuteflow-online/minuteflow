@@ -674,13 +674,17 @@ export default function AdminPage() {
         (s) => s.user_id === profile.id && formatDateLocalTZ(new Date(s.created_at), orgTimezone) === formatDateLocalTZ(new Date(), orgTimezone)
       );
 
-      let status: "live" | "break" | "off" = "off";
+      let status: "live" | "personal" | "break" | "off" = "off";
       let currentTask = "No activity today";
 
       if (session?.clocked_in && session.active_task) {
         if (session.active_task.isBreak) {
           status = "break";
           currentTask = "On Break";
+        } else if (session.active_task.category === "Personal") {
+          status = "personal";
+          const parts = [session.active_task.task_name, session.active_task.account].filter(Boolean);
+          currentTask = parts.join(" -- ") || "Personal";
         } else {
           status = "live";
           const parts = [session.active_task.task_name, session.active_task.account].filter(Boolean);
@@ -715,13 +719,13 @@ export default function AdminPage() {
         wizardTimeMs: userLogs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0),
       };
     }).sort((a, b) => {
-      const order = { live: 0, break: 1, off: 2 };
+      const order = { live: 0, personal: 1, break: 2, off: 3 };
       return order[a.status] - order[b.status];
     });
   }, [profiles, sessions, heartbeats, logs, allScreenshots]);
 
   const stats = useMemo(() => {
-    const activeCount = monitorMembers.filter((m) => m.status === "live").length;
+    const activeCount = monitorMembers.filter((m) => m.status === "live" || m.status === "personal").length;
     const todayHoursMs = logs
       .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
     const todayScreenshots = allScreenshots.filter(
@@ -1618,7 +1622,7 @@ function OverviewTab({
   monitorMembers: {
     profile: Profile;
     session: Session | null;
-    status: "live" | "break" | "off";
+    status: "live" | "personal" | "break" | "off";
     currentTask: string;
     hasExtension: boolean;
     latestScreenshot: TaskScreenshot | null;
@@ -6255,7 +6259,7 @@ function TeamMemberCard({
   member: {
     profile: Profile;
     session: Session | null;
-    status: "live" | "break" | "off";
+    status: "live" | "personal" | "break" | "off";
     currentTask: string;
     hasExtension: boolean;
     latestScreenshot: TaskScreenshot | null;
@@ -6288,6 +6292,7 @@ function TeamMemberCard({
 
   const statusConfig = {
     live: { label: "Live", bg: "bg-sage-soft", text: "text-sage", dot: "bg-sage" },
+    personal: { label: "Personal", bg: "bg-clay-rose-soft", text: "text-clay-rose", dot: "bg-clay-rose" },
     break: { label: "Break", bg: "bg-amber-soft", text: "text-amber", dot: "bg-amber" },
     off: { label: "Offline", bg: "bg-parchment", text: "text-stone", dot: "bg-stone" },
   }[status];

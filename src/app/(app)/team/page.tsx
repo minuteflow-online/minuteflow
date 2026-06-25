@@ -26,7 +26,7 @@ type TeamMember = {
   todayScreenshots: number;
   currentTaskName: string | null;
   currentTaskMeta: string | null;
-  status: "working" | "on-break" | "away";
+  status: "working" | "personal" | "on-break" | "away";
   // Time allocation breakdown (ms)
   personalMs: number;
   sortingMs: number;
@@ -258,7 +258,7 @@ export default function TeamPage() {
           currentTaskName = "On Break";
           currentTaskMeta = "";
         } else {
-          status = "working";
+          status = task.category === "Personal" ? "personal" : "working";
           currentTaskName = task.task_name || null;
           const parts = [task.account, task.client_name].filter(Boolean);
           currentTaskMeta = parts.join(" \u00b7 ") || null;
@@ -291,7 +291,7 @@ export default function TeamPage() {
       };
     });
 
-    const order = { working: 0, "on-break": 1, away: 2 };
+    const order = { working: 0, personal: 1, "on-break": 2, away: 3 };
     teamMembers.sort((a, b) => order[a.status] - order[b.status]);
 
     setMembers(teamMembers);
@@ -397,7 +397,7 @@ export default function TeamPage() {
     setSelectedMembers(new Set());
   }, []);
 
-  const activeCount = members.filter((m) => m.status === "working").length;
+  const activeCount = members.filter((m) => m.status === "working" || m.status === "personal").length;
   const totalTasks = members.reduce((sum, m) => sum + m.todayTaskCount, 0);
   const totalHoursMs = members.reduce((sum, m) => sum + m.todayHoursMs, 0);
   const onBreakCount = members.filter(
@@ -428,9 +428,11 @@ export default function TeamPage() {
 
   const hasSelection = selectedMembers.size > 0;
 
-  // Apply status filter
+  // Apply status filter (personal counts as working for filter purposes)
   const filteredMembers = statusFilter === "all"
     ? members
+    : statusFilter === "working"
+    ? members.filter((m) => m.status === "working" || m.status === "personal")
     : members.filter((m) => m.status === statusFilter);
 
   // Split members into selected (expanded) and unselected (compact)
@@ -444,7 +446,7 @@ export default function TeamPage() {
   // Status counts for filter badges
   const statusCounts = {
     all: members.length,
-    working: members.filter((m) => m.status === "working").length,
+    working: members.filter((m) => m.status === "working" || m.status === "personal").length,
     "on-break": members.filter((m) => m.status === "on-break").length,
     away: members.filter((m) => m.status === "away").length,
   };
@@ -743,6 +745,11 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
       label: "Working",
       bgClass: "bg-sage-soft",
       textClass: "text-sage",
+    },
+    personal: {
+      label: "Personal",
+      bgClass: "bg-clay-rose-soft",
+      textClass: "text-clay-rose",
     },
     "on-break": {
       label: "On Break",
@@ -1172,6 +1179,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
 
   const statusConfig = {
     working: { label: "Working", bgClass: "bg-sage-soft", textClass: "text-sage" },
+    personal: { label: "Personal", bgClass: "bg-clay-rose-soft", textClass: "text-clay-rose" },
     "on-break": { label: "On Break", bgClass: "bg-amber-soft", textClass: "text-amber" },
     away: { label: "Offline", bgClass: "bg-parchment", textClass: "text-stone" },
   }[status];

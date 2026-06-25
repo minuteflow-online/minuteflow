@@ -40,16 +40,19 @@ function getAvatarColor(index: number): string {
 
 function getMemberStatus(
   session: Session | null
-): "working" | "resting" | "away" {
+): "working" | "personal" | "resting" | "away" {
   if (!session || !session.clocked_in) return "away";
   if (session.active_task?.isBreak) return "resting";
+  if (session.active_task?.category === "Personal") return "personal";
   return "working";
 }
 
-function getStatusLabel(status: "working" | "resting" | "away"): string {
+function getStatusLabel(status: "working" | "personal" | "resting" | "away"): string {
   switch (status) {
     case "working":
       return "Working";
+    case "personal":
+      return "Personal";
     case "resting":
       return "On Break";
     default:
@@ -57,10 +60,12 @@ function getStatusLabel(status: "working" | "resting" | "away"): string {
   }
 }
 
-function getStatusBadgeClass(status: "working" | "resting" | "away"): string {
+function getStatusBadgeClass(status: "working" | "personal" | "resting" | "away"): string {
   switch (status) {
     case "working":
       return "bg-sage-soft text-sage";
+    case "personal":
+      return "bg-clay-rose-soft text-clay-rose";
     case "resting":
       return "bg-amber-soft text-amber";
     default:
