@@ -1390,6 +1390,7 @@ interface PaystubRecord {
   total_hours_ms: number | null;
   pay_rate: number | null;
   confirmation_number: string | null;
+  by_date: Record<string, number> | null;
 }
 
 interface PerTaskEarning {
@@ -1416,6 +1417,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
   const [paystubs, setPaystubs] = useState<PaystubRecord[]>([]);
   const [perTaskEarnings, setPerTaskEarnings] = useState<PerTaskEarning[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -1423,7 +1425,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
         const [paystubRes, perTaskRes] = await Promise.all([
           supabase
             .from("paystub_snapshots")
-            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link, period_start, period_end, total_hours_ms, pay_rate, confirmation_number")
+            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link, period_start, period_end, total_hours_ms, pay_rate, confirmation_number, by_date")
             .eq("user_id", currentUserId)
             .order("sent_at", { ascending: false }),
           supabase
@@ -1548,10 +1550,18 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                 p.total_hours_ms != null
                   ? `${(p.total_hours_ms / 3600000).toFixed(2)}h`
                   : "—";
+              const isExpanded = expandedId === p.id;
+              const byDateEntries = p.by_date
+                ? Object.entries(p.by_date).sort(([a], [b]) => a.localeCompare(b))
+                : [];
               return (
                 <div key={p.id} className="rounded-xl border border-sand bg-white shadow-sm overflow-hidden">
-                  {/* Header */}
-                  <div className="flex items-center justify-between gap-4 px-4 py-3">
+                  {/* Header — click to expand/collapse */}
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(isExpanded ? null : p.id)}
+                    className="w-full flex items-center justify-between gap-4 px-4 py-3 text-left hover:bg-cream transition-colors"
+                  >
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-espresso truncate">{p.pay_period_label}</p>
                       <div className="flex items-center gap-3 mt-0.5">
@@ -1565,10 +1575,18 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                         )}
                       </div>
                     </div>
-                    <span className="text-sm font-bold text-terracotta shrink-0">
-                      {fmtCurrency(p.amount_paid)}
-                    </span>
-                  </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-sm font-bold text-terracotta">
+                        {fmtCurrency(p.amount_paid)}
+                      </span>
+                      <svg
+                        className={`h-4 w-4 text-bark transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </div>
+                  </button>
 
                   {/* Details grid */}
                   <div className="border-t border-sand px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-2">
@@ -1605,38 +1623,63 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                     </div>
                   </div>
 
-                  {/* Footer: Download / View buttons */}
-                  {p.paystub_link && (
-                    <div className="border-t border-sand px-4 py-3 flex items-center gap-3">
-                      <a
-                        href={p.paystub_link}
-                        download
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-sage px-3 py-1.5 text-xs font-semibold text-white hover:bg-sage/90 transition-colors"
-                      >
-                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                          <polyline points="7 10 12 15 17 10" />
-                          <line x1="12" y1="15" x2="12" y2="3" />
-                        </svg>
-                        Download PDF
-                      </a>
-                      <a
-                        href={p.paystub_link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-parchment border border-sand px-3 py-1.5 text-xs font-semibold text-walnut hover:bg-sand transition-colors"
-                      >
-                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                          <polyline points="15 3 21 3 21 9" />
-                          <line x1="10" y1="14" x2="21" y2="3" />
-                        </svg>
-                        View
-                      </a>
+                  {/* Daily breakdown — visible when expanded */}
+                  {isExpanded && (
+                    <div className="border-t border-sand px-4 py-3">
+                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide mb-2">Daily Breakdown</p>
+                      {byDateEntries.length === 0 ? (
+                        <p className="text-xs text-stone italic">No daily data available.</p>
+                      ) : (
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-sand">
+                              <th className="text-left text-[10px] font-semibold text-walnut uppercase tracking-wide py-1.5 pr-4">Date</th>
+                              <th className="text-right text-[10px] font-semibold text-walnut uppercase tracking-wide py-1.5 pr-4">Hours</th>
+                              <th className="text-right text-[10px] font-semibold text-walnut uppercase tracking-wide py-1.5">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {byDateEntries.map(([date, ms]) => {
+                              const hrs = ms / 3_600_000;
+                              const amt = p.pay_rate != null ? hrs * p.pay_rate : null;
+                              return (
+                                <tr key={date} className="border-b border-sand/50 last:border-0">
+                                  <td className="py-1.5 pr-4 text-espresso">
+                                    {new Date(date + "T12:00:00Z").toLocaleDateString("en-US", {
+                                      weekday: "short", month: "short", day: "numeric", timeZone: "UTC",
+                                    })}
+                                  </td>
+                                  <td className="py-1.5 pr-4 text-right text-stone">{hrs.toFixed(2)}h</td>
+                                  <td className="py-1.5 text-right text-espresso font-medium">
+                                    {amt != null
+                                      ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amt)
+                                      : "—"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
                     </div>
                   )}
+
+                  {/* Footer: Download PDF (always visible) */}
+                  <div className="border-t border-sand px-4 py-3 flex items-center gap-3">
+                    <a
+                      href={`/api/paystub/print?id=${p.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-sage px-3 py-1.5 text-xs font-semibold text-white hover:bg-sage/90 transition-colors"
+                    >
+                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                      Download PDF
+                    </a>
+                  </div>
                 </div>
               );
             })}

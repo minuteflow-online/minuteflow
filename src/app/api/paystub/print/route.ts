@@ -28,16 +28,6 @@ export async function GET(request: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  // Admin only
-  const { data: callerProfile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  if (!callerProfile || callerProfile.role !== "admin") {
-    return new Response("Forbidden", { status: 403 });
-  }
-
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
 
@@ -57,6 +47,16 @@ export async function GET(request: Request) {
 
   if (error || !snap) {
     return new Response("Paystub not found", { status: 404 });
+  }
+
+  // Scope check: admins see all; VAs may only print their own paystubs
+  const { data: callerProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if (!callerProfile || (callerProfile.role !== "admin" && snap.user_id !== user.id)) {
+    return new Response("Forbidden", { status: 403 });
   }
 
   const byDate = (snap.by_date ?? {}) as Record<string, number>;
