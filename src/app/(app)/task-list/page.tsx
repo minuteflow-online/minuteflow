@@ -2241,6 +2241,9 @@ export default function TaskListPage() {
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Objective</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Client Detail</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</th>
+                        {activeView === "submitted" && (
+                          <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Submitted By</th>
+                        )}
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Due Date</th>
                         {(taskView === "archived" || taskView === "trash") && (
                           <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Actions</th>
@@ -2351,6 +2354,12 @@ export default function TaskListPage() {
                               disabled={taskView !== "active"}
                               display={<StatusBadge status={task.status} />}
                             />
+
+                            {activeView === "submitted" && (
+                              <td className="px-3 py-3 text-[13px] text-walnut">
+                                {task.profiles?.full_name ?? <span className="text-stone/30">—</span>}
+                              </td>
+                            )}
 
                             <InlineCell
                               task={task}
