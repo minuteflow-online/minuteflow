@@ -19,7 +19,7 @@ export async function GET() {
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   const filteredMembers = (members || []).filter(
-    (member) => member.role === "admin" || member.position === "Full-time VA" || member.position === "Part-time VA"
+    (member) => member.role === "admin" || member.role === "va"
   );
 
   return Response.json({ members: filteredMembers });
