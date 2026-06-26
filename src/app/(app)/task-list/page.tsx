@@ -72,6 +72,7 @@ type ProfileOption = {
   full_name: string;
   username: string;
   role?: string;
+  position?: string;
 };
 
 type InlineEditField = "task_name" | "account" | "project" | "status" | "due_date";
@@ -629,6 +630,7 @@ export default function TaskListPage() {
           full_name: member.full_name ?? "",
           username: member.username ?? "",
           role: member.role,
+          position: member.position,
         }));
         if (!cancelled) { setAssignedByProfiles(members); setAssignedByProfilesLoaded(true); }
       } catch {
@@ -1952,7 +1954,7 @@ export default function TaskListPage() {
                   >
                     <option value="">My View</option>
                     {assignedByProfiles
-                      .filter((p) => p.id !== currentUserId && p.role === "va")
+                      .filter((p) => p.id !== currentUserId && p.role === "va" && (p.position === "Full-time VA" || p.position === "Part-time VA"))
                       .map((p) => (
                         <option key={p.id} value={p.id}>{p.full_name}</option>
                       ))}
