@@ -274,10 +274,11 @@ export default function TaskListPage() {
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
   const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
   const [filterObjectives, setFilterObjectives] = useState<string[]>([]);
+  const [filterSubmittedBy, setFilterSubmittedBy] = useState<string[]>([]);
   const [filterDueStart, setFilterDueStart] = useState("");
   const [filterDueEnd, setFilterDueEnd] = useState("");
   const [taskNameSearch, setTaskNameSearch] = useState("");
-  const [openFilter, setOpenFilter] = useState<"taskname" | "objective" | "duedate" | "status" | "account" | null>(null);
+  const [openFilter, setOpenFilter] = useState<"taskname" | "objective" | "duedate" | "status" | "account" | "submittedby" | null>(null);
 
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
@@ -902,6 +903,17 @@ export default function TaskListPage() {
     () => Array.from(new Set(tasks.map((task) => task.assigned_tasks.account ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [tasks]
   );
+  const submittedByFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          tasks
+            .map((task) => task.profiles?.full_name || task.profiles?.username || "")
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
 
   const filteredTasks = useMemo(() => {
     const start = filterDueStart ? parseDueDateSafe(filterDueStart) : null;
@@ -917,12 +929,16 @@ export default function TaskListPage() {
       if (filterAccounts.length > 0 && !filterAccounts.includes(detail.account ?? "")) return false;
       if (filterTaskNames.length > 0 && !filterTaskNames.includes(detail.task_name)) return false;
       if (filterObjectives.length > 0 && !filterObjectives.includes(detail.project ?? "")) return false;
+      if (filterSubmittedBy.length > 0) {
+        const vaName = task.profiles?.full_name || task.profiles?.username || "";
+        if (!filterSubmittedBy.includes(vaName)) return false;
+      }
       if (taskNameSearchLower && !detail.task_name.toLowerCase().includes(taskNameSearchLower)) return false;
       if (start && (!dueTime || dueTime < start.getTime())) return false;
       if (end && (!dueTime || dueTime > end.getTime())) return false;
       return true;
     });
-  }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterTaskNames, taskNameSearch, tasks]);
+  }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const allFilteredTasksSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
@@ -2001,8 +2017,18 @@ export default function TaskListPage() {
                   isOpen={openFilter === "account"}
                   onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
                 />
+                {isSubmittedView && submittedByFilterOptions.length > 0 && (
+                  <FilterDropdown
+                    label="Submitted By"
+                    options={submittedByFilterOptions.map((name) => ({ value: name, label: name }))}
+                    selected={filterSubmittedBy}
+                    onChange={setFilterSubmittedBy}
+                    isOpen={openFilter === "submittedby"}
+                    onToggle={() => setOpenFilter(openFilter === "submittedby" ? null : "submittedby")}
+                  />
+                )}
 
-                {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
+                {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2010,6 +2036,7 @@ export default function TaskListPage() {
                       setFilterAccounts([]);
                       setFilterTaskNames([]);
                       setFilterObjectives([]);
+                      setFilterSubmittedBy([]);
                       setFilterDueStart("");
                       setFilterDueEnd("");
                       setTaskNameSearch("");
