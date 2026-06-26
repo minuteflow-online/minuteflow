@@ -299,6 +299,8 @@ export default function TaskListPage() {
   const [hourlyExpandedIds, setHourlyExpandedIds] = useState<number[]>([]);
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(false);
+  const [selectedVaId, setSelectedVaId] = useState<string | null>(null);
+  const [selectedVaName, setSelectedVaName] = useState<string | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
   const [inlineSaving, setInlineSaving] = useState(false);
 
@@ -364,6 +366,8 @@ export default function TaskListPage() {
         const endpoint =
           mode === "submitted"
             ? "/api/assigned-tasks?asReviewer=true"
+            : selectedVaId
+            ? `/api/assigned-tasks?viewAsVa=${selectedVaId}&view=${taskView}`
             : `/api/assigned-tasks?selfOnly=true&view=${taskView}`;
         const res = await fetch(endpoint, { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -427,7 +431,7 @@ export default function TaskListPage() {
         setLoading(false);
       }
     },
-    [activeView, taskView]
+    [activeView, taskView, selectedVaId]
   );
 
   const fetchHourlyPool = useCallback(async () => {
@@ -645,6 +649,13 @@ export default function TaskListPage() {
     setTaskNameSearch("");
     setOpenFilter(null);
   }, [taskView]);
+
+  useEffect(() => {
+    if (activeView !== "my_tasks") {
+      setSelectedVaId(null);
+      setSelectedVaName(null);
+    }
+  }, [activeView]);
 
   useEffect(() => {
     const activeTask = tasks.find((task) => task.status === "in_progress" && typeof task.log_id === "number");
@@ -1923,6 +1934,32 @@ export default function TaskListPage() {
                   </button>
                 )}
               </div>
+
+              {isAdmin && assignedByProfilesLoaded && activeView === "my_tasks" && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-stone whitespace-nowrap">View as VA:</span>
+                  <select
+                    value={selectedVaId ?? ""}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      const profile = assignedByProfiles.find((p) => p.id === id);
+                      setSelectedVaId(id || null);
+                      setSelectedVaName(profile?.full_name ?? null);
+                    }}
+                    className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                  >
+                    <option value="">My View</option>
+                    {assignedByProfiles
+                      .filter((p) => p.id !== currentUserId)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>{p.full_name}</option>
+                      ))}
+                  </select>
+                  {selectedVaName && (
+                    <span className="text-[11px] font-semibold text-walnut">Viewing: {selectedVaName}</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

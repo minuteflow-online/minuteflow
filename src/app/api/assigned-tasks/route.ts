@@ -85,6 +85,7 @@ export async function GET(request: Request) {
   const unassignedOnly = searchParams.get("unassigned") === "true";
   const asReviewer = searchParams.get("asReviewer") === "true";
   const projectIdParam = searchParams.get("projectId");
+  const viewAsVaParam = searchParams.get("viewAsVa");
 
   const assigneeSelect =
     "id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked";
@@ -193,6 +194,64 @@ export async function GET(request: Request) {
     return Response.json({ tasks: result.filter((task) => matchesTaskView(task, viewParam)) });
   }
 
+  // Used by both viewAsVa (admin impersonation) and the VA self-query below.
+  const vaSelectString = `id, va_id, status, log_id, notes, assigned_at, updated_at,
+     assigned_tasks(id, account, project, project_id, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name))`;
+
+  if (isAdminOrManager && viewAsVaParam) {
+    // Admin viewing a specific VA's task list — bypass RLS with serviceRoleClient
+    // so we see exactly what that VA sees (no collaborative tasks included).
+    let assigneeQuery = serviceRoleClient
+      .from("assigned_task_assignees")
+      .select(vaSelectString)
+      .eq("va_id", viewAsVaParam)
+      .order("assigned_at", { ascending: false });
+
+    if (statusParam) {
+      assigneeQuery = assigneeQuery.eq("status", statusParam);
+    }
+
+    const { data: vaAssigneeData, error: vaAssigneeError } = await assigneeQuery;
+    if (vaAssigneeError) {
+      return Response.json({ error: vaAssigneeError.message }, { status: 500 });
+    }
+
+    const vaAssignedByIds = [
+      ...new Set(
+        (vaAssigneeData ?? [])
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((row) => ((row as any).assigned_tasks?.assigned_by as string | null | undefined))
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
+
+    let vaAssignorMap: Record<string, { id: string; full_name: string; username: string }> = {};
+    if (vaAssignedByIds.length > 0) {
+      const { data: vaAssignors } = await serviceRoleClient
+        .from("profiles")
+        .select("id, full_name, username")
+        .in("id", vaAssignedByIds);
+      vaAssignorMap = Object.fromEntries((vaAssignors ?? []).map((p) => [p.id, p]));
+    }
+
+    const vaRows = (vaAssigneeData ?? []).map((row) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const task = (row as any).assigned_tasks;
+      if (task) task.assigned_by_profile = vaAssignorMap[task.assigned_by] ?? null;
+      return { ...row, is_collaborative: false, collaborator_name: null };
+    });
+
+    const vaFiltered = vaRows.filter((row) =>
+      matchesTaskView(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ((row as any).assigned_tasks as { archived_at?: string | null; deleted_at?: string | null }),
+        viewParam
+      )
+    );
+
+    return Response.json({ tasks: vaFiltered });
+  }
+
   if (isAdminOrManager && !selfOnly) {
     let query = supabase
       .from("assigned_tasks")
@@ -240,9 +299,6 @@ export async function GET(request: Request) {
   // Note: we do NOT use the PostgREST join `assigned_by_profile:profiles(...)` here
   // because the nested join silently returns null under the regular auth client (RLS context).
   // Instead we do a manual profiles lookup for all assignor IDs after both queries.
-  const vaSelectString = `id, va_id, status, log_id, notes, assigned_at, updated_at,
-     assigned_tasks(id, account, project, project_id, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name))`;
-
   let assigneeQuery = supabase
     .from("assigned_task_assignees")
     .select(vaSelectString)
