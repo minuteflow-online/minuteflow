@@ -3005,6 +3005,7 @@ export default function DashboardPage() {
               hasActiveTask={!!activeTask || sessionState === "clocked-in" || sessionState === "on-break"}
               role={role}
               sessionState={sessionState}
+              activeTaskClientMemo={activeTask?.client_memo || ""}
             />
             {/* Assigned Tasks Widget — visible for all users */}
             {userId && (

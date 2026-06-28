@@ -78,11 +78,12 @@ interface TaskEntryFormProps {
   role?: string;
   sessionState?: "idle" | "clocked-in" | "on-break";
   previewMode?: boolean;
+  activeTaskClientMemo?: string;
 }
 
 type WizardStep = "form" | "close-old" | "log-fixed";
 
-export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle", previewMode = false }: TaskEntryFormProps) {
+export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle", previewMode = false, activeTaskClientMemo = "" }: TaskEntryFormProps) {
   const isAdmin = role === "admin" || role === "manager";
 
   // ─── Form Fields ───
@@ -268,6 +269,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
       // Fixed tasks always show the wizard to collect status + memos for the NEW task
       setWizardStep("log-fixed");
     } else if (hasActiveTask) {
+      setClientMemoText(activeTaskClientMemo || "");
+      setShowClientMemo(!!activeTaskClientMemo);
       setWizardStep("close-old");
     } else {
       submitTask("", "", "");
