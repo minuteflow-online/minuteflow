@@ -6,7 +6,7 @@ export interface UseScreenCaptureReturn {
   /** Whether the screen-sharing stream is currently active */
   isActive: boolean;
   /** Prompt the user to share their screen. */
-  requestStream: () => Promise<'granted' | 'denied' | 'wrong-surface'>;
+  requestStream: () => Promise<'granted' | 'denied'>;
   /** Grab a single frame from the active stream. Returns a PNG Blob, or null if no stream. */
   captureFrame: () => Promise<Blob | null>;
   /** Stop the stream and clean up. */
@@ -32,7 +32,7 @@ export function useScreenCapture(): UseScreenCaptureReturn {
     };
   }, []);
 
-  const requestStream = useCallback(async (): Promise<'granted' | 'denied' | 'wrong-surface'> => {
+  const requestStream = useCallback(async (): Promise<'granted' | 'denied'> => {
     // Already have a live stream
     if (streamRef.current && streamRef.current.getVideoTracks().some((t) => t.readyState === "live")) {
       setIsActive(true);
@@ -50,14 +50,7 @@ export function useScreenCapture(): UseScreenCaptureReturn {
         audio: false,
       });
 
-      // Verify the user actually shared the entire screen (not a window or tab)
       const videoTrack = stream.getVideoTracks()[0];
-      const settings = videoTrack?.getSettings() as MediaTrackSettings & { displaySurface?: string };
-      if (settings?.displaySurface && settings.displaySurface !== 'monitor') {
-        // Wrong surface — stop immediately and reject
-        stream.getTracks().forEach((t) => t.stop());
-        return 'wrong-surface';
-      }
 
       streamRef.current = stream;
       setIsActive(true);

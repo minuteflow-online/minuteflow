@@ -169,7 +169,6 @@ export default function DashboardPage() {
   const consecutiveCaptureFailuresRef = useRef(0);
   const [showScreenShareAlert, setShowScreenShareAlert] = useState(false);
   const [showScreenShareDisclaimer, setShowScreenShareDisclaimer] = useState(false);
-  const [showWrongSurfaceError, setShowWrongSurfaceError] = useState(false);
   const disclaimerShownRef = useRef(false);
   const pendingCaptureLogIdRef = useRef<number | null>(null);
   const streamPromptOnLoadRef = useRef(false);
@@ -2191,9 +2190,6 @@ export default function DashboardPage() {
           const result = await requestStream();
           if (result === 'granted') {
             scheduleCaptureSequence(newLogId);
-          } else if (result === 'wrong-surface') {
-            notifyVA("⚠️ Wrong screen selected", "Please re-open MinuteFlow and select Entire Screen when sharing.");
-            setShowWrongSurfaceError(true);
           }
         }
       }
@@ -2818,9 +2814,6 @@ export default function DashboardPage() {
                 if (result === 'granted' && activeLogIdRef.current) {
                   // Restart capture schedule with the restored log ID
                   scheduleCaptureSequence(activeLogIdRef.current);
-                } else if (result === 'wrong-surface') {
-                  notifyVA("⚠️ Wrong screen selected", "Please re-open MinuteFlow and select Entire Screen when sharing.");
-                  setShowWrongSurfaceError(true);
                 }
               }}
               className="w-full bg-terracotta text-white rounded-lg py-2.5 text-sm font-medium hover:bg-terracotta/90 transition-colors"
@@ -2861,50 +2854,11 @@ export default function DashboardPage() {
                 if (result === 'granted') {
                   const logId = pendingCaptureLogIdRef.current;
                   if (logId) scheduleCaptureSequence(logId);
-                } else if (result === 'wrong-surface') {
-                  notifyVA("⚠️ Wrong screen selected", "Please re-open MinuteFlow and select Entire Screen when sharing.");
-                  setShowWrongSurfaceError(true);
                 }
               }}
               className="w-full bg-terracotta text-white rounded-lg py-2.5 text-sm font-medium hover:bg-terracotta/90 transition-colors"
             >
               Got It — Share My Screen
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Wrong Surface Error — shown when user picks a window/tab instead of entire screen */}
-      {showWrongSurfaceError && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4 text-center">
-            <div className="text-3xl mb-3">🖥️</div>
-            <h2 className="font-serif text-lg font-bold text-espresso mb-2">Please Share Your Entire Screen</h2>
-            <p className="text-sm text-bark mb-4">
-              It looks like you shared a window or browser tab instead of your entire screen.
-              Please try again and select <strong>&quot;Entire Screen&quot;</strong> (or your monitor) from the share picker.
-            </p>
-            <button
-              onClick={async () => {
-                setShowWrongSurfaceError(false);
-                const result = await requestStream();
-                if (result === 'granted') {
-                  const logId = pendingCaptureLogIdRef.current ?? activeLogIdRef.current;
-                  if (logId) scheduleCaptureSequence(logId);
-                } else if (result === 'wrong-surface') {
-                  notifyVA("⚠️ Wrong screen selected", "Please re-open MinuteFlow and select Entire Screen when sharing.");
-                  setShowWrongSurfaceError(true);
-                }
-              }}
-              className="w-full bg-terracotta text-white rounded-lg py-2.5 text-sm font-medium hover:bg-terracotta/90 transition-colors"
-            >
-              Try Again
-            </button>
-            <button
-              onClick={() => setShowWrongSurfaceError(false)}
-              className="w-full mt-2 text-xs text-stone hover:text-bark transition-colors py-1"
-            >
-              Dismiss
             </button>
           </div>
         </div>
@@ -2941,9 +2895,6 @@ export default function DashboardPage() {
                       body: JSON.stringify({ id: captureAlertIdRef.current, action: "reshared" }),
                     }).catch(console.error);
                   }
-                } else if (result === "wrong-surface") {
-                  notifyVA("⚠️ Wrong screen selected", "Please select Entire Screen when sharing.");
-                  setShowWrongSurfaceError(true);
                 }
               }}
               className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-amber-600 transition-colors hover:bg-amber-50"
@@ -2996,6 +2947,12 @@ export default function DashboardPage() {
         onClockOut={clockOut}
         onStartBreak={startBreak}
         onEndBreak={endBreak}
+        onReshare={async () => {
+          const result = await requestStream();
+          if (result === 'granted' && activeLogIdRef.current) {
+            scheduleCaptureSequence(activeLogIdRef.current);
+          }
+        }}
       />
 
       {/* Active Task Bar */}

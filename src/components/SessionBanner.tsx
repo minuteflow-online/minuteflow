@@ -16,6 +16,7 @@ interface SessionBannerProps {
   onClockOut: () => void;
   onStartBreak: () => void;
   onEndBreak: () => void;
+  onReshare?: () => void;
 }
 
 function formatTimer(totalSeconds: number): string {
@@ -48,6 +49,7 @@ export default function SessionBanner({
   onClockOut,
   onStartBreak,
   onEndBreak,
+  onReshare,
 }: SessionBannerProps) {
   const bannerClass = useCallback(() => {
     switch (state) {
@@ -132,6 +134,20 @@ export default function SessionBanner({
         )}
         {state === "clocked-in" && (
           <>
+            {onReshare && (
+              <button
+                onClick={onReshare}
+                disabled={actionPending}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <path d="M8 21h8" />
+                  <path d="M12 17v4" />
+                </svg>
+                Reshare Screen
+              </button>
+            )}
             <button
               onClick={onStartBreak}
               disabled={actionPending}
@@ -149,13 +165,29 @@ export default function SessionBanner({
           </>
         )}
         {state === "on-break" && (
-          <button
-            onClick={onEndBreak}
-            disabled={actionPending}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(194,105,79,0.25)] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
-          >
-            End Break
-          </button>
+          <>
+            {onReshare && (
+              <button
+                onClick={onReshare}
+                disabled={actionPending}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <path d="M8 21h8" />
+                  <path d="M12 17v4" />
+                </svg>
+                Reshare Screen
+              </button>
+            )}
+            <button
+              onClick={onEndBreak}
+              disabled={actionPending}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-terracotta text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#a85840] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(194,105,79,0.25)] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
+            >
+              End Break
+            </button>
+          </>
         )}
       </div>
     </div>
