@@ -540,17 +540,18 @@ export default function TaskListPage() {
     }
   }, []);
 
-  const fetchPanelScreenshots = useCallback(async (taskId: number) => {
+  const fetchPanelScreenshots = useCallback(async (taskId: number, taskName: string) => {
     setPanelScreenshotsLoading(true);
     setPanelScreenshots([]);
     setPanelSignedUrls({});
     try {
       const { data: assigneeRows } = await supabase
         .from("assigned_task_assignees")
-        .select("log_id")
+        .select("log_id, va_id")
         .eq("assigned_task_id", taskId);
 
-      const logIds = Array.from(
+      // Collect log_ids that are already linked (new tasks post-fix)
+      const linkedLogIds = Array.from(
         new Set(
           (assigneeRows ?? [])
             .map((row) => row.log_id)
@@ -558,12 +559,33 @@ export default function TaskListPage() {
         )
       );
 
-      if (logIds.length === 0) return;
+      // Fallback for older tasks: find log_ids by matching user_id + task_name in time_logs
+      const vaIds = Array.from(
+        new Set(
+          (assigneeRows ?? [])
+            .map((row) => row.va_id)
+            .filter((id): id is string => typeof id === "string")
+        )
+      );
+
+      let fallbackLogIds: number[] = [];
+      if (vaIds.length > 0 && taskName) {
+        const { data: timeLogs } = await supabase
+          .from("time_logs")
+          .select("id")
+          .in("user_id", vaIds)
+          .eq("task_name", taskName);
+        fallbackLogIds = (timeLogs ?? []).map((row) => row.id as number);
+      }
+
+      const allLogIds = Array.from(new Set([...linkedLogIds, ...fallbackLogIds]));
+
+      if (allLogIds.length === 0) return;
 
       const { data: screenshotRows } = await supabase
         .from("task_screenshots")
         .select("*")
-        .in("log_id", logIds);
+        .in("log_id", allLogIds);
 
       const screenshots = (screenshotRows ?? []) as TaskScreenshot[];
       setPanelScreenshots(screenshots);
@@ -1448,7 +1470,7 @@ export default function TaskListPage() {
       setAttachmentsLoading(true);
       setPanelScreenshotsLoading(true);
       await fetchAttachments(task.assigned_tasks.id);
-      await fetchPanelScreenshots(task.assigned_tasks.id);
+      await fetchPanelScreenshots(task.assigned_tasks.id, task.assigned_tasks.task_name ?? "");
     },
     [closeCreate, fetchAttachments, fetchPanelScreenshots]
   );
