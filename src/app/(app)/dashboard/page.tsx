@@ -1140,6 +1140,9 @@ export default function DashboardPage() {
 
     // If there's an active task, show the close-task modal instead of clocking out directly
     if (activeTask) {
+      // Pre-fill memos from the active task so the VA doesn't have to re-type them
+      setClockOutClientMemo(activeTask.client_memo || "");
+      setClockOutInternalMemo(activeTask.internal_memo || "");
       setShowClockOutModal(true);
       return;
     }

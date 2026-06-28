@@ -569,26 +569,16 @@ export default function TaskListPage() {
         )
       );
 
-      // Find the earliest assigned_at across all assignees to use as a lower bound
-      const assignedAts = (assigneeRows ?? [])
-        .map((row) => row.assigned_at)
-        .filter((d): d is string => typeof d === "string");
-      const earliestAssignedAt = assignedAts.length > 0
-        ? assignedAts.reduce((a, b) => (a < b ? a : b))
-        : null;
-
       let fallbackLogIds: number[] = [];
       if (vaIds.length > 0 && taskName) {
-        let query = supabase
+        // Match by user_id + task_name. No date filter — tasks are often assigned
+        // retroactively (after the VA already worked on them), so filtering by
+        // assigned_at would exclude all the real work logs and hide screenshots.
+        const { data: timeLogs } = await supabase
           .from("time_logs")
           .select("id")
           .in("user_id", vaIds)
           .eq("task_name", taskName);
-        // Scope to logs on or after the task was assigned to reduce cross-task bleed
-        if (earliestAssignedAt) {
-          query = query.gte("start_time", earliestAssignedAt);
-        }
-        const { data: timeLogs } = await query;
         fallbackLogIds = (timeLogs ?? []).map((row) => row.id as number);
       }
 
