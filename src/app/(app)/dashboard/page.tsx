@@ -2245,6 +2245,15 @@ export default function DashboardPage() {
     }
   }, [activeTask, captureScreenshot]);
 
+  const handleReshare = useCallback(async () => {
+    // Always stop the existing stream first so Chrome opens the share picker
+    stopStream();
+    const result = await requestStream();
+    if (result === 'granted' && activeLogIdRef.current) {
+      scheduleCaptureSequence(activeLogIdRef.current);
+    }
+  }, [stopStream, requestStream, scheduleCaptureSequence]);
+
   // Clean up capture timers and worker on unmount
   useEffect(() => {
     return () => {
@@ -2947,12 +2956,7 @@ export default function DashboardPage() {
         onClockOut={clockOut}
         onStartBreak={startBreak}
         onEndBreak={endBreak}
-        onReshare={async () => {
-          const result = await requestStream();
-          if (result === 'granted' && activeLogIdRef.current) {
-            scheduleCaptureSequence(activeLogIdRef.current);
-          }
-        }}
+        onReshare={handleReshare}
       />
 
       {/* Active Task Bar */}
@@ -2962,6 +2966,7 @@ export default function DashboardPage() {
           elapsedSeconds={taskElapsed}
           onScreenshot={handleActiveTaskScreenshot}
           onNotes={handleNotes}
+          onReshare={handleReshare}
         />
       )}
 

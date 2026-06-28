@@ -7,6 +7,7 @@ interface ActiveTaskBarProps {
   elapsedSeconds: number;
   onScreenshot: () => void;
   onNotes: () => void;
+  onReshare?: () => void;
 }
 
 function formatTimer(totalSeconds: number): string {
@@ -22,6 +23,7 @@ export default function ActiveTaskBar({
   elapsedSeconds,
   onScreenshot,
   onNotes,
+  onReshare,
 }: ActiveTaskBarProps) {
   const details = [task.project, task.account, task.client_name]
     .filter(Boolean)
@@ -55,6 +57,19 @@ export default function ActiveTaskBar({
         >
           Notes
         </button>
+        {onReshare && (
+          <button
+            onClick={onReshare}
+            className="inline-flex items-center gap-1.5 py-1.5 px-3.5 rounded-lg bg-parchment text-walnut border border-sand text-xs font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <path d="M8 21h8" />
+              <path d="M12 17v4" />
+            </svg>
+            Reshare Screen
+          </button>
+        )}
         <button
           onClick={onScreenshot}
           className="inline-flex items-center gap-1.5 py-1.5 px-3.5 rounded-lg bg-terracotta text-white text-xs font-semibold cursor-pointer transition-all hover:bg-[#a85840]"
