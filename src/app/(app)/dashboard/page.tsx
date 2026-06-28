@@ -2579,7 +2579,7 @@ export default function DashboardPage() {
       fetch(`/api/assigned-tasks/${pendingAssignedTaskId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "in_progress" }),
+        body: JSON.stringify({ status: "in_progress", log_id: parseInt(newLogId, 10) }),
       }).catch(console.error);
       setPendingAssignedTaskId(null);
     }
