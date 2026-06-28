@@ -38,7 +38,23 @@ export default function SceAlertBanner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const DISMISS_KEY = "sce_banner_dismissed_until";
+  const DISMISS_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+
+  const isDismissed = () => {
+    try {
+      const until = sessionStorage.getItem(DISMISS_KEY);
+      if (!until) return false;
+      return Date.now() < parseInt(until, 10);
+    } catch {
+      return false;
+    }
+  };
+
   const checkSce = async (uid: string) => {
+    // If the user dismissed within the last 30 min, don't re-show on navigation
+    if (isDismissed()) return;
+
     // Is the VA currently clocked in?
     const { data: session } = await supabase
       .from("sessions")
@@ -116,7 +132,12 @@ export default function SceAlertBanner() {
           Reshare Now
         </button>
         <button
-          onClick={() => setShow(false)}
+          onClick={() => {
+            try {
+              sessionStorage.setItem(DISMISS_KEY, String(Date.now() + DISMISS_DURATION_MS));
+            } catch { /* ignore */ }
+            setShow(false);
+          }}
           className="px-2 py-1 text-xs text-white/80 transition-colors hover:text-white"
         >
           Dismiss
