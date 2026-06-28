@@ -2956,7 +2956,6 @@ export default function DashboardPage() {
         onClockOut={clockOut}
         onStartBreak={startBreak}
         onEndBreak={endBreak}
-        onReshare={handleReshare}
       />
 
       {/* Active Task Bar */}
