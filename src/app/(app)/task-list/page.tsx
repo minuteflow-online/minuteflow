@@ -547,7 +547,7 @@ export default function TaskListPage() {
     try {
       const { data: assigneeRows } = await supabase
         .from("assigned_task_assignees")
-        .select("log_id, va_id")
+        .select("log_id, va_id, assigned_at")
         .eq("assigned_task_id", taskId);
 
       // Collect log_ids that are already linked (new tasks post-fix)
@@ -559,7 +559,8 @@ export default function TaskListPage() {
         )
       );
 
-      // Fallback for older tasks: find log_ids by matching user_id + task_name in time_logs
+      // Fallback for older tasks: find log_ids by matching user_id + task_name in time_logs,
+      // scoped by the assignment date to avoid mixing screenshots from repeated same-named tasks
       const vaIds = Array.from(
         new Set(
           (assigneeRows ?? [])
@@ -568,13 +569,26 @@ export default function TaskListPage() {
         )
       );
 
+      // Find the earliest assigned_at across all assignees to use as a lower bound
+      const assignedAts = (assigneeRows ?? [])
+        .map((row) => row.assigned_at)
+        .filter((d): d is string => typeof d === "string");
+      const earliestAssignedAt = assignedAts.length > 0
+        ? assignedAts.reduce((a, b) => (a < b ? a : b))
+        : null;
+
       let fallbackLogIds: number[] = [];
       if (vaIds.length > 0 && taskName) {
-        const { data: timeLogs } = await supabase
+        let query = supabase
           .from("time_logs")
           .select("id")
           .in("user_id", vaIds)
           .eq("task_name", taskName);
+        // Scope to logs on or after the task was assigned to reduce cross-task bleed
+        if (earliestAssignedAt) {
+          query = query.gte("start_time", earliestAssignedAt);
+        }
+        const { data: timeLogs } = await query;
         fallbackLogIds = (timeLogs ?? []).map((row) => row.id as number);
       }
 
