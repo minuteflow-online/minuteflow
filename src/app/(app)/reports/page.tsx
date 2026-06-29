@@ -381,7 +381,13 @@ export default function ReportsPage() {
       : raw === "Meeting" ? "Collaboration"
       : raw;
 
-    const computeMetrics = (logs: TimeLog[]) => {
+    // allLogs: full date-range logs for this user, NOT filtered by account/client.
+    // Used for personal time, break time, and threshold computation — these are
+    // person-wide metrics, not account-specific. Filtering by account would zero
+    // them out because personal/break logs have account = null.
+    const computeMetrics = (logs: TimeLog[], allLogs?: TimeLog[]) => {
+      const base = allLogs ?? logs;
+
       const totalMs = logs.reduce((s, l) => s + (l.duration_ms || 0), 0);
       const billableMs = logs.reduce((s, l) => l.billable ? s + (l.duration_ms || 0) : s, 0);
       const wizardMs = logs.reduce((s, l) => s + (l.form_fill_ms || 0), 0);
@@ -396,12 +402,20 @@ export default function ReportsPage() {
       const planningMs = catMap["Planning"] || 0;
       const communicationMs = catMap["Communication"] || 0;
       const collaborationMs = catMap["Collaboration"] || 0;
-      const personalMs = catMap["Personal"] || 0;
-      const breakMs = catMap["Break"] || 0;
 
-      // Per-session-date threshold computation
+      // Personal and break: computed from ALL user logs (base), not account-filtered logs.
+      // Personal logs have account = null, so they vanish when an account filter is active.
+      const baseCatMap: Record<string, number> = {};
+      base.forEach((l) => {
+        const cat = normCat(l.category || "Task");
+        baseCatMap[cat] = (baseCatMap[cat] || 0) + (l.duration_ms || 0);
+      });
+      const personalMs = baseCatMap["Personal"] || 0;
+      const breakMs = baseCatMap["Break"] || 0;
+
+      // Per-session-date threshold — also from ALL user logs (base)
       const byDate: Record<string, number> = {};
-      logs.forEach((l) => {
+      base.forEach((l) => {
         const d = l.session_date || (l.start_time ? new Date(l.start_time).toLocaleDateString("en-CA", { timeZone: orgTimezone }) : "unknown");
         byDate[d] = (byDate[d] || 0) + (l.duration_ms || 0);
       });
@@ -429,9 +443,12 @@ export default function ReportsPage() {
 
     return Array.from(userIds).map((uid) => {
       const currLogs = filteredLogs.filter((l) => l.user_id === uid);
+      // Unfiltered-by-account logs for this user (personal/break are not account-specific)
+      const allCurrLogs = logs.filter((l) => l.user_id === uid);
       const prevLogs = compFilteredLogs.filter((l) => l.user_id === uid);
-      const curr = computeMetrics(currLogs);
-      const prev = computeMetrics(prevLogs);
+      const allPrevLogs = compLogs.filter((l) => l.user_id === uid);
+      const curr = computeMetrics(currLogs, allCurrLogs);
+      const prev = computeMetrics(prevLogs, allPrevLogs);
 
       // CategoryTrend[] kept for insights section (% of billableMs)
       const allCats = new Set([...Object.keys(curr.catMap), ...Object.keys(prev.catMap)]);
@@ -474,7 +491,7 @@ export default function ReportsPage() {
         screenshotCount: filteredScreenshots.filter((s) => s.user_id === uid).length,
       };
     }).sort((a, b) => b.currentTotalMs - a.currentTotalMs);
-  }, [filteredLogs, compFilteredLogs, profiles, filteredScreenshots, orgTimezone]);
+  }, [filteredLogs, compFilteredLogs, logs, compLogs, profiles, filteredScreenshots, orgTimezone]);
 
   // Keep these for the daily chart and financial summary
   const totalHoursMs = reportSummary.totalMs;
