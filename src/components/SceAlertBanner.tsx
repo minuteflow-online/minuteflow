@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 
 type BannerReason = "screenshare" | "sce" | "sce-login";
 
@@ -18,6 +19,7 @@ export default function SceAlertBanner() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  const { isActive: screenShareActive } = useScreenCaptureCtx();
 
   const [show, setShow] = useState(false);
   const [reason, setReason] = useState<BannerReason>("screenshare");
@@ -87,9 +89,11 @@ export default function SceAlertBanner() {
     }
   };
 
-  // Run check on load and every 2 minutes; re-run on route changes
+  // Run check on load and every 2 minutes.
+  // Does NOT re-run on route changes — navigation alone should not re-trigger the banner.
+  // Suppressed entirely when the web-app screen share stream is active.
   useEffect(() => {
-    if (!userId || isDashboard) {
+    if (!userId || isDashboard || screenShareActive) {
       setShow(false);
       return;
     }
@@ -98,7 +102,7 @@ export default function SceAlertBanner() {
     const interval = setInterval(() => checkSce(userId), 2 * 60 * 1000);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, pathname, isDashboard]);
+  }, [userId, isDashboard, screenShareActive]);
 
   if (!show || isDashboard) return null;
 
