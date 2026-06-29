@@ -75,6 +75,16 @@ function renderTextWithLinks(text: string) {
   return parts.length > 0 ? parts : [<Fragment key="empty">{text}</Fragment>];
 }
 
+function RevisionBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const label = count === 1 ? 'R' : `${count}R`;
+  return (
+    <span className="text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-terracotta text-white">
+      {label}
+    </span>
+  );
+}
+
 export default function AssignedTasksWidget({
   userId,
   isAdmin = false,
@@ -382,6 +392,7 @@ export default function AssignedTasksWidget({
                           </span>
                         </button>
                         <div className="flex items-center gap-1.5 shrink-0">
+                          <RevisionBadge count={detail.revision_count ?? 0} />
                           {statusBadge(task.status)}
                           {rate != null && (
                             <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
@@ -471,7 +482,7 @@ export default function AssignedTasksWidget({
                           </button>
                         )}
 
-                        {task.status === "in_progress" && (
+                        {task.status === "in_progress" && !detail.review_required && (
                           <button
                             onClick={() => updateStatus(task, "submitted")}
                             disabled={isUpdating}

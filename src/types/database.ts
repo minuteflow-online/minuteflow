@@ -519,6 +519,7 @@ export interface AssignedTask {
   project_id?: string | null;
   pay_type?: string | null;
   review_required: boolean;
+  revision_count: number;
   created_by: string | null;
   created_at: string;
   updated_at: string;

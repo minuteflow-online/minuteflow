@@ -461,6 +461,19 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   }
 
   if (hasTaskLevelStatusUpdate) {
+    const { data: taskForReview } = await adminSupabase
+      .from("assigned_tasks")
+      .select("review_required, status, revision_count")
+      .eq("id", id)
+      .single();
+
+    if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
+      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress"];
+      if (!allowedStatuses.includes(status)) {
+        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, or in_progress" }, { status: 403 });
+      }
+    }
+
     const { error: taskStatusError } = await adminSupabase
       .from("assigned_tasks")
       .update({ status, updated_at: now })
@@ -493,6 +506,15 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       }
     }
 
+    // Increment revision_count when moving out of revision_needed back to an active status
+    const revisionAllowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress"];
+    if (taskForReview?.status === "revision_needed" && revisionAllowedStatuses.includes(status)) {
+      await adminSupabase
+        .from("assigned_tasks")
+        .update({ revision_count: (taskForReview.revision_count ?? 0) + 1, updated_at: now })
+        .eq("id", id);
+    }
+
     return Response.json({ ok: true });
   }
 
@@ -512,6 +534,19 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       targetVaId = bodyVaId;
     } else {
       targetVaId = user.id;
+    }
+
+    const { data: taskForReview } = await adminSupabase
+      .from("assigned_tasks")
+      .select("review_required, status, revision_count")
+      .eq("id", id)
+      .single();
+
+    if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
+      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress"];
+      if (!allowedStatuses.includes(status)) {
+        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, or in_progress" }, { status: 403 });
+      }
     }
 
     const updatePayload: Record<string, unknown> = {
@@ -553,6 +588,15 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
     if (!updatedAssignee) {
       return Response.json({ error: "Assignee row not found" }, { status: 404 });
+    }
+
+    // Increment revision_count when moving out of revision_needed back to an active status
+    const revisionAllowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress"];
+    if (status !== undefined && taskForReview?.status === "revision_needed" && revisionAllowedStatuses.includes(status)) {
+      await adminSupabase
+        .from("assigned_tasks")
+        .update({ revision_count: (taskForReview.revision_count ?? 0) + 1, updated_at: now })
+        .eq("id", id);
     }
 
     if (status !== undefined && !isAdminOrManager) {
