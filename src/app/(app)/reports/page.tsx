@@ -101,6 +101,11 @@ export default function ReportsPage() {
   const [customEnd, setCustomEnd] = useState<string>("");
   const [appliedStart, setAppliedStart] = useState<string>("");
   const [appliedEnd, setAppliedEnd] = useState<string>("");
+  const [customMode, setCustomMode] = useState<"range" | "compare" | null>(null);
+  const [customCompStart, setCustomCompStart] = useState<string>("");
+  const [customCompEnd, setCustomCompEnd] = useState<string>("");
+  const [appliedCompStart, setAppliedCompStart] = useState<string>("");
+  const [appliedCompEnd, setAppliedCompEnd] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<UserRole>("va");
@@ -162,6 +167,19 @@ export default function ReportsPage() {
   /* ── Comparison period (previous equivalent range) ──────── */
 
   const { compStartISO, compEndISO, compLabel } = useMemo(() => {
+    // Range mode: no comparison period
+    if (dateRange === "custom" && customMode === "range") {
+      return { compStartISO: "", compEndISO: "", compLabel: "" };
+    }
+    // Compare mode: use user-specified Period B
+    if (dateRange === "custom" && customMode === "compare") {
+      if (!appliedCompStart || !appliedCompEnd) return { compStartISO: "", compEndISO: "", compLabel: "" };
+      const s = new Date(appliedCompStart + "T12:00:00");
+      const e = new Date(appliedCompEnd + "T12:00:00");
+      const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      return { compStartISO: s.toISOString(), compEndISO: e.toISOString(), compLabel: label };
+    }
+    // Custom null mode or non-custom: auto-compute previous equivalent period
     if (!startISO || !endISO) return { compStartISO: "", compEndISO: "", compLabel: "" };
     const durMs = new Date(endISO).getTime() - new Date(startISO).getTime();
     const compEnd = new Date(new Date(startISO).getTime() - 1);
@@ -172,7 +190,11 @@ export default function ReportsPage() {
     else if (dateRange === "month") label = "last month";
     else if (dateRange === "year") label = "last year";
     return { compStartISO: compStart.toISOString(), compEndISO: compEnd.toISOString(), compLabel: label };
-  }, [startISO, endISO, dateRange]);
+  }, [startISO, endISO, dateRange, customMode, appliedCompStart, appliedCompEnd]);
+
+  /* ── Whether a comparison period is active ─────────────────── */
+
+  const isComparisonActive = dateRange !== "custom" || customMode === "compare";
 
   /* ── Fetch data — uses ISO strings so deps are stable primitives ── */
 
@@ -975,37 +997,115 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* Custom Date Range Picker */}
+      {/* Custom Date Range Picker — two-step flow */}
       {dateRange === "custom" && (
-        <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-sand bg-white px-5 py-4">
-          <label className="text-[13px] font-semibold text-espresso">From</label>
-          <input
-            type="date"
-            value={customStart}
-            onChange={(e) => setCustomStart(e.target.value)}
-            className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
-          />
-          <label className="text-[13px] font-semibold text-espresso">To</label>
-          <input
-            type="date"
-            value={customEnd}
-            onChange={(e) => setCustomEnd(e.target.value)}
-            className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
-          />
-          {customStart && customEnd ? (
-            <button
-              onClick={() => {
-                // Just set the applied dates — the useEffect will detect the
-                // change in startISO/endISO and trigger a single fetch.
-                setAppliedStart(customStart);
-                setAppliedEnd(customEnd);
-              }}
-              className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
-            >
-              Apply
-            </button>
-          ) : (
-            <span className="text-[12px] text-bark">Pick both dates to load data</span>
+        <div className="mb-6 rounded-xl border border-sand bg-white px-5 py-4">
+          {customMode === null && (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[13px] font-semibold text-espresso">Choose mode:</span>
+              <button
+                onClick={() => setCustomMode("range")}
+                className="rounded-lg border border-sand bg-parchment px-4 py-2 text-[13px] font-semibold text-walnut hover:bg-sand transition-colors"
+              >
+                Range
+              </button>
+              <button
+                onClick={() => setCustomMode("compare")}
+                className="rounded-lg border border-sand bg-parchment px-4 py-2 text-[13px] font-semibold text-walnut hover:bg-sand transition-colors"
+              >
+                Compare
+              </button>
+              <span className="text-[11px] text-bark">Range: single period, one bar. Compare: two periods side by side with color-coded improvement.</span>
+            </div>
+          )}
+
+          {customMode === "range" && (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => { setCustomMode(null); setAppliedStart(""); setAppliedEnd(""); }}
+                className="text-[11px] text-bark hover:text-espresso transition-colors"
+              >
+                ← back
+              </button>
+              <div className="w-px h-5 bg-sand shrink-0" />
+              <label className="text-[13px] font-semibold text-espresso">From</label>
+              <input
+                type="date"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+              />
+              <label className="text-[13px] font-semibold text-espresso">To</label>
+              <input
+                type="date"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+              />
+              {customStart && customEnd ? (
+                <button
+                  onClick={() => { setAppliedStart(customStart); setAppliedEnd(customEnd); setAppliedCompStart(""); setAppliedCompEnd(""); }}
+                  className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
+                >
+                  Apply
+                </button>
+              ) : (
+                <span className="text-[12px] text-bark">Pick both dates to load data</span>
+              )}
+            </div>
+          )}
+
+          {customMode === "compare" && (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => { setCustomMode(null); setAppliedStart(""); setAppliedEnd(""); setAppliedCompStart(""); setAppliedCompEnd(""); }}
+                className="text-[11px] text-bark hover:text-espresso transition-colors"
+              >
+                ← back
+              </button>
+              <div className="w-px h-5 bg-sand shrink-0" />
+              <span className="text-[11px] font-semibold text-walnut uppercase tracking-wide">Period A (Analyzing)</span>
+              <label className="text-[13px] font-semibold text-espresso">From</label>
+              <input
+                type="date"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+                className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+              />
+              <label className="text-[13px] font-semibold text-espresso">To</label>
+              <input
+                type="date"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+              />
+              <div className="w-px h-5 bg-sand shrink-0" />
+              <span className="text-[11px] font-semibold text-walnut uppercase tracking-wide">Period B (Comparing to)</span>
+              <label className="text-[13px] font-semibold text-espresso">From</label>
+              <input
+                type="date"
+                value={customCompStart}
+                onChange={(e) => setCustomCompStart(e.target.value)}
+                className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+              />
+              <label className="text-[13px] font-semibold text-espresso">To</label>
+              <input
+                type="date"
+                value={customCompEnd}
+                onChange={(e) => setCustomCompEnd(e.target.value)}
+                className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+              />
+              {customStart && customEnd && customCompStart && customCompEnd ? (
+                <button
+                  onClick={() => { setAppliedStart(customStart); setAppliedEnd(customEnd); setAppliedCompStart(customCompStart); setAppliedCompEnd(customCompEnd); }}
+                  className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
+                >
+                  Apply
+                </button>
+              ) : (
+                <span className="text-[12px] text-bark">Fill all 4 dates to load comparison</span>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -1129,7 +1229,7 @@ export default function ReportsPage() {
                   {/* Productivity Meters */}
                   <div className="px-5 py-4">
                     <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">
-                      Productivity Meters — vs {compLabel}
+                      Productivity Meters{isComparisonActive && compLabel ? ` — vs ${compLabel}` : ""}
                     </div>
                     <div className="space-y-3">
                       <ProductivityMeterWidget
@@ -1138,6 +1238,7 @@ export default function ReportsPage() {
                         denominatorMs={va.billableMs}
                         prevMs={va.prevTaskMs}
                         prevDenominatorMs={va.prevBillableMs}
+                        improvementDirection="higher_better"
                       />
                       <ProductivityMeterWidget
                         label="Planning"
@@ -1145,6 +1246,7 @@ export default function ReportsPage() {
                         denominatorMs={va.billableMs}
                         prevMs={va.prevPlanningMs}
                         prevDenominatorMs={va.prevBillableMs}
+                        improvementDirection="lower_better"
                       />
                       <ProductivityMeterWidget
                         label="Communication"
@@ -1152,6 +1254,7 @@ export default function ReportsPage() {
                         denominatorMs={va.billableMs}
                         prevMs={va.prevCommunicationMs}
                         prevDenominatorMs={va.prevBillableMs}
+                        improvementDirection="neutral"
                       />
                       <ProductivityMeterWidget
                         label="Collaboration"
@@ -1159,6 +1262,7 @@ export default function ReportsPage() {
                         denominatorMs={va.billableMs}
                         prevMs={va.prevCollaborationMs}
                         prevDenominatorMs={va.prevBillableMs}
+                        improvementDirection="neutral"
                       />
                       <ProductivityMeterWidget
                         label="Wizard Time"
@@ -1166,6 +1270,7 @@ export default function ReportsPage() {
                         denominatorMs={va.billableMs}
                         prevMs={va.prevWizardMs}
                         prevDenominatorMs={va.prevBillableMs}
+                        improvementDirection="lower_better"
                       />
                       <ProductivityMeterWidget
                         label="Personal Time"
@@ -1174,6 +1279,7 @@ export default function ReportsPage() {
                         prevMs={va.prevPersonalMs}
                         prevDenominatorMs={va.prevPersonalThresholdMs}
                         redWhenExceeded
+                        improvementDirection="lower_better"
                       />
                       <ProductivityMeterWidget
                         label="Break"
@@ -1183,6 +1289,7 @@ export default function ReportsPage() {
                         prevDenominatorMs={va.prevBreakThresholdMs}
                         redWhenExceeded
                         noAllowanceWhenZero
+                        improvementDirection="lower_better"
                       />
                     </div>
 
