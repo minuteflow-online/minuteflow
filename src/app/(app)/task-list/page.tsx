@@ -3101,7 +3101,10 @@ export default function TaskListPage() {
                 <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
                 {selectedTask.is_collaborative ? (
                   <div className="space-y-3 rounded-xl border border-slate-blue/20 bg-slate-blue-soft px-3 py-3 text-sm text-slate-blue">
-                    <StatusBadge status={selectedTask.status} />
+                    <div className="flex items-center gap-1.5">
+                      <RevisionBadge count={selectedTask.assigned_tasks.revision_count ?? 0} />
+                      <StatusBadge status={selectedTask.status} />
+                    </div>
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Update Status</label>
                       <select
@@ -3128,7 +3131,10 @@ export default function TaskListPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <StatusBadge status={selectedTask.status} />
+                    <div className="flex items-center gap-1.5">
+                      <RevisionBadge count={selectedTask.assigned_tasks.revision_count ?? 0} />
+                      <StatusBadge status={selectedTask.status} />
+                    </div>
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">
                         Update Status
