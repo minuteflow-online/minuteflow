@@ -37,6 +37,7 @@ type VATaskRow = {
     instructions: string | null;
     instructions_locked: boolean;
     review_required: boolean;
+    revision_count: number;
     fixed_pay_task_id: number | null;
     fixed_pay_tasks?: { rate: number } | null;
     projects?: { id: string; name: string } | null;
@@ -111,6 +112,7 @@ type AdminTaskFlat = {
   task_notes: string | null;
   due_date: string | null;
   review_required: boolean;
+  revision_count?: number;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -185,6 +187,16 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[status]}`}>
       {STATUS_LABELS[status]}
+    </span>
+  );
+}
+
+function RevisionBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const label = count === 1 ? 'R' : `${count}R`;
+  return (
+    <span className="text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-terracotta text-white">
+      {label}
     </span>
   );
 }
@@ -413,6 +425,7 @@ export default function TaskListPage() {
                 instructions: task.instructions ?? null,
                 instructions_locked: Boolean(task.instructions_locked),
                 review_required: Boolean(task.review_required),
+                revision_count: task.revision_count ?? 0,
                 fixed_pay_task_id: task.fixed_pay_task_id ?? null,
                 fixed_pay_tasks: task.fixed_pay_tasks ?? null,
                 projects: task.projects ?? null,
@@ -1361,7 +1374,13 @@ export default function TaskListPage() {
               }}
               className="w-full rounded-lg border border-terracotta bg-white px-2 py-1 text-[13px] outline-none"
             >
-              {STATUS_FILTERS.filter((option) => option.value !== "all").map((option) => (
+              {STATUS_FILTERS.filter((option) => {
+                if (option.value === "all") return false;
+                if (!isAdmin && task.assigned_tasks.review_required) {
+                  return (["pending", "on_queue", "in_progress"] as string[]).includes(option.value);
+                }
+                return true;
+              }).map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -2488,7 +2507,12 @@ export default function TaskListPage() {
                               field="status"
                               className="px-3 py-3 text-[13px]"
                               disabled={taskView !== "active"}
-                              display={<StatusBadge status={task.status} />}
+                              display={
+                                <span className="flex items-center gap-1.5">
+                                  <RevisionBadge count={task.assigned_tasks.revision_count ?? 0} />
+                                  <StatusBadge status={task.status} />
+                                </span>
+                              }
                             />
 
                             <td className="px-3 py-3 text-[13px]">
@@ -3085,9 +3109,13 @@ export default function TaskListPage() {
                         onChange={(e) => setPanelStatus(e.target.value as AssignedTaskStatus)}
                         className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                       >
-                        {STATUS_FILTERS.filter(
-                          (option): option is { value: AssignedTaskStatus; label: string } => option.value !== "all"
-                        ).map((option) => (
+                        {STATUS_FILTERS.filter((option): option is { value: AssignedTaskStatus; label: string } => {
+                          if (option.value === "all") return false;
+                          if (!isAdmin && selectedTask.assigned_tasks.review_required) {
+                            return (["pending", "on_queue", "in_progress"] as AssignedTaskStatus[]).includes(option.value as AssignedTaskStatus);
+                          }
+                          return true;
+                        }).map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
@@ -3110,9 +3138,13 @@ export default function TaskListPage() {
                         onChange={(e) => setPanelStatus(e.target.value as AssignedTaskStatus)}
                         className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                       >
-                        {STATUS_FILTERS.filter(
-                          (option): option is { value: AssignedTaskStatus; label: string } => option.value !== "all"
-                        ).map((option) => (
+                        {STATUS_FILTERS.filter((option): option is { value: AssignedTaskStatus; label: string } => {
+                          if (option.value === "all") return false;
+                          if (!isAdmin && selectedTask.assigned_tasks.review_required) {
+                            return (["pending", "on_queue", "in_progress"] as AssignedTaskStatus[]).includes(option.value as AssignedTaskStatus);
+                          }
+                          return true;
+                        }).map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
