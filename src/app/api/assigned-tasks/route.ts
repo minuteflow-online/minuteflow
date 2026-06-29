@@ -88,9 +88,9 @@ export async function GET(request: Request) {
   const viewAsVaParam = searchParams.get("viewAsVa");
 
   const assigneeSelect =
-    "id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked";
+    "id, va_id, status, log_id, notes, accuracy_score, assigned_at, updated_at, instructions, instructions_locked";
   const taskSelect =
-    `id, account, project, project_id, pay_type, category, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, recurring_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username), projects(id, name),
+    `id, account, project, project_id, pay_type, category, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, review_required, fixed_pay_task_id, recurring_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username), projects(id, name),
          assigned_task_assignees(${assigneeSelect})`;
 
   const formatAdminTaskRows = async (data: Array<Record<string, unknown>>) => {
@@ -195,8 +195,8 @@ export async function GET(request: Request) {
   }
 
   // Used by both viewAsVa (admin impersonation) and the VA self-query below.
-  const vaSelectString = `id, va_id, status, log_id, notes, assigned_at, updated_at,
-     assigned_tasks(id, account, project, project_id, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name))`;
+  const vaSelectString = `id, va_id, status, log_id, notes, accuracy_score, assigned_at, updated_at,
+     assigned_tasks(id, account, project, project_id, task_name, task_detail, task_notes, due_date, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, review_required, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name))`;
 
   if (isAdminOrManager && viewAsVaParam) {
     // Admin viewing a specific VA's task list — bypass RLS with serviceRoleClient

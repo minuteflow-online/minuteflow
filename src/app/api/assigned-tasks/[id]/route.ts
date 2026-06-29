@@ -58,7 +58,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, recurring_template_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -69,6 +69,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
+    review_required?: boolean;
     recurring_template_id?: string | null;
     va_ids?: string[];
   };
@@ -87,6 +88,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
   if (instructions !== undefined) updatePayload.instructions = instructions;
   if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
+  if (putReviewRequired !== undefined) updatePayload.review_required = Boolean(putReviewRequired);
   if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
 
   const { data: updatedTask, error: updateError } = await supabase
@@ -272,6 +274,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     instructions_locked,
     archived_at,
     deleted_at,
+    review_required,
   } = body as {
     va_id?: string;
     status?: AssignedTaskStatus;
@@ -288,6 +291,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     instructions_locked?: boolean;
     archived_at?: string | null;
     deleted_at?: string | null;
+    review_required?: boolean;
   };
 
   // Use the service-role client here so VAs who are the task ASSIGNER (assigned_by)
@@ -321,7 +325,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     instructions !== undefined ||
     instructions_locked !== undefined;
   const hasMetadataUpdate =
-    hasCoreMetadataUpdate || archived_at !== undefined || deleted_at !== undefined;
+    hasCoreMetadataUpdate || archived_at !== undefined || deleted_at !== undefined || review_required !== undefined;
   const hasArchiveUpdate = archived_at !== undefined;
   const hasDeleteUpdate = deleted_at !== undefined;
   const hasArchiveOnlyUpdate =
@@ -363,6 +367,33 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   }
 
   const now = new Date().toISOString();
+
+  // VA-only: allow checking review_required (true) but never unchecking (false).
+  // This is handled as a standalone path — admin review_required changes go through the metadata path below.
+  if (!isAdminOrManager && review_required !== undefined && !hasCoreMetadataUpdate && !hasAssigneeUpdate && archived_at === undefined && deleted_at === undefined) {
+    if (review_required === false) {
+      return Response.json({ error: "Forbidden: VAs cannot uncheck Review Required" }, { status: 403 });
+    }
+    // Verify the VA is an assignee on this task
+    const { data: assigneeRow } = await supabase
+      .from("assigned_task_assignees")
+      .select("id")
+      .eq("assigned_task_id", id)
+      .eq("va_id", user.id)
+      .limit(1)
+      .maybeSingle();
+    if (!assigneeRow) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const { error: rrError } = await adminSupabase
+      .from("assigned_tasks")
+      .update({ review_required: true, updated_at: now })
+      .eq("id", id);
+    if (rrError) {
+      return Response.json({ error: rrError.message }, { status: 500 });
+    }
+    return Response.json({ ok: true });
+  }
 
   // Task owners (non-admin) may pass va_id to target a specific assignee row for
   // status-only updates (e.g., reviewing a submitted task). Block everything else.
@@ -439,13 +470,27 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       return Response.json({ error: taskStatusError.message }, { status: 500 });
     }
 
-    const { error: assigneeStatusError } = await adminSupabase
-      .from("assigned_task_assignees")
-      .update({ status, updated_at: now })
-      .eq("assigned_task_id", id);
+    if (status === "revision_needed") {
+      // Decrement accuracy_score by 10 for every assignee on this task
+      const { data: assigneeRows } = await adminSupabase
+        .from("assigned_task_assignees")
+        .select("id, accuracy_score")
+        .eq("assigned_task_id", id);
+      for (const row of assigneeRows ?? []) {
+        await adminSupabase
+          .from("assigned_task_assignees")
+          .update({ status, accuracy_score: (row.accuracy_score as number) - 10, updated_at: now })
+          .eq("id", row.id);
+      }
+    } else {
+      const { error: assigneeStatusError } = await adminSupabase
+        .from("assigned_task_assignees")
+        .update({ status, updated_at: now })
+        .eq("assigned_task_id", id);
 
-    if (assigneeStatusError) {
-      return Response.json({ error: assigneeStatusError.message }, { status: 500 });
+      if (assigneeStatusError) {
+        return Response.json({ error: assigneeStatusError.message }, { status: 500 });
+      }
     }
 
     return Response.json({ ok: true });
@@ -475,6 +520,19 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (status !== undefined) updatePayload.status = status;
     if (log_id !== undefined) updatePayload.log_id = log_id;
     if (notes !== undefined) updatePayload.notes = notes;
+
+    // When marking revision_needed, decrement accuracy_score by 10 on the targeted row
+    if (status === "revision_needed") {
+      const { data: currentAssigneeRow } = await adminSupabase
+        .from("assigned_task_assignees")
+        .select("accuracy_score")
+        .eq("assigned_task_id", id)
+        .eq("va_id", targetVaId)
+        .single();
+      if (currentAssigneeRow) {
+        updatePayload.accuracy_score = (currentAssigneeRow.accuracy_score as number) - 10;
+      }
+    }
 
     // Task owners targeting another VA's row need the admin client to bypass RLS
     const assigneeClient = (isAdminOrManager || (isTaskOwner && bodyVaId)) ? adminSupabase : supabase;
@@ -522,6 +580,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
     if (archived_at !== undefined) updatePayload.archived_at = archived_at;
     if (deleted_at !== undefined) updatePayload.deleted_at = deleted_at;
+    if (review_required !== undefined) updatePayload.review_required = Boolean(review_required);
 
     const { error: taskError } = await supabase
       .from("assigned_tasks")

@@ -74,6 +74,7 @@ interface DetailFormState {
   task_notes: string;
   instructions: string;
   instructions_locked: boolean;
+  review_required: boolean;
   due_date: string;
   assigned_by_id: string;
   recurring_template_id: string | null;
@@ -448,6 +449,7 @@ export default function TaskAssignmentsAdminTab({
     task_notes: "",
     instructions: "",
     instructions_locked: false,
+    review_required: false,
     due_date: "",
     assigned_by_id: "",
     recurring_template_id: null,
@@ -779,6 +781,7 @@ export default function TaskAssignmentsAdminTab({
     task_notes: "",
     instructions: "",
     instructions_locked: false,
+    review_required: false,
     due_date: "",
     assigned_by_id: "",
     recurring_template_id: null,
@@ -817,6 +820,7 @@ export default function TaskAssignmentsAdminTab({
       instructions: (task as any).instructions || "",
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       instructions_locked: Boolean((task as any).instructions_locked),
+      review_required: Boolean(task.review_required),
       due_date: task.due_date ? task.due_date.slice(0, 10) : "",
       assigned_by_id: task.assigned_by || "",
       recurring_template_id: (task.recurring_template_id as string | null | undefined) ?? null,
@@ -882,6 +886,7 @@ export default function TaskAssignmentsAdminTab({
       task_notes: detailForm.task_notes.trim() || null,
       instructions: detailForm.instructions.trim() || null,
       instructions_locked: detailForm.instructions_locked,
+      review_required: detailForm.review_required,
       due_date: detailForm.due_date || null,
       assigned_by: detailForm.assigned_by_id || null,
       recurring_template_id: detailForm.recurring_template_id,
@@ -1855,6 +1860,7 @@ export default function TaskAssignmentsAdminTab({
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Detail</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Status</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Accuracy</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Due Date</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Created</th>
@@ -2056,6 +2062,28 @@ export default function TaskAssignmentsAdminTab({
                             </button>
                           );
                         })}
+                      </div>
+                    </td>
+
+                    {/* Accuracy */}
+                    <td className="px-3 py-3 text-[13px]">
+                      <div className="flex flex-wrap gap-1">
+                        {assignees.length === 0 ? (
+                          <span className="text-stone/30">—</span>
+                        ) : (
+                          assignees.map((a) => {
+                            const score = (a as { accuracy_score?: number }).accuracy_score ?? 100;
+                            return (
+                              <span
+                                key={a.id}
+                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${score >= 90 ? "bg-sage-soft text-sage" : score >= 70 ? "bg-amber-50 text-amber-600" : "bg-terracotta-soft text-terracotta"}`}
+                                title={a.profiles?.full_name || a.profiles?.username || a.va_id}
+                              >
+                                {score}%
+                              </span>
+                            );
+                          })
+                        )}
                       </div>
                     </td>
 
@@ -2482,6 +2510,18 @@ export default function TaskAssignmentsAdminTab({
                   )}
                 </div>
               )}
+
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input
+                    type="checkbox"
+                    checked={detailForm.review_required}
+                    onChange={(e) => setDetailForm((f) => ({ ...f, review_required: e.target.checked }))}
+                    className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                  />
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-walnut">Review Required</span>
+                </label>
+              </div>
 
               {!selectedTask && (
                 <div className="mb-5">

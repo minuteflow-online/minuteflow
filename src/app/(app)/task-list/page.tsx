@@ -17,6 +17,7 @@ type VATaskRow = {
   status: AssignedTaskStatus;
   log_id: number | null;
   notes: string | null;
+  accuracy_score: number;
   assigned_at: string | null;
   updated_at: string | null;
   is_collaborative?: boolean;
@@ -35,6 +36,7 @@ type VATaskRow = {
     assigned_by_profile?: { id: string; full_name: string; username: string } | null;
     instructions: string | null;
     instructions_locked: boolean;
+    review_required: boolean;
     fixed_pay_task_id: number | null;
     fixed_pay_tasks?: { rate: number } | null;
     projects?: { id: string; name: string } | null;
@@ -92,6 +94,7 @@ type AdminAssigneeFlat = {
   status: AssignedTaskStatus;
   log_id: number | null;
   notes: string | null;
+  accuracy_score: number;
   assigned_at: string | null;
   updated_at: string | null;
   instructions?: string | null;
@@ -107,6 +110,7 @@ type AdminTaskFlat = {
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
+  review_required: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -332,6 +336,7 @@ export default function TaskListPage() {
   const [panelAssignedBy, setPanelAssignedBy] = useState("");
   const [panelInstructions, setPanelInstructions] = useState("");
   const [panelInstructionsLocked, setPanelInstructionsLocked] = useState(false);
+  const [panelReviewRequired, setPanelReviewRequired] = useState(false);
   const [panelNotes, setPanelNotes] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
   const [panelUploadSaving, setPanelUploadSaving] = useState(false);
@@ -388,6 +393,7 @@ export default function TaskListPage() {
               status: assignee.status,
               log_id: assignee.log_id,
               notes: assignee.notes,
+              accuracy_score: assignee.accuracy_score ?? 100,
               assigned_at: assignee.assigned_at,
               updated_at: assignee.updated_at,
               is_collaborative: false,
@@ -406,6 +412,7 @@ export default function TaskListPage() {
                 assigned_by_profile: task.assigned_by_profile ?? null,
                 instructions: task.instructions ?? null,
                 instructions_locked: Boolean(task.instructions_locked),
+                review_required: Boolean(task.review_required),
                 fixed_pay_task_id: task.fixed_pay_task_id ?? null,
                 fixed_pay_tasks: task.fixed_pay_tasks ?? null,
                 projects: task.projects ?? null,
@@ -981,6 +988,12 @@ export default function TaskListPage() {
     });
   }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks]);
 
+  const avgAccuracy = useMemo(() => {
+    const rows = tasks.filter((t) => typeof t.accuracy_score === "number");
+    if (rows.length === 0) return null;
+    return Math.round(rows.reduce((sum, t) => sum + t.accuracy_score, 0) / rows.length);
+  }, [tasks]);
+
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const allFilteredTasksSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
 
@@ -1465,6 +1478,7 @@ export default function TaskListPage() {
       setPanelAssignedBy(task.assigned_tasks.assigned_by ?? "");
       setPanelInstructions(task.assigned_tasks.instructions ?? "");
       setPanelInstructionsLocked(Boolean(task.assigned_tasks.instructions_locked));
+      setPanelReviewRequired(Boolean(task.assigned_tasks.review_required));
       setPanelNotes(task.notes ?? "");
       setPanelUploadSaving(false);
       setPanelMsg(null);
@@ -1632,8 +1646,10 @@ export default function TaskListPage() {
     const nextAssignedBy = panelAssignedBy;
     const nextInstructions = panelInstructions;
     const nextInstructionsLocked = panelInstructionsLocked;
+    const nextReviewRequired = panelReviewRequired;
     const nextNotes = panelNotes;
     const notesChanged = !sameText(nextNotes, previousNotes);
+    const reviewRequiredChanged = nextReviewRequired !== Boolean(selectedTask.assigned_tasks.review_required);
     const metadataChanged =
       !sameText(nextAccount, selectedTask.assigned_tasks.account) ||
       !sameText(nextProject, selectedTask.assigned_tasks.project) ||
@@ -1645,7 +1661,7 @@ export default function TaskListPage() {
       !sameText(nextInstructions, selectedTask.assigned_tasks.instructions) ||
       nextInstructionsLocked !== Boolean(selectedTask.assigned_tasks.instructions_locked);
 
-    if (!statusChanged && !metadataChanged && !notesChanged) {
+    if (!statusChanged && !metadataChanged && !notesChanged && !reviewRequiredChanged) {
       closePanel();
       return;
     }
@@ -1677,13 +1693,29 @@ export default function TaskListPage() {
         body.instructions = nextInstructions || null;
         body.instructions_locked = nextInstructionsLocked;
       }
+      // Admins include review_required in the metadata body; VAs send it standalone below
+      if (reviewRequiredChanged && isAdmin) {
+        body.review_required = nextReviewRequired;
+      }
 
-      const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!saveRes.ok) throw new Error(`HTTP ${saveRes.status}`);
+      if (Object.keys(body).length > 0) {
+        const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!saveRes.ok) throw new Error(`HTTP ${saveRes.status}`);
+      }
+
+      // VAs can check (not uncheck) review_required — send as standalone PATCH
+      if (reviewRequiredChanged && !isAdmin && nextReviewRequired) {
+        const rrRes = await fetch(`/api/assigned-tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ review_required: true }),
+        });
+        if (!rrRes.ok) throw new Error(`HTTP ${rrRes.status}`);
+      }
 
       const updatedAt = new Date().toISOString();
       setTasks((prev) =>
@@ -1707,7 +1739,8 @@ export default function TaskListPage() {
                 assigned_by: metadataChanged ? (nextAssignedBy || null) : row.assigned_tasks.assigned_by,
                 instructions: metadataChanged ? (nextInstructions || null) : row.assigned_tasks.instructions,
                 instructions_locked: metadataChanged ? nextInstructionsLocked : row.assigned_tasks.instructions_locked,
-                updated_at: metadataChanged ? updatedAt : row.assigned_tasks.updated_at,
+                review_required: reviewRequiredChanged ? nextReviewRequired : row.assigned_tasks.review_required,
+                updated_at: (metadataChanged || reviewRequiredChanged) ? updatedAt : row.assigned_tasks.updated_at,
               },
             };
           })
@@ -1731,7 +1764,8 @@ export default function TaskListPage() {
                 assigned_by: metadataChanged ? (nextAssignedBy || null) : current.assigned_tasks.assigned_by,
                 instructions: metadataChanged ? (nextInstructions || null) : current.assigned_tasks.instructions,
                 instructions_locked: metadataChanged ? nextInstructionsLocked : current.assigned_tasks.instructions_locked,
-                updated_at: metadataChanged ? updatedAt : current.assigned_tasks.updated_at,
+                review_required: reviewRequiredChanged ? nextReviewRequired : current.assigned_tasks.review_required,
+                updated_at: (metadataChanged || reviewRequiredChanged) ? updatedAt : current.assigned_tasks.updated_at,
               },
             }
           : current
@@ -1766,11 +1800,13 @@ export default function TaskListPage() {
     panelInstructionsLocked,
     panelNotes,
     panelProject,
+    panelReviewRequired,
     panelStatus,
     panelTaskName,
     panelTaskNotes,
     selectedTask,
     currentUserId,
+    isAdmin,
     isSubmittedView,
     requestStream,
     captureTaskScreenshot,
@@ -2297,6 +2333,11 @@ export default function TaskListPage() {
                 <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 font-semibold text-slate-blue">
                   {activeView === "submitted" ? "Submitted" : taskView === "active" ? "Active" : taskView === "archived" ? "Archived" : "Trash"}
                 </span>
+                {avgAccuracy !== null && (
+                  <span className={`rounded-full px-2 py-0.5 font-semibold ${avgAccuracy >= 90 ? "bg-sage-soft text-sage" : avgAccuracy >= 70 ? "bg-amber-50 text-amber-600" : "bg-terracotta-soft text-terracotta"}`}>
+                    Accuracy: {avgAccuracy}%
+                  </span>
+                )}
               </div>
 
               {error && (
@@ -2335,6 +2376,7 @@ export default function TaskListPage() {
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Objective</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Client Detail</th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Accuracy</th>
                         {activeView === "submitted" && (
                           <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Submitted By</th>
                         )}
@@ -2448,6 +2490,12 @@ export default function TaskListPage() {
                               disabled={taskView !== "active"}
                               display={<StatusBadge status={task.status} />}
                             />
+
+                            <td className="px-3 py-3 text-[13px]">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${task.accuracy_score >= 90 ? "bg-sage-soft text-sage" : task.accuracy_score >= 70 ? "bg-amber-50 text-amber-600" : "bg-terracotta-soft text-terracotta"}`}>
+                                {task.accuracy_score ?? 100}%
+                              </span>
+                            </td>
 
                             {activeView === "submitted" && (
                               <td className="px-3 py-3 text-[13px] text-walnut">
@@ -3010,6 +3058,19 @@ export default function TaskListPage() {
                   placeholder="Add your private notes for this task..."
                   className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                 />
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer w-fit">
+                  <input
+                    type="checkbox"
+                    checked={panelReviewRequired}
+                    disabled={!isAdmin && panelReviewRequired}
+                    onChange={(e) => setPanelReviewRequired(e.target.checked)}
+                    className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-stone">Review Required</span>
+                </label>
               </div>
 
               <div>

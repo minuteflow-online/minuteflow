@@ -518,6 +518,7 @@ export interface AssignedTask {
   recurring_template_id: string | null;
   project_id?: string | null;
   pay_type?: string | null;
+  review_required: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -536,6 +537,7 @@ export interface AssignedTaskAssignee {
   status: AssignedTaskStatus;
   log_id: number | null;
   notes: string | null;
+  accuracy_score: number;
   assigned_at: string;
   updated_at: string;
   profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>;
