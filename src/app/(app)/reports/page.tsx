@@ -10,11 +10,13 @@ import {
   getTodayBoundsInTimezone,
   getWeekBoundsInTimezone,
   getMonthBoundsInTimezone,
+  getYearBoundsInTimezone,
 } from "@/lib/utils";
+import { ProductivityMeterWidget } from "@/components/ProductivityMeterWidget";
 
 /* ── Types ────────────────────────────────────────────────── */
 
-type DateRange = "today" | "week" | "month" | "custom";
+type DateRange = "today" | "week" | "month" | "year" | "custom";
 
 type DailyData = {
   label: string;
@@ -63,6 +65,26 @@ type VAProgress = {
   prevTotalMs: number;
   productivityScore: number;
   prevProductivityScore: number;
+  taskMs: number;
+  prevTaskMs: number;
+  planningMs: number;
+  prevPlanningMs: number;
+  communicationMs: number;
+  prevCommunicationMs: number;
+  collaborationMs: number;
+  prevCollaborationMs: number;
+  wizardMs: number;
+  prevWizardMs: number;
+  billableMs: number;
+  prevBillableMs: number;
+  personalMs: number;
+  prevPersonalMs: number;
+  personalThresholdMs: number;
+  prevPersonalThresholdMs: number;
+  breakMs: number;
+  prevBreakMs: number;
+  breakThresholdMs: number;
+  prevBreakThresholdMs: number;
   categories: CategoryTrend[];
   screenshotCount: number;
 };
@@ -116,6 +138,10 @@ export default function ReportsPage() {
       const { start: s, end: e } = getWeekBoundsInTimezone(orgTimezone);
       const label = `Week of ${new Date(s).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: orgTimezone })} \u2013 ${new Date(e).toLocaleDateString("en-US", { day: "numeric", year: "numeric", timeZone: orgTimezone })}`;
       return { startISO: s, endISO: e, start: new Date(s), end: new Date(e), periodLabel: label };
+    } else if (dateRange === "year") {
+      const { start: s, end: e } = getYearBoundsInTimezone(orgTimezone);
+      const label = new Date(s).toLocaleDateString("en-US", { year: "numeric", timeZone: orgTimezone });
+      return { startISO: s, endISO: e, start: new Date(s), end: new Date(e), periodLabel: label };
     } else if (dateRange === "custom" && appliedStart && appliedEnd) {
       const s = new Date(appliedStart + "T12:00:00");
       const e = new Date(appliedEnd + "T12:00:00");
@@ -144,6 +170,7 @@ export default function ReportsPage() {
     if (dateRange === "today") label = "yesterday";
     else if (dateRange === "week") label = "last week";
     else if (dateRange === "month") label = "last month";
+    else if (dateRange === "year") label = "last year";
     return { compStartISO: compStart.toISOString(), compEndISO: compEnd.toISOString(), compLabel: label };
   }, [startISO, endISO, dateRange]);
 
@@ -354,16 +381,45 @@ export default function ReportsPage() {
       : raw === "Meeting" ? "Collaboration"
       : raw;
 
-    const computeCats = (logs: TimeLog[]) => {
+    const computeMetrics = (logs: TimeLog[]) => {
       const totalMs = logs.reduce((s, l) => s + (l.duration_ms || 0), 0);
+      const billableMs = logs.reduce((s, l) => l.billable ? s + (l.duration_ms || 0) : s, 0);
       const wizardMs = logs.reduce((s, l) => s + (l.form_fill_ms || 0), 0);
+
       const catMap: Record<string, number> = {};
       logs.forEach((l) => {
         const cat = normCat(l.category || "Task");
         catMap[cat] = (catMap[cat] || 0) + (l.duration_ms || 0);
       });
-      if (wizardMs > 0) catMap["Wizard Time"] = (catMap["Wizard Time"] || 0) + wizardMs;
-      return { totalMs, catMap };
+
+      const taskMs = catMap["Task"] || 0;
+      const planningMs = catMap["Planning"] || 0;
+      const communicationMs = catMap["Communication"] || 0;
+      const collaborationMs = catMap["Collaboration"] || 0;
+      const personalMs = catMap["Personal"] || 0;
+      const breakMs = catMap["Break"] || 0;
+
+      // Per-session-date threshold computation
+      const byDate: Record<string, number> = {};
+      logs.forEach((l) => {
+        const d = l.session_date || (l.start_time ? new Date(l.start_time).toLocaleDateString("en-CA", { timeZone: orgTimezone }) : "unknown");
+        byDate[d] = (byDate[d] || 0) + (l.duration_ms || 0);
+      });
+      let breakThresholdMs = 0;
+      let personalThresholdMs = 0;
+      Object.values(byDate).forEach((sessionMs) => {
+        if (sessionMs >= 8 * 3600000) breakThresholdMs += 45 * 60000;
+        else if (sessionMs >= 6 * 3600000) breakThresholdMs += 30 * 60000;
+        else if (sessionMs >= 4 * 3600000) breakThresholdMs += 15 * 60000;
+        personalThresholdMs += sessionMs / 8;
+      });
+
+      const productivityScore = billableMs > 0 ? (taskMs / billableMs) * 100 : 0;
+
+      return {
+        totalMs, billableMs, wizardMs, taskMs, planningMs, communicationMs, collaborationMs,
+        personalMs, personalThresholdMs, breakMs, breakThresholdMs, productivityScore, catMap,
+      };
     };
 
     const userIds = new Set<string>([
@@ -374,35 +430,51 @@ export default function ReportsPage() {
     return Array.from(userIds).map((uid) => {
       const currLogs = filteredLogs.filter((l) => l.user_id === uid);
       const prevLogs = compFilteredLogs.filter((l) => l.user_id === uid);
-      const curr = computeCats(currLogs);
-      const prev = computeCats(prevLogs);
+      const curr = computeMetrics(currLogs);
+      const prev = computeMetrics(prevLogs);
 
+      // CategoryTrend[] kept for insights section (% of billableMs)
       const allCats = new Set([...Object.keys(curr.catMap), ...Object.keys(prev.catMap)]);
       const categories: CategoryTrend[] = Array.from(allCats).map((name) => {
         const currentMs = curr.catMap[name] || 0;
         const prevMs = prev.catMap[name] || 0;
-        const currentPct = curr.totalMs > 0 ? (currentMs / curr.totalMs) * 100 : 0;
-        const prevPct = prev.totalMs > 0 ? (prevMs / prev.totalMs) * 100 : 0;
+        const currentPct = curr.billableMs > 0 ? (currentMs / curr.billableMs) * 100 : 0;
+        const prevPct = prev.billableMs > 0 ? (prevMs / prev.billableMs) * 100 : 0;
         return { name, currentMs, currentPct, prevMs, prevPct, deltaPct: currentPct - prevPct };
       }).sort((a, b) => b.currentMs - a.currentMs);
-
-      const nonProdMs = (curr.catMap["Personal"] || 0) + (curr.catMap["Break"] || 0);
-      const productivityScore = curr.totalMs > 0 ? ((curr.totalMs - nonProdMs) / curr.totalMs) * 100 : 0;
-      const prevNonProd = (prev.catMap["Personal"] || 0) + (prev.catMap["Break"] || 0);
-      const prevProductivityScore = prev.totalMs > 0 ? ((prev.totalMs - prevNonProd) / prev.totalMs) * 100 : 0;
 
       return {
         userId: uid,
         profile: profiles.find((p) => p.id === uid),
         currentTotalMs: curr.totalMs,
         prevTotalMs: prev.totalMs,
-        productivityScore,
-        prevProductivityScore,
+        productivityScore: curr.productivityScore,
+        prevProductivityScore: prev.productivityScore,
+        taskMs: curr.taskMs,
+        prevTaskMs: prev.taskMs,
+        planningMs: curr.planningMs,
+        prevPlanningMs: prev.planningMs,
+        communicationMs: curr.communicationMs,
+        prevCommunicationMs: prev.communicationMs,
+        collaborationMs: curr.collaborationMs,
+        prevCollaborationMs: prev.collaborationMs,
+        wizardMs: curr.wizardMs,
+        prevWizardMs: prev.wizardMs,
+        billableMs: curr.billableMs,
+        prevBillableMs: prev.billableMs,
+        personalMs: curr.personalMs,
+        prevPersonalMs: prev.personalMs,
+        personalThresholdMs: curr.personalThresholdMs,
+        prevPersonalThresholdMs: prev.personalThresholdMs,
+        breakMs: curr.breakMs,
+        prevBreakMs: prev.breakMs,
+        breakThresholdMs: curr.breakThresholdMs,
+        prevBreakThresholdMs: prev.breakThresholdMs,
         categories,
         screenshotCount: filteredScreenshots.filter((s) => s.user_id === uid).length,
       };
     }).sort((a, b) => b.currentTotalMs - a.currentTotalMs);
-  }, [filteredLogs, compFilteredLogs, profiles, filteredScreenshots]);
+  }, [filteredLogs, compFilteredLogs, profiles, filteredScreenshots, orgTimezone]);
 
   // Keep these for the daily chart and financial summary
   const totalHoursMs = reportSummary.totalMs;
@@ -450,6 +522,26 @@ export default function ReportsPage() {
         days.push(buildDay(dateStr, label));
       }
       return days;
+    } else if (dateRange === "year") {
+      const months: DailyData[] = [];
+      const yearStr = startISO ? new Date(startISO).toLocaleDateString("en-CA", { timeZone: orgTimezone }).slice(0, 4) : String(new Date().getFullYear());
+      const year = parseInt(yearStr);
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      for (let m = 0; m < 12; m++) {
+        const prefix = `${year}-${String(m + 1).padStart(2, "0")}`;
+        const monthLogs = filteredLogs.filter((l) => {
+          const d = l.session_date || (l.start_time ? new Date(l.start_time).toLocaleDateString("en-CA", { timeZone: orgTimezone }) : "");
+          return d.startsWith(prefix);
+        });
+        months.push({
+          label: monthNames[m],
+          date: `${prefix}-01`,
+          billableMs: monthLogs.filter((l) => l.billable).reduce((s, l) => s + (l.duration_ms || 0), 0),
+          personalMs: monthLogs.filter((l) => l.category === "Personal").reduce((s, l) => s + (l.duration_ms || 0), 0),
+          totalMs: monthLogs.reduce((s, l) => s + (l.duration_ms || 0), 0),
+        });
+      }
+      return months;
     } else if (dateRange === "custom" && appliedStart && appliedEnd) {
       const days: DailyData[] = [];
       const s = new Date(appliedStart + "T12:00:00");
@@ -832,6 +924,16 @@ export default function ReportsPage() {
             This Month
           </button>
           <button
+            onClick={() => setDateRange("year")}
+            className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all ${
+              dateRange === "year"
+                ? "bg-white text-espresso border border-sand shadow-sm"
+                : "bg-parchment text-walnut border border-sand hover:bg-sand"
+            }`}
+          >
+            This Year
+          </button>
+          <button
             onClick={() => setDateRange("custom")}
             className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all ${
               dateRange === "custom"
@@ -1007,69 +1109,64 @@ export default function ReportsPage() {
                     </div>
                   </div>
 
-                  {/* Category Trends */}
+                  {/* Productivity Meters */}
                   <div className="px-5 py-4">
                     <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">
-                      Time by Category — vs {compLabel}
+                      Productivity Meters — vs {compLabel}
                     </div>
                     <div className="space-y-3">
-                      {va.categories
-                        .filter((c) => c.currentMs > 0 || c.prevMs > 0)
-                        .map((cat) => (
-                          <div key={cat.name} className="flex items-center gap-3">
-                            <div className="w-[110px] shrink-0 text-[12px] font-semibold text-espresso truncate">
-                              {cat.name}
-                            </div>
-                            <div className="flex-1 space-y-1">
-                              {/* Current period bar */}
-                              <div className="flex items-center gap-2">
-                                <div className="w-[30px] shrink-0 text-right text-[10px] text-espresso font-semibold">
-                                  {cat.currentPct.toFixed(0)}%
-                                </div>
-                                <div className="flex-1 h-2 rounded bg-parchment overflow-hidden">
-                                  <div
-                                    className="h-full rounded bg-terracotta"
-                                    style={{ width: `${Math.max(cat.currentPct, cat.currentMs > 0 ? 2 : 0)}%` }}
-                                  />
-                                </div>
-                                <div className="w-[55px] shrink-0 text-right text-[10px] text-espresso">
-                                  {formatDuration(cat.currentMs)}
-                                </div>
-                              </div>
-                              {/* Previous period bar */}
-                              {cat.prevMs > 0 && (
-                                <div className="flex items-center gap-2 opacity-50">
-                                  <div className="w-[30px] shrink-0 text-right text-[10px] text-bark">
-                                    {cat.prevPct.toFixed(0)}%
-                                  </div>
-                                  <div className="flex-1 h-1.5 rounded bg-parchment overflow-hidden">
-                                    <div
-                                      className="h-full rounded bg-bark"
-                                      style={{ width: `${Math.max(cat.prevPct, 2)}%` }}
-                                    />
-                                  </div>
-                                  <div className="w-[55px] shrink-0 text-right text-[10px] text-bark">
-                                    {formatDuration(cat.prevMs)}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                            {/* Delta badge */}
-                            <div
-                              className={`w-[44px] shrink-0 text-right text-[11px] font-bold ${
-                                cat.deltaPct > 2
-                                  ? "text-sage"
-                                  : cat.deltaPct < -2
-                                  ? "text-terracotta"
-                                  : "text-bark"
-                              }`}
-                            >
-                              {Math.abs(cat.deltaPct) < 0.5
-                                ? "—"
-                                : `${cat.deltaPct > 0 ? "+" : ""}${cat.deltaPct.toFixed(1)}pp`}
-                            </div>
-                          </div>
-                        ))}
+                      <ProductivityMeterWidget
+                        label="Task"
+                        currentMs={va.taskMs}
+                        denominatorMs={va.billableMs}
+                        prevMs={va.prevTaskMs}
+                        prevDenominatorMs={va.prevBillableMs}
+                      />
+                      <ProductivityMeterWidget
+                        label="Planning"
+                        currentMs={va.planningMs}
+                        denominatorMs={va.billableMs}
+                        prevMs={va.prevPlanningMs}
+                        prevDenominatorMs={va.prevBillableMs}
+                      />
+                      <ProductivityMeterWidget
+                        label="Communication"
+                        currentMs={va.communicationMs}
+                        denominatorMs={va.billableMs}
+                        prevMs={va.prevCommunicationMs}
+                        prevDenominatorMs={va.prevBillableMs}
+                      />
+                      <ProductivityMeterWidget
+                        label="Collaboration"
+                        currentMs={va.collaborationMs}
+                        denominatorMs={va.billableMs}
+                        prevMs={va.prevCollaborationMs}
+                        prevDenominatorMs={va.prevBillableMs}
+                      />
+                      <ProductivityMeterWidget
+                        label="Wizard Time"
+                        currentMs={va.wizardMs}
+                        denominatorMs={va.billableMs}
+                        prevMs={va.prevWizardMs}
+                        prevDenominatorMs={va.prevBillableMs}
+                      />
+                      <ProductivityMeterWidget
+                        label="Personal Time"
+                        currentMs={va.personalMs}
+                        denominatorMs={va.personalThresholdMs}
+                        prevMs={va.prevPersonalMs}
+                        prevDenominatorMs={va.prevPersonalThresholdMs}
+                        redWhenExceeded
+                      />
+                      <ProductivityMeterWidget
+                        label="Break"
+                        currentMs={va.breakMs}
+                        denominatorMs={va.breakThresholdMs}
+                        prevMs={va.prevBreakMs}
+                        prevDenominatorMs={va.prevBreakThresholdMs}
+                        redWhenExceeded
+                        noAllowanceWhenZero
+                      />
                     </div>
 
                     {/* Insights */}
@@ -1203,7 +1300,7 @@ export default function ReportsPage() {
             <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
               <h3 className="text-sm font-bold text-espresso">Daily Hours</h3>
               <span className="text-[11px] text-bark">
-                {dateRange === "today" ? "Today" : dateRange === "week" ? "This week" : dateRange === "month" ? "This month" : "Custom range"}
+                {dateRange === "today" ? "Today" : dateRange === "week" ? "This week" : dateRange === "month" ? "This month" : dateRange === "year" ? "This year" : "Custom range"}
               </span>
             </div>
             <div

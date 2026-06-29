@@ -225,6 +225,35 @@ export function getMonthBoundsInTimezone(timezone: string): { start: string; end
   return getMonthBoundsForDate(new Date(), timezone);
 }
 
+/** Get start/end of the current year (Jan 1 – Dec 31) in a given timezone, as UTC ISO strings */
+export function getYearBoundsInTimezone(timezone: string): { start: string; end: string } {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const tzYear = parseInt(parts.find(p => p.type === "year")!.value);
+  const tzMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
+  const tzDay = parseInt(parts.find(p => p.type === "day")!.value);
+  const tzHour = parseInt(parts.find(p => p.type === "hour")!.value);
+  const tzMinute = parseInt(parts.find(p => p.type === "minute")!.value);
+  const tzSecond = parseInt(parts.find(p => p.type === "second")!.value);
+  const tzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, tzHour, tzMinute, tzSecond));
+  const offsetMs = tzAsUtc.getTime() - now.getTime();
+  const firstDay = new Date(tzYear, 0, 1);
+  const lastDay = new Date(tzYear, 11, 31);
+  const startUtc = new Date(Date.UTC(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate(), 0, 0, 0) - offsetMs);
+  const endUtc = new Date(Date.UTC(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate(), 0, 0, 0) - offsetMs + 24 * 60 * 60 * 1000 - 1);
+  return { start: startUtc.toISOString(), end: endUtc.toISOString() };
+}
+
 /** Get start of the week (Monday) at midnight UTC */
 export function weekStart(date?: Date): Date {
   const d = date ? new Date(date) : new Date();
