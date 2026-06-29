@@ -468,9 +468,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .single();
 
     if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
-      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress"];
+      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress", "submitted", "revision_needed"];
       if (!allowedStatuses.includes(status)) {
-        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, or in_progress" }, { status: 403 });
+        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, in_progress, submitted, or revision_needed" }, { status: 403 });
       }
     }
 
@@ -543,9 +543,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .single();
 
     if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
-      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress"];
+      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress", "submitted", "revision_needed"];
       if (!allowedStatuses.includes(status)) {
-        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, or in_progress" }, { status: 403 });
+        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, in_progress, submitted, or revision_needed" }, { status: 403 });
       }
     }
 

@@ -199,6 +199,18 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
   );
 }
 
+// ─── Revision badge ───────────────────────────────────────────────────────────
+
+function RevisionBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const label = count === 1 ? 'R' : `${count}R`;
+  return (
+    <span className="text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-terracotta text-white">
+      {label}
+    </span>
+  );
+}
+
 // ─── Status dot color helper ──────────────────────────────────────────────────
 
 function statusDotColor(status: AssignedTaskStatus): string {
@@ -1987,6 +1999,9 @@ export default function TaskAssignmentsAdminTab({
                     {/* Status — clickable per-assignee badge */}
                     <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-wrap gap-1">
+                        {(task.revision_count ?? 0) > 0 && (
+                          <RevisionBadge count={task.revision_count ?? 0} />
+                        )}
                         {assignees.length === 0 && (
                           taskStatusEdit?.taskId === task.id ? (
                             <select
