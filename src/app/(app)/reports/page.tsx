@@ -10,7 +10,6 @@ import {
   getTodayBoundsInTimezone,
   getWeekBoundsInTimezone,
   getMonthBoundsInTimezone,
-  getMonthBoundsForDate,
   getYearBoundsInTimezone,
 } from "@/lib/utils";
 import { ProductivityMeterWidget } from "@/components/ProductivityMeterWidget";
@@ -165,37 +164,65 @@ export default function ReportsPage() {
     }
   }, [dateRange, appliedStart, appliedEnd, orgTimezone]);
 
-  /* ── Comparison period (previous equivalent range) ──────── */
+  /* ── Comparison period — computed as YYYY-MM-DD session_date strings ──────── */
+  // We compute the comparison range directly as session_date strings so there is
+  // no UTC-to-local roundtrip that can silently shift the date boundary.
 
-  const { compStartISO, compEndISO, compLabel } = useMemo(() => {
-    // Range mode: no comparison period
-    if (dateRange === "custom" && customMode === "range") {
-      return { compStartISO: "", compEndISO: "", compLabel: "" };
-    }
-    // Compare mode: use user-specified Period B
+  const { compSessionStart, compSessionEnd, compLabel } = useMemo(() => {
+    const empty = { compSessionStart: "", compSessionEnd: "", compLabel: "" };
+
+    // Range mode: no comparison
+    if (dateRange === "custom" && customMode === "range") return empty;
+
+    // Compare mode: user picked Period B dates directly (already YYYY-MM-DD strings)
     if (dateRange === "custom" && customMode === "compare") {
-      if (!appliedCompStart || !appliedCompEnd) return { compStartISO: "", compEndISO: "", compLabel: "" };
-      const s = new Date(appliedCompStart + "T12:00:00");
-      const e = new Date(appliedCompEnd + "T12:00:00");
-      const label = `${s.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
-      return { compStartISO: s.toISOString(), compEndISO: e.toISOString(), compLabel: label };
+      if (!appliedCompStart || !appliedCompEnd) return empty;
+      const sDate = new Date(appliedCompStart + "T12:00:00");
+      const eDate = new Date(appliedCompEnd + "T12:00:00");
+      const label = `${sDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${eDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      return { compSessionStart: appliedCompStart, compSessionEnd: appliedCompEnd, compLabel: label };
     }
-    // Custom null mode or non-custom: auto-compute previous equivalent period
-    if (!startISO || !endISO) return { compStartISO: "", compEndISO: "", compLabel: "" };
-    // Month mode: use timezone-aware previous month boundaries (avoids off-by-1-day from ms-shift)
+
+    if (!startISO || !endISO) return empty;
+
+    // Convert current period to local YYYY-MM-DD dates
+    const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: orgTimezone });
+    const startDate = fmt.format(new Date(startISO));   // e.g. "2026-06-01"
+    const endDate   = fmt.format(new Date(endISO));     // e.g. "2026-06-30"
+    const [yr, mo] = startDate.split("-").map(Number);
+
+    // Helper: shift a YYYY-MM-DD string by N calendar days
+    const shiftDate = (dateStr: string, days: number): string => {
+      const d = new Date(dateStr + "T12:00:00");
+      d.setDate(d.getDate() + days);
+      return new Intl.DateTimeFormat("en-CA").format(d);
+    };
+
     if (dateRange === "month") {
-      const prevDate = new Date(new Date(startISO).getTime() - 1);
-      const { start: cs, end: ce } = getMonthBoundsForDate(prevDate, orgTimezone);
-      return { compStartISO: cs, compEndISO: ce, compLabel: "last month" };
+      // Previous calendar month (handles year rollover)
+      const prevMo = mo === 1 ? 12 : mo - 1;
+      const prevYr = mo === 1 ? yr - 1 : yr;
+      const lastDay = new Date(prevYr, prevMo, 0).getDate(); // day 0 of month M = last day of M-1
+      const cs = `${prevYr}-${String(prevMo).padStart(2, "0")}-01`;
+      const ce = `${prevYr}-${String(prevMo).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      return { compSessionStart: cs, compSessionEnd: ce, compLabel: "last month" };
     }
-    const durMs = new Date(endISO).getTime() - new Date(startISO).getTime();
-    const compEnd = new Date(new Date(startISO).getTime() - 1);
-    const compStart = new Date(compEnd.getTime() - durMs);
+
+    if (dateRange === "year") {
+      return { compSessionStart: `${yr - 1}-01-01`, compSessionEnd: `${yr - 1}-12-31`, compLabel: "last year" };
+    }
+
+    // today / week / custom-range: shift back by the same number of calendar days
+    const durDays =
+      Math.round(
+        (new Date(endDate + "T12:00:00").getTime() - new Date(startDate + "T12:00:00").getTime()) / 86400000
+      ) + 1; // inclusive
+    const cs = shiftDate(startDate, -durDays);
+    const ce = shiftDate(endDate,   -durDays);
     let label = "previous period";
     if (dateRange === "today") label = "yesterday";
     else if (dateRange === "week") label = "last week";
-    else if (dateRange === "year") label = "last year";
-    return { compStartISO: compStart.toISOString(), compEndISO: compEnd.toISOString(), compLabel: label };
+    return { compSessionStart: cs, compSessionEnd: ce, compLabel: label };
   }, [startISO, endISO, dateRange, customMode, appliedCompStart, appliedCompEnd, orgTimezone]);
 
   /* ── Whether a comparison period is active ─────────────────── */
@@ -259,21 +286,22 @@ export default function ReportsPage() {
   }, [toLocalDate]);
 
   /* ── Fetch comparison data (previous period) ────────────── */
+  // sessionStart / sessionEnd are already YYYY-MM-DD strings — no timezone conversion needed.
 
-  const fetchCompData = useCallback(async (qStart: string, qEnd: string, tz: string) => {
-    if (!qStart || !qEnd) return;
+  const fetchCompData = useCallback(async (sessionStart: string, sessionEnd: string) => {
+    if (!sessionStart || !sessionEnd) return;
     try {
       const supabase = createClient();
       const { data } = await supabase
         .from("time_logs")
         .select("*")
-        .gte("session_date", toLocalDate(qStart, tz))
-        .lte("session_date", toLocalDate(qEnd, tz));
+        .gte("session_date", sessionStart)
+        .lte("session_date", sessionEnd);
       setCompLogs((data ?? []) as TimeLog[]);
     } catch (err) {
       console.error("Comparison fetch error:", err);
     }
-  }, [toLocalDate]);
+  }, []);
 
   /* ── Auto-fetch when startISO/endISO change (for non-custom ranges) ── */
 
@@ -287,8 +315,8 @@ export default function ReportsPage() {
   }, [startISO, endISO, fetchData, dateRange, appliedStart, orgTimezone]);
 
   useEffect(() => {
-    if (compStartISO && compEndISO) fetchCompData(compStartISO, compEndISO, orgTimezone);
-  }, [compStartISO, compEndISO, fetchCompData, orgTimezone]);
+    if (compSessionStart && compSessionEnd) fetchCompData(compSessionStart, compSessionEnd);
+  }, [compSessionStart, compSessionEnd, fetchCompData]);
 
   /* ── Filter by selected VA / Account / Client ───────────── */
 
