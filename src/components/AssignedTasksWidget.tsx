@@ -162,6 +162,21 @@ export default function AssignedTasksWidget({
                   (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
               )
           );
+        } else if (task.assigned_tasks.status === "revision_needed") {
+          // Moving out of revision_needed — increment revision_count badge in state
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === id
+                ? {
+                    ...t,
+                    assigned_tasks: {
+                      ...t.assigned_tasks,
+                      revision_count: (t.assigned_tasks.revision_count ?? 0) + 1,
+                    },
+                  }
+                : t
+            )
+          );
         }
       } catch {
         setTasks((prev) =>
