@@ -10,6 +10,7 @@ import {
   getTodayBoundsInTimezone,
   getWeekBoundsInTimezone,
   getMonthBoundsInTimezone,
+  getMonthBoundsForDate,
   getYearBoundsInTimezone,
 } from "@/lib/utils";
 import { ProductivityMeterWidget } from "@/components/ProductivityMeterWidget";
@@ -181,16 +182,21 @@ export default function ReportsPage() {
     }
     // Custom null mode or non-custom: auto-compute previous equivalent period
     if (!startISO || !endISO) return { compStartISO: "", compEndISO: "", compLabel: "" };
+    // Month mode: use timezone-aware previous month boundaries (avoids off-by-1-day from ms-shift)
+    if (dateRange === "month") {
+      const prevDate = new Date(new Date(startISO).getTime() - 1);
+      const { start: cs, end: ce } = getMonthBoundsForDate(prevDate, orgTimezone);
+      return { compStartISO: cs, compEndISO: ce, compLabel: "last month" };
+    }
     const durMs = new Date(endISO).getTime() - new Date(startISO).getTime();
     const compEnd = new Date(new Date(startISO).getTime() - 1);
     const compStart = new Date(compEnd.getTime() - durMs);
     let label = "previous period";
     if (dateRange === "today") label = "yesterday";
     else if (dateRange === "week") label = "last week";
-    else if (dateRange === "month") label = "last month";
     else if (dateRange === "year") label = "last year";
     return { compStartISO: compStart.toISOString(), compEndISO: compEnd.toISOString(), compLabel: label };
-  }, [startISO, endISO, dateRange, customMode, appliedCompStart, appliedCompEnd]);
+  }, [startISO, endISO, dateRange, customMode, appliedCompStart, appliedCompEnd, orgTimezone]);
 
   /* ── Whether a comparison period is active ─────────────────── */
 
@@ -198,7 +204,11 @@ export default function ReportsPage() {
 
   /* ── Fetch data — uses ISO strings so deps are stable primitives ── */
 
-  const fetchData = useCallback(async (qStart: string, qEnd: string) => {
+  // Extract a local YYYY-MM-DD date string from an ISO timestamp, respecting orgTimezone
+  const toLocalDate = useCallback((iso: string, tz: string) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(iso)), []);
+
+  const fetchData = useCallback(async (qStart: string, qEnd: string, tz: string) => {
     if (!qStart || !qEnd) {
       setLoading(false);
       return;
@@ -226,8 +236,8 @@ export default function ReportsPage() {
         supabase
           .from("time_logs")
           .select("*")
-          .gte("session_date", qStart.slice(0, 10))
-          .lte("session_date", qEnd.slice(0, 10))
+          .gte("session_date", toLocalDate(qStart, tz))
+          .lte("session_date", toLocalDate(qEnd, tz))
           .order("start_time", { ascending: true }),
         supabase.from("profiles").select("*"),
         supabase
@@ -246,39 +256,39 @@ export default function ReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toLocalDate]);
 
   /* ── Fetch comparison data (previous period) ────────────── */
 
-  const fetchCompData = useCallback(async (qStart: string, qEnd: string) => {
+  const fetchCompData = useCallback(async (qStart: string, qEnd: string, tz: string) => {
     if (!qStart || !qEnd) return;
     try {
       const supabase = createClient();
       const { data } = await supabase
         .from("time_logs")
         .select("*")
-        .gte("session_date", qStart.slice(0, 10))
-        .lte("session_date", qEnd.slice(0, 10));
+        .gte("session_date", toLocalDate(qStart, tz))
+        .lte("session_date", toLocalDate(qEnd, tz));
       setCompLogs((data ?? []) as TimeLog[]);
     } catch (err) {
       console.error("Comparison fetch error:", err);
     }
-  }, []);
+  }, [toLocalDate]);
 
   /* ── Auto-fetch when startISO/endISO change (for non-custom ranges) ── */
 
   useEffect(() => {
     if (startISO && endISO) {
-      fetchData(startISO, endISO);
+      fetchData(startISO, endISO, orgTimezone);
     } else if (dateRange === "custom" && !appliedStart) {
       // Just switched to custom, no dates yet — stop loading, show picker
       setLoading(false);
     }
-  }, [startISO, endISO, fetchData, dateRange, appliedStart]);
+  }, [startISO, endISO, fetchData, dateRange, appliedStart, orgTimezone]);
 
   useEffect(() => {
-    if (compStartISO && compEndISO) fetchCompData(compStartISO, compEndISO);
-  }, [compStartISO, compEndISO, fetchCompData]);
+    if (compStartISO && compEndISO) fetchCompData(compStartISO, compEndISO, orgTimezone);
+  }, [compStartISO, compEndISO, fetchCompData, orgTimezone]);
 
   /* ── Filter by selected VA / Account / Client ───────────── */
 
@@ -1097,7 +1107,23 @@ export default function ReportsPage() {
               />
               {customStart && customEnd && customCompStart && customCompEnd ? (
                 <button
-                  onClick={() => { setAppliedStart(customStart); setAppliedEnd(customEnd); setAppliedCompStart(customCompStart); setAppliedCompEnd(customCompEnd); }}
+                  onClick={() => {
+                    // Always put the more recent period on top (primary = top bar)
+                    const startA = new Date(customStart);
+                    const startB = new Date(customCompStart);
+                    if (startB > startA) {
+                      // Period B is more recent — swap so it becomes primary (top bar)
+                      setAppliedStart(customCompStart);
+                      setAppliedEnd(customCompEnd);
+                      setAppliedCompStart(customStart);
+                      setAppliedCompEnd(customEnd);
+                    } else {
+                      setAppliedStart(customStart);
+                      setAppliedEnd(customEnd);
+                      setAppliedCompStart(customCompStart);
+                      setAppliedCompEnd(customCompEnd);
+                    }
+                  }}
                   className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840]"
                 >
                   Apply
