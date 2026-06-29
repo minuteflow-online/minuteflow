@@ -12,7 +12,7 @@ import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSid
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
-import { useScreenCapture } from "@/hooks/useScreenCapture";
+import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone } from "@/lib/utils";
 import type {
   Profile,
@@ -159,7 +159,7 @@ export default function DashboardPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ─── Persistent Screen Capture ─────────────────────────────
-  const { isActive: screenShareActive, requestStream, captureFrame, stopStream } = useScreenCapture();
+  const { isActive: screenShareActive, requestStream, captureFrame, stopStream } = useScreenCaptureCtx();
   const captureTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const activeLogIdRef = useRef<number | null>(null);
   const captureWorkerRef = useRef<Worker | null>(null);

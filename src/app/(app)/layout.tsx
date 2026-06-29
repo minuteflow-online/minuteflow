@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import TopNav from "@/components/TopNav";
 import SceAlertBanner from "@/components/SceAlertBanner";
+import { ScreenCaptureProvider } from "@/contexts/ScreenCaptureProvider";
 import type { UserRole } from "@/types/database";
 
 export default async function AppLayout({
@@ -33,9 +34,11 @@ export default async function AppLayout({
     <>
       <TopNav user={{ full_name: fullName, role }} />
       <SceAlertBanner />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">
-        {children}
-      </main>
+      <ScreenCaptureProvider>
+        <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">
+          {children}
+        </main>
+      </ScreenCaptureProvider>
     </>
   );
 }
