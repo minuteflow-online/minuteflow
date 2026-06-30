@@ -779,32 +779,46 @@ export default function DashboardPage() {
         .select("id, start_time")
         .eq("user_id", userId)
         .is("end_time", null)
-        .neq("category", "Break")
         .neq("category", "Clock Out");
 
       if (openLogs && openLogs.length > 0) {
+        const nowDate = new Date(now).toDateString();
+        type ClosedLog = { id: number; end_time: string; duration_ms: number };
+        const closedLogs: ClosedLog[] = [];
+
         for (const openLog of openLogs) {
           const logStartMs = openLog.start_time
             ? new Date(openLog.start_time).getTime()
             : Date.now();
-          const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+
+          // Logs started on a previous calendar date close at 23:59:59.999 of that day,
+          // so overnight/weekend stragglers don't get impossibly long durations.
+          let endTime: string;
+          if (openLog.start_time && new Date(openLog.start_time).toDateString() !== nowDate) {
+            const endOfDay = new Date(openLog.start_time);
+            endOfDay.setHours(23, 59, 59, 999);
+            endTime = endOfDay.toISOString();
+          } else {
+            endTime = now;
+          }
+
+          const duration_ms = Math.max(0, new Date(endTime).getTime() - logStartMs);
+          closedLogs.push({ id: openLog.id, end_time: endTime, duration_ms });
+
           await supabase
             .from("time_logs")
-            .update({ end_time: now, duration_ms: logDurationMs })
+            .update({ end_time: endTime, duration_ms })
             .eq("id", openLog.id);
         }
 
         setTimeLogs((prev) =>
           prev.map((log) => {
-            const match = openLogs.find((o) => o.id === log.id);
-            if (match && !log.end_time) {
-              const logStartMs = match.start_time
-                ? new Date(match.start_time).getTime()
-                : Date.now();
+            const closed = closedLogs.find((c) => c.id === log.id);
+            if (closed && !log.end_time) {
               return {
                 ...log,
-                end_time: now,
-                duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
+                end_time: closed.end_time,
+                duration_ms: closed.duration_ms,
               } as TimeLog;
             }
             return log;
@@ -814,6 +828,13 @@ export default function DashboardPage() {
     },
     [supabase, userId]
   );
+
+  // ─── Auto-close stale open logs on page load ──────────────
+  useEffect(() => {
+    if (!userId) return;
+    const now = new Date().toISOString();
+    closeOpenNonBreakLogs(now);
+  }, [userId, closeOpenNonBreakLogs]);
 
   // ─── Actions ──────────────────────────────────────────────
 
