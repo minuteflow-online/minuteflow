@@ -1283,8 +1283,11 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         const dayCompleted = nonBreakLogs.filter(l => l.progress === "completed").length;
         const dayOnHold = nonBreakLogs.filter(l => l.progress === "on_hold").length;
 
+        // Personal (unbilled) time breakdown
+        const personalMs = dayLogs.filter(l => l.category === "Personal").reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+
         const sortedDayLogs = [...dayLogs].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-        return { dateLabel, totalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
+        return { dateLabel, totalMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
       });
   }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type, userMoods]);
 
@@ -1520,6 +1523,13 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
                       )}
                       <span className="text-[11px] text-bark">{day.taskCount} tasks</span>
                       <span className="text-[12px] font-bold text-espresso">{formatDuration(day.totalMs)}</span>
+                      {day.personalMs > 0 && (
+                        <span className="text-[10px] text-bark/70 flex items-center gap-1">
+                          <span className="text-sage font-semibold">Billed: {formatDuration(day.totalMs)}</span>
+                          <span className="text-bark/40">·</span>
+                          <span className="text-clay-rose font-semibold">Personal: {formatDuration(day.personalMs)}</span>
+                        </span>
+                      )}
                       {isAdmin && profile.pay_rate > 0 && (
                         <span className="text-[12px] font-semibold text-sage">{formatCurrency(day.dayPayable)}</span>
                       )}
