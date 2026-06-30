@@ -661,9 +661,9 @@ export default function ReportsPage() {
   const accountHours: AccountHours[] = useMemo(() => {
     const map: Record<string, number> = {};
     filteredLogs
+      .filter((l) => l.account)
       .forEach((l) => {
-        const acct = l.account || "Unassigned";
-        map[acct] = (map[acct] || 0) + (l.duration_ms || 0);
+        map[l.account!] = (map[l.account!] || 0) + (l.duration_ms || 0);
       });
     return Object.entries(map)
       .map(([account, totalMs]) => ({ account, totalMs }))
