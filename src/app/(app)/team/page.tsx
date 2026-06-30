@@ -90,6 +90,9 @@ export default function TeamPage() {
   // Status filter
   const [statusFilter, setStatusFilter] = useState<"all" | "working" | "on-break" | "away">("all");
 
+  // Member name filter
+  const [memberFilter, setMemberFilter] = useState<string>("all");
+
   // Mood data: { [userId]: { [session_date_YYYY-MM-DD]: mood } }
   const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
 
@@ -433,11 +436,16 @@ export default function TeamPage() {
   const hasSelection = selectedMembers.size > 0;
 
   // Apply status filter (personal counts as working for filter purposes)
-  const filteredMembers = statusFilter === "all"
+  const statusFiltered = statusFilter === "all"
     ? members
     : statusFilter === "working"
     ? members.filter((m) => m.status === "working" || m.status === "personal")
     : members.filter((m) => m.status === statusFilter);
+
+  // Apply member name filter
+  const filteredMembers = memberFilter === "all"
+    ? statusFiltered
+    : statusFiltered.filter((m) => m.profile.id === memberFilter);
 
   // Split members into selected (expanded) and unselected (compact)
   const expandedMembers = hasSelection
@@ -523,7 +531,7 @@ export default function TeamPage() {
         )}
       </div>
 
-      {/* Status Filter */}
+      {/* Status Filter + Member Filter */}
       {!loading && members.length > 0 && (
         <div className="mb-6 flex flex-wrap items-center gap-2">
           {(["all", "working", "on-break", "away"] as const).map((f) => {
@@ -554,6 +562,19 @@ export default function TeamPage() {
               </button>
             );
           })}
+          {/* Member name filter */}
+          <select
+            value={memberFilter}
+            onChange={(e) => setMemberFilter(e.target.value)}
+            className="ml-2 rounded-full border border-sand px-3 py-1.5 text-[12px] font-semibold text-espresso bg-white outline-none cursor-pointer hover:bg-parchment transition-colors"
+          >
+            <option value="all">All Members</option>
+            {members.map((m) => (
+              <option key={m.profile.id} value={m.profile.id}>
+                {m.profile.full_name}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 
