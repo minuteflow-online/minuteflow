@@ -794,9 +794,9 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
     profile.pay_rate_type || "hourly"
   );
 
-  // Sort logs: most recent first
+  // Sort logs: chronological (oldest first) so the day reads top-to-bottom
   const sortedLogs = [...member.todayLogs].sort(
-    (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
+    (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
   );
 
   // Progress status counts
@@ -1215,9 +1215,9 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
     profile.pay_rate_type || "hourly"
   );
 
-  // Sort logs: most recent first
+  // Sort logs: chronological (oldest first) so the day reads top-to-bottom
   const sortedLogs = [...member.todayLogs].sort(
-    (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
+    (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
   );
 
   // Progress status counts (exclude breaks and clock-in entries)
@@ -1282,7 +1282,8 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         const dayCompleted = nonBreakLogs.filter(l => l.progress === "completed").length;
         const dayOnHold = nonBreakLogs.filter(l => l.progress === "on_hold").length;
 
-        return { dateLabel, totalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: dayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
+        const sortedDayLogs = [...dayLogs].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+        return { dateLabel, totalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
       });
   }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type, userMoods]);
 
