@@ -186,6 +186,22 @@ export default function CorrectionRequestModal({
       return;
     }
 
+    // Validate time fields: end_time must be after start_time
+    if (selectedFields.has("start_time") || selectedFields.has("end_time")) {
+      const effectiveStart = selectedFields.has("start_time")
+        ? fieldValues["start_time"]
+        : log.start_time;
+      const effectiveEnd = selectedFields.has("end_time")
+        ? fieldValues["end_time"]
+        : log.end_time;
+      if (effectiveStart && effectiveEnd) {
+        if (new Date(effectiveEnd).getTime() <= new Date(effectiveStart).getTime()) {
+          setError("The end time must be after the start time. Please fix your correction before submitting.");
+          return;
+        }
+      }
+    }
+
     setSaving(true);
     setError("");
 
@@ -357,13 +373,36 @@ export default function CorrectionRequestModal({
     }
 
     if (fieldKey.includes("time")) {
+      // Inline time conflict warning
+      let timeWarning = "";
+      if (fieldKey === "end_time" && val) {
+        const effectiveStart = selectedFields.has("start_time")
+          ? fieldValues["start_time"]
+          : log.start_time;
+        if (effectiveStart && new Date(val).getTime() <= new Date(effectiveStart).getTime()) {
+          timeWarning = "⚠️ End time must be after the start time.";
+        }
+      }
+      if (fieldKey === "start_time" && val) {
+        const effectiveEnd = selectedFields.has("end_time")
+          ? fieldValues["end_time"]
+          : log.end_time;
+        if (effectiveEnd && new Date(val).getTime() >= new Date(effectiveEnd).getTime()) {
+          timeWarning = "⚠️ Start time must be before the end time.";
+        }
+      }
       return (
-        <input
-          type="datetime-local"
-          value={val}
-          onChange={(e) => setFieldVal(fieldKey, e.target.value)}
-          className="mt-1 w-full rounded border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
-        />
+        <div>
+          <input
+            type="datetime-local"
+            value={val}
+            onChange={(e) => setFieldVal(fieldKey, e.target.value)}
+            className="mt-1 w-full rounded border border-sand px-2 py-1 text-xs text-espresso outline-none focus:border-terracotta"
+          />
+          {timeWarning && (
+            <p className="mt-1 text-[11px] text-terracotta font-medium">{timeWarning}</p>
+          )}
+        </div>
       );
     }
 
