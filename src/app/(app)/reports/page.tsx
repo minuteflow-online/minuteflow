@@ -324,7 +324,7 @@ export default function ReportsPage() {
     let result = selectedVA === "all" ? logs : logs.filter((l) => l.user_id === selectedVA);
     if (selectedAccount !== "all") result = result.filter((l) => l.account === selectedAccount);
     if (selectedClient !== "all") result = result.filter((l) => l.client_name === selectedClient);
-    return result;
+    return result.filter((l) => l.category !== "Clock Out");
   }, [logs, selectedVA, selectedAccount, selectedClient]);
 
   /* ── Derived filter options ──────────────────────────────── */
@@ -355,7 +355,7 @@ export default function ReportsPage() {
     let result = selectedVA === "all" ? compLogs : compLogs.filter((l) => l.user_id === selectedVA);
     if (selectedAccount !== "all") result = result.filter((l) => l.account === selectedAccount);
     if (selectedClient !== "all") result = result.filter((l) => l.client_name === selectedClient);
-    return result;
+    return result.filter((l) => l.category !== "Clock Out");
   }, [compLogs, selectedVA, selectedAccount, selectedClient]);
 
   /* ── Computed stats (matches Activity Log summary + type/status) ── */

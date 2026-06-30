@@ -204,9 +204,9 @@ export default function TeamPage() {
         sessions.find((s) => s.user_id === profile.id) ?? null;
 
       const userLogs = logs.filter((l) => l.user_id === profile.id);
-      const nonBreakLogs = userLogs.filter((l) => l.category !== "Break");
+      const nonBreakLogs = userLogs.filter((l) => l.category !== "Break" && l.category !== "Clock Out");
       const payableLogs = userLogs.filter(
-        (l) => l.category !== "Personal" && (l.category !== "Break" || l.billable === true)
+        (l) => l.category !== "Personal" && l.category !== "Clock Out" && (l.category !== "Break" || l.billable === true)
       );
       const todayHoursMs = payableLogs.reduce(
         (sum, l) => sum + (l.duration_ms || 0),
@@ -228,7 +228,7 @@ export default function TeamPage() {
         .filter((l) => l.category === "Break")
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const taskMs = userLogs
-        .filter((l) => !["Personal", "Planning", "Sorting", "Sorting Tasks", "Break", "Collaboration", "Meeting", "Communication", "Message"].includes(l.category))
+        .filter((l) => !["Personal", "Planning", "Sorting", "Sorting Tasks", "Break", "Collaboration", "Meeting", "Communication", "Message", "Clock Out"].includes(l.category))
         .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const wizardMs = userLogs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0);
       const collaborationMs = userLogs
@@ -800,7 +800,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
   );
 
   // Progress status counts
-  const nonBreakLogs = sortedLogs.filter(l => l.category !== "Break" && l.category !== "Clock In");
+  const nonBreakLogs = sortedLogs.filter(l => l.category !== "Break" && l.category !== "Clock In" && l.category !== "Clock Out");
   const inProgressCount = nonBreakLogs.filter(l => l.progress === "in_progress" || (!l.end_time && !l.progress)).length;
   const completedCount = nonBreakLogs.filter(l => l.progress === "completed").length;
   const onHoldCount = nonBreakLogs.filter(l => l.progress === "on_hold").length;
@@ -1221,7 +1221,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   );
 
   // Progress status counts (exclude breaks and clock-in entries)
-  const progressLogs = sortedLogs.filter(l => l.category !== "Break" && l.category !== "Clock In");
+  const progressLogs = sortedLogs.filter(l => l.category !== "Break" && l.category !== "Clock In" && l.category !== "Clock Out");
   const inProgressCount = progressLogs.filter(l => l.progress === "in_progress" || (!l.end_time && !l.progress)).length;
   const completedCount = progressLogs.filter(l => l.progress === "completed").length;
   const onHoldCount = progressLogs.filter(l => l.progress === "on_hold").length;
@@ -1256,8 +1256,8 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
     return Object.entries(byDate)
       .sort((a, b) => b[1].dateSort - a[1].dateSort) // newest first
       .map(([dateLabel, { logs: dayLogs, isoDate }]) => {
-        const nonBreakLogs = dayLogs.filter(l => l.category !== "Break");
-        const payableLogs = dayLogs.filter(l => l.category !== "Personal" && (l.category !== "Break" || l.billable === true));
+        const nonBreakLogs = dayLogs.filter(l => l.category !== "Break" && l.category !== "Clock Out");
+        const payableLogs = dayLogs.filter(l => l.category !== "Personal" && l.category !== "Clock Out" && (l.category !== "Break" || l.billable === true));
         const totalMs = payableLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
         const dayPayable = computePayable(totalMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
 

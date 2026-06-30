@@ -717,8 +717,9 @@ export default function AdminPage() {
         latestScreenshot,
         todayScreenshots: userScreenshotsToday.length,
         todayHoursMs: userLogs
+          .filter((l) => l.category !== "Clock Out")
           .reduce((sum, l) => sum + (l.duration_ms || 0), 0),
-        todayTasks: userLogs.filter((l) => l.category !== "Break").length,
+        todayTasks: userLogs.filter((l) => l.category !== "Break" && l.category !== "Clock Out").length,
         wizardTimeMs: userLogs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0),
       };
     }).sort((a, b) => {
@@ -730,11 +731,12 @@ export default function AdminPage() {
   const stats = useMemo(() => {
     const activeCount = monitorMembers.filter((m) => m.status === "live" || m.status === "personal").length;
     const todayHoursMs = logs
+      .filter((l) => l.category !== "Clock Out")
       .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
     const todayScreenshots = allScreenshots.filter(
       (s) => formatDateLocalTZ(new Date(s.created_at), orgTimezone) === formatDateLocalTZ(new Date(), orgTimezone)
     ).length;
-    const todayTasks = logs.filter((l) => l.end_time && l.category !== "Break").length;
+    const todayTasks = logs.filter((l) => l.end_time && l.category !== "Break" && l.category !== "Clock Out").length;
     const wizardTimeMs = logs.reduce((sum, l) => sum + (l.form_fill_ms || 0), 0);
 
     return { activeCount, todayHoursMs, todayScreenshots, todayTasks, wizardTimeMs };
@@ -864,12 +866,13 @@ export default function AdminPage() {
     const now = new Date().toISOString();
     const nowMs = new Date(now).getTime();
 
-    // Close any open time logs for this user
+    // Close any open time logs for this user (exclude Clock Out marker logs)
     const { data: openLogs } = await supabase
       .from("time_logs")
       .select("id, start_time")
       .eq("user_id", targetUserId)
-      .is("end_time", null);
+      .is("end_time", null)
+      .neq("category", "Clock Out");
 
     if (openLogs?.length) {
       await Promise.all(
