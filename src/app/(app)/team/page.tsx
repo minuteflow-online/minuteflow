@@ -83,6 +83,8 @@ export default function TeamPage() {
   const [datePreset, setDatePreset] = useState<DateRangePreset>("today");
   const [customStart, setCustomStart] = useState<string>(formatDateInput(new Date()));
   const [customEnd, setCustomEnd] = useState<string>(formatDateInput(new Date()));
+  const [showPayPeriodDropdown, setShowPayPeriodDropdown] = useState(false);
+  const payPeriodRef = useRef<HTMLDivElement>(null);
 
   // Member selection state
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
@@ -116,6 +118,17 @@ export default function TeamPage() {
     checkRole();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!showPayPeriodDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (payPeriodRef.current && !payPeriodRef.current.contains(e.target as Node)) {
+        setShowPayPeriodDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showPayPeriodDropdown]);
 
   // Compute date range boundaries
   const { rangeStart, rangeEnd, periodLabel } = useMemo(() => {
@@ -500,7 +513,10 @@ export default function TeamPage() {
           return (
             <button
               key={preset}
-              onClick={() => setDatePreset(preset)}
+              onClick={() => {
+                setDatePreset(preset);
+                setShowPayPeriodDropdown(false);
+              }}
               className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${
                 datePreset === preset
                   ? "bg-white text-espresso border border-sand shadow-sm"
@@ -511,6 +527,57 @@ export default function TeamPage() {
             </button>
           );
         })}
+
+        {/* Pay Period quick-pick */}
+        <div ref={payPeriodRef} className="relative">
+          <button
+            onClick={() => setShowPayPeriodDropdown((v) => !v)}
+            className={`rounded-lg px-4 py-2 text-[13px] font-semibold transition-all cursor-pointer ${
+              showPayPeriodDropdown
+                ? "bg-white text-espresso border border-sand shadow-sm"
+                : "bg-parchment text-walnut border border-sand hover:bg-sand"
+            }`}
+          >
+            Pay Period ▾
+          </button>
+          {showPayPeriodDropdown && (() => {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = now.getMonth();
+            const pad = (n: number) => String(n).padStart(2, "0");
+            const lastDayThis = new Date(y, m + 1, 0).getDate();
+            const lastMonthDate = new Date(y, m - 1, 1);
+            const ly = lastMonthDate.getFullYear();
+            const lm = lastMonthDate.getMonth();
+            const lastDayLast = new Date(ly, lm + 1, 0).getDate();
+            const thisM = `${y}-${pad(m + 1)}`;
+            const lastM = `${ly}-${pad(lm + 1)}`;
+            const options = [
+              { label: `This month 1–15`, start: `${thisM}-01`, end: `${thisM}-15` },
+              { label: `This month 16–${lastDayThis}`, start: `${thisM}-16`, end: `${thisM}-${pad(lastDayThis)}` },
+              { label: `Last month 1–15`, start: `${lastM}-01`, end: `${lastM}-15` },
+              { label: `Last month 16–${lastDayLast}`, start: `${lastM}-16`, end: `${lastM}-${pad(lastDayLast)}` },
+            ];
+            return (
+              <div className="absolute left-0 top-full mt-1 z-20 min-w-[180px] rounded-xl border border-sand bg-white shadow-md py-1">
+                {options.map((opt) => (
+                  <button
+                    key={opt.start}
+                    onClick={() => {
+                      setCustomStart(opt.start);
+                      setCustomEnd(opt.end);
+                      setDatePreset("custom");
+                      setShowPayPeriodDropdown(false);
+                    }}
+                    className="w-full text-left px-4 py-2 text-[13px] text-espresso hover:bg-parchment transition-colors"
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
 
         {datePreset === "custom" && (
           <div className="flex items-center gap-2 ml-2">
