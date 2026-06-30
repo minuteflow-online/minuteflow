@@ -1066,6 +1066,18 @@ export default function DashboardPage() {
           else if (shiftHours >= 4) allowedBreakMs = 15 * 60 * 1000;
           else allowedBreakMs = 10 * 60 * 1000; // Under 4 hours: 10 min allowed
 
+          // Reset all completed breaks for this session to billable first,
+          // so the allowance check below starts from a clean state and is idempotent.
+          await supabase
+            .from("time_logs")
+            .update({ billable: true })
+            .eq("user_id", userId)
+            .eq("category", "Break")
+            .eq("session_date", sessionDate)
+            .gte("start_time", clockInTime)
+            .lte("start_time", now)
+            .not("end_time", "is", null);
+
           // Fetch completed break logs for this session, filtered by session_date to avoid cross-day accumulation
           const { data: breakLogs } = await supabase
             .from("time_logs")
