@@ -424,10 +424,16 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     > = {};
 
     filteredLogs.forEach((log) => {
-      if (log.category === "Personal") return; // unpaid, not billed
+      if (log.category === "Personal") {
+        // Group personal time under "Personal / Unbilled"
+        const key = "Personal / Unbilled";
+        if (!accountTotals[key]) accountTotals[key] = { ms: 0, clients: new Set() };
+        accountTotals[key].ms += log.duration_ms;
+        return;
+      }
 
       // Determine billing account
-      let billingAccount = log.account || "Unassigned";
+      let billingAccount = log.account || "Personal / Unbilled";
       if (VC_BILLED_CATEGORIES.includes(log.category)) {
         billingAccount = VIRTUAL_CONCIERGE;
       }
@@ -1285,19 +1291,24 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                                       <tr className="text-[9px] font-semibold uppercase tracking-wider text-bark/60">
                                         <th className="py-1 text-left">Date</th>
                                         <th className="py-1 text-right">Total</th>
-                                        <th className="py-1 text-right">Paid Hours</th>
+                                        <th className="py-1 text-right">Billed</th>
+                                        <th className="py-1 text-right">Personal</th>
                                         <th className="py-1 text-right">Amount</th>
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      {row.days.map((d) => (
+                                      {row.days.map((d) => {
+                                        const personalMs = d.ms - d.paidMs;
+                                        return (
                                         <tr key={d.date} className="border-t border-parchment/50">
                                           <td className="py-1 text-espresso">{fmtDate(d.date, timezone)}</td>
                                           <td className="py-1 text-right text-bark">{fmtHours(d.ms)}</td>
-                                          <td className="py-1 text-right text-bark">{fmtHours(d.paidMs)}</td>
+                                          <td className="py-1 text-right text-sage font-medium">{fmtHours(d.paidMs)}</td>
+                                          <td className="py-1 text-right text-clay-rose">{personalMs > 0 ? fmtHours(personalMs) : "—"}</td>
                                           <td className="py-1 text-right font-medium text-espresso">{fmtMoney(d.amount)}</td>
                                         </tr>
-                                      ))}
+                                        );
+                                      })}
                                     </tbody>
                                   </table>
 

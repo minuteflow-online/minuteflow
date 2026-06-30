@@ -660,14 +660,18 @@ export default function ReportsPage() {
 
   const accountHours: AccountHours[] = useMemo(() => {
     const map: Record<string, number> = {};
-    filteredLogs
-      .filter((l) => l.account && l.billable)
-      .forEach((l) => {
-        map[l.account!] = (map[l.account!] || 0) + (l.duration_ms || 0);
-      });
+    filteredLogs.forEach((l) => {
+      const key = (l.billable && l.account) ? l.account : "Personal / Unbilled";
+      map[key] = (map[key] || 0) + (l.duration_ms || 0);
+    });
     return Object.entries(map)
       .map(([account, totalMs]) => ({ account, totalMs }))
-      .sort((a, b) => b.totalMs - a.totalMs);
+      .sort((a, b) => {
+        // "Personal / Unbilled" always goes last
+        if (a.account === "Personal / Unbilled") return 1;
+        if (b.account === "Personal / Unbilled") return -1;
+        return b.totalMs - a.totalMs;
+      });
   }, [filteredLogs]);
 
   const maxAccountMs = useMemo(
