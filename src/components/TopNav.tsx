@@ -234,7 +234,7 @@ export default function TopNav({ user }: TopNavProps) {
           // Filter by session_date to avoid pulling breaks from other workdays
           const { data: breakLogs } = await supabase
             .from("time_logs")
-            .select("id, duration_ms, start_time")
+            .select("id, duration_ms, start_time, end_time, account, client_name, project, username, full_name")
             .eq("user_id", authUser.id)
             .eq("category", "Break")
             .eq("session_date", sessionDate)
@@ -256,8 +256,44 @@ export default function TopNav({ user }: TopNavProps) {
               const idsToFlip: number[] = [];
               for (const bl of sortedDesc) {
                 if (remaining <= 0) break;
-                idsToFlip.push(bl.id);
-                remaining -= (bl.duration_ms || 0);
+                const blDuration = bl.duration_ms || 0;
+
+                if (blDuration <= remaining) {
+                  // Entire log is excess — flip it
+                  idsToFlip.push(bl.id);
+                  remaining -= blDuration;
+                } else {
+                  // Partial excess — split: billable head + non-billable tail
+                  const billablePart = blDuration - remaining;
+                  const splitPoint = new Date(bl.start_time).getTime() + billablePart;
+                  const splitPointIso = new Date(splitPoint).toISOString();
+
+                  await supabase
+                    .from("time_logs")
+                    .update({ duration_ms: billablePart, end_time: splitPointIso, billable: true })
+                    .eq("id", bl.id);
+
+                  await supabase.from("time_logs").insert({
+                    user_id: authUser.id,
+                    username: bl.username,
+                    full_name: bl.full_name,
+                    task_name: "Break",
+                    category: "Break",
+                    account: bl.account,
+                    client_name: bl.client_name,
+                    project: bl.project,
+                    start_time: splitPointIso,
+                    end_time: bl.end_time,
+                    duration_ms: remaining,
+                    billable: false,
+                    billing_type: "hourly",
+                    is_manual: false,
+                    form_fill_ms: 0,
+                    session_date: sessionDate,
+                  });
+
+                  remaining = 0;
+                }
               }
               if (idsToFlip.length > 0) {
                 await supabase

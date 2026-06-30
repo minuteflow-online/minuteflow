@@ -1081,7 +1081,7 @@ export default function DashboardPage() {
           // Fetch completed break logs for this session, filtered by session_date to avoid cross-day accumulation
           const { data: breakLogs } = await supabase
             .from("time_logs")
-            .select("id, duration_ms, start_time")
+            .select("id, duration_ms, start_time, end_time, account, client_name, project, username, full_name")
             .eq("user_id", userId)
             .eq("category", "Break")
             .eq("session_date", sessionDate)
@@ -1096,7 +1096,7 @@ export default function DashboardPage() {
 
             // Minimum 1-minute threshold — avoids flagging rounding noise (e.g. 13-25 second overages)
             if (excessMs >= 60 * 1000) {
-              // Determine which break logs to flip to non-billable (latest first, consuming excess)
+              // Determine which break logs to mark non-billable (latest first, consuming excess)
               const sortedDesc = [...breakLogs].sort(
                 (a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
               );
@@ -1105,11 +1105,47 @@ export default function DashboardPage() {
 
               for (const bl of sortedDesc) {
                 if (remaining <= 0) break;
-                idsToFlip.push(bl.id);
-                remaining -= (bl.duration_ms || 0);
+                const blDuration = bl.duration_ms || 0;
+
+                if (blDuration <= remaining) {
+                  // Entire log is excess — flip it
+                  idsToFlip.push(bl.id);
+                  remaining -= blDuration;
+                } else {
+                  // Partial excess — split: billable head + non-billable tail
+                  const billablePart = blDuration - remaining;
+                  const splitPoint = new Date(bl.start_time).getTime() + billablePart;
+                  const splitPointIso = new Date(splitPoint).toISOString();
+
+                  await supabase
+                    .from("time_logs")
+                    .update({ duration_ms: billablePart, end_time: splitPointIso, billable: true })
+                    .eq("id", bl.id);
+
+                  await supabase.from("time_logs").insert({
+                    user_id: userId,
+                    username: bl.username,
+                    full_name: bl.full_name,
+                    task_name: "Break",
+                    category: "Break",
+                    account: bl.account,
+                    client_name: bl.client_name,
+                    project: bl.project,
+                    start_time: splitPointIso,
+                    end_time: bl.end_time,
+                    duration_ms: remaining,
+                    billable: false,
+                    billing_type: "hourly",
+                    is_manual: false,
+                    form_fill_ms: 0,
+                    session_date: sessionDate,
+                  });
+
+                  remaining = 0;
+                }
               }
 
-              // Flip excess break logs to non-billable
+              // Flip whole excess break logs to non-billable
               if (idsToFlip.length > 0) {
                 await supabase
                   .from("time_logs")
