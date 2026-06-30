@@ -1050,13 +1050,21 @@ export default function DashboardPage() {
       const sessionDate = session?.session_date || new Date().toISOString().split("T")[0];
 
       if (clockInTime) {
-        const shiftMs = new Date(now).getTime() - new Date(clockInTime).getTime();
+        // Multi-session aware: sum ALL time_log durations for this date (work + breaks across every
+        // session today). This correctly handles VAs who clock out mid-day and clock back in — the
+        // combined shift determines the break tier, not each session evaluated in isolation.
+        const { data: allDayLogs } = await supabase
+          .from("time_logs")
+          .select("duration_ms")
+          .eq("user_id", userId)
+          .eq("session_date", sessionDate)
+          .not("end_time", "is", null);
+        const shiftMs = (allDayLogs || []).reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
-        // Break tier table (shift hours → allowed break ms)
+        // Break tier table (total hours logged today → allowed break ms)
         const shiftHours = shiftMs / (1000 * 60 * 60);
 
-        // Skip stale sessions — shift > 16 hours means the session was never reset between days,
-        // which would incorrectly pull breaks from multiple workdays into one window.
+        // Skip anomalous days — if total logged time exceeds 16 hours something is wrong with data
         if (shiftHours <= 16) {
           let allowedBreakMs = 0;
           if (shiftHours >= 8) allowedBreakMs = 45 * 60 * 1000;
@@ -1066,29 +1074,36 @@ export default function DashboardPage() {
           else if (shiftHours >= 4) allowedBreakMs = 15 * 60 * 1000;
           else allowedBreakMs = 10 * 60 * 1000; // Under 4 hours: 10 min allowed
 
-          // Reset all completed breaks for this session to billable first,
-          // so the allowance check below starts from a clean state and is idempotent.
+          // Reset ALL completed breaks for this date to billable first — includes prior sessions today.
+          // This is idempotent: if a prior session over-flagged, we re-evaluate correctly below.
           await supabase
             .from("time_logs")
             .update({ billable: true })
             .eq("user_id", userId)
             .eq("category", "Break")
             .eq("session_date", sessionDate)
-            .gte("start_time", clockInTime)
             .lte("start_time", now)
             .not("end_time", "is", null);
 
-          // Fetch completed break logs for this session, filtered by session_date to avoid cross-day accumulation
+          // Fetch ALL completed break logs for this date (all sessions today)
           const { data: breakLogs } = await supabase
             .from("time_logs")
             .select("id, duration_ms, start_time, end_time, account, client_name, project, username, full_name")
             .eq("user_id", userId)
             .eq("category", "Break")
             .eq("session_date", sessionDate)
-            .gte("start_time", clockInTime)
             .lte("start_time", now)
             .not("end_time", "is", null)
             .order("start_time", { ascending: true });
+
+          // Always clear prior overage records for this date — will re-insert if overage still exists.
+          // This handles the case where a 2nd session pushes the total above the next tier,
+          // retroactively eliminating an overage that was flagged during the 1st session's clock-out.
+          await supabase
+            .from("break_correction_requests")
+            .delete()
+            .eq("user_id", userId)
+            .eq("session_date", sessionDate);
 
           if (breakLogs && breakLogs.length > 0) {
             const totalBreakMs = breakLogs.reduce((sum, b) => sum + (b.duration_ms || 0), 0);
