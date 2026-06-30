@@ -1230,7 +1230,8 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   const accountBreakdown = useMemo(() => {
     const byAccount: Record<string, number> = {};
     member.todayLogs.forEach((log) => {
-      const acct = log.account || "Unassigned";
+      if (!log.billable) return; // exclude unbilled time from account breakdown
+      const acct = log.account || "Personal";
       byAccount[acct] = (byAccount[acct] || 0) + (log.duration_ms || 0);
     });
     // Sort by most time first
