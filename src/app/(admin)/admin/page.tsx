@@ -5557,7 +5557,7 @@ function BreakCorrectionsSection({
                     </span>
                   </div>
                   <div className="mt-0.5 text-[11px] text-stone">
-                    {new Date(req.session_date).toLocaleDateString("en-US", { timeZone: orgTimezone })} &middot; {shiftHrs}h shift
+                    {new Date(req.session_date + "T12:00:00").toLocaleDateString("en-US", { timeZone: orgTimezone })} &middot; {shiftHrs}h shift
                   </div>
 
                   {/* Break details */}
