@@ -115,8 +115,12 @@ export default function AssignedTasksWidget({
           ...row,
           assigned_tasks: (row.assigned_tasks as unknown as VAAssignedTask["assigned_tasks"]),
         }));
+        const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = [
+            'on_queue', 'in_progress', 'revision_needed',
+            'submitted', 'reviewing', 'approved', 'completed', 'paid',
+          ];
         const visible = data
-          .filter((t) => t.status === 'on_queue' || t.status === 'in_progress' || t.status === 'revision_needed')
+          .filter((t) => VA_VISIBLE_STATUSES.includes(t.status))
           .sort(
             (a, b) =>
               (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
