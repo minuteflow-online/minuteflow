@@ -12,10 +12,6 @@ interface AssignedTasksWidgetProps {
   orgTimezone?: string;
   /** Increment to force a re-fetch from the server (e.g. after wizard cancel or task start). */
   refetchCount?: number;
-  /** logId of the currently active time log — used to detect which assigned task is being worked on. */
-  activeLogId?: string | null;
-  /** Called when Submit is clicked on the task that IS the current active time log. */
-  onSubmitAssignedTask?: (task: VAAssignedTask) => void;
 }
 
 function formatDueDate(dueDateStr: string, orgTimezone: string): { label: string; isOverdue: boolean } {
@@ -97,8 +93,6 @@ export default function AssignedTasksWidget({
   onPlayAssignedTask,
   orgTimezone = "UTC",
   refetchCount = 0,
-  activeLogId,
-  onSubmitAssignedTask,
 }: AssignedTasksWidgetProps) {
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -517,14 +511,7 @@ export default function AssignedTasksWidget({
 
                         {task.status === "in_progress" && !detail.review_required && (
                           <button
-                            onClick={() => {
-                              const isActivelog = task.log_id != null && activeLogId != null && task.log_id === parseInt(activeLogId, 10);
-                              if (isActivelog && onSubmitAssignedTask) {
-                                onSubmitAssignedTask(task);
-                              } else {
-                                updateStatus(task, "submitted");
-                              }
-                            }}
+                            onClick={() => updateStatus(task, "submitted")}
                             disabled={isUpdating}
                             className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sky-500 text-white hover:bg-sky-600 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >

@@ -107,8 +107,6 @@ export default function DashboardPage() {
   const prevActiveLogIdRef = useRef<string | null>(null);
   // Counter that tells AssignedTasksWidget to re-fetch from DB
   const [widgetRefetchCount, setWidgetRefetchCount] = useState(0);
-  // Assigned task pending submit (close-wizard path: close time log then mark submitted)
-  const [pendingSubmitAssignedTaskId, setPendingSubmitAssignedTaskId] = useState<number | null>(null);
 
   // Close-old-task wizard state
   const [closeOldStep, setCloseOldStep] = useState<"screenshot" | "details" | null>(null);
@@ -2535,20 +2533,6 @@ export default function DashboardPage() {
       return;
     }
 
-    // If this wizard was opened to submit an assigned task, mark it submitted and re-sync widget
-    if (pendingSubmitAssignedTaskId) {
-      const submitId = pendingSubmitAssignedTaskId;
-      setPendingSubmitAssignedTaskId(null);
-      fetch(`/api/assigned-tasks/${submitId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "submitted" }),
-      })
-        .then(() => setWidgetRefetchCount((c) => c + 1))
-        .catch(console.error);
-      return;
-    }
-
     // Now start the new task if we have pending form data
     if (pendingFormData) {
       // Slight delay to ensure old task is closed before starting new
@@ -2556,7 +2540,7 @@ export default function DashboardPage() {
       setPendingFormData(null);
       await startTask(formData);
     }
-  }, [liveSessionData, userId, supabase, closeOldScreenshotBlob, closeOldMemoType, closeOldMemoText, closeOldClientMemo, closeOldInternalMemo, closeOldStatus, closeOldRating, closeOldRatingNote, pendingFormData, pendingSubmitAssignedTaskId, startTask, breakPending, doStartBreak]);
+  }, [liveSessionData, userId, supabase, closeOldScreenshotBlob, closeOldMemoType, closeOldMemoText, closeOldClientMemo, closeOldInternalMemo, closeOldStatus, closeOldRating, closeOldRatingNote, pendingFormData, startTask, breakPending, doStartBreak]);
 
   const captureCloseOldScreenshot = useCallback(async () => {
     setCloseOldCapturing(true);
@@ -2751,44 +2735,6 @@ export default function DashboardPage() {
       handleCheckAndStartTask(formData);
     }
   }, [activeTask, userId, profile, taskElapsed, handleCheckAndStartTask]);
-
-  // When VA clicks Submit on an assigned task that IS their active time log, open the
-  // close-old wizard to capture memos + close the log, then mark the task submitted.
-  const handleSubmitAssignedTask = useCallback((task: VAAssignedTask) => {
-    if (!activeTask || !userId || !profile) return;
-    const taskAsLog: TimeLog = {
-      id: parseInt(activeTask.logId, 10),
-      user_id: userId,
-      username: profile.username,
-      full_name: profile.full_name,
-      department: profile.department,
-      position: profile.position,
-      task_name: activeTask.task_name,
-      category: activeTask.category,
-      project: activeTask.project || null,
-      account: activeTask.account || null,
-      client_name: activeTask.client_name || null,
-      start_time: activeTask.start_time,
-      end_time: null,
-      duration_ms: taskElapsed * 1000,
-      billable: true,
-      client_memo: activeTask.client_memo || null,
-      internal_memo: activeTask.internal_memo || null,
-      is_manual: false,
-      form_fill_ms: 0,
-      progress: null,
-      billing_type: activeTask.billing_type || "hourly",
-      task_rate: activeTask.task_rate ?? null,
-      manual_status: null,
-      session_date: null,
-      created_at: activeTask.start_time,
-      deleted_at: null,
-    };
-    setPendingSubmitAssignedTaskId(task.assigned_tasks.id);
-    setLiveSessionData(taskAsLog);
-    // No pendingFormData — wizard will close the log and submit the task, not start a new one
-    setCloseOldStep("details");
-  }, [activeTask, userId, profile, taskElapsed]);
 
   // When a new task log ID appears, the assigned task has started — mark it in_progress.
   useEffect(() => {
@@ -3230,11 +3176,9 @@ export default function DashboardPage() {
                 sessionState={sessionState}
                 hasActiveTask={!!activeTask}
                 onPlayAssignedTask={handlePlayAssignedTask}
-                onSubmitAssignedTask={handleSubmitAssignedTask}
                 orgTimezone={orgTimezone}
                 isAdmin={role === "admin" || role === "manager"}
                 refetchCount={widgetRefetchCount}
-                activeLogId={activeTask?.logId ?? null}
               />
             )}
             {isVa && sessionState === "idle" && (
@@ -3306,7 +3250,7 @@ export default function DashboardPage() {
                   setPendingFormData(null);
                   if (pendingAssignedTaskId) setWidgetRefetchCount((c) => c + 1);
                   setPendingAssignedTaskId(null);
-                  setPendingSubmitAssignedTaskId(null);
+
                 }}
                 className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
               >
@@ -3367,7 +3311,7 @@ export default function DashboardPage() {
                   setBreakPending(false);
                   if (pendingAssignedTaskId) setWidgetRefetchCount((c) => c + 1);
                   setPendingAssignedTaskId(null);
-                  setPendingSubmitAssignedTaskId(null);
+
                 }}
                 className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
               >
@@ -3518,7 +3462,7 @@ export default function DashboardPage() {
                     setBreakPending(false);
                     if (pendingAssignedTaskId) setWidgetRefetchCount((c) => c + 1);
                     setPendingAssignedTaskId(null);
-                    setPendingSubmitAssignedTaskId(null);
+
                   }}
                   className="flex-1 py-2.5 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"
                 >
