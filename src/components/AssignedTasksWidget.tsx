@@ -228,16 +228,6 @@ export default function AssignedTasksWidget({
 
   const handlePlay = useCallback(
     (task: VAAssignedTask) => {
-      setTasks((prev) =>
-        prev
-          .map((t): VAAssignedTask =>
-            t.id === task.id ? { ...t, status: "in_progress" as AssignedTaskStatus } : t
-          )
-          .sort(
-            (a, b) =>
-              (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
-          )
-      );
       onPlayAssignedTask(task);
     },
     [onPlayAssignedTask]

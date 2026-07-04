@@ -104,6 +104,7 @@ export default function DashboardPage() {
 
   // Assigned task pending play (tracks which assignee row to mark in_progress)
   const [pendingAssignedTaskId, setPendingAssignedTaskId] = useState<number | null>(null);
+  const pendingAssignedTaskIdRef = useRef<number | null>(null);
   const prevActiveLogIdRef = useRef<string | null>(null);
   // Counter that tells AssignedTasksWidget to re-fetch from DB
   const [widgetRefetchCount, setWidgetRefetchCount] = useState(0);
@@ -2190,6 +2191,21 @@ export default function DashboardPage() {
       // Auto-update assignment status to "in_progress" when VA starts working
       await autoUpdateAssignmentStatus(formData.task_name);
 
+      // If this task was started from the assigned tasks widget, mark it in_progress now.
+      // Use the ref so we read the latest value synchronously (avoids the timing issues of the old useEffect).
+      const assignedTaskIdToMark = pendingAssignedTaskIdRef.current;
+      if (assignedTaskIdToMark && logData) {
+        setPendingAssignedTaskId(null);
+        pendingAssignedTaskIdRef.current = null;
+        fetch(`/api/assigned-tasks/${assignedTaskIdToMark}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "in_progress", log_id: logData.id }),
+        })
+          .then(() => setWidgetRefetchCount((c) => c + 1))
+          .catch(console.error);
+      }
+
       const newActiveTask: ActiveTask = {
         task_name: formData.task_name,
         category: formData.category,
@@ -2695,6 +2711,7 @@ export default function DashboardPage() {
 
     if (!isFixedPay) {
       setPendingAssignedTaskId(task.assigned_tasks.id);
+      pendingAssignedTaskIdRef.current = task.assigned_tasks.id;
     }
 
     if (activeTask) {
@@ -2735,22 +2752,6 @@ export default function DashboardPage() {
       handleCheckAndStartTask(formData);
     }
   }, [activeTask, userId, profile, taskElapsed, handleCheckAndStartTask]);
-
-  // When a new task log ID appears, the assigned task has started — mark it in_progress.
-  useEffect(() => {
-    const newLogId = activeTask?.logId ?? null;
-    if (pendingAssignedTaskId && newLogId && newLogId !== prevActiveLogIdRef.current) {
-      fetch(`/api/assigned-tasks/${pendingAssignedTaskId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "in_progress", log_id: parseInt(newLogId, 10) }),
-      })
-        .then(() => setWidgetRefetchCount((c) => c + 1))
-        .catch(console.error);
-      setPendingAssignedTaskId(null);
-    }
-    prevActiveLogIdRef.current = newLogId;
-  }, [activeTask?.logId, pendingAssignedTaskId]);
 
   // ─── Notes modal ──────────────────────────────────────────
 
@@ -3248,9 +3249,9 @@ export default function DashboardPage() {
                   setCloseOldStep(null);
                   setLiveSessionData(null);
                   setPendingFormData(null);
-                  if (pendingAssignedTaskId) setWidgetRefetchCount((c) => c + 1);
                   setPendingAssignedTaskId(null);
-
+                  pendingAssignedTaskIdRef.current = null;
+                  setWidgetRefetchCount((c) => c + 1);
                 }}
                 className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
               >
@@ -3309,9 +3310,9 @@ export default function DashboardPage() {
                   setCloseOldClientMemo("");
                   setCloseOldInternalMemo("");
                   setBreakPending(false);
-                  if (pendingAssignedTaskId) setWidgetRefetchCount((c) => c + 1);
                   setPendingAssignedTaskId(null);
-
+                  pendingAssignedTaskIdRef.current = null;
+                  setWidgetRefetchCount((c) => c + 1);
                 }}
                 className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
               >
@@ -3460,9 +3461,9 @@ export default function DashboardPage() {
                     setCloseOldClientMemo("");
                     setCloseOldInternalMemo("");
                     setBreakPending(false);
-                    if (pendingAssignedTaskId) setWidgetRefetchCount((c) => c + 1);
                     setPendingAssignedTaskId(null);
-
+                    pendingAssignedTaskIdRef.current = null;
+                    setWidgetRefetchCount((c) => c + 1);
                   }}
                   className="flex-1 py-2.5 rounded-lg bg-parchment text-walnut border border-sand text-[13px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"
                 >
