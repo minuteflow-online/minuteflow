@@ -12,6 +12,7 @@ import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSid
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
+import GapFillModal from "@/components/GapFillModal";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone } from "@/lib/utils";
 import type {
@@ -151,6 +152,10 @@ export default function DashboardPage() {
 
   // Extension install popup (first login for VAs who require extension)
   const [showExtensionPopup, setShowExtensionPopup] = useState(false);
+
+  // Gap-fill modal (shown when clocked in but no active task)
+  const [showGapFillModal, setShowGapFillModal] = useState(false);
+  const [gapFillStartTime, setGapFillStartTime] = useState<string>("");
 
   // Session action debounce — prevents double-taps on Clock In/Out/Break
   const [sessionActionPending, setSessionActionPending] = useState(false);
@@ -442,6 +447,20 @@ export default function DashboardPage() {
 
       // Time logs
       if (logsRes.data) setTimeLogs(logsRes.data as TimeLog[]);
+
+      // Gap-fill detection: clocked in with no active task (not a break)
+      if (sessionRes.data) {
+        const s = sessionRes.data as Session;
+        if (s.clocked_in && s.active_task === null) {
+          const logs = (logsRes.data as TimeLog[]) || [];
+          const lastLog = logs
+            .filter((l) => l.end_time)
+            .sort((a, b) => new Date(b.end_time!).getTime() - new Date(a.end_time!).getTime())[0];
+          const gapStart = lastLog?.end_time || s.clock_in_time || new Date().toISOString();
+          setGapFillStartTime(gapStart);
+          setShowGapFillModal(true);
+        }
+      }
 
       // Screenshots grouped by log_id
       if (ssRes.data) {
@@ -2598,6 +2617,53 @@ export default function DashboardPage() {
     [checkLiveSession, startTask, activeTask]
   );
 
+  // ─── Gap Fill Submit ──────────────────────────────────────
+  const handleGapFillSubmit = useCallback(
+    async (taskName: string, account: string, category: string) => {
+      if (!userId || !profile || !gapFillStartTime) return;
+      const now = new Date().toISOString();
+      const durationMs = Math.max(0, new Date(now).getTime() - new Date(gapFillStartTime).getTime());
+      const { error } = await supabase.from("time_logs").insert({
+        user_id: userId,
+        username: profile.username,
+        full_name: profile.full_name,
+        department: profile.department,
+        position: profile.position,
+        task_name: taskName,
+        category,
+        account: account || null,
+        client_name: null,
+        start_time: gapFillStartTime,
+        end_time: now,
+        duration_ms: durationMs,
+        billable: category !== "Personal",
+        billing_type: "hourly",
+        is_manual: true,
+        form_fill_ms: 0,
+        session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+      });
+      if (error) throw error;
+      setTimeLogs((prev) => [
+        {
+          user_id: userId,
+          username: profile.username,
+          full_name: profile.full_name,
+          task_name: taskName,
+          category,
+          account: account || null,
+          start_time: gapFillStartTime,
+          end_time: now,
+          duration_ms: durationMs,
+          billable: category !== "Personal",
+          is_manual: true,
+        } as unknown as TimeLog,
+        ...prev,
+      ]);
+      setShowGapFillModal(false);
+    },
+    [userId, profile, gapFillStartTime, session, orgTimezone, supabase]
+  );
+
   // ─── Assigned Task Play ───────────────────────────────────
   // When VA hits Play on an assigned task, trigger the close-old-task wizard
   // (if there's an active task) then start the new task. After the task
@@ -3888,6 +3954,15 @@ export default function DashboardPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* ── Gap Fill Modal (non-dismissable) ─────────────────── */}
+      {showGapFillModal && gapFillStartTime && (
+        <GapFillModal
+          gapStart={gapFillStartTime}
+          orgTimezone={orgTimezone}
+          onSubmit={handleGapFillSubmit}
+        />
       )}
 
       {/* ── Extension Install Popup ────────────────────────────── */}
