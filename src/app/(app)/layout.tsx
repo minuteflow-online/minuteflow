@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import TopNav from "@/components/TopNav";
 import SceAlertBanner from "@/components/SceAlertBanner";
 import { ScreenCaptureProvider } from "@/contexts/ScreenCaptureProvider";
+import { SessionProvider } from "@/contexts/SessionContext";
+import SessionBannerWrapper from "@/components/SessionBannerWrapper";
 import type { UserRole } from "@/types/database";
 
 export default async function AppLayout({
@@ -35,9 +37,12 @@ export default async function AppLayout({
       <TopNav user={{ full_name: fullName, role }} />
       <ScreenCaptureProvider>
         <SceAlertBanner />
-        <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">
-          {children}
-        </main>
+        <SessionProvider>
+          <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-8">
+            <SessionBannerWrapper />
+            {children}
+          </main>
+        </SessionProvider>
       </ScreenCaptureProvider>
     </>
   );

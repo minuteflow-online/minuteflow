@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import SessionBanner, { type SessionState } from "@/components/SessionBanner";
+import { useSession, type SessionActions } from "@/contexts/SessionContext";
+import { type SessionState } from "@/components/SessionBanner";
 import ActiveTaskBar from "@/components/ActiveTaskBar";
 import TaskEntryForm, { type TaskFormData } from "@/components/TaskEntryForm";
 import TeamSidebar from "@/components/TeamSidebar";
@@ -68,17 +69,28 @@ function secondsSince(isoDate: string): number {
 
 export default function DashboardPage() {
   const supabase = createClient();
+
+  // Session context — provides timer, state, and action registration
+  const {
+    sessionState,
+    setSessionState,
+    sessionElapsed,
+    breakElapsed,
+    breakStartTime,
+    setBreakStartTime,
+    actionPending: sessionActionPending,
+    setActionPending: setSessionActionPending,
+    refresh: refreshSession,
+    registerActions,
+  } = useSession();
+
   // Auth & profile
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
 
   // Session state
   const [session, setSession] = useState<Session | null>(null);
-  const [sessionState, setSessionState] = useState<SessionState>("idle");
   const [claimRefreshKey, setClaimRefreshKey] = useState(0);
-  const [sessionElapsed, setSessionElapsed] = useState(0);
-  const [breakElapsed, setBreakElapsed] = useState(0);
-  const [breakStartTime, setBreakStartTime] = useState<string | null>(null);
   const [preBreakTask, setPreBreakTask] = useState<ActiveTask | null>(null);
 
   // Active task
@@ -159,12 +171,6 @@ export default function DashboardPage() {
   // Gap-fill modal (shown when clocked in but no active task)
   const [showGapFillModal, setShowGapFillModal] = useState(false);
   const [gapFillStartTime, setGapFillStartTime] = useState<string>("");
-
-  // Session action debounce — prevents double-taps on Clock In/Out/Break
-  const [sessionActionPending, setSessionActionPending] = useState(false);
-
-  // Timer refs
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ─── Persistent Screen Capture ─────────────────────────────
   const { isActive: screenShareActive, requestStream, captureFrame, stopStream } = useScreenCaptureCtx();
@@ -400,24 +406,12 @@ export default function DashboardPage() {
         }
       }
 
-      // Process session
+      // Process session (context owns sessionState/elapsed/timer; dashboard syncs local session obj + active task)
       if (sessionRes.data) {
         const s = sessionRes.data as Session;
         setSession(s);
 
         if (s.clocked_in) {
-          if (s.active_task?.isBreak) {
-            setSessionState("on-break");
-            if (s.active_task.start_time) {
-              setBreakStartTime(s.active_task.start_time);
-              setBreakElapsed(secondsSince(s.active_task.start_time));
-            }
-          } else {
-            setSessionState("clocked-in");
-          }
-          if (s.clock_in_time) {
-            setSessionElapsed(secondsSince(s.clock_in_time));
-          }
           if (s.active_task && !s.active_task.isBreak) {
             setActiveTask(s.active_task);
             if (s.active_task.start_time) {
@@ -428,8 +422,6 @@ export default function DashboardPage() {
               activeLogIdRef.current = parseInt(s.active_task.logId, 10);
             }
           }
-        } else {
-          setSessionState("idle");
         }
       }
 
@@ -714,29 +706,15 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  // ─── Timers ───────────────────────────────────────────────
+  // ─── Task elapsed timer (active task only — session elapsed owned by context) ───
 
   useEffect(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    if (sessionState === "clocked-in" || sessionState === "on-break") {
-      timerRef.current = setInterval(() => {
-        if (session?.clock_in_time) {
-          setSessionElapsed(secondsSince(session.clock_in_time));
-        }
-        if (sessionState === "on-break" && breakStartTime) {
-          setBreakElapsed(secondsSince(breakStartTime));
-        }
-        if (activeTask?.start_time && sessionState === "clocked-in") {
-          setTaskElapsed(secondsSince(activeTask.start_time));
-        }
-      }, 1000);
-    }
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [sessionState, session?.clock_in_time, activeTask?.start_time, breakStartTime]);
+    if (!activeTask?.start_time || sessionState !== "clocked-in") return;
+    const interval = setInterval(() => {
+      setTaskElapsed(secondsSince(activeTask.start_time!));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [sessionState, activeTask?.start_time]);
 
   // ─── Session heartbeat (keeps updated_at fresh for stale detection) ───
   useEffect(() => {
@@ -931,13 +909,12 @@ export default function DashboardPage() {
         active_task: sortingTask,
         session_date: clockInSessionDate,
       } as Session));
-      setSessionState("clocked-in");
-      setSessionElapsed(0);
       setActiveTask(sortingTask);
       setTaskElapsed(0);
       if (sortingLog) {
         setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
       }
+      await refreshSession();
 
       // Request notification permission at clock-in so off-tab alerts work
       if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
@@ -962,7 +939,7 @@ export default function DashboardPage() {
       }
     }
     setSessionActionPending(false);
-  }, [userId, profile, supabase, sessionActionPending, notifyVA]);
+  }, [userId, profile, supabase, sessionActionPending, notifyVA, refreshSession]);
 
   const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null, dayRating?: number | null, dayRatingNote?: string) => {
     if (!userId) return;
@@ -1223,12 +1200,9 @@ export default function DashboardPage() {
             }
           : prev
       );
-      setSessionState("idle");
-      setSessionElapsed(0);
       setActiveTask(null);
       setTaskElapsed(0);
-      setBreakElapsed(0);
-      setBreakStartTime(null);
+      await refreshSession();
 
       // Stop screen sharing and clear capture timers on clock out
       captureTimersRef.current.forEach((t) => clearTimeout(t));
@@ -1239,7 +1213,7 @@ export default function DashboardPage() {
       stopStream();
       activeLogIdRef.current = null;
     }
-  }, [userId, profile, supabase, stopStream]);
+  }, [userId, profile, supabase, stopStream, refreshSession]);
 
   const clockOut = useCallback(async () => {
     if (!userId) return;
@@ -1498,17 +1472,14 @@ export default function DashboardPage() {
     );
 
     setActiveTask(null);
-    setSessionState("on-break");
-    setBreakStartTime(now);
-    setBreakElapsed(0);
-
     // Update local session state so endBreak can find the break logId
     setSession((prev) => prev ? { ...prev, active_task: breakTask } : prev);
 
     if (logData) {
       setTimeLogs((prev) => [logData as TimeLog, ...prev]);
     }
-  }, [userId, profile, supabase, session, activeTask, stopCurrentTask]);
+    await refreshSession();
+  }, [userId, profile, supabase, session, activeTask, stopCurrentTask, refreshSession]);
 
 
 
@@ -1559,19 +1530,24 @@ export default function DashboardPage() {
       { onConflict: "user_id" }
     );
 
-    setSessionState("clocked-in");
-    setBreakElapsed(0);
-    setBreakStartTime(null);
     setActiveTask(null);
     setTaskElapsed(0);
     setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
+    await refreshSession();
 
     // If there was a task before break, show resume/new prompt
     if (preBreakTask) {
       setShowPostBreakPrompt(true);
     }
     setSessionActionPending(false);
-  }, [userId, supabase, session, breakElapsed, preBreakTask, sessionActionPending]);
+  }, [userId, supabase, session, breakElapsed, preBreakTask, sessionActionPending, refreshSession]);
+
+  // Register dashboard's complex action handlers with context so the layout's SessionBanner
+  // calls these (wizard flows, memos, etc.) instead of the simple context defaults.
+  useEffect(() => {
+    const actions: SessionActions = { clockIn, clockOut, startBreak, endBreak };
+    return registerActions(actions);
+  }, [registerActions, clockIn, clockOut, startBreak, endBreak]);
 
   // Resume the pre-break task
   const resumePreBreakTask = useCallback(async () => {
@@ -2254,8 +2230,6 @@ export default function DashboardPage() {
             session_date: taskSessionDate,
             updated_at: now,
           } as Session));
-          setSessionState("clocked-in");
-          setSessionElapsed(0);
         } else if (sessionState === "on-break") {
           // Close any open break logs when starting a new task from break
           if (session?.active_task?.logId && session.active_task.isBreak) {
@@ -2282,11 +2256,8 @@ export default function DashboardPage() {
             .eq("user_id", userId)
             .eq("category", "Break")
             .is("end_time", null);
-
-          setSessionState("clocked-in");
-          setBreakElapsed(0);
-          setBreakStartTime(null);
         }
+        await refreshSession();
       }
 
       // Always update active task state (even when skipping clock-in for assigned tasks)
@@ -2318,7 +2289,7 @@ export default function DashboardPage() {
         }
       }
     },
-    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA]
+    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA, refreshSession]
   );
 
   // ─── Screenshot (manual + fallback) ─────────────────────────
@@ -2455,15 +2426,14 @@ export default function DashboardPage() {
           session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
           updated_at: now,
         } as Session));
-        setSessionState("clocked-in");
-        setSessionElapsed(secondsSince(session?.clock_in_time || liveLog.start_time));
+        await refreshSession();
       }
 
       setShowLivePrompt(false);
       setLiveSessionData(null);
       setPendingFormData(null);
     },
-    [userId, supabase, session, sessionState]
+    [userId, supabase, session, sessionState, refreshSession]
   );
 
   // Close old task with details, then start new task
@@ -3100,21 +3070,6 @@ export default function DashboardPage() {
             : "No tasks logged yet today"}
         </p>
       </div>
-
-      {/* Session Banner */}
-      <SessionBanner
-        state={sessionState}
-        clockInTime={session?.clock_in_time || null}
-        elapsedSeconds={sessionElapsed}
-        breakElapsedSeconds={breakElapsed}
-        screenShareActive={screenShareActive}
-        timezone={orgTimezone}
-        actionPending={sessionActionPending}
-        onClockIn={clockIn}
-        onClockOut={clockOut}
-        onStartBreak={startBreak}
-        onEndBreak={endBreak}
-      />
 
       {/* Active Task Bar */}
       {activeTask && sessionState === "clocked-in" && (
