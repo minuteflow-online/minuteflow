@@ -444,9 +444,12 @@ export default function DashboardPage() {
       if (logsRes.data) setTimeLogs(logsRes.data as TimeLog[]);
 
       // Gap-fill detection: clocked in with no active task (not a break)
+      // Only show once per session (not on every dashboard re-mount) using a sessionStorage flag
       if (sessionRes.data) {
         const s = sessionRes.data as Session;
-        if (s.clocked_in && s.active_task === null) {
+        const gapFillKey = `gapFillShown_${s.session_date || ""}`;
+        const alreadyShown = typeof window !== "undefined" && sessionStorage.getItem(gapFillKey);
+        if (s.clocked_in && s.active_task === null && !alreadyShown) {
           const logs = (logsRes.data as TimeLog[]) || [];
           const lastLog = logs
             .filter((l) => l.end_time)
@@ -454,6 +457,7 @@ export default function DashboardPage() {
           const gapStart = lastLog?.end_time || s.clock_in_time || new Date().toISOString();
           setGapFillStartTime(gapStart);
           setShowGapFillModal(true);
+          if (typeof window !== "undefined") sessionStorage.setItem(gapFillKey, "1");
         }
       }
 
