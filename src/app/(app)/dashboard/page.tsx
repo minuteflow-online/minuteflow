@@ -443,23 +443,8 @@ export default function DashboardPage() {
       // Time logs
       if (logsRes.data) setTimeLogs(logsRes.data as TimeLog[]);
 
-      // Gap-fill detection: clocked in with no active task (not a break)
-      // Only show once per session (not on every dashboard re-mount) using a sessionStorage flag
-      if (sessionRes.data) {
-        const s = sessionRes.data as Session;
-        const gapFillKey = `gapFillShown_${s.session_date || ""}`;
-        const alreadyShown = typeof window !== "undefined" && sessionStorage.getItem(gapFillKey);
-        if (s.clocked_in && s.active_task === null && !alreadyShown) {
-          const logs = (logsRes.data as TimeLog[]) || [];
-          const lastLog = logs
-            .filter((l) => l.end_time)
-            .sort((a, b) => new Date(b.end_time!).getTime() - new Date(a.end_time!).getTime())[0];
-          const gapStart = lastLog?.end_time || s.clock_in_time || new Date().toISOString();
-          setGapFillStartTime(gapStart);
-          setShowGapFillModal(true);
-          if (typeof window !== "undefined") sessionStorage.setItem(gapFillKey, "1");
-        }
-      }
+      // Gap-fill detection removed: clocking in means time is always running.
+      // There is no untracked gap for a clocked-in VA regardless of active task state.
 
       // Screenshots grouped by log_id
       if (ssRes.data) {
