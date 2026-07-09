@@ -59,7 +59,7 @@ export async function POST(request: Request) {
   // Fetch VA profile (include payment_accounts for display on paystub)
   const { data: vaProfile, error: profileError } = await adminClient
     .from("profiles")
-    .select("full_name, pay_rate, pay_rate_type, payment_accounts")
+    .select("full_name, pay_rate, pay_rate_type, payment_accounts, position")
     .eq("id", user_id)
     .single();
 
@@ -88,7 +88,11 @@ export async function POST(request: Request) {
   const entries = logs ?? [];
 
   // Group by session_date (local date) — matches Financial tab logic.
-  // Personal time should not be included in paystub hours or totals.
+  // Personal time is never included in paystub hours or totals.
+  // Break time is excluded for Full-Time VAs on sessions dated July 6, 2026 or later.
+  const isFullTimeVa = vaProfile.position === "Full-time VA";
+  const BREAK_EXCLUSION_DATE = "2026-07-06";
+
   const byDate: Record<string, number> = {};
   let totalMs = 0;
 
@@ -96,10 +100,10 @@ export async function POST(request: Request) {
     if (!log.duration_ms) continue;
     const category = String(log.category ?? "").trim().toLowerCase();
     if (category === "personal") continue;
+    const dateKey = (log.session_date as string) || (log.start_time as string).split("T")[0];
+    if (category === "break" && isFullTimeVa && dateKey >= BREAK_EXCLUSION_DATE) continue;
 
     const ms = Number(log.duration_ms);
-    // Use session_date (local date VA was working), fall back to UTC date
-    const dateKey = (log.session_date as string) || (log.start_time as string).split("T")[0];
     byDate[dateKey] = (byDate[dateKey] || 0) + ms;
     totalMs += ms;
   }

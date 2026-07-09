@@ -27,6 +27,7 @@ interface ProfileRow {
   pay_rate_type: "hourly" | "daily" | "monthly" | "per_task";
   role: string;
   is_active: boolean;
+  position?: string;
 }
 
 interface LogRow {
@@ -265,7 +266,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       fetch("/api/accounts"),
       supabase
         .from("profiles")
-        .select("id, full_name, pay_rate, pay_rate_type, role, is_active"),
+        .select("id, full_name, pay_rate, pay_rate_type, role, is_active, position"),
       supabase
         .from("time_logs")
         .select(
@@ -479,7 +480,13 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
 
   /* ── VA Costs Calculation (Enhanced with day breakdown + fixed tasks from assignments) ── */
 
+  const BREAK_EXCLUSION_DATE = "2026-07-06";
+
   const vaCostData = useMemo(() => {
+    // Build profile map first so we can apply position-based exclusions in the log loop
+    const profileMapForLoop: Record<string, ProfileRow> = {};
+    profiles.forEach((p) => (profileMapForLoop[p.id] = p));
+
     // Group time logs by user_id
     const userTotals: Record<
       string,
@@ -505,7 +512,16 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       const ut = userTotals[log.user_id];
       ut.totalMs += log.duration_ms;
 
-      if (!UNPAID_CATEGORIES.includes(log.category)) {
+      const day = log.session_date || log.start_time.slice(0, 10);
+      // Break logs are unpaid for Full-Time VAs on sessions dated July 6, 2026 or later
+      const isFullTimeVaBreak =
+        log.category === "Break" &&
+        day >= BREAK_EXCLUSION_DATE &&
+        profileMapForLoop[log.user_id]?.position === "Full-time VA";
+
+      const isUnpaid = UNPAID_CATEGORIES.includes(log.category) || isFullTimeVaBreak;
+
+      if (!isUnpaid) {
         ut.paidMs += log.duration_ms;
       }
 
@@ -513,10 +529,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       ut.categoryMs[log.category] += log.duration_ms;
 
       // Day breakdown
-      const day = log.session_date || log.start_time.slice(0, 10);
       if (!ut.dayBreakdown[day]) ut.dayBreakdown[day] = { ms: 0, paidMs: 0 };
       ut.dayBreakdown[day].ms += log.duration_ms;
-      if (!UNPAID_CATEGORIES.includes(log.category)) {
+      if (!isUnpaid) {
         ut.dayBreakdown[day].paidMs += log.duration_ms;
       }
 
