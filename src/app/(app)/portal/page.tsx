@@ -2209,8 +2209,7 @@ function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdm
                       <p className="text-xs text-bark italic">"{report.admin_notes}"</p>
                     )}
 
-                    {isAdmin && (
-                      <div className="flex items-center gap-2 pt-1">
+                    <div className="flex items-center gap-2 pt-1">
                         <label className="text-[11px] font-semibold text-walnut">Status:</label>
                         <select
                           value={report.status}
@@ -2226,7 +2225,6 @@ function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdm
                           <div className="h-3.5 w-3.5 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
                         )}
                       </div>
-                    )}
                   </div>
                 )}
               </div>
