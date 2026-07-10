@@ -1957,7 +1957,7 @@ interface BugReport {
   title: string;
   description: string;
   report_date: string;
-  status: "submitted" | "fixed";
+  status: "submitted" | "testing" | "fixed";
   drive_file_ids: string[];
   admin_notes: string | null;
   reviewed_at: string | null;
@@ -1965,8 +1965,9 @@ interface BugReport {
 }
 
 const BUG_STATUS_STYLES: Record<string, { bg: string; text: string; border: string; label: string }> = {
-  submitted: { bg: "bg-amber-soft",  text: "text-amber",  border: "border-amber-200",  label: "Submitted" },
-  fixed:     { bg: "bg-sage-soft",   text: "text-sage",   border: "border-sage/20",    label: "Fixed"     },
+  submitted: { bg: "bg-amber-soft",      text: "text-amber",      border: "border-amber-200",    label: "Submitted" },
+  testing:   { bg: "bg-slate-blue-soft", text: "text-slate-blue", border: "border-slate-blue/20", label: "Testing"   },
+  fixed:     { bg: "bg-sage-soft",       text: "text-sage",       border: "border-sage/20",       label: "Fixed"     },
 };
 
 // ─── Bug Report Tab ──────────────────────────────────────────
@@ -2210,6 +2211,7 @@ function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdm
                           className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
                         >
                           <option value="submitted">Submitted</option>
+                          <option value="testing">Testing</option>
                           <option value="fixed">Fixed</option>
                         </select>
                         {statusUpdating[report.id] && (
