@@ -8,7 +8,7 @@ import VAProfileTab from "@/components/VAProfileTab";
 
 // ─── Types ───────────────────────────────────────────────────
 
-type PortalTab = "profile" | "onboarding" | "sops" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "coaching_notes" | "reviews" | "tokens" | "change_password";
+type PortalTab = "profile" | "onboarding" | "sops" | "jobs" | "requests" | "paystubs" | "feedback" | "trainings" | "memos" | "coaching_notes" | "reviews" | "tokens" | "change_password" | "bug_reports";
 
 type RequestType = "time_off" | "schedule_change" | "pay_question" | "general";
 type RequestStatus = "pending" | "approved" | "denied" | "noted";
@@ -94,6 +94,17 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M9 11l3 3L22 4" />
         <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+      </svg>
+    ),
+  },
+  {
+    id: "bug_reports",
+    label: "Report Bug",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M12 22c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8z" />
+        <path d="M12 8v4" />
+        <path d="M12 16h.01" />
       </svg>
     ),
   },
@@ -1817,6 +1828,7 @@ export default function VaPortalPage() {
     reviews: "Reviews",
     tokens: "Tokens & Ratings",
     change_password: "Change Password",
+    bug_reports: "Report a Bug",
   };
 
   const tabSubtitle: Record<PortalTab, string> = {
@@ -1833,6 +1845,7 @@ export default function VaPortalPage() {
     reviews: isAdmin ? "Manage performance reviews" : "Your performance reviews",
     tokens: isAdmin ? "Award tokens and rate performance" : "Your tokens and performance ratings",
     change_password: "Update your account password",
+    bug_reports: isAdmin ? "Review and resolve bug reports from the team" : "Report issues you've encountered in MinuteFlow",
   };
 
   if (loading) {
@@ -1926,7 +1939,310 @@ export default function VaPortalPage() {
         {activeTab === "change_password" && (
           <PortalChangePasswordTab />
         )}
+        {activeTab === "bug_reports" && currentUserId && (
+          <BugReportTab currentUserId={currentUserId} isAdmin={isAdmin} />
+        )}
       </main>
+    </div>
+  );
+}
+
+// ─── Bug Report Interfaces ───────────────────────────────────
+
+interface BugReport {
+  id: number;
+  user_id: string;
+  username: string;
+  full_name: string;
+  title: string;
+  description: string;
+  report_date: string;
+  status: "submitted" | "fixed";
+  drive_file_ids: string[];
+  admin_notes: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+const BUG_STATUS_STYLES: Record<string, { bg: string; text: string; border: string; label: string }> = {
+  submitted: { bg: "bg-amber-soft",  text: "text-amber",  border: "border-amber-200",  label: "Submitted" },
+  fixed:     { bg: "bg-sage-soft",   text: "text-sage",   border: "border-sage/20",    label: "Fixed"     },
+};
+
+// ─── Bug Report Tab ──────────────────────────────────────────
+
+function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmin: boolean }) {
+  const [reports, setReports] = useState<BugReport[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [reportDate, setReportDate] = useState(new Date().toISOString().split("T")[0]);
+  const [files, setFiles] = useState<File[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitMsg, setSubmitMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [statusUpdating, setStatusUpdating] = useState<Record<number, boolean>>({});
+
+  const fetchReports = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/bug-reports");
+      const d = await res.json();
+      setReports(d.reports || []);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchReports(); }, [fetchReports]);
+
+  const handleSubmit = useCallback(async () => {
+    if (!title.trim() || !description.trim()) return;
+    setSubmitting(true);
+    setSubmitMsg(null);
+
+    // Upload screenshots first
+    const driveFileIds: string[] = [];
+    for (const file of files) {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/bug-reports/upload", { method: "POST", body: fd });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.drive_file_id) driveFileIds.push(d.drive_file_id);
+      }
+    }
+
+    const res = await fetch("/api/bug-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: title.trim(),
+        description: description.trim(),
+        report_date: reportDate,
+        drive_file_ids: driveFileIds,
+      }),
+    });
+    setSubmitting(false);
+    if (res.ok) {
+      setTitle(""); setDescription(""); setFiles([]); setShowForm(false);
+      setReportDate(new Date().toISOString().split("T")[0]);
+      setSubmitMsg({ type: "ok", text: "Bug report submitted. Thank you!" });
+      setTimeout(() => setSubmitMsg(null), 3000);
+      fetchReports();
+    } else {
+      const e = await res.json();
+      setSubmitMsg({ type: "err", text: e.error || "Failed to submit" });
+    }
+  }, [title, description, reportDate, files, fetchReports]);
+
+  const handleStatusChange = useCallback(async (id: number, status: string) => {
+    setStatusUpdating((s) => ({ ...s, [id]: true }));
+    await fetch(`/api/bug-reports?id=${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    setStatusUpdating((s) => ({ ...s, [id]: false }));
+    fetchReports();
+  }, [fetchReports]);
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      {/* Submit button / success message */}
+      <div className="flex items-center justify-between">
+        {!showForm && (
+          <button
+            onClick={() => setShowForm(true)}
+            className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors"
+          >
+            + New Bug Report
+          </button>
+        )}
+        {submitMsg && (
+          <span className={`text-xs font-medium ${submitMsg.type === "ok" ? "text-sage" : "text-terracotta"}`}>
+            {submitMsg.text}
+          </span>
+        )}
+      </div>
+
+      {/* Form */}
+      {showForm && (
+        <div className="rounded-xl border border-sand bg-white p-5 space-y-4">
+          <h3 className="text-sm font-bold text-espresso">New Bug Report</h3>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-walnut tracking-wide mb-1">Title</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Brief description of the issue"
+              className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none bg-white focus:border-terracotta"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-walnut tracking-wide mb-1">Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={4}
+              placeholder="Steps to reproduce, what happened, what you expected..."
+              className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none bg-white focus:border-terracotta resize-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-walnut tracking-wide mb-1">Date</label>
+            <input
+              type="date"
+              value={reportDate}
+              onChange={(e) => setReportDate(e.target.value)}
+              className="rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none bg-white focus:border-terracotta"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-walnut tracking-wide mb-1">Screenshots <span className="font-normal text-stone">(optional)</span></label>
+            <input
+              type="file"
+              multiple
+              accept="image/*"
+              onChange={(e) => setFiles(Array.from(e.target.files || []))}
+              className="text-xs text-stone"
+            />
+            {files.length > 0 && (
+              <p className="mt-1 text-[11px] text-stone">{files.length} file{files.length !== 1 ? "s" : ""} selected</p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !title.trim() || !description.trim()}
+              className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submitting ? "Submitting..." : "Submit Report"}
+            </button>
+            <button
+              onClick={() => setShowForm(false)}
+              className="text-xs text-stone hover:text-espresso cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex items-center gap-2 py-6 text-sm text-stone">
+          <div className="h-4 w-4 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
+          Loading bug reports...
+        </div>
+      )}
+
+      {/* Reports list */}
+      {!loading && reports.length > 0 && (
+        <div className="space-y-3">
+          {reports.map((report) => {
+            const style = BUG_STATUS_STYLES[report.status] || BUG_STATUS_STYLES.submitted;
+            const isExpanded = expandedId === report.id;
+            return (
+              <div key={report.id} className="rounded-xl border border-sand bg-white shadow-sm overflow-hidden">
+                <div
+                  className="flex items-start justify-between gap-3 p-4 cursor-pointer"
+                  onClick={() => setExpandedId(isExpanded ? null : report.id)}
+                >
+                  <div className="min-w-0">
+                    {isAdmin && (
+                      <p className="text-xs font-semibold text-espresso">{report.full_name}</p>
+                    )}
+                    <p className="text-sm font-medium text-espresso truncate">{report.title}</p>
+                    <p className="text-[11px] text-stone mt-0.5">{fmtDate(report.report_date)}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full ${style.bg} ${style.text} border ${style.border}`}>
+                      {style.label}
+                    </span>
+                    <svg className={`h-3.5 w-3.5 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </div>
+                </div>
+
+                {isExpanded && (
+                  <div className="px-4 pb-4 border-t border-sand space-y-3 pt-3">
+                    <p className="text-xs text-bark leading-relaxed">{report.description}</p>
+
+                    {report.drive_file_ids && report.drive_file_ids.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1.5">Screenshots</p>
+                        <div className="flex flex-wrap gap-2">
+                          {report.drive_file_ids.map((fileId) => (
+                            <a
+                              key={fileId}
+                              href={`https://drive.google.com/file/d/${fileId}/view`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-slate-blue underline hover:text-espresso"
+                            >
+                              View Screenshot
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {report.admin_notes && (
+                      <p className="text-xs text-bark italic">"{report.admin_notes}"</p>
+                    )}
+
+                    {isAdmin && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <label className="text-[11px] font-semibold text-walnut">Status:</label>
+                        <select
+                          value={report.status}
+                          disabled={!!statusUpdating[report.id]}
+                          onChange={(e) => handleStatusChange(report.id, e.target.value)}
+                          className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                        >
+                          <option value="submitted">Submitted</option>
+                          <option value="fixed">Fixed</option>
+                        </select>
+                        {statusUpdating[report.id] && (
+                          <div className="h-3.5 w-3.5 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && reports.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="mb-3 h-12 w-12 rounded-full bg-parchment flex items-center justify-center">
+            <svg className="h-5 w-5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12 22c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8z" />
+              <path d="M12 8v4" />
+              <path d="M12 16h.01" />
+            </svg>
+          </div>
+          <p className="text-sm font-medium text-espresso">
+            {isAdmin ? "No bug reports yet" : "No bug reports submitted yet"}
+          </p>
+          <p className="mt-1 text-xs text-stone">
+            {isAdmin ? "Reports from the team will appear here." : "Click \"New Bug Report\" above to report an issue."}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
