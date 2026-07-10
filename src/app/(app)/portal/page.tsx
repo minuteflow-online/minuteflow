@@ -98,17 +98,6 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
-    id: "bug_reports",
-    label: "Report Bug",
-    icon: (
-      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M12 22c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8z" />
-        <path d="M12 8v4" />
-        <path d="M12 16h.01" />
-      </svg>
-    ),
-  },
-  {
     id: "paystubs",
     label: "Paystubs",
     icon: (
@@ -1888,6 +1877,25 @@ export default function VaPortalPage() {
               );
             })}
           </nav>
+
+          {/* ─── Report Bug — bottom CTA ─────────────────────── */}
+          <div className="px-2 mt-4 pt-4 border-t border-sand">
+            <button
+              onClick={() => setActiveTab("bug_reports")}
+              className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-colors cursor-pointer ${
+                activeTab === "bug_reports"
+                  ? "bg-terracotta text-white"
+                  : "bg-terracotta-soft text-terracotta hover:bg-terracotta hover:text-white"
+              }`}
+            >
+              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M12 22c4.418 0 8-3.582 8-8s-3.582-8-8-8-8 3.582-8 8 3.582 8 8 8z" />
+                <path d="M12 8v4" />
+                <path d="M12 16h.01" />
+              </svg>
+              Report a Bug
+            </button>
+          </div>
         </div>
       </aside>
 
