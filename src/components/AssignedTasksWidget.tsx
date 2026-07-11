@@ -117,7 +117,6 @@ export default function AssignedTasksWidget({
         }));
         const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = [
             'on_queue', 'in_progress', 'revision_needed',
-            'submitted', 'reviewing', 'approved', 'completed', 'paid',
           ];
         const visible = data
           .filter((t) => VA_VISIBLE_STATUSES.includes(t.status))
