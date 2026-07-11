@@ -1589,6 +1589,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                   </button>
 
                   {/* Details grid */}
+                  {isExpanded && (
                   <div className="border-t border-sand px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-2">
                     {periodLabel && (
                       <>
@@ -1622,6 +1623,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                       <p className="text-[13px] text-espresso">{p.confirmation_number || "—"}</p>
                     </div>
                   </div>
+                  )}
 
                   {/* Daily breakdown — visible when expanded */}
                   {isExpanded && (
