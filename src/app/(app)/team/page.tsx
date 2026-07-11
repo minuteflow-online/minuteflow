@@ -39,6 +39,8 @@ type TeamMember = {
   messageMs: number;
   // Period's logs for expandable task list
   todayLogs: TimeLog[];
+  // Approved absences (day off / time off / schedule change) overlapping the selected range
+  absences: { type: string; start_date: string | null; end_date: string | null; subject: string }[];
 };
 
 /* ── Helpers ──────────────────────────────────────────────── */
@@ -61,6 +63,13 @@ function formatCurrency(amount: number): string {
 
 function formatDateShort(d: Date, timezone?: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(timezone ? { timeZone: timezone } : {}) });
+}
+
+function formatAbsenceRange(startDate: string | null, endDate: string | null): string {
+  if (!startDate) return "";
+  const fmt = (s: string) => new Date(s + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  if (!endDate || endDate === startDate) return fmt(startDate);
+  return `${fmt(startDate)} – ${fmt(endDate)}`;
 }
 
 function formatDateInput(d: Date): string {
@@ -169,7 +178,7 @@ export default function TeamPage() {
     const moodStart = formatDateLocalTZ(rangeStart, tz);
     const moodEnd = formatDateLocalTZ(rangeEnd, tz);
 
-    const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes, orgRes] =
+    const [profilesRes, sessionsRes, logsRes, screenshotsRes, moodRes, orgRes, requestsRes] =
       await Promise.all([
         supabase.from("profiles").select("*"),
         supabase.from("sessions").select("*"),
@@ -190,6 +199,11 @@ export default function TeamPage() {
           .gte("session_date", moodStart)
           .lte("session_date", moodEnd),
         supabase.from("organization_settings").select("timezone").limit(1).single(),
+        supabase
+          .from("va_requests")
+          .select("user_id, type, subject, start_date, end_date, status")
+          .eq("status", "approved")
+          .in("type", ["time_off", "schedule_change"]),
       ]);
 
     if (orgRes.data?.timezone) {
@@ -211,6 +225,20 @@ export default function TeamPage() {
       });
     }
     setMoodData(moodLookup);
+
+    // Build approved-absence lookup: only requests overlapping the selected date range
+    type ApprovedRequest = { user_id: string; type: string; subject: string; start_date: string | null; end_date: string | null };
+    const approvedRequests = (requestsRes.data ?? []) as ApprovedRequest[];
+    const absenceLookup: Record<string, TeamMember["absences"]> = {};
+    approvedRequests.forEach((r) => {
+      if (!r.start_date) return;
+      const reqStart = r.start_date;
+      const reqEnd = r.end_date || r.start_date;
+      // overlap check against the selected range (YYYY-MM-DD strings compare lexically)
+      if (reqStart > moodEnd || reqEnd < moodStart) return;
+      if (!absenceLookup[r.user_id]) absenceLookup[r.user_id] = [];
+      absenceLookup[r.user_id].push({ type: r.type, start_date: r.start_date, end_date: r.end_date, subject: r.subject });
+    });
 
     const teamMembers: TeamMember[] = profiles.map((profile) => {
       const session =
@@ -308,6 +336,7 @@ export default function TeamPage() {
         meetingMs,
         messageMs,
         todayLogs: userLogs,
+        absences: absenceLookup[profile.id] || [],
       };
     });
 
@@ -919,6 +948,18 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
           {currentTaskMeta || "No recent activity"}
         </div>
       </div>
+
+      {/* Approved Absences */}
+      {member.absences.length > 0 && (
+        <div className="px-5 pb-3 flex flex-wrap gap-1.5">
+          {member.absences.map((a, i) => (
+            <span key={i} className="inline-flex items-center gap-1 rounded-full bg-amber-soft px-2.5 py-[3px] text-[10px] font-semibold text-amber">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber" />
+              {a.type === "schedule_change" ? "Schedule Change" : "Time Off"} &middot; {formatAbsenceRange(a.start_date, a.end_date)}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Progress Status Badges */}
       {(inProgressCount > 0 || completedCount > 0 || onHoldCount > 0) && (

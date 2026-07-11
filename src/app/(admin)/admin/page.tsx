@@ -37,6 +37,7 @@ import CaptureAlertsTab from "@/components/CaptureAlertsTab";
 import PaystubTab from "@/components/PaystubTab";
 import VaResourcesAdminTab from "@/components/VaResourcesAdminTab";
 import VaFeedbackAdminTab from "@/components/VaFeedbackAdminTab";
+import VaRequestsAdminTab from "@/components/VaRequestsAdminTab";
 import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
 import VaTokensAdminTab from "@/components/VaTokensAdminTab";
 import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
@@ -103,7 +104,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "email_log" | "reset_va_password";
+type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_requests" | "email_log" | "reset_va_password";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -282,6 +283,16 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: "va_requests",
+    label: "Requests",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+      </svg>
+    ),
+  },
+  {
     id: "va_reviews",
     label: "Reviews",
     icon: (
@@ -378,7 +389,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "team",
     label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log", "reset_va_password"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "paystubs", "email_log", "reset_va_password"] as AdminTab[]).includes(t.id)),
   },
 ];
 
@@ -386,7 +397,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
 const SIDEBAR_GROUPS: SidebarGroup[] = [...ADMIN_SIDEBAR_GROUPS, ...TEAM_SIDEBAR_GROUPS];
 
 // Tab IDs that belong to the TEAM section
-const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "paystubs", "email_log", "reset_va_password"];
+const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "paystubs", "email_log", "reset_va_password"];
 
 /* ── Main Admin Page ─────────────────────────────────────── */
 
@@ -1372,6 +1383,7 @@ export default function AdminPage() {
                 {activeTab === "alerts" && "Track screen capture drops and VA responses"}
                 {activeTab === "va_resources" && "Manage onboarding, SOPs, coaching, and job postings for VAs"}
                 {activeTab === "va_feedback" && "Review feedback submitted by your team"}
+                {activeTab === "va_requests" && "Approve or deny time off, schedule change, and other VA requests"}
                 {activeTab === "va_reviews" && "Create and publish performance reviews"}
                 {activeTab === "va_tokens" && "Award tokens and track daily ratings"}
                 {activeTab === "va_broadcasts" && "Send broadcasts, memos, and announcements to your team"}
@@ -1517,6 +1529,9 @@ export default function AdminPage() {
           )}
           {activeTab === "va_feedback" && (
             <VaFeedbackAdminTab />
+          )}
+          {activeTab === "va_requests" && (
+            <VaRequestsAdminTab />
           )}
           {activeTab === "va_reviews" && (
             <VaReviewsAdminTab />
