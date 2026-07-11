@@ -6729,6 +6729,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editingInvoice, setEditingInvoice] = useState(false);
   const [editSubtotal, setEditSubtotal] = useState("");
   const [editAdjustment, setEditAdjustment] = useState("0");
+  const [editAmountDue, setEditAmountDue] = useState("");
   const [editPeriodStart, setEditPeriodStart] = useState("");
   const [editPeriodEnd, setEditPeriodEnd] = useState("");
   const [editPaymentLink, setEditPaymentLink] = useState("");
@@ -7664,6 +7665,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     // Init edit fields
     setEditSubtotal(String(invoice.subtotal ?? ""));
     setEditAdjustment(String(invoice.adjustment_amount ?? "0"));
+    setEditAmountDue(invoice.amount_due != null ? String(invoice.amount_due) : "");
     setEditPaymentLink(invoice.payment_link ?? "");
     setEditPaymentInfo(invoice.payment_info ?? DEFAULT_PAYMENT_INFO);
     setEditFromName(invoice.from_name ?? "");
@@ -7919,6 +7921,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       to_address: editToAddress || null,
       dba: editDba || null,
       allow_custom_amount: editAllowCustomAmount,
+      amount_due: editAmountDue ? parseFloat(editAmountDue) : null,
       payment_schedule: editSchedule.length > 0 ? editSchedule : null,
       payment_template_id: editTemplateId,
       period_start: editPeriodStart || null,
@@ -9868,6 +9871,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 </div>
               </div>
               <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Amount Due ($) <span className="normal-case font-normal text-stone">(optional — overrides total for client)</span></label>
+                <input type="number" step="0.01" min="0" value={editAmountDue} onChange={(e) => setEditAmountDue(e.target.value)}
+                  placeholder={formatCurrency((parseFloat(editSubtotal) || 0) - (parseFloat(editAdjustment) || 0))}
+                  className="w-full rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta placeholder:text-stone" />
+              </div>
+              <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Previous Balance ($)</label>
                 <input type="number" step="0.01" min="0" value={editPreviousBalance}
                   onChange={(e) => setEditPreviousBalance(e.target.value)}
@@ -10481,10 +10490,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     return (
                       <>
                         <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
-                          {prevBal > 0 ? "Balance Due" : "Invoice Amount"}
+                          {inv.amount_due != null ? "Amount Due" : prevBal > 0 ? "Balance Due" : "Invoice Amount"}
                         </div>
                         <div className="text-[24px] font-extrabold text-[#2d1a00]">
-                          {formatCurrency(prevBal > 0 ? currentBal : Number(inv.total), inv.currency)}
+                          {formatCurrency(inv.amount_due != null ? Number(inv.amount_due) : prevBal > 0 ? currentBal : Number(inv.total), inv.currency)}
                         </div>
                         <div className="mt-2">
                           <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice Date</div>

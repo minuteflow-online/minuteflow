@@ -295,10 +295,10 @@ export default function PublicInvoicePage() {
               {invoice.to_address && <div className="text-[10px] text-[#5a4000] mt-0.5">{invoice.to_address}</div>}
               <div className="mt-3">
                 <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
-                  {currentBalance > Number(invoice.total) ? "Balance Due" : "Invoice Amount"}
+                  {invoice.amount_due != null ? "Amount Due" : currentBalance > Number(invoice.total) ? "Balance Due" : "Invoice Amount"}
                 </div>
                 <div className="text-[22px] font-extrabold text-[#2d1a00]">
-                  {formatCurrency(currentBalance > Number(invoice.total) ? currentBalance : Number(invoice.total), invoice.currency)}
+                  {formatCurrency(invoice.amount_due != null ? Number(invoice.amount_due) : currentBalance > Number(invoice.total) ? currentBalance : Number(invoice.total), invoice.currency)}
                 </div>
                 {invoice.service_type && (
                   <div className="text-[12px] font-semibold text-[#5a4000] mt-1">{invoice.service_type}</div>

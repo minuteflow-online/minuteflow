@@ -271,6 +271,7 @@ export interface Invoice {
   payment_schedule: PaymentScheduleItem[] | null;
   payment_template_id: number | null;
   dba: string | null;
+  amount_due: number | null;
   created_at: string;
   updated_at: string;
 }
