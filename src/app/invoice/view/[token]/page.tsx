@@ -41,6 +41,7 @@ interface Invoice {
   payment_schedule?: Array<{ label: string; amount_type: "percentage" | "fixed"; value: number; due_date?: string }> | null;
   share_token?: string | null;
   dba?: string | null;
+  amount_due?: number | null;
 }
 
 interface LineItem {
