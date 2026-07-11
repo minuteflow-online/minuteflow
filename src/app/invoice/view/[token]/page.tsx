@@ -294,12 +294,27 @@ export default function PublicInvoicePage() {
               {invoice.to_phone && <div className="text-[11px] text-[#5a4000]">{invoice.to_phone}</div>}
               {invoice.to_address && <div className="text-[10px] text-[#5a4000] mt-0.5">{invoice.to_address}</div>}
               <div className="mt-3">
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
-                  {invoice.amount_due != null ? "Amount Due" : currentBalance > Number(invoice.total) ? "Balance Due" : "Invoice Amount"}
-                </div>
-                <div className="text-[22px] font-extrabold text-[#2d1a00]">
-                  {formatCurrency(invoice.amount_due != null ? Number(invoice.amount_due) : currentBalance > Number(invoice.total) ? currentBalance : Number(invoice.total), invoice.currency)}
-                </div>
+                {invoice.amount_due != null ? (
+                  <>
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">Invoice Total</div>
+                    <div className="text-[14px] font-bold text-[#5a4000] line-through mb-1">
+                      {formatCurrency(Number(invoice.total), invoice.currency)}
+                    </div>
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">Amount Due</div>
+                    <div className="text-[28px] font-extrabold text-[#2d1a00]">
+                      {formatCurrency(Number(invoice.amount_due), invoice.currency)}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
+                      {currentBalance > Number(invoice.total) ? "Balance Due" : "Invoice Amount"}
+                    </div>
+                    <div className="text-[22px] font-extrabold text-[#2d1a00]">
+                      {formatCurrency(currentBalance > Number(invoice.total) ? currentBalance : Number(invoice.total), invoice.currency)}
+                    </div>
+                  </>
+                )}
                 {invoice.service_type && (
                   <div className="text-[12px] font-semibold text-[#5a4000] mt-1">{invoice.service_type}</div>
                 )}
