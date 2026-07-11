@@ -83,6 +83,7 @@ export async function POST(request: Request) {
     .eq("user_id", user_id)
     .gte("session_date", start_date)
     .lte("session_date", end_date)
+    .is("deleted_at", null)
     .order("start_time", { ascending: true });
 
   const entries = logs ?? [];
@@ -100,6 +101,7 @@ export async function POST(request: Request) {
     if (!log.duration_ms) continue;
     const category = String(log.category ?? "").trim().toLowerCase();
     if (category === "personal") continue;
+    if (category === "clock out") continue;
     const dateKey = (log.session_date as string) || (log.start_time as string).split("T")[0];
     if (category === "break" && isFullTimeVa && dateKey >= BREAK_EXCLUSION_DATE) continue;
 
