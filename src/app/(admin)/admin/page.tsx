@@ -7712,6 +7712,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       try {
         const parsed = JSON.parse(invoice.custom_line_items) as Array<{ description: string; amount: number }>;
         setEditCustomItems(parsed.map((item, i) => ({ id: `eci-${i}`, description: item.description, amount: String(item.amount) })));
+        // If the saved subtotal is 0 or missing, auto-calculate from line items
+        if (!invoice.subtotal || invoice.subtotal === 0) {
+          const computedSubtotal = parsed.reduce((sum, item) => sum + (item.amount || 0), 0);
+          setEditSubtotal(computedSubtotal.toFixed(2));
+        }
       } catch { setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]); }
     } else if (invoice.invoice_type === "custom") {
       setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]);
