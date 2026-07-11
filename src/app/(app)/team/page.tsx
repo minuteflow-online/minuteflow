@@ -246,9 +246,21 @@ export default function TeamPage() {
 
       const userLogs = logs.filter((l) => l.user_id === profile.id);
       const nonBreakLogs = userLogs.filter((l) => l.category !== "Break" && l.category !== "Clock Out");
-      const payableLogs = userLogs.filter(
-        (l) => l.category !== "Personal" && l.category !== "Clock Out" && (l.category !== "Break" || l.billable === true)
-      );
+      const isFullTimeVa = profile.position === "Full-time VA";
+      const BREAK_EXCLUSION_DATE = "2026-07-06";
+      const payableLogs = userLogs.filter((l) => {
+        if (l.category === "Personal" || l.category === "Clock Out") return false;
+        if (l.category === "Break") {
+          // Full-time VAs: breaks on/after July 6 2026 are unpaid
+          if (isFullTimeVa) {
+            const logDate = (l.session_date as string) || (l.start_time as string).split("T")[0];
+            return logDate < BREAK_EXCLUSION_DATE;
+          }
+          // Non-full-time VAs: all breaks count
+          return true;
+        }
+        return true;
+      });
       const todayHoursMs = payableLogs.reduce(
         (sum, l) => sum + (l.duration_ms || 0),
         0
