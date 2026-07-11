@@ -7,6 +7,7 @@ import EditTimeLogModal from "@/components/EditTimeLogModal";
 import CorrectionRequestModal from "@/components/CorrectionRequestModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import CSVUploadModal from "@/components/CSVUploadModal";
+import TimeLogColumnFilter from "@/components/TimeLogColumnFilter";
 import {
   formatDuration,
   formatDurationShort,
@@ -197,6 +198,15 @@ export default function TimeLogPage() {
   /* ── Bulk select / delete state ──────────────────────────── */
   const [selectedLogIds, setSelectedLogIds] = useState<Set<number>>(new Set());
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+
+  /* ── Column filters (Excel-style) ──────────────────────────── */
+  type FilterColumn = "user" | "project" | "category" | "account";
+  const [columnFilters, setColumnFilters] = useState<Record<FilterColumn, Set<string>>>({
+    user: new Set(),
+    project: new Set(),
+    category: new Set(),
+    account: new Set(),
+  });
 
   /* ── Trash bin state ──────────────────────────────────────── */
   const [showTrash, setShowTrash] = useState(false);
@@ -558,18 +568,64 @@ export default function TimeLogPage() {
     });
   }, [logs, rangeStart, rangeEnd, viewMode, anchorDate, orgTimezone]);
 
+  /* ── Reset column filters when the date range changes ──── */
+
+  useEffect(() => {
+    setColumnFilters({
+      user: new Set(),
+      project: new Set(),
+      category: new Set(),
+      account: new Set(),
+    });
+  }, [viewMode, anchorDate, customStart, customEnd]);
+
+  /* ── Unique column values for filter dropdowns ──────────── */
+
+  const columnOptions = useMemo(() => {
+    const userSet = new Set<string>();
+    const projectSet = new Set<string>();
+    const categorySet = new Set<string>();
+    const accountSet = new Set<string>();
+    filteredLogs.forEach((l) => {
+      const userLabel = l.full_name || l.username;
+      if (userLabel) userSet.add(userLabel);
+      if (l.project) projectSet.add(l.project);
+      if (l.category) categorySet.add(l.category);
+      if (l.account) accountSet.add(l.account);
+    });
+    return {
+      user: Array.from(userSet).sort(),
+      project: Array.from(projectSet).sort(),
+      category: Array.from(categorySet).sort(),
+      account: Array.from(accountSet).sort(),
+    };
+  }, [filteredLogs]);
+
+  /* ── Apply column filters ────────────────────────────────── */
+
+  const columnFilteredLogs = useMemo(() => {
+    return filteredLogs.filter((l) => {
+      const userLabel = l.full_name || l.username || "";
+      if (columnFilters.user.size > 0 && !columnFilters.user.has(userLabel)) return false;
+      if (columnFilters.project.size > 0 && !columnFilters.project.has(l.project || "")) return false;
+      if (columnFilters.category.size > 0 && !columnFilters.category.has(l.category || "")) return false;
+      if (columnFilters.account.size > 0 && !columnFilters.account.has(l.account || "")) return false;
+      return true;
+    });
+  }, [filteredLogs, columnFilters]);
+
   /* ── Group logs by day (for week/month view) ───────────── */
 
   const logsByDay = useMemo(() => {
     const grouped: Record<string, TimeLog[]> = {};
-    filteredLogs.forEach((l) => {
+    columnFilteredLogs.forEach((l) => {
       if (!l.start_time) return;
       const key = toDateInTz(l.start_time, orgTimezone);
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(l);
     });
     return grouped;
-  }, [filteredLogs, orgTimezone]);
+  }, [columnFilteredLogs, orgTimezone]);
 
   /* ── Day summary stats (dynamic categories + type/status) ──── */
 
@@ -837,8 +893,8 @@ export default function TimeLogPage() {
           ];
         });
     }
-    return filteredLogs.map((l) => ({ _type: "log" as const, log: l }));
-  }, [viewMode, logsByDay, filteredLogs]);
+    return columnFilteredLogs.map((l) => ({ _type: "log" as const, log: l }));
+  }, [viewMode, logsByDay, columnFilteredLogs]);
 
   /* ── Render ────────────────────────────────────────────── */
 
@@ -1134,15 +1190,17 @@ export default function TimeLogPage() {
                     : "This Month's Entries"}
               </h3>
               <span className="text-[11px] text-bark">
-                {filteredLogs.length}{" "}
-                {filteredLogs.length === 1 ? "entry" : "entries"}
+                {columnFilteredLogs.length}{" "}
+                {columnFilteredLogs.length === 1 ? "entry" : "entries"}
               </span>
             </div>
 
-            {filteredLogs.length === 0 ? (
+            {columnFilteredLogs.length === 0 ? (
               <div className="px-5 py-12 text-center">
                 <p className="text-sm text-bark">
-                  No time entries for this period
+                  {filteredLogs.length === 0
+                    ? "No time entries for this period"
+                    : "No entries match the current filters"}
                 </p>
               </div>
             ) : (
@@ -1160,12 +1218,52 @@ export default function TimeLogPage() {
                         />
                       </th>
                       {isAdminOrManager && (
-                        <th className="px-3 py-2.5">User</th>
+                        <th className="px-3 py-2.5">
+                          <span className="inline-flex items-center">
+                            User
+                            <TimeLogColumnFilter
+                              label="User"
+                              options={columnOptions.user}
+                              selected={columnFilters.user}
+                              onChange={(next) => setColumnFilters((prev) => ({ ...prev, user: next }))}
+                            />
+                          </span>
+                        </th>
                       )}
-                      <th className="px-3 py-2.5">Project</th>
+                      <th className="px-3 py-2.5">
+                        <span className="inline-flex items-center">
+                          Project
+                          <TimeLogColumnFilter
+                            label="Project"
+                            options={columnOptions.project}
+                            selected={columnFilters.project}
+                            onChange={(next) => setColumnFilters((prev) => ({ ...prev, project: next }))}
+                          />
+                        </span>
+                      </th>
                       <th className="px-3 py-2.5">Task</th>
-                      <th className="px-3 py-2.5">Category</th>
-                      <th className="px-3 py-2.5">Account</th>
+                      <th className="px-3 py-2.5">
+                        <span className="inline-flex items-center">
+                          Category
+                          <TimeLogColumnFilter
+                            label="Category"
+                            options={columnOptions.category}
+                            selected={columnFilters.category}
+                            onChange={(next) => setColumnFilters((prev) => ({ ...prev, category: next }))}
+                          />
+                        </span>
+                      </th>
+                      <th className="px-3 py-2.5">
+                        <span className="inline-flex items-center">
+                          Account
+                          <TimeLogColumnFilter
+                            label="Account"
+                            options={columnOptions.account}
+                            selected={columnFilters.account}
+                            onChange={(next) => setColumnFilters((prev) => ({ ...prev, account: next }))}
+                          />
+                        </span>
+                      </th>
                       <th className="px-3 py-2.5 text-right">Duration</th>
                       <th className="px-3 py-2.5">Memos</th>
                       <th className="px-3 py-2.5">Screenshots</th>
