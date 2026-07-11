@@ -7257,7 +7257,11 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
     let invoiceNumber = await generateInvoiceNumber();
     const issueDate = new Date().toISOString().split("T")[0];
-    const timeTotal = parseFloat(invoiceTotal) || 0;
+    // For timelog invoices, always recompute from actual hours × rate at save time
+    // so stale/mismatched invoiceTotal state never corrupts the saved subtotal.
+    const timeTotal = invoiceType === "timelog"
+      ? Math.round(lineItems.reduce((s, li) => s + li.quantity, 0) * (parseFloat(rateAmount) || 0) * 100) / 100
+      : parseFloat(invoiceTotal) || 0;
     const expenseTotal = expenseItems.filter(e => !e.excluded).reduce((s, e) => s + e.amount, 0);
     const manualTotal = timeTotal + expenseTotal;
     const adjustment = parseFloat(adjustmentAmount) || 0;
@@ -8147,7 +8151,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
     let invoiceNumber = await generateInvoiceNumber();
     const issueDate = new Date().toISOString().split("T")[0];
-    const manualTotal = parseFloat(invoiceTotal) || 0;
+    // For timelog invoices, always recompute from actual hours × rate at save time
+    const manualTotal = invoiceType === "timelog"
+      ? Math.round(lineItems.reduce((s, li) => s + li.quantity, 0) * (parseFloat(rateAmount) || 0) * 100) / 100
+      : parseFloat(invoiceTotal) || 0;
     const adjustment = parseFloat(adjustmentAmount) || 0;
     const finalTotal = manualTotal - adjustment;
 
