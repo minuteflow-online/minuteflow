@@ -1377,7 +1377,16 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
       .sort((a, b) => b[1].dateSort - a[1].dateSort) // newest first
       .map(([dateLabel, { logs: dayLogs, isoDate }]) => {
         const nonBreakLogs = dayLogs.filter(l => l.category !== "Break" && l.category !== "Clock Out");
-        const payableLogs = dayLogs.filter(l => l.category !== "Personal" && l.category !== "Clock Out" && (l.category !== "Break" || l.billable === true));
+        const isFullTimeVaDay = profile.position === "Full-time VA";
+        const BREAK_EXCLUSION_DAY = "2026-07-06";
+        const payableLogs = dayLogs.filter(l => {
+          if (l.category === "Personal" || l.category === "Clock Out") return false;
+          if (l.category === "Break") {
+            if (isFullTimeVaDay) return isoDate < BREAK_EXCLUSION_DAY;
+            return true;
+          }
+          return true;
+        });
         const totalMs = payableLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
         const dayPayable = computePayable(totalMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
 
