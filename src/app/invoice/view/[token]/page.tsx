@@ -474,7 +474,7 @@ export default function PublicInvoicePage() {
 
                 // Money cells — only non-empty values
                 const moneyItems: BItem[] = [
-                  { label: "Billing Month's Total", value: formatCurrency(Number(invoice.subtotal), invoice.currency) },
+                  { label: "Billing Month's Total", value: formatCurrency(Number(invoice.subtotal) - reimbTotal, invoice.currency) },
                   ...(reimbTotal > 0 ? [{ label: "Reimbursable Expenses", value: formatCurrency(reimbTotal, invoice.currency) }] : []),
                   ...(hasAdjustment ? [
                     { label: "Savings", value: `− ${formatCurrency(adjustment)}` },
