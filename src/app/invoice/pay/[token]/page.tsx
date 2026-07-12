@@ -250,6 +250,14 @@ export default function InvoicePayPage() {
 
   // ACH is initialized on-demand when the user switches to the Bank Transfer tab
   // (initializing while the section is hidden causes Plaid to fail silently)
+  // Use a useEffect watching paymentMethodTab so React has already un-hidden the div before attach()
+  useEffect(() => {
+    if (paymentMethodTab === "ach" && paymentsRef.current && !achInstanceRef.current) {
+      // Small delay ensures the hidden→visible class swap has painted before Plaid attaches
+      const t = setTimeout(() => initAch(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [paymentMethodTab, initAch]);
 
   /* ── Handle payment submission ─────────────────────────── */
 
@@ -612,10 +620,8 @@ export default function InvoicePayPage() {
                     <button
                       onClick={() => {
                         setPaymentMethodTab("ach");
-                        // Initialize ACH on first click — must be visible in DOM for Plaid to attach
-                        if (!achInstanceRef.current && paymentsRef.current) {
-                          initAch();
-                        }
+                        // initAch() is triggered via useEffect watching paymentMethodTab
+                        // so the div is guaranteed visible before Plaid's attach() runs
                       }}
                       className={`flex-1 py-2.5 text-[12px] font-semibold transition-colors border-l border-[#e8e0d4] ${
                         paymentMethodTab === "ach"
