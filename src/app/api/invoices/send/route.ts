@@ -25,10 +25,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { invoice_id } = body;
-  // Recipient is taken solely from the invoice record — no arbitrary
-  // override_email / cc override is honored (prevents sending invoices to
-  // an attacker-controlled address).
+  const { invoice_id, override_email, cc_emails } = body;
 
   if (!invoice_id) {
     return Response.json({ error: "invoice_id is required" }, { status: 400 });
@@ -51,8 +48,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invoice not found" }, { status: 404 });
   }
 
-  // Parse To: supports comma-separated string or array
-  const rawTo = invoice.to_email;
+  // Parse To: use override_email if provided (admin typed a different address),
+  // otherwise fall back to the invoice's recorded to_email.
+  const rawTo = override_email && override_email.trim() ? override_email : invoice.to_email;
   const recipientEmails: string[] = Array.isArray(rawTo)
     ? rawTo.map((e: string) => e.trim()).filter(Boolean)
     : typeof rawTo === "string"
@@ -63,8 +61,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "No recipient email — enter a send-to email address above the Send button" }, { status: 400 });
   }
 
-  // CC overrides are not honored — invoices go only to the recorded recipient.
-  const ccEmails: string[] = [];
+  // Parse CC emails if provided
+  const ccEmails: string[] = cc_emails && cc_emails.trim()
+    ? cc_emails.split(",").map((e: string) => e.trim()).filter(Boolean)
+    : [];
 
   // Fetch line items
   const { data: lineItems } = await serviceClient
