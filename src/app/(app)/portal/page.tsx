@@ -1390,6 +1390,8 @@ interface PaystubRecord {
   total_hours_ms: number | null;
   pay_rate: number | null;
   confirmation_number: string | null;
+  payment_date: string | null;
+  personal_message: string | null;
   by_date: Record<string, number> | null;
 }
 
@@ -1425,7 +1427,7 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
         const [paystubRes, perTaskRes] = await Promise.all([
           supabase
             .from("paystub_snapshots")
-            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link, period_start, period_end, total_hours_ms, pay_rate, confirmation_number, by_date")
+            .select("id, pay_period_label, sent_at, amount_paid, gross_pay, payment_method, paystub_link, period_start, period_end, total_hours_ms, pay_rate, confirmation_number, payment_date, personal_message, by_date")
             .eq("user_id", currentUserId)
             .order("sent_at", { ascending: false }),
           supabase
@@ -1622,6 +1624,20 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                       <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Confirmation #</p>
                       <p className="text-[13px] text-espresso">{p.confirmation_number || "—"}</p>
                     </div>
+                    {p.payment_date && (
+                      <div>
+                        <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Payment Date</p>
+                        <p className="text-[13px] text-espresso">
+                          {new Date(p.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}
+                        </p>
+                      </div>
+                    )}
+                    {p.personal_message && (
+                      <div className="col-span-2">
+                        <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Note</p>
+                        <p className="text-[13px] text-espresso">{p.personal_message}</p>
+                      </div>
+                    )}
                   </div>
                   )}
 
