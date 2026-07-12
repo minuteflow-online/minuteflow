@@ -10733,7 +10733,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             {selectedLineItems.length > 0 && (() => {
               // Group by task name
               const taskMap: Record<string, number> = {};
-              selectedLineItems.forEach((li) => {
+              selectedLineItems.filter((li) => !li.expense_id).forEach((li) => {
                 const key = li.description || "Unknown";
                 taskMap[key] = (taskMap[key] || 0) + Number(li.quantity);
               });
@@ -10741,7 +10741,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
               // Group by project
               const projMap: Record<string, number> = {};
-              selectedLineItems.forEach((li) => {
+              selectedLineItems.filter((li) => !li.expense_id).forEach((li) => {
                 const key = li.project || li.account_name || "Unassigned";
                 projMap[key] = (projMap[key] || 0) + Number(li.quantity);
               });
