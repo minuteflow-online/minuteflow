@@ -321,8 +321,20 @@ function buildInvoiceEmail(
             ${invoice.to_phone ? `<div style="font-size:11px; color:#5a4000;">${invoice.to_phone}</div>` : ""}
             ${invoice.to_address ? `<div style="font-size:10px; color:#5a4000; margin-top:2px;">${invoice.to_address}</div>` : ""}
             <div style="margin-top:14px;">
-              <div style="font-size:10px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px;">${headerAmountLabel}</div>
-              <div style="font-size:24px; font-weight:800; color:#2d1a00;">${formatCurrency(headerAmount, invoice.currency)}</div>
+              ${hasSchedule ? (() => {
+                const schedule = invoice.payment_schedule as Array<{ label: string; amount_type: string; value: number }>;
+                const rows = schedule.map((item, i) => {
+                  const amt = item.amount_type === "percentage"
+                    ? Math.round((item.value / 100) * finalTotal * 100) / 100
+                    : item.value;
+                  return `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+                    <span style="font-size:11px; font-weight:600; color:#1a5c3a;">${item.label || `Installment ${i + 1}`}</span>
+                    <span style="font-size:13px; font-weight:800; color:#1a5c3a;">${formatCurrency(amt, invoice.currency)}</span>
+                  </div>`;
+                }).join("");
+                return `<div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#5a4000; margin-bottom:4px;">Payment Schedule</div>${rows}`;
+              })() : `<div style="font-size:10px; font-weight:600; color:#5a4000; text-transform:uppercase; letter-spacing:0.5px;">${headerAmountLabel}</div>
+              <div style="font-size:24px; font-weight:800; color:#2d1a00;">${formatCurrency(headerAmount, invoice.currency)}</div>`}
               <div style="margin-top:8px;">
                 <div style="font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#5a4000; margin-bottom:2px;">Invoice Date</div>
                 <div style="font-size:13px; font-weight:600; color:#2d1a00; margin-top:2px;">${dateDisplay}</div>

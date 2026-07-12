@@ -315,13 +315,19 @@ export default function PublicInvoicePage() {
               <div className="mt-3">
                 {hasSchedule ? (
                   <>
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">Invoice Total</div>
-                    <div className="text-[14px] font-bold text-[#5a4000] mb-1">
-                      {formatCurrency(Number(invoice.total), invoice.currency)}
-                    </div>
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">{headerAmountLabel}</div>
-                    <div className="text-[28px] font-extrabold text-[#2d1a00]">
-                      {formatCurrency(headerAmount, invoice.currency)}
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000] mb-1">Payment Schedule</div>
+                    <div className="flex flex-col gap-1">
+                      {invoice.payment_schedule!.map((item, i) => {
+                        const amt = item.amount_type === "percentage"
+                          ? Math.round((item.value / 100) * Number(invoice.total) * 100) / 100
+                          : item.value;
+                        return (
+                          <div key={i} className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-semibold text-[#1a5c3a]">{item.label || `Installment ${i + 1}`}</span>
+                            <span className="text-[13px] font-extrabold text-[#1a5c3a]">{formatCurrency(amt, invoice.currency)}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </>
                 ) : (
