@@ -253,9 +253,23 @@ function buildInvoiceEmail(
     ? `https://minuteflow.click/invoice/pay/${invoice.share_token}`
     : null;
 
-  // Display amount in header: current balance if prev balance, otherwise final total
-  const headerAmount = prevBalance > 0 ? currentBalance : finalTotal;
-  const headerAmountLabel = prevBalance > 0 ? "Balance Due" : "Invoice Amount";
+  // Display amount in header: current balance if prev balance, first installment if schedule, otherwise final total
+  let headerAmount: number;
+  let headerAmountLabel: string;
+  if (prevBalance > 0) {
+    headerAmount = currentBalance;
+    headerAmountLabel = "Balance Due";
+  } else if (hasSchedule) {
+    const schedule = invoice.payment_schedule as Array<{ label: string; amount_type: string; value: number }>;
+    const firstItem = schedule[0];
+    headerAmount = firstItem.amount_type === "percentage"
+      ? Math.round((firstItem.value / 100) * finalTotal * 100) / 100
+      : firstItem.value;
+    headerAmountLabel = firstItem.label || "Amount Due";
+  } else {
+    headerAmount = finalTotal;
+    headerAmountLabel = "Invoice Amount";
+  }
 
   return `<!DOCTYPE html>
 <html>
