@@ -10487,14 +10487,34 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   {(() => {
                     const prevBal = Number(inv.previous_balance || 0);
                     const currentBal = Number(inv.total) + prevBal;
+                    const hasSchedule = inv.payment_schedule && (inv.payment_schedule as Array<{ label: string; amount_type: string; value: number }>).length > 0;
                     return (
                       <>
-                        <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
-                          {inv.amount_due != null ? "Amount Due" : prevBal > 0 ? "Balance Due" : "Invoice Amount"}
-                        </div>
-                        <div className="text-[24px] font-extrabold text-[#2d1a00]">
-                          {formatCurrency(inv.amount_due != null ? Number(inv.amount_due) : prevBal > 0 ? currentBal : Number(inv.total), inv.currency)}
-                        </div>
+                        {hasSchedule ? (
+                          <>
+                            <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000] mb-1">Payment Schedule</div>
+                            {(inv.payment_schedule as Array<{ label: string; amount_type: string; value: number }>).map((item, i) => {
+                              const amt = item.amount_type === "percentage"
+                                ? Math.round((item.value / 100) * Number(inv.total) * 100) / 100
+                                : item.value;
+                              return (
+                                <div key={i} className="flex items-center justify-between mb-1">
+                                  <span className="text-[11px] font-semibold text-[#1a5c3a]">{item.label || `Installment ${i + 1}`}</span>
+                                  <span className="text-[13px] font-extrabold text-[#1a5c3a]">{formatCurrency(amt, inv.currency)}</span>
+                                </div>
+                              );
+                            })}
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
+                              {inv.amount_due != null ? "Amount Due" : prevBal > 0 ? "Balance Due" : "Invoice Amount"}
+                            </div>
+                            <div className="text-[24px] font-extrabold text-[#2d1a00]">
+                              {formatCurrency(inv.amount_due != null ? Number(inv.amount_due) : prevBal > 0 ? currentBal : Number(inv.total), inv.currency)}
+                            </div>
+                          </>
+                        )}
                         <div className="mt-2">
                           <div className="text-[9px] font-bold uppercase tracking-wider text-[#5a4000]">Invoice Date</div>
                           <div className="text-[13px] font-semibold text-[#2d1a00] mt-1">
