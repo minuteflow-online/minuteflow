@@ -972,27 +972,6 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                       <span>Amount Paid</span>
                                       <span>{formatCurrency(snap.amount_paid)}</span>
                                     </div>
-                                    {snap.payment_method && (
-                                      <div className="flex justify-between pt-1">
-                                        <span className="text-bark/40">Method</span>
-                                        <span className="capitalize">{snap.payment_method.replace(/_/g, " ")}</span>
-                                      </div>
-                                    )}
-                                    {snap.confirmation_number && (
-                                      <div className="flex justify-between">
-                                        <span className="text-bark/40">Confirmation #</span>
-                                        <span className="font-mono">{snap.confirmation_number}</span>
-                                      </div>
-                                    )}
-                                    {snap.payment_date && (
-                                      <div className="flex justify-between">
-                                        <span className="text-bark/40">Payment Date</span>
-                                        <span>{new Date(snap.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}</span>
-                                      </div>
-                                    )}
-                                    {snap.personal_message && (
-                                      <div className="pt-2 text-bark/50 italic">"{snap.personal_message}"</div>
-                                    )}
                                     <div className="flex justify-between pt-1">
                                       <span className="text-bark/40">Sent to</span>
                                       <span>{snap.email_sent_to}</span>
@@ -1002,34 +981,89 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                       <span>{new Date(snap.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} {new Date(snap.sent_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>
                                     </div>
                                   </div>
-                                </div>
-                              </div>
 
-                              {/* Portal Link */}
-                              <div className="mt-4 pt-4 border-t border-linen">
-                                <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Portal Link</div>
-                                <p className="text-xs text-bark/40 mb-2">Paste the paystub link here and it will appear in the VA&apos;s portal.</p>
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="url"
-                                    value={linkInputs[snap.id] ?? snap.paystub_link ?? ""}
-                                    onChange={(e) =>
-                                      setLinkInputs((prev) => ({ ...prev, [snap.id]: e.target.value }))
-                                    }
-                                    placeholder="https://drive.google.com/..."
-                                    className="flex-1 border border-linen rounded-lg px-3 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
-                                  />
-                                  <button
-                                    onClick={() => handleSaveLink(snap)}
-                                    disabled={savingLinkId === snap.id}
-                                    className="px-3 py-1.5 rounded-lg bg-terracotta text-white text-xs font-semibold hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-                                  >
-                                    {savingLinkId === snap.id ? "Saving…" : "Save Link"}
-                                  </button>
+                                  {/* Editable payment fields */}
+                                  <div className="pt-3 mt-2 border-t border-linen space-y-2">
+                                    <div>
+                                      <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Payment Method</label>
+                                      <select
+                                        value={getEditValues(snap).payment_method}
+                                        onChange={(e) =>
+                                          setEditInputs((prev) => ({
+                                            ...prev,
+                                            [snap.id]: { ...getEditValues(snap), payment_method: e.target.value },
+                                          }))
+                                        }
+                                        className="w-full border border-linen rounded-lg px-2 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                                      >
+                                        <option value="gcash">Gcash</option>
+                                        <option value="bank_transfer">Bank Transfer</option>
+                                        <option value="paypal">Paypal</option>
+                                        <option value="check">Check</option>
+                                        <option value="zelle">Zelle</option>
+                                        <option value="venmo">Venmo</option>
+                                        <option value="cash">Cash</option>
+                                        <option value="other">Other</option>
+                                      </select>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Confirmation #</label>
+                                        <input
+                                          type="text"
+                                          value={getEditValues(snap).confirmation_number}
+                                          onChange={(e) =>
+                                            setEditInputs((prev) => ({
+                                              ...prev,
+                                              [snap.id]: { ...getEditValues(snap), confirmation_number: e.target.value },
+                                            }))
+                                          }
+                                          className="w-full border border-linen rounded-lg px-2 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Payment Date</label>
+                                        <input
+                                          type="date"
+                                          value={getEditValues(snap).payment_date}
+                                          onChange={(e) =>
+                                            setEditInputs((prev) => ({
+                                              ...prev,
+                                              [snap.id]: { ...getEditValues(snap), payment_date: e.target.value },
+                                            }))
+                                          }
+                                          className="w-full border border-linen rounded-lg px-2 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Note</label>
+                                      <textarea
+                                        value={getEditValues(snap).personal_message}
+                                        onChange={(e) =>
+                                          setEditInputs((prev) => ({
+                                            ...prev,
+                                            [snap.id]: { ...getEditValues(snap), personal_message: e.target.value },
+                                          }))
+                                        }
+                                        rows={2}
+                                        className="w-full border border-linen rounded-lg px-2 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30 resize-none"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-2 pt-1">
+                                      <button
+                                        onClick={() => handleSaveEdit(snap)}
+                                        disabled={savingEditId === snap.id}
+                                        className="px-3 py-1.5 rounded-lg bg-terracotta text-white text-xs font-semibold hover:bg-terracotta/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                      >
+                                        {savingEditId === snap.id ? "Saving…" : "Save"}
+                                      </button>
+                                      {savedEditId === snap.id && (
+                                        <span className="text-xs text-green-600 font-medium">✓ Saved</span>
+                                      )}
+                                    </div>
+                                  </div>
                                 </div>
-                                {savedLinkId === snap.id && (
-                                  <p className="mt-1 text-xs text-green-600 font-medium">✓ Link saved — visible in VA portal</p>
-                                )}
                               </div>
 
                               {/* Action buttons */}
