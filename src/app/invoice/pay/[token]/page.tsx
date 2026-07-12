@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -80,6 +80,11 @@ export default function InvoicePayPage() {
   const [paymentError, setPaymentError] = useState("");
   const [paymentSuccess, setPaymentSuccess] = useState<{ receiptUrl: string | null; amount: number; totalCharged?: number; balanceRemaining: number } | null>(null);
 
+  const searchParams = useSearchParams();
+  const [paymentMethodTab, setPaymentMethodTab] = useState<"card" | "ach">(
+    searchParams?.get("method") === "ach" ? "ach" : "card"
+  );
+
   const [squareLoaded, setSquareLoaded] = useState(false);
   const [cardReady, setCardReady] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -87,7 +92,12 @@ export default function InvoicePayPage() {
   const cardInstanceRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const paymentsRef = useRef<any>(null);
-  const [paymentMethodTab] = useState<"card">("card");
+
+  // ACH / bank transfer
+  const achRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const achInstanceRef = useRef<any>(null);
+  const [achReady, setAchReady] = useState(false);
 
   /* ── Load invoice data ─────────────────────────────────── */
 
@@ -172,6 +182,24 @@ export default function InvoicePayPage() {
     }
   }, [squareConfig]);
 
+  /* ── Initialize Square ACH (bank transfer) ────────────── */
+
+  const initAch = useCallback(async () => {
+    if (!squareConfig || !paymentsRef.current || !achRef.current || achInstanceRef.current) return;
+
+    try {
+      const ach = await paymentsRef.current.ach({
+        redirectURI: window.location.href.split("?")[0],
+        transactionId: `ach-inv-${Date.now()}`,
+      });
+      await ach.attach(achRef.current);
+      achInstanceRef.current = ach;
+      setAchReady(true);
+    } catch (err) {
+      console.error("Square ACH init error:", err);
+    }
+  }, [squareConfig]);
+
   /* ── Load Square SDK manually when squareConfig is ready ── */
 
   useEffect(() => {
@@ -203,11 +231,17 @@ export default function InvoicePayPage() {
     }
   }, [squareLoaded, squareConfig, initSquare]);
 
+  // Init ACH after card is ready (paymentsRef is set by then)
+  useEffect(() => {
+    if (cardReady && invoice?.ach_enabled) {
+      initAch();
+    }
+  }, [cardReady, invoice?.ach_enabled, initAch]);
+
   /* ── Handle payment submission ─────────────────────────── */
 
-  const handlePay = async (method: "card") => {
+  const handlePay = async (method: "card" | "ach") => {
     if (!invoice || !paymentsRef.current) return;
-    if (!cardInstanceRef.current) return;
 
     const payAmount = selectedAmount;
 
@@ -221,22 +255,31 @@ export default function InvoicePayPage() {
       return;
     }
 
-    const fee = Math.round(payAmount * 0.03 * 100) / 100;
+    if (method === "card" && !cardInstanceRef.current) return;
+    if (method === "ach" && !achInstanceRef.current) return;
+
+    // Fee: card = 3%, bank transfer = 1%
+    const fee = method === "ach"
+      ? Math.round(payAmount * 0.01 * 100) / 100
+      : Math.round(payAmount * 0.03 * 100) / 100;
 
     setProcessing(true);
     setPaymentError("");
 
     try {
-      const tokenResult = await cardInstanceRef.current.tokenize();
+      const tokenResult = method === "ach"
+        ? await achInstanceRef.current.tokenize({ accountHolderName: invoice.to_name || "Customer" })
+        : await cardInstanceRef.current.tokenize();
 
       if (tokenResult.status !== "OK") {
-        const errorMessages = tokenResult.errors?.map((e: { message: string }) => e.message).join(", ") || "Card tokenization failed.";
+        const errorMessages = tokenResult.errors?.map((e: { message: string }) => e.message).join(", ")
+          || (method === "ach" ? "Bank transfer tokenization failed." : "Card tokenization failed.");
         setPaymentError(errorMessages);
         setProcessing(false);
         return;
       }
 
-      const idempotencyKey = `${invoice.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const idempotencyKey = `${invoice.id}-${method}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
       const res = await fetch(`/api/invoices/pay/${token}`, {
         method: "POST",
@@ -245,7 +288,7 @@ export default function InvoicePayPage() {
           sourceId: tokenResult.token,
           amount: payAmount,
           processingFee: fee,
-          paymentMethodLabel: "Square Card",
+          paymentMethodLabel: method === "ach" ? "Bank Transfer (ACH)" : "Square Card",
           idempotencyKey,
         }),
       });
@@ -339,10 +382,12 @@ export default function InvoicePayPage() {
     });
   })();
 
-  // Processing fee: card = 3%
+  // Processing fees
   const basePayAmount = selectedAmount ?? 0;
   const cardFee = basePayAmount > 0 ? Math.round(basePayAmount * 0.03 * 100) / 100 : 0;
   const cardTotalCharged = basePayAmount > 0 ? Math.round((basePayAmount + cardFee) * 100) / 100 : 0;
+  const achFee = basePayAmount > 0 ? Math.round(basePayAmount * 0.01 * 100) / 100 : 0;
+  const achTotalCharged = basePayAmount > 0 ? Math.round((basePayAmount + achFee) * 100) / 100 : 0;
 
   /* ── Payment success screen ──────────────────────────── */
 
@@ -538,9 +583,37 @@ export default function InvoicePayPage() {
                   </div>
                 )}
 
+                {/* Payment method tabs — show Bank Transfer tab only when ach_enabled */}
+                {invoice.ach_enabled && (
+                  <div className="flex rounded-lg border border-[#e8e0d4] overflow-hidden">
+                    <button
+                      onClick={() => setPaymentMethodTab("card")}
+                      className={`flex-1 py-2.5 text-[12px] font-semibold transition-colors ${
+                        paymentMethodTab === "card"
+                          ? "bg-[#2d6a4f] text-white"
+                          : "bg-white text-[#6b5e52] hover:bg-[#faf6f0]"
+                      }`}
+                    >
+                      💳 Pay with Card
+                    </button>
+                    <button
+                      onClick={() => setPaymentMethodTab("ach")}
+                      className={`flex-1 py-2.5 text-[12px] font-semibold transition-colors border-l border-[#e8e0d4] ${
+                        paymentMethodTab === "ach"
+                          ? "bg-[#2d6a4f] text-white"
+                          : "bg-white text-[#6b5e52] hover:bg-[#faf6f0]"
+                      }`}
+                    >
+                      🏦 Bank Transfer
+                    </button>
+                  </div>
+                )}
+
                 {/* Card section */}
-                <div>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-[#6b5e52] mb-2">💳 Credit / Debit Card</div>
+                <div className={paymentMethodTab === "card" ? "" : "hidden"}>
+                  {!invoice.ach_enabled && (
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-[#6b5e52] mb-2">💳 Credit / Debit Card</div>
+                  )}
                   <div ref={cardRef} className="min-h-[100px]" />
                   {!cardReady && (
                     <div className="text-[12px] text-[#9e9080] mt-2 text-center">Loading card form…</div>
@@ -576,6 +649,46 @@ export default function InvoicePayPage() {
                     Payments are securely processed by Square. Your card details are never stored on our servers.
                   </p>
                 </div>
+
+                {/* Bank Transfer (ACH) section */}
+                {invoice.ach_enabled && (
+                  <div className={paymentMethodTab === "ach" ? "" : "hidden"}>
+                    <div ref={achRef} className="min-h-[60px]" />
+                    {!achReady && (
+                      <div className="text-[12px] text-[#9e9080] mt-2 text-center">Loading bank transfer form…</div>
+                    )}
+                    {basePayAmount > 0 && achReady && (
+                      <div className="rounded-lg bg-[#faf6f0] border border-[#e8e0d4] px-4 py-3 space-y-1.5 mt-3">
+                        <div className="flex justify-between text-[12px] text-[#6b5e52]">
+                          <span>Amount</span>
+                          <span>{formatCurrency(basePayAmount, invoice.currency)}</span>
+                        </div>
+                        <div className="flex justify-between text-[12px] text-[#6b5e52]">
+                          <span>Bank transfer fee (1%)</span>
+                          <span>{formatCurrency(achFee, invoice.currency)}</span>
+                        </div>
+                        <div className="flex justify-between text-[13px] font-bold text-[#3d2b1f] border-t border-[#e8e0d4] pt-1.5">
+                          <span>Total charged</span>
+                          <span>{formatCurrency(achTotalCharged, invoice.currency)}</span>
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handlePay("ach")}
+                      disabled={processing || !achReady || !selectedAmount}
+                      className="w-full mt-3 rounded-lg bg-[#2d6a4f] text-white text-[15px] font-bold py-4 hover:bg-[#1f4d38] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {processing && paymentMethodTab === "ach"
+                        ? "Processing…"
+                        : !achReady
+                        ? "Loading…"
+                        : `Pay ${formatCurrency(achTotalCharged, invoice.currency)} with Bank Transfer`}
+                    </button>
+                    <p className="text-center text-[11px] text-[#9e9080] mt-2">
+                      Bank transfers are secure and have a lower 1% processing fee. Powered by Square + Plaid.
+                    </p>
+                  </div>
+                )}
 
               </div>
             </div>
