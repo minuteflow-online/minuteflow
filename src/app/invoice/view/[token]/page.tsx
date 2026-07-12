@@ -236,6 +236,24 @@ export default function PublicInvoicePage() {
   // Current balance: invoice total + any previous unpaid balance
   const currentBalance = Number(invoice.total) + prevBalance;
 
+  // Header amount label + value — mirrors the email logic
+  const hasSchedule = invoice.payment_schedule && invoice.payment_schedule.length > 0;
+  let headerAmountLabel: string;
+  let headerAmount: number;
+  if (prevBalance > 0) {
+    headerAmountLabel = "Balance Due";
+    headerAmount = currentBalance;
+  } else if (hasSchedule) {
+    const firstItem = invoice.payment_schedule![0];
+    headerAmountLabel = firstItem.label || "Amount Due";
+    headerAmount = firstItem.amount_type === "percentage"
+      ? Math.round((firstItem.value / 100) * Number(invoice.total) * 100) / 100
+      : firstItem.value;
+  } else {
+    headerAmountLabel = "Invoice Amount";
+    headerAmount = Number(invoice.total);
+  }
+
   const issueDateFmt = new Date(invoice.issue_date + "T12:00:00Z").toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
@@ -295,24 +313,22 @@ export default function PublicInvoicePage() {
               {invoice.to_phone && <div className="text-[11px] text-[#5a4000]">{invoice.to_phone}</div>}
               {invoice.to_address && <div className="text-[10px] text-[#5a4000] mt-0.5">{invoice.to_address}</div>}
               <div className="mt-3">
-                {invoice.amount_due != null ? (
+                {hasSchedule ? (
                   <>
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">Invoice Total</div>
                     <div className="text-[14px] font-bold text-[#5a4000] mb-1">
                       {formatCurrency(Number(invoice.total), invoice.currency)}
                     </div>
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">Amount Due</div>
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">{headerAmountLabel}</div>
                     <div className="text-[28px] font-extrabold text-[#2d1a00]">
-                      {formatCurrency(Number(invoice.amount_due), invoice.currency)}
+                      {formatCurrency(headerAmount, invoice.currency)}
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">
-                      {currentBalance > Number(invoice.total) ? "Balance Due" : "Invoice Amount"}
-                    </div>
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">{headerAmountLabel}</div>
                     <div className="text-[22px] font-extrabold text-[#2d1a00]">
-                      {formatCurrency(currentBalance > Number(invoice.total) ? currentBalance : Number(invoice.total), invoice.currency)}
+                      {formatCurrency(headerAmount, invoice.currency)}
                     </div>
                   </>
                 )}
