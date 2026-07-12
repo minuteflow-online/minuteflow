@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useEffect } from "react";
 import type { Profile } from "@/types/database";
+import { createClient } from "@/lib/supabase/client";
 
 interface Props {
   profiles: Profile[];
@@ -220,10 +221,15 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [resendSuccessId, setResendSuccessId] = useState<string | null>(null);
 
-  // Portal link editing
-  const [linkInputs, setLinkInputs] = useState<Record<string, string>>({});
-  const [savingLinkId, setSavingLinkId] = useState<string | null>(null);
-  const [savedLinkId, setSavedLinkId] = useState<string | null>(null);
+  // Editable payment fields (post-send, in expanded history row)
+  const [editInputs, setEditInputs] = useState<Record<string, {
+    payment_method: string;
+    confirmation_number: string;
+    payment_date: string;
+    personal_message: string;
+  }>>({});
+  const [savingEditId, setSavingEditId] = useState<string | null>(null);
+  const [savedEditId, setSavedEditId] = useState<string | null>(null);
 
   // Only show active profiles with a pay rate
   const eligibleProfiles = profiles.filter((p) => p.is_active);
@@ -347,32 +353,53 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     }
   }, []);
 
-  const handleSaveLink = useCallback(async (snap: PaystubSnapshot) => {
-    const link = linkInputs[snap.id] ?? snap.paystub_link ?? "";
-    setSavingLinkId(snap.id);
-    setSavedLinkId(null);
+  function getEditValues(snap: PaystubSnapshot) {
+    return editInputs[snap.id] ?? {
+      payment_method: snap.payment_method ?? "gcash",
+      confirmation_number: snap.confirmation_number ?? "",
+      payment_date: snap.payment_date ?? "",
+      personal_message: snap.personal_message ?? "",
+    };
+  }
+
+  const handleSaveEdit = useCallback(async (snap: PaystubSnapshot) => {
+    const values = getEditValues(snap);
+    setSavingEditId(snap.id);
+    setSavedEditId(null);
     try {
-      const res = await fetch("/api/paystub/update-link", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ snapshot_id: snap.id, paystub_link: link.trim() || null }),
-      });
-      if (!res.ok) {
-        const d = await res.json();
-        throw new Error(d.error || "Failed to save link.");
-      }
-      // Update local history so link shows immediately
+      const supabase = createClient();
+      const { error: updateError } = await supabase
+        .from("paystub_snapshots")
+        .update({
+          payment_method: values.payment_method || null,
+          confirmation_number: values.confirmation_number.trim() || null,
+          payment_date: values.payment_date || null,
+          personal_message: values.personal_message.trim() || null,
+        })
+        .eq("id", snap.id);
+      if (updateError) throw new Error(updateError.message);
+
       setHistory((prev) =>
-        prev.map((s) => (s.id === snap.id ? { ...s, paystub_link: link.trim() || null } : s))
+        prev.map((s) =>
+          s.id === snap.id
+            ? {
+                ...s,
+                payment_method: values.payment_method || null,
+                confirmation_number: values.confirmation_number.trim() || null,
+                payment_date: values.payment_date || null,
+                personal_message: values.personal_message.trim() || null,
+              }
+            : s
+        )
       );
-      setSavedLinkId(snap.id);
-      setTimeout(() => setSavedLinkId(null), 3000);
+      setSavedEditId(snap.id);
+      setTimeout(() => setSavedEditId(null), 3000);
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Failed to save link.");
+      alert(e instanceof Error ? e.message : "Failed to save.");
     } finally {
-      setSavingLinkId(null);
+      setSavingEditId(null);
     }
-  }, [linkInputs]);
+  }, [editInputs]);
 
   const fetchHistory = useCallback(async (userId: string) => {
     if (!userId) { setHistory([]); return; }
