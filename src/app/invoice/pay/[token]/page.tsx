@@ -98,6 +98,7 @@ export default function InvoicePayPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const achInstanceRef = useRef<any>(null);
   const [achReady, setAchReady] = useState(false);
+  const [achError, setAchError] = useState(false);
 
   /* ── Load invoice data ─────────────────────────────────── */
 
@@ -212,6 +213,7 @@ export default function InvoicePayPage() {
       setAchReady(true);
     } catch (err) {
       console.error("Square ACH init error:", err);
+      setAchError(true);
     }
   }, [squareConfig]);
 
@@ -246,12 +248,8 @@ export default function InvoicePayPage() {
     }
   }, [squareLoaded, squareConfig, initSquare]);
 
-  // Init ACH after card is ready (paymentsRef is set by then)
-  useEffect(() => {
-    if (cardReady && invoice?.ach_enabled) {
-      initAch();
-    }
-  }, [cardReady, invoice?.ach_enabled, initAch]);
+  // ACH is initialized on-demand when the user switches to the Bank Transfer tab
+  // (initializing while the section is hidden causes Plaid to fail silently)
 
   /* ── Handle payment submission ─────────────────────────── */
 
@@ -612,7 +610,13 @@ export default function InvoicePayPage() {
                       💳 Pay with Card
                     </button>
                     <button
-                      onClick={() => setPaymentMethodTab("ach")}
+                      onClick={() => {
+                        setPaymentMethodTab("ach");
+                        // Initialize ACH on first click — must be visible in DOM for Plaid to attach
+                        if (!achInstanceRef.current && paymentsRef.current) {
+                          initAch();
+                        }
+                      }}
                       className={`flex-1 py-2.5 text-[12px] font-semibold transition-colors border-l border-[#e8e0d4] ${
                         paymentMethodTab === "ach"
                           ? "bg-[#2d6a4f] text-white"
@@ -669,8 +673,13 @@ export default function InvoicePayPage() {
                 {invoice.ach_enabled && (
                   <div className={paymentMethodTab === "ach" ? "" : "hidden"}>
                     <div ref={achRef} className="min-h-[60px]" />
-                    {!achReady && (
+                    {!achReady && !achError && (
                       <div className="text-[12px] text-[#9e9080] mt-2 text-center">Loading bank transfer form…</div>
+                    )}
+                    {achError && (
+                      <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-[13px] text-red-700 mt-2 text-center">
+                        Bank transfer is unavailable at this time. Please use Pay with Card instead.
+                      </div>
                     )}
                     {basePayAmount > 0 && achReady && (
                       <div className="rounded-lg bg-[#faf6f0] border border-[#e8e0d4] px-4 py-3 space-y-1.5 mt-3">
