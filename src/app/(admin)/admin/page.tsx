@@ -458,8 +458,9 @@ export default function AdminPage() {
   const [sortingReviews, setSortingReviews] = useState<SortingReview[]>([]);
   const [reviewNotes, setReviewNotes] = useState<Record<number, string>>({});
 
-  // Org timezone
+  // Org timezone + name
   const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
+  const [orgName, setOrgName] = useState<string>("");
 
   // Clock
   const [clock, setClock] = useState("");
@@ -574,7 +575,7 @@ export default function AdminPage() {
         .eq("is_manual", true)
         .eq("manual_status", "pending")
         .order("created_at", { ascending: false }),
-      supabase.from("organization_settings").select("timezone").limit(1).single(),
+      supabase.from("organization_settings").select("timezone, org_name").limit(1).single(),
     ]);
 
     setProfiles((profilesRes.data ?? []) as Profile[]);
@@ -589,6 +590,7 @@ export default function AdminPage() {
     setBreakCorrectionRequests((breakCorrectionsRes.data ?? []) as BreakCorrectionRequest[]);
     setPendingManualEntries((manualEntriesRes.data ?? []) as TimeLog[]);
     if (orgSettingsRes.data?.timezone) setOrgTimezone(orgSettingsRes.data.timezone);
+    if (orgSettingsRes.data?.org_name) setOrgName(orgSettingsRes.data.org_name);
 
     if (authRes.data?.user) {
       setCurrentUserId(authRes.data.user.id);
@@ -1474,7 +1476,7 @@ export default function AdminPage() {
           )}
 
           {activeTab === "paystubs" && (
-            <PaystubTab profiles={profiles} orgTimezone={orgTimezone} />
+            <PaystubTab profiles={profiles} orgTimezone={orgTimezone} orgName={orgName} />
           )}
 
           {activeTab === "financial" && (

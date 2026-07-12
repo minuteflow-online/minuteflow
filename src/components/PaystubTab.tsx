@@ -6,6 +6,7 @@ import type { Profile } from "@/types/database";
 interface Props {
   profiles: Profile[];
   orgTimezone: string;
+  orgName?: string;
 }
 
 type PeriodPreset = "this_week" | "last_week" | "this_first_half" | "this_second_half" | "last_first_half" | "last_second_half" | "this_month" | "last_month" | "custom";
@@ -186,7 +187,7 @@ function formatDateLabel(iso: string): string {
 
 /* ── Component ───────────────────────────────────────────── */
 
-export default function PaystubTab({ profiles, orgTimezone }: Props) {
+export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
   const [preset, setPreset] = useState<PeriodPreset>("last_second_half");
   const [customStart, setCustomStart] = useState<string>("");
@@ -199,7 +200,10 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
   const [paymentWarning, setPaymentWarning] = useState<string | null>(null);
 
   // Company name (editable, shown on paystub email)
-  const [companyName, setCompanyName] = useState<string>("MinuteFlow");
+  const [companyName, setCompanyName] = useState<string>(orgName || "MinuteFlow");
+
+  // Miscellaneous amount (added on top of Amount to Pay)
+  const [miscAmount, setMiscAmount] = useState<string>("");
 
   // Payment fields
   const todayIso = new Date().toLocaleDateString("en-CA");
@@ -296,7 +300,11 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
           confirmation_number: confirmationNumber || null,
           payment_date: paymentDate,
           personal_message: personalMessage.trim() || null,
-          custom_amount: customAmount !== "" ? parseFloat(customAmount) : undefined,
+          custom_amount: (() => {
+            const base = customAmount !== "" ? parseFloat(customAmount) : (preview?.totalGrossPay ?? preview?.grossPay ?? 0);
+            const misc = miscAmount !== "" ? parseFloat(miscAmount) : 0;
+            return base + misc;
+          })(),
           company_name: companyName.trim() || "MinuteFlow",
         }),
       });
@@ -317,7 +325,7 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, companyName]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, companyName]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -696,6 +704,33 @@ export default function PaystubTab({ profiles, orgTimezone }: Props) {
                   <p className="text-xs text-bark/40 mt-1">
                     Default: {formatCurrency(preview.totalGrossPay ?? preview.grossPay)} · You entered: {formatCurrency(parseFloat(customAmount) || 0)}
                   </p>
+                )}
+              </div>
+
+              {/* Miscellaneous Amount */}
+              <div className="px-5 pb-4">
+                <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                  Miscellaneous <span className="normal-case font-normal text-bark/40">(optional add-on)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-bark/50">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={miscAmount}
+                    onChange={(e) => setMiscAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  />
+                </div>
+                {miscAmount !== "" && parseFloat(miscAmount) > 0 && (
+                  <div className="mt-2 flex justify-between items-center rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark">
+                    <span>Total to Send</span>
+                    <span className="text-terracotta">
+                      {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : (preview.totalGrossPay ?? preview.grossPay)) + (parseFloat(miscAmount) || 0))}
+                    </span>
+                  </div>
                 )}
               </div>
 
