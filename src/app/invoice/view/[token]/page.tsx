@@ -298,7 +298,7 @@ export default function PublicInvoicePage() {
                 {invoice.amount_due != null ? (
                   <>
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">Invoice Total</div>
-                    <div className="text-[14px] font-bold text-[#5a4000] line-through mb-1">
+                    <div className="text-[14px] font-bold text-[#5a4000] mb-1">
                       {formatCurrency(Number(invoice.total), invoice.currency)}
                     </div>
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-[#5a4000]">Amount Due</div>
