@@ -159,26 +159,41 @@ export default function InvoicePayPage() {
   const initSquare = useCallback(async () => {
     if (!squareConfig || !window.Square || !cardRef.current || cardInstanceRef.current) return;
 
-    try {
-      const squarePayments = window.Square.payments(squareConfig.applicationId, squareConfig.locationId);
-      paymentsRef.current = squarePayments;
+    const CARD_STYLE = {
+      ".input-container": { borderColor: "#e8e0d4", borderRadius: "8px" },
+      ".input-container.is-focus": { borderColor: "#c0704e" },
+      ".input-container.is-error": { borderColor: "#dc2626" },
+      input: { color: "#3d2b1f", fontSize: "14px", fontFamily: "Arial, sans-serif" },
+      "input::placeholder": { color: "#9e9080" },
+    };
 
-      const card = await squarePayments.card({
-        style: {
-          ".input-container": { borderColor: "#e8e0d4", borderRadius: "8px" },
-          ".input-container.is-focus": { borderColor: "#c0704e" },
-          ".input-container.is-error": { borderColor: "#dc2626" },
-          input: { color: "#3d2b1f", fontSize: "14px", fontFamily: "Arial, sans-serif" },
-          "input::placeholder": { color: "#9e9080" },
-        },
-      });
-      await card.attach(cardRef.current);
-      cardInstanceRef.current = card;
-      setCardReady(true);
-    } catch (err) {
-      console.error("Square SDK init error:", err);
-      const errMsg = err instanceof Error ? err.message : String(err);
-      setPaymentError(`Payment form error: ${errMsg}`);
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 600; // ms
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const squarePayments = window.Square.payments(squareConfig.applicationId, squareConfig.locationId);
+        paymentsRef.current = squarePayments;
+
+        const card = await squarePayments.card({ style: CARD_STYLE });
+        await card.attach(cardRef.current);
+        cardInstanceRef.current = card;
+        setCardReady(true);
+        return; // success — stop retrying
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const isTimingError = errMsg.toLowerCase().includes("initialized in time") || errMsg.toLowerCase().includes("not ready");
+        console.warn(`Square SDK init attempt ${attempt + 1} failed:`, errMsg);
+
+        if (isTimingError && attempt < MAX_RETRIES - 1) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAY));
+          continue; // retry
+        }
+
+        // Non-timing error or out of retries
+        setPaymentError(`Payment form error: ${errMsg}`);
+        return;
+      }
     }
   }, [squareConfig]);
 
