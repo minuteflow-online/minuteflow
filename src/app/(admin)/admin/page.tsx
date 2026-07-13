@@ -45,6 +45,7 @@ import EmailStatusTab from "@/components/EmailStatusTab";
 import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
 import FixedPayTasksTab from "@/components/FixedPayTasksTab";
 import TeamProfilePanel from "@/components/TeamProfilePanel";
+import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -1705,6 +1706,22 @@ function OverviewTab({
           ))}
         </div>
       </div>
+
+      {/* Team Performance */}
+      {(() => {
+        const vaProfiles = profiles.filter((p) => p.role === "va" && p.is_active !== false);
+        if (vaProfiles.length === 0) return null;
+        const names: Record<string, string> = {};
+        vaProfiles.forEach((p) => { names[p.id] = p.full_name || p.username || "Unknown"; });
+        return (
+          <VAPerformanceMetrics
+            vaIds={vaProfiles.map((p) => p.id)}
+            names={names}
+            orgTimezone={orgTimezone}
+            variant="compact"
+          />
+        );
+      })()}
 
       {/* Extension Upload Status */}
       {extensionUploadStatus.length > 0 && (

@@ -14,6 +14,7 @@ import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import GapFillModal from "@/components/GapFillModal";
+import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone } from "@/lib/utils";
 import type {
@@ -3059,6 +3060,9 @@ export default function DashboardPage() {
             : "No tasks logged yet today"}
         </p>
       </div>
+
+      {/* VA Performance Metrics */}
+      {userId && <VAPerformanceMetrics vaIds={[userId]} orgTimezone={orgTimezone} variant="detail" />}
 
       {/* Active Task Bar */}
       {activeTask && sessionState === "clocked-in" && (

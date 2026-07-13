@@ -13,6 +13,7 @@ import {
   getYearBoundsInTimezone,
 } from "@/lib/utils";
 import { ProductivityMeterWidget } from "@/components/ProductivityMeterWidget";
+import { ProgressBar } from "@/components/VAPerformanceMetrics";
 
 /* ── Types ────────────────────────────────────────────────── */
 
@@ -1351,6 +1352,13 @@ export default function ReportsPage() {
                       />
                     </div>
 
+                    {/* Progress */}
+                    {startISO && endISO && (
+                      <div className="mt-4">
+                        <VAProgressBar vaId={va.userId} startISO={startISO} endISO={endISO} orgTimezone={orgTimezone} />
+                      </div>
+                    )}
+
                     {/* Insights */}
                     {insights.length > 0 && (
                       <div className="mt-4 flex flex-wrap gap-2">
@@ -1827,4 +1835,70 @@ function BigStat({
       <div className="mt-1 text-xs font-semibold text-bark">{label}</div>
     </div>
   );
+}
+
+/* ── VA Progress Bar (Progress Report tab) ───────────────────
+ * Fetches planned_tasks + assigned_task_assignees completion for the
+ * selected report period and renders the shared Ahead/On Track/Behind bar. */
+
+function VAProgressBar({
+  vaId,
+  startISO,
+  endISO,
+  orgTimezone,
+}: {
+  vaId: string;
+  startISO: string;
+  endISO: string;
+  orgTimezone: string;
+}) {
+  const supabase = createClient();
+  const [pct, setPct] = useState<number | null>(null);
+  const [label, setLabel] = useState<"Ahead" | "On Track" | "Behind" | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const startDate = new Date(startISO).toLocaleDateString("en-CA", { timeZone: orgTimezone });
+      const endDate = new Date(endISO).toLocaleDateString("en-CA", { timeZone: orgTimezone });
+
+      const [plannedRes, assigneesRes] = await Promise.all([
+        supabase
+          .from("planned_tasks")
+          .select("completed,plan_date")
+          .eq("user_id", vaId)
+          .gte("plan_date", startDate)
+          .lte("plan_date", endDate),
+        supabase
+          .from("assigned_task_assignees")
+          .select("status,assigned_at")
+          .eq("va_id", vaId)
+          .gte("assigned_at", startISO)
+          .lte("assigned_at", endISO),
+      ]);
+
+      if (cancelled) return;
+
+      const planned = plannedRes.data ?? [];
+      const assignees = assigneesRes.data ?? [];
+      const completedPlanned = planned.filter((p) => p.completed).length;
+      const completedAssigned = assignees.filter((a) => a.status === "completed" || a.status === "approved").length;
+      const totalDue = planned.length + assignees.length;
+      const progressPct = totalDue > 0 ? ((completedPlanned + completedAssigned) / totalDue) * 100 : null;
+
+      setPct(progressPct);
+      setLabel(progressPct !== null ? (progressPct >= 90 ? "Ahead" : progressPct >= 70 ? "On Track" : "Behind") : null);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [vaId, startISO, endISO, orgTimezone, supabase]);
+
+  if (loading) return <div className="h-5 animate-pulse rounded-full bg-parchment" />;
+
+  const color = label === "Ahead" ? "sage" : label === "On Track" ? "amber" : "terracotta";
+  return <ProgressBar pct={pct} label={label} color={color} />;
 }
