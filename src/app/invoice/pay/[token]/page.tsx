@@ -388,7 +388,12 @@ export default function InvoicePayPage() {
         JSON.stringify({ payAmount, fee, urlToken: token })
       );
       try {
-        achInstanceRef.current.tokenize({ accountHolderName: invoice.to_name || "Customer" });
+        achInstanceRef.current.tokenize({
+          accountHolderName: invoice.to_name || "Customer",
+          intent: "CHARGE",
+          amount: String(payAmount.toFixed(2)),
+          currency: invoice.currency || "USD",
+        });
       } catch {
         sessionStorage.removeItem("ach_payment_details");
         setPaymentError("Failed to start bank transfer. Please try again.");
