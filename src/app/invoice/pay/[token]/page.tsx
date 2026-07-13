@@ -75,6 +75,7 @@ export default function InvoicePayPage() {
   // Payment form state
   // selectedIndex: 0 = next installment, 1 = full payment
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
+  useEffect(() => { selectedAmountRef.current = selectedAmount; }, [selectedAmount]);
   const [selectedIndex, setSelectedIndex] = useState<number>(1);
   const [processing, setProcessing] = useState(false);
   const [paymentError, setPaymentError] = useState("");
@@ -99,6 +100,9 @@ export default function InvoicePayPage() {
   const achInstanceRef = useRef<any>(null);
   const [achReady, setAchReady] = useState(false);
   const [achError, setAchError] = useState(false);
+
+  // Ref so ontokenization event listener always sees current amount (survives Plaid redirect)
+  const selectedAmountRef = useRef<number | null>(null);
 
   /* ── Load invoice data ─────────────────────────────────── */
 
@@ -208,6 +212,93 @@ export default function InvoicePayPage() {
         redirectURI: window.location.href.split("?")[0],
         transactionId: `ach-inv-${Date.now()}`,
       });
+
+      // ACH uses Plaid — the token comes back via ontokenization event,
+      // not as a return value from .tokenize(). This fires both for inline
+      // Plaid and after the OAuth redirect flow completes.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ach.addEventListener("ontokenization", async (event: any) => {
+        const { tokenResult, error } = event.detail ?? {};
+
+        if (error) {
+          setPaymentError(error.message || "Bank transfer failed.");
+          setProcessing(false);
+          return;
+        }
+
+        if (!tokenResult || tokenResult.status !== "OK") {
+          const msgs =
+            tokenResult?.errors?.map((e: { message: string }) => e.message).join(", ") ||
+            "Bank transfer tokenization failed.";
+          setPaymentError(msgs);
+          setProcessing(false);
+          return;
+        }
+
+        // Retrieve payment details — use sessionStorage to survive Plaid redirect
+        const stored = sessionStorage.getItem("ach_payment_details");
+        let payAmount: number | null = null;
+        let fee = 0;
+        let storedToken = token;
+
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            payAmount = parsed.payAmount;
+            fee = parsed.fee;
+            storedToken = parsed.urlToken ?? token;
+            sessionStorage.removeItem("ach_payment_details");
+          } catch { /* fall through to ref */ }
+        }
+
+        // Fallback: read from ref (works when Plaid doesn't redirect)
+        if (payAmount == null) {
+          payAmount = selectedAmountRef.current;
+          if (payAmount != null) {
+            fee = Math.round(payAmount * 0.01 * 100) / 100;
+          }
+        }
+
+        if (!payAmount || payAmount <= 0) {
+          setPaymentError("Payment amount lost. Please try again.");
+          setProcessing(false);
+          return;
+        }
+
+        try {
+          const idempotencyKey = `ach-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          const res = await fetch(`/api/invoices/pay/${storedToken}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sourceId: tokenResult.token,
+              amount: payAmount,
+              processingFee: fee,
+              paymentMethodLabel: "Bank Transfer (ACH)",
+              idempotencyKey,
+            }),
+          });
+
+          const data = await res.json();
+
+          if (!res.ok || !data.success) {
+            setPaymentError(data.error || "Payment failed. Please try again.");
+            setProcessing(false);
+            return;
+          }
+
+          setPaymentSuccess({
+            receiptUrl: data.receiptUrl,
+            amount: data.amountPaid,
+            totalCharged: data.totalCharged,
+            balanceRemaining: data.balanceRemaining,
+          });
+        } catch {
+          setPaymentError("An unexpected error occurred. Please try again.");
+          setProcessing(false);
+        }
+      });
+
       await ach.attach(achRef.current);
       achInstanceRef.current = ach;
       setAchReady(true);
@@ -215,7 +306,7 @@ export default function InvoicePayPage() {
       console.error("Square ACH init error:", err);
       setAchError(true);
     }
-  }, [squareConfig]);
+  }, [squareConfig, token]);
 
   /* ── Load Square SDK manually when squareConfig is ready ── */
 
@@ -287,20 +378,40 @@ export default function InvoicePayPage() {
     setProcessing(true);
     setPaymentError("");
 
+    if (method === "ach") {
+      // ACH: .tokenize() opens Plaid — the token comes back via the ontokenization
+      // event listener registered in initAch (not as a return value here).
+      // For redirect-mode banks, Plaid will navigate away and back; persist
+      // the amount in sessionStorage so the event handler can read it on return.
+      sessionStorage.setItem(
+        "ach_payment_details",
+        JSON.stringify({ payAmount, fee, urlToken: token })
+      );
+      try {
+        achInstanceRef.current.tokenize({ accountHolderName: invoice.to_name || "Customer" });
+      } catch {
+        sessionStorage.removeItem("ach_payment_details");
+        setPaymentError("Failed to start bank transfer. Please try again.");
+        setProcessing(false);
+      }
+      // Do NOT setProcessing(false) here — the event listener does it when done
+      return;
+    }
+
+    // Card payment — token comes back directly
     try {
-      const tokenResult = method === "ach"
-        ? await achInstanceRef.current.tokenize({ accountHolderName: invoice.to_name || "Customer" })
-        : await cardInstanceRef.current.tokenize();
+      const tokenResult = await cardInstanceRef.current.tokenize();
 
       if (tokenResult.status !== "OK") {
-        const errorMessages = tokenResult.errors?.map((e: { message: string }) => e.message).join(", ")
-          || (method === "ach" ? "Bank transfer tokenization failed." : "Card tokenization failed.");
+        const errorMessages =
+          tokenResult.errors?.map((e: { message: string }) => e.message).join(", ") ||
+          "Card tokenization failed.";
         setPaymentError(errorMessages);
         setProcessing(false);
         return;
       }
 
-      const idempotencyKey = `${invoice.id}-${method}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const idempotencyKey = `${invoice.id}-card-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
       const res = await fetch(`/api/invoices/pay/${token}`, {
         method: "POST",
@@ -309,7 +420,7 @@ export default function InvoicePayPage() {
           sourceId: tokenResult.token,
           amount: payAmount,
           processingFee: fee,
-          paymentMethodLabel: method === "ach" ? "Bank Transfer (ACH)" : "Square Card",
+          paymentMethodLabel: "Square Card",
           idempotencyKey,
         }),
       });
