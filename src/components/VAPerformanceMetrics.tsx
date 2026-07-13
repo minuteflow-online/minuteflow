@@ -116,9 +116,10 @@ export default function VAPerformanceMetrics({
       const productivityScore = billableMs > 0 ? (taskMs / billableMs) * 100 : null;
 
       const vaAssignees = assignees.filter((a) => a.va_id === vaId);
+      const scoredAssignees = vaAssignees.filter((a) => typeof a.accuracy_score === "number" && a.accuracy_score !== null);
       const accuracyScore =
-        vaAssignees.length > 0
-          ? vaAssignees.reduce((s, a) => s + (a.accuracy_score ?? 100), 0) / vaAssignees.length
+        scoredAssignees.length > 0
+          ? scoredAssignees.reduce((s, a) => s + (a.accuracy_score as number), 0) / scoredAssignees.length
           : null;
 
       const tokenCount = tokens.filter((t) => t.user_id === vaId).length;

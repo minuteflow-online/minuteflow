@@ -405,7 +405,7 @@ export default function TaskListPage() {
               status: assignee.status,
               log_id: assignee.log_id,
               notes: assignee.notes,
-              accuracy_score: assignee.accuracy_score ?? 100,
+              accuracy_score: assignee.accuracy_score ?? null,
               assigned_at: assignee.assigned_at,
               updated_at: assignee.updated_at,
               is_collaborative: false,
