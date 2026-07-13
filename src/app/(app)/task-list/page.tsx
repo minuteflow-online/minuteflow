@@ -1002,10 +1002,10 @@ export default function TaskListPage() {
   }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks]);
 
   const avgAccuracy = useMemo(() => {
-    const rows = tasks.filter((t) => typeof t.accuracy_score === "number");
+    const rows = filteredTasks.filter((t) => typeof t.accuracy_score === "number");
     if (rows.length === 0) return null;
     return Math.round(rows.reduce((sum, t) => sum + t.accuracy_score, 0) / rows.length);
-  }, [tasks]);
+  }, [filteredTasks]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const allFilteredTasksSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
