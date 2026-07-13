@@ -6698,8 +6698,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [createAccountName, setCreateAccountName] = useState("");
   // Invoice list filters
   const [filterClient, setFilterClient] = useState<number | null>(null);
-  const [filterDateFrom, setFilterDateFrom] = useState("");
-  const [filterDateTo, setFilterDateTo] = useState("");
+  // Period selector: "YYYY-MM" for a specific month, or "YYYY-full" for the full year.
+  // Defaults to the current month.
+  const [periodFilter, setPeriodFilter] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
 
   // Manual invoice state
   const [manualDescription, setManualDescription] = useState("");
@@ -6907,8 +6911,28 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
   /* ── Computed ──────────────────────────────────────────────── */
 
+  // Years available in the period selector: every year with at least one invoice, plus the current year.
+  const periodYears = useMemo(() => {
+    const years = new Set<number>([new Date().getFullYear()]);
+    invoices.forEach((inv) => {
+      const year = Number(inv.issue_date?.slice(0, 4));
+      if (year) years.add(year);
+    });
+    return Array.from(years).sort((a, b) => b - a);
+  }, [invoices]);
+
+  const periodFilteredInvoices = useMemo(() => {
+    const isFullYear = periodFilter.endsWith("-full");
+    const year = periodFilter.slice(0, 4);
+    return invoices.filter((inv) => {
+      if (!inv.issue_date) return false;
+      if (isFullYear) return inv.issue_date.slice(0, 4) === year;
+      return inv.issue_date.slice(0, 7) === periodFilter;
+    });
+  }, [invoices, periodFilter]);
+
   const filteredInvoices = useMemo(() => {
-    let list = invoices;
+    let list = periodFilteredInvoices;
     // Status filtering
     if (statusFilter === "all") {
       list = list.filter((inv) => inv.status !== "trash" && inv.status !== "archived");
@@ -6919,15 +6943,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (filterClient !== null) {
       list = list.filter((inv) => inv.client_id === filterClient);
     }
-    // Date range filter (issue_date)
-    if (filterDateFrom) {
-      list = list.filter((inv) => inv.issue_date >= filterDateFrom);
-    }
-    if (filterDateTo) {
-      list = list.filter((inv) => inv.issue_date <= filterDateTo);
-    }
     return list;
-  }, [invoices, statusFilter, filterClient, filterDateFrom, filterDateTo]);
+  }, [periodFilteredInvoices, statusFilter, filterClient]);
 
   const summaryStats = useMemo(() => {
     let totalInvoiced = 0;
@@ -6935,7 +6952,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     let paid = 0;
     let overdue = 0;
     let draftTotal = 0;
-    invoices.forEach((inv) => {
+    periodFilteredInvoices.forEach((inv) => {
       if (inv.status === "trash") return; // trash excluded from all totals
       if (inv.status === "draft") { draftTotal += Number(inv.total); return; }
       if (["sent", "paid", "partially_paid", "overdue", "archived"].includes(inv.status)) {
@@ -6947,7 +6964,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       if (inv.status === "overdue") overdue += Number(inv.total) + Number(inv.previous_balance || 0) - Number(inv.amount_paid || 0);
     });
     return { totalInvoiced, outstanding, paid, overdue, draftTotal };
-  }, [invoices]);
+  }, [periodFilteredInvoices]);
 
   const selectedClient = useMemo(() => {
     return clients.find((c) => c.id === selectedClientId) ?? null;
@@ -10869,7 +10886,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     <>
       {/* Summary Stats */}
       <div className="mb-6 grid grid-cols-5 gap-4">
-        <StatCard value={formatCurrency(summaryStats.draftTotal)} label="Draft Total" sub={`${invoices.filter((i) => i.status === "draft").length} drafts`} color="slate-blue" />
+        <StatCard value={formatCurrency(summaryStats.draftTotal)} label="Draft Total" sub={`${periodFilteredInvoices.filter((i) => i.status === "draft").length} drafts`} color="slate-blue" />
         <StatCard value={formatCurrency(summaryStats.totalInvoiced)} label="Total Invoiced" sub="active invoices only" color="terracotta" />
         <StatCard value={formatCurrency(summaryStats.outstanding)} label="Outstanding" sub="unpaid sent invoices" color="slate-blue" />
         <StatCard value={formatCurrency(summaryStats.paid)} label="Paid" sub="total collected" color="sage" />
@@ -10892,7 +10909,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               {status === "all" ? "All" : statusLabel(status)}
               {status === "all" ? null : (
                 <span className="ml-1 opacity-60">
-                  ({invoices.filter((inv) => inv.status === status).length})
+                  ({periodFilteredInvoices.filter((inv) => inv.status === status).length})
                 </span>
               )}
             </button>
@@ -10926,6 +10943,22 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-sand bg-parchment/30 px-4 py-3">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-bark">Filter:</span>
         <select
+          value={periodFilter}
+          onChange={(e) => setPeriodFilter(e.target.value)}
+          className="rounded-lg border border-sand bg-white px-3 py-1.5 text-[12px] text-espresso outline-none focus:border-terracotta cursor-pointer"
+        >
+          {periodYears.map((year) => (
+            <optgroup key={year} label={String(year)}>
+              <option value={`${year}-full`}>Full Year {year}</option>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => (
+                <option key={month} value={`${year}-${String(month).padStart(2, "0")}`}>
+                  {new Date(year, month - 1, 1).toLocaleString("en-US", { month: "long" })} {year}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        <select
           value={filterClient ?? ""}
           onChange={(e) => setFilterClient(e.target.value ? Number(e.target.value) : null)}
           className="rounded-lg border border-sand bg-white px-3 py-1.5 text-[12px] text-espresso outline-none focus:border-terracotta cursor-pointer"
@@ -10935,29 +10968,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
-        <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={filterDateFrom}
-            onChange={(e) => setFilterDateFrom(e.target.value)}
-            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-[12px] text-espresso outline-none focus:border-terracotta"
-            title="Issue date from"
-          />
-          <span className="text-[11px] text-bark">to</span>
-          <input
-            type="date"
-            value={filterDateTo}
-            onChange={(e) => setFilterDateTo(e.target.value)}
-            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-[12px] text-espresso outline-none focus:border-terracotta"
-            title="Issue date to"
-          />
-        </div>
-        {(filterClient !== null || filterDateFrom || filterDateTo) && (
+        {filterClient !== null && (
           <button
-            onClick={() => { setFilterClient(null); setFilterDateFrom(""); setFilterDateTo(""); }}
+            onClick={() => setFilterClient(null)}
             className="text-[11px] font-semibold text-terracotta hover:underline cursor-pointer"
           >
-            Clear Filters
+            Clear Client Filter
           </button>
         )}
       </div>
