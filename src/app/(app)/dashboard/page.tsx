@@ -3035,7 +3035,15 @@ export default function DashboardPage() {
       </div>
 
       {/* VA Performance Metrics */}
-      {userId && <VAPerformanceMetrics vaIds={[userId]} orgTimezone={orgTimezone} variant="detail" />}
+      {userId && (
+        <VAPerformanceMetrics
+          vaIds={[userId]}
+          orgTimezone={orgTimezone}
+          variant="detail"
+          isAdmin={role === "admin" || role === "manager"}
+          teamMembers={teamMembers.map((m) => ({ id: m.profile.id, name: m.profile.full_name }))}
+        />
+      )}
 
       {/* Active Task Bar */}
       {activeTask && sessionState === "clocked-in" && (

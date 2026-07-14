@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { getTodayBoundsInTimezone, getWeekBoundsInTimezone } from "@/lib/utils";
+import { getMonthBoundsInTimezone, getYearBoundsInTimezone, getWeekBoundsInTimezone } from "@/lib/utils";
 
-type Period = "daily" | "weekly";
+type Period = "daily" | "weekly" | "monthly" | "yearly" | "custom";
 type ProgressLabel = "Ahead" | "On Track" | "Behind";
 
 interface VAMetrics {
@@ -26,6 +26,9 @@ interface VAPerformanceMetricsProps {
   /** "detail" = full card (VA dashboard). "compact" = grid of mini cards (admin Overview). */
   variant: "detail" | "compact";
   showPeriodToggle?: boolean;
+  /** admin/manager only: full VA roster to populate the selector. Omit for non-admin VAs. */
+  teamMembers?: { id: string; name: string }[];
+  isAdmin?: boolean;
 }
 
 function progressLabelFor(pct: number): ProgressLabel {
@@ -47,6 +50,10 @@ function scoreColor(value: number | null): string {
   return "text-terracotta";
 }
 
+function localDateStr(date: Date, timezone: string): string {
+  return date.toLocaleDateString("en-CA", { timeZone: timezone });
+}
+
 /** Fetches and renders Productivity / Accuracy / Ownership / Tokens / Stars / Progress
  * metrics for one or more VAs. Used on the VA dashboard, admin Overview tab, and
  * (via ProgressBar export) the Progress Report tab. */
@@ -56,47 +63,84 @@ export default function VAPerformanceMetrics({
   orgTimezone,
   variant,
   showPeriodToggle = true,
+  teamMembers,
+  isAdmin = false,
 }: VAPerformanceMetricsProps) {
   const supabase = createClient();
   const [period, setPeriod] = useState<Period>("daily");
+  const [customStart, setCustomStart] = useState(() => localDateStr(new Date(), orgTimezone));
+  const [customEnd, setCustomEnd] = useState(() => localDateStr(new Date(), orgTimezone));
+  const [selectedVaId, setSelectedVaId] = useState<string>("__self__");
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState<Record<string, VAMetrics>>({});
 
+  const showVaSelector = isAdmin && !!teamMembers && teamMembers.length > 0;
+  const showAllVas = showVaSelector && selectedVaId === "__all__";
+
+  // Which VA ids to actually fetch metrics for
+  const activeVaIds = useMemo(() => {
+    if (showVaSelector) {
+      if (selectedVaId === "__all__") return teamMembers!.map((m) => m.id);
+      if (selectedVaId === "__self__") return vaIds;
+      return [selectedVaId];
+    }
+    return vaIds;
+  }, [showVaSelector, selectedVaId, teamMembers, vaIds]);
+
+  const activeNames = useMemo(() => {
+    if (!showVaSelector) return names;
+    const map: Record<string, string> = {};
+    teamMembers!.forEach((m) => (map[m.id] = m.name));
+    return map;
+  }, [showVaSelector, teamMembers, names]);
+
+  const { startDateStr, endDateStr } = useMemo(() => {
+    const now = new Date();
+    if (period === "daily") {
+      const d = localDateStr(now, orgTimezone);
+      return { startDateStr: d, endDateStr: d };
+    }
+    if (period === "weekly") {
+      const weekStart = new Date(getWeekBoundsInTimezone(orgTimezone).start);
+      return { startDateStr: localDateStr(weekStart, orgTimezone), endDateStr: localDateStr(now, orgTimezone) };
+    }
+    if (period === "monthly") {
+      const monthStart = new Date(getMonthBoundsInTimezone(orgTimezone).start);
+      return { startDateStr: localDateStr(monthStart, orgTimezone), endDateStr: localDateStr(now, orgTimezone) };
+    }
+    if (period === "yearly") {
+      const yearStart = new Date(getYearBoundsInTimezone(orgTimezone).start);
+      return { startDateStr: localDateStr(yearStart, orgTimezone), endDateStr: localDateStr(now, orgTimezone) };
+    }
+    // custom
+    return { startDateStr: customStart, endDateStr: customEnd };
+  }, [period, orgTimezone, customStart, customEnd]);
+
   const fetchMetrics = useCallback(async () => {
-    if (vaIds.length === 0) {
+    if (activeVaIds.length === 0) {
       setLoading(false);
       return;
     }
     setLoading(true);
-
-    const dateBounds =
-      period === "daily" ? getTodayBoundsInTimezone(orgTimezone) : getWeekBoundsInTimezone(orgTimezone);
-
-    const dateStrs: string[] = (() => {
-      if (period === "daily") {
-        return [new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone })];
-      }
-      const days: string[] = [];
-      const weekStart = new Date(getWeekBoundsInTimezone(orgTimezone).start);
-      for (let i = 0; i < 7; i++) {
-        days.push(new Date(weekStart.getTime() + i * 86400000).toLocaleDateString("en-CA", { timeZone: orgTimezone }));
-      }
-      return days;
-    })();
 
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
 
     const [logsRes, assigneesRes, plannedRes, tokensRes, ratingsRes] = await Promise.all([
       supabase
         .from("time_logs")
-        .select("user_id,duration_ms,billable,category,start_time")
-        .in("user_id", vaIds)
-        .gte("start_time", dateBounds.start)
-        .lte("start_time", dateBounds.end),
-      supabase.from("assigned_task_assignees").select("va_id,status,accuracy_score,assigned_at").in("va_id", vaIds),
-      supabase.from("planned_tasks").select("user_id,completed,plan_date").in("user_id", vaIds).in("plan_date", dateStrs),
-      supabase.from("va_tokens").select("user_id").in("user_id", vaIds),
-      supabase.from("va_daily_ratings").select("va_id,score,rating_date").in("va_id", vaIds).gte("rating_date", sevenDaysAgo),
+        .select("user_id,duration_ms,billable,category,session_date")
+        .in("user_id", activeVaIds)
+        .gte("session_date", startDateStr)
+        .lte("session_date", endDateStr),
+      supabase.from("assigned_task_assignees").select("va_id,status,accuracy_score,assigned_at").in("va_id", activeVaIds),
+      supabase
+        .from("planned_tasks")
+        .select("user_id,completed,plan_date")
+        .in("user_id", activeVaIds)
+        .gte("plan_date", startDateStr)
+        .lte("plan_date", endDateStr),
+      supabase.from("va_tokens").select("user_id").in("user_id", activeVaIds),
+      supabase.from("va_daily_ratings").select("va_id,score,rating_date").in("va_id", activeVaIds).gte("rating_date", sevenDaysAgo),
     ]);
 
     const logs = logsRes.data ?? [];
@@ -107,7 +151,7 @@ export default function VAPerformanceMetrics({
 
     const next: Record<string, VAMetrics> = {};
 
-    for (const vaId of vaIds) {
+    for (const vaId of activeVaIds) {
       const vaLogs = logs.filter((l) => l.user_id === vaId);
       const billableMs = vaLogs.filter((l) => l.billable).reduce((s, l) => s + (l.duration_ms || 0), 0);
       const taskMs = vaLogs
@@ -128,9 +172,10 @@ export default function VAPerformanceMetrics({
       const stars = vaRatings.length > 0 ? vaRatings.reduce((s, r) => s + r.score, 0) / vaRatings.length : null;
 
       const vaPlanned = planned.filter((p) => p.user_id === vaId);
-      const vaAssigneesInRange = vaAssignees.filter((a) =>
-        dateStrs.includes(new Date(a.assigned_at).toLocaleDateString("en-CA", { timeZone: orgTimezone }))
-      );
+      const vaAssigneesInRange = vaAssignees.filter((a) => {
+        const d = localDateStr(new Date(a.assigned_at), orgTimezone);
+        return d >= startDateStr && d <= endDateStr;
+      });
       const completedPlanned = vaPlanned.filter((p) => p.completed).length;
       const completedAssigned = vaAssigneesInRange.filter((a) =>
         a.status === "completed" || a.status === "approved"
@@ -152,11 +197,66 @@ export default function VAPerformanceMetrics({
     setMetrics(next);
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vaIds, orgTimezone, period]);
+  }, [activeVaIds, orgTimezone, startDateStr, endDateStr]);
 
   useEffect(() => {
     fetchMetrics();
   }, [fetchMetrics]);
+
+  const PeriodToggle = showPeriodToggle ? (
+    <div className="flex flex-wrap items-center gap-1">
+      {([
+        ["daily", "Daily"],
+        ["weekly", "Weekly"],
+        ["monthly", "Monthly"],
+        ["yearly", "Yearly"],
+        ["custom", "Custom"],
+      ] as [Period, string][]).map(([value, label]) => (
+        <button
+          key={value}
+          onClick={() => setPeriod(value)}
+          className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors ${
+            period === value ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+      {period === "custom" && (
+        <div className="flex items-center gap-1 ml-1">
+          <input
+            type="date"
+            value={customStart}
+            onChange={(e) => setCustomStart(e.target.value)}
+            className="rounded-md border border-sand px-1.5 py-0.5 text-[10px] text-espresso outline-none bg-white"
+          />
+          <span className="text-[10px] text-stone">to</span>
+          <input
+            type="date"
+            value={customEnd}
+            onChange={(e) => setCustomEnd(e.target.value)}
+            className="rounded-md border border-sand px-1.5 py-0.5 text-[10px] text-espresso outline-none bg-white"
+          />
+        </div>
+      )}
+    </div>
+  ) : null;
+
+  const VaSelector = showVaSelector ? (
+    <select
+      value={selectedVaId}
+      onChange={(e) => setSelectedVaId(e.target.value)}
+      className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+    >
+      <option value="__self__">My Performance</option>
+      {teamMembers!.map((m) => (
+        <option key={m.id} value={m.id}>
+          {m.name}
+        </option>
+      ))}
+      <option value="__all__">All VAs</option>
+    </select>
+  ) : null;
 
   if (loading) {
     return (
@@ -166,37 +266,48 @@ export default function VAPerformanceMetrics({
     );
   }
 
-  const PeriodToggle = showPeriodToggle ? (
-    <div className="flex items-center gap-1">
-      <button
-        onClick={() => setPeriod("daily")}
-        className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors ${
-          period === "daily" ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
-        }`}
-      >
-        Daily
-      </button>
-      <button
-        onClick={() => setPeriod("weekly")}
-        className={`px-2 py-0.5 rounded-md text-[10px] font-semibold transition-colors ${
-          period === "weekly" ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
-        }`}
-      >
-        Weekly
-      </button>
-    </div>
-  ) : null;
+  if (showAllVas) {
+    return (
+      <div className="rounded-xl border border-sand bg-white p-4 mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Performance</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            {PeriodToggle}
+            {VaSelector}
+          </div>
+        </div>
+        <div className="space-y-3">
+          {activeVaIds.map((vaId) => {
+            const m = metrics[vaId];
+            if (!m) return null;
+            const name = activeNames?.[vaId] || "Unknown";
+            const label = m.progressLabel;
+            const color = colorFor(label);
+            return (
+              <div key={vaId}>
+                <div className="text-[12px] font-semibold text-espresso mb-1">{name}</div>
+                <ProgressBar pct={m.progressPct} label={label} color={color} compact />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   if (variant === "detail") {
-    const m = metrics[vaIds[0]];
+    const m = metrics[activeVaIds[0]];
     if (!m) return null;
     const label = m.progressLabel;
     const color = colorFor(label);
     return (
       <div className="rounded-xl border border-sand bg-white p-4 mb-6">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Performance</h3>
-          {PeriodToggle}
+          <div className="flex flex-wrap items-center gap-2">
+            {PeriodToggle}
+            {VaSelector}
+          </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
           <MetricTile label="Productivity" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
@@ -213,15 +324,18 @@ export default function VAPerformanceMetrics({
   // compact variant — grid of mini cards, one per VA
   return (
     <div className="mb-6 rounded-xl border border-sand bg-white">
-      <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-parchment px-5 py-4">
         <h2 className="text-sm font-bold text-espresso">Team Performance</h2>
-        {PeriodToggle}
+        <div className="flex flex-wrap items-center gap-2">
+          {PeriodToggle}
+          {VaSelector}
+        </div>
       </div>
       <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-        {vaIds.map((vaId) => {
+        {activeVaIds.map((vaId) => {
           const m = metrics[vaId];
           if (!m) return null;
-          const name = names?.[vaId] || "Unknown";
+          const name = activeNames?.[vaId] || "Unknown";
           const label = m.progressLabel;
           const color = colorFor(label);
           return (
