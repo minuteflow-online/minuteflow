@@ -50,7 +50,7 @@ export default function DailyTaskPlanner({
   teamMembers = [],
   orgTimezone = "UTC",
 }: DailyTaskPlannerProps) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const [tasks, setTasks] = useState<PlannedTask[]>([]);
   const [accounts, setAccounts] = useState<string[]>(FALLBACK_ACCOUNTS);
   const [loading, setLoading] = useState(true);
