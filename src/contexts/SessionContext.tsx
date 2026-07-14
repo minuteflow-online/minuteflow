@@ -214,15 +214,30 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     endBreak: defaultEndBreak,
   };
 
+  // Keep a ref to default actions so the stable wrapper can fall back without capturing stale closures
+  const defaultActionsRef = useRef<SessionActions>(defaultActions);
+  useEffect(() => { defaultActionsRef.current = defaultActions; });
+
   // Override actions (registered by dashboard on mount)
-  const [overrideActions, setOverrideActions] = useState<SessionActions | null>(null);
+  // Use a ref — NOT state — so updating registered actions never triggers a provider re-render.
+  // A state-based approach caused the entire provider (and all children) to re-render every
+  // second because startBreak/endBreak depend on taskElapsed/breakElapsed timer states.
+  const overrideActionsRef = useRef<SessionActions | null>(null);
+
+  // Stable wrapper — same object reference forever, delegates to whatever is currently registered.
+  const stableActions = useRef<SessionActions>({
+    clockIn: (...args) => (overrideActionsRef.current ?? defaultActionsRef.current).clockIn(...args),
+    clockOut: (...args) => (overrideActionsRef.current ?? defaultActionsRef.current).clockOut(...args),
+    startBreak: (...args) => (overrideActionsRef.current ?? defaultActionsRef.current).startBreak(...args),
+    endBreak: (...args) => (overrideActionsRef.current ?? defaultActionsRef.current).endBreak(...args),
+  });
 
   const registerActions = useCallback((a: SessionActions): (() => void) => {
-    setOverrideActions(a);
-    return () => setOverrideActions(null);
+    overrideActionsRef.current = a;
+    return () => { overrideActionsRef.current = null; };
   }, []);
 
-  const actions = overrideActions ?? defaultActions;
+  const actions = stableActions.current;
 
   return (
     <SessionContext.Provider
