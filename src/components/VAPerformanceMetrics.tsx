@@ -276,7 +276,7 @@ export default function VAPerformanceMetrics({
             {VaSelector}
           </div>
         </div>
-        <div className="space-y-3">
+        <div className="space-y-4">
           {activeVaIds.map((vaId) => {
             const m = metrics[vaId];
             if (!m) return null;
@@ -284,9 +284,16 @@ export default function VAPerformanceMetrics({
             const label = m.progressLabel;
             const color = colorFor(label);
             return (
-              <div key={vaId}>
-                <div className="text-[12px] font-semibold text-espresso mb-1">{name}</div>
-                <ProgressBar pct={m.progressPct} label={label} color={color} compact />
+              <div key={vaId} className="rounded-lg border border-sand bg-cream p-3">
+                <div className="text-[12px] font-semibold text-espresso mb-2">{name}</div>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+                  <MetricTile label="Productivity" value={m.productivityScore !== null ? `${m.productivityScore.toFixed(0)}%` : "--"} colorClass={scoreColor(m.productivityScore)} />
+                  <MetricTile label="Accuracy" value={m.accuracyScore !== null ? `${m.accuracyScore.toFixed(1)}%` : "--"} colorClass={scoreColor(m.accuracyScore)} />
+                  <MetricTile label="Ownership" value="--" sub="(coming soon)" colorClass="text-stone" />
+                  <MetricTile label="Tokens" value={String(m.tokens)} colorClass="text-walnut" />
+                  <MetricTile label="Stars" value={m.stars !== null ? `${m.stars.toFixed(1)} ★` : "--"} colorClass="text-amber" />
+                </div>
+                <ProgressBar pct={m.progressPct} label={label} color={color} />
               </div>
             );
           })}
