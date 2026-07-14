@@ -62,10 +62,6 @@ function formatHoursMinutes(ms: number): string {
   return `${minutes}m`;
 }
 
-function secondsSince(isoDate: string): number {
-  return Math.max(0, Math.floor((Date.now() - new Date(isoDate).getTime()) / 1000));
-}
-
 // ─── Page Component ────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -94,7 +90,6 @@ export default function DashboardPage() {
 
   // Active task
   const [activeTask, setActiveTask] = useState<ActiveTask | null>(null);
-  const [taskElapsed, setTaskElapsed] = useState(0);
 
   // Team & logs
   const [teamMembers, setTeamMembers] = useState<
@@ -413,9 +408,6 @@ export default function DashboardPage() {
         if (s.clocked_in) {
           if (s.active_task && !s.active_task.isBreak) {
             setActiveTask(s.active_task);
-            if (s.active_task.start_time) {
-              setTaskElapsed(secondsSince(s.active_task.start_time));
-            }
             // Restore the active log ID so Capture Now works after a page refresh
             if (s.active_task.logId) {
               activeLogIdRef.current = parseInt(s.active_task.logId, 10);
@@ -694,16 +686,6 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  // ─── Task elapsed timer (active task only — session elapsed owned by context) ───
-
-  useEffect(() => {
-    if (!activeTask?.start_time || sessionState !== "clocked-in") return;
-    const interval = setInterval(() => {
-      setTaskElapsed(secondsSince(activeTask.start_time!));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [sessionState, activeTask?.start_time]);
-
   // ─── Session heartbeat (keeps updated_at fresh for stale detection) ───
   useEffect(() => {
     if (!userId || sessionState === "idle") return;
@@ -754,9 +736,8 @@ export default function DashboardPage() {
     );
 
     setActiveTask(null);
-    setTaskElapsed(0);
     setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
-  }, [activeTask, taskElapsed, userId, supabase, session]);
+  }, [activeTask, userId, supabase, session]);
 
   const closeOpenNonBreakLogs = useCallback(
     async (now: string) => {
@@ -898,7 +879,6 @@ export default function DashboardPage() {
         session_date: clockInSessionDate,
       } as Session));
       setActiveTask(sortingTask);
-      setTaskElapsed(0);
       if (sortingLog) {
         setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
       }
@@ -1189,7 +1169,6 @@ export default function DashboardPage() {
           : prev
       );
       setActiveTask(null);
-      setTaskElapsed(0);
       await refreshSession();
 
       // Stop screen sharing and clear capture timers on clock out
@@ -1276,7 +1255,6 @@ export default function DashboardPage() {
 
       // Clear active task locally before clocking out
       setActiveTask(null);
-      setTaskElapsed(0);
 
       // Now clock out with mood and day rating
       await performClockOut(savedMood, savedDayRating, savedDayRatingNote);
@@ -1284,7 +1262,7 @@ export default function DashboardPage() {
       console.error("Error closing task before clock out:", err);
       setClockingOut(false);
     }
-  }, [activeTask, taskElapsed, userId, supabase, clockOutTaskStatus, clockOutClientMemo, clockOutInternalMemo, clockOutMood, clockOutRating, clockOutRatingNote, performClockOut]);
+  }, [activeTask, userId, supabase, clockOutTaskStatus, clockOutClientMemo, clockOutInternalMemo, clockOutMood, clockOutRating, clockOutRatingNote, performClockOut]);
 
   const cancelClockOutModal = useCallback(() => {
     setShowClockOutModal(false);
@@ -1324,7 +1302,9 @@ export default function DashboardPage() {
         client_name: activeTask.client_name || null,
         start_time: activeTask.start_time,
         end_time: null,
-        duration_ms: taskElapsed * 1000,
+        duration_ms: activeTask.start_time
+          ? Date.now() - new Date(activeTask.start_time).getTime()
+          : 0,
         billable: activeTask.category !== "Personal",
         client_memo: activeTask.client_memo || null,
         internal_memo: activeTask.internal_memo || null,
@@ -1345,7 +1325,7 @@ export default function DashboardPage() {
 
     // No active task, start break directly
     await doStartBreak();
-  }, [userId, profile, activeTask, taskElapsed]);
+  }, [userId, profile, activeTask]);
 
   // Actually start the break (called after wizard or directly)
   const doStartBreak = useCallback(async () => {
@@ -1521,7 +1501,6 @@ export default function DashboardPage() {
     );
 
     setActiveTask(null);
-    setTaskElapsed(0);
     setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
     await refreshSession();
 
@@ -1590,7 +1569,6 @@ export default function DashboardPage() {
     );
 
     setActiveTask(resumedTask);
-    setTaskElapsed(0);
     if (logData) {
       setTimeLogs((prev) => [logData as TimeLog, ...prev]);
     }
@@ -1705,7 +1683,6 @@ export default function DashboardPage() {
     );
 
     setActiveTask(resumedTask);
-    setTaskElapsed(0);
     if (logData) {
       setTimeLogs((prev) => [logData as TimeLog, ...prev]);
     }
@@ -2116,7 +2093,6 @@ export default function DashboardPage() {
         }
       }
       setActiveTask(null);
-      setTaskElapsed(0);
       setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
 
       const isBillable =
@@ -2252,7 +2228,6 @@ export default function DashboardPage() {
 
       // Always update active task state (even when skipping clock-in for assigned tasks)
       setActiveTask(newActiveTask);
-      setTaskElapsed(0);
 
       if (logData) {
         setTimeLogs((prev) => [logData as TimeLog, ...prev]);
@@ -2387,7 +2362,6 @@ export default function DashboardPage() {
       };
 
       setActiveTask(task);
-      setTaskElapsed(secondsSince(liveLog.start_time));
 
       // Update session to reflect rejoined task
       const now = new Date().toISOString();
@@ -2486,7 +2460,6 @@ export default function DashboardPage() {
 
     // Clear the active task locally
     setActiveTask(null);
-    setTaskElapsed(0);
 
     // Reset close-old wizard state
     setCloseOldStep(null);
@@ -2691,7 +2664,9 @@ export default function DashboardPage() {
         client_name: activeTask.client_name || null,
         start_time: activeTask.start_time,
         end_time: null,
-        duration_ms: taskElapsed * 1000,
+        duration_ms: activeTask.start_time
+          ? Date.now() - new Date(activeTask.start_time).getTime()
+          : 0,
         billable: true,
         client_memo: activeTask.client_memo || null,
         internal_memo: activeTask.internal_memo || null,
@@ -2711,7 +2686,7 @@ export default function DashboardPage() {
     } else {
       handleCheckAndStartTask(formData);
     }
-  }, [activeTask, userId, profile, taskElapsed, handleCheckAndStartTask]);
+  }, [activeTask, userId, profile, handleCheckAndStartTask]);
 
   // ─── Notes modal ──────────────────────────────────────────
 
@@ -2805,7 +2780,6 @@ export default function DashboardPage() {
         );
         setHeldTask(activeTask);
         setActiveTask(null);
-        setTaskElapsed(0);
       }
       // Start the message task
       await startTask({
@@ -2837,7 +2811,6 @@ export default function DashboardPage() {
       );
     }
     setActiveTask(null);
-    setTaskElapsed(0);
     const taskToResume = heldTask;
     setHeldTask(null);
     // Start a fresh log for the resumed task
@@ -3068,7 +3041,7 @@ export default function DashboardPage() {
       {activeTask && sessionState === "clocked-in" && (
         <ActiveTaskBar
           task={activeTask}
-          elapsedSeconds={taskElapsed}
+          startTime={activeTask.start_time}
           onScreenshot={handleActiveTaskScreenshot}
           onNotes={handleNotes}
           onReshare={handleReshare}

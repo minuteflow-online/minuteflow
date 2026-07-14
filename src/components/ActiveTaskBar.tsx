@@ -1,10 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { ActiveTask } from "@/types/database";
 
 interface ActiveTaskBarProps {
   task: ActiveTask;
-  elapsedSeconds: number;
+  startTime: string;
   onScreenshot: () => void;
   onNotes: () => void;
   onReshare?: () => void;
@@ -18,13 +19,27 @@ function formatTimer(totalSeconds: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
+function secondsSince(startTime: string): number {
+  return Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);
+}
+
 export default function ActiveTaskBar({
   task,
-  elapsedSeconds,
+  startTime,
   onScreenshot,
   onNotes,
   onReshare,
 }: ActiveTaskBarProps) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => secondsSince(startTime));
+
+  useEffect(() => {
+    setElapsedSeconds(secondsSince(startTime));
+    const interval = setInterval(() => {
+      setElapsedSeconds(secondsSince(startTime));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [startTime]);
+
   const details = [task.project, task.account, task.client_name]
     .filter(Boolean)
     .join(" \u00B7 ");
