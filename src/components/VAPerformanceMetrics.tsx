@@ -67,7 +67,7 @@ export default function VAPerformanceMetrics({
   isAdmin = false,
 }: VAPerformanceMetricsProps) {
   const supabase = createClient();
-  const [period, setPeriod] = useState<Period>("daily");
+  const [period, setPeriod] = useState<Period>("monthly");
   const [customStart, setCustomStart] = useState(() => localDateStr(new Date(), orgTimezone));
   const [customEnd, setCustomEnd] = useState(() => localDateStr(new Date(), orgTimezone));
   const [selectedVaId, setSelectedVaId] = useState<string>("__self__");

@@ -3041,7 +3041,7 @@ export default function DashboardPage() {
           orgTimezone={orgTimezone}
           variant="detail"
           isAdmin={role === "admin" || role === "manager"}
-          teamMembers={teamMembers.map((m) => ({ id: m.profile.id, name: m.profile.full_name }))}
+          teamMembers={teamMembers.filter((m) => m.profile.pay_rate_type === "hourly").map((m) => ({ id: m.profile.id, name: m.profile.full_name }))}
         />
       )}
 
