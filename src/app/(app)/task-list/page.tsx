@@ -1004,7 +1004,7 @@ export default function TaskListPage() {
   const avgAccuracy = useMemo(() => {
     const rows = filteredTasks.filter((t) => typeof t.accuracy_score === "number");
     if (rows.length === 0) return null;
-    return Math.round(rows.reduce((sum, t) => sum + t.accuracy_score, 0) / rows.length);
+    return Math.round(rows.reduce((sum, t) => sum + t.accuracy_score, 0) / rows.length * 10) / 10;
   }, [filteredTasks]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
