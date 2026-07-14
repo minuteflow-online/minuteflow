@@ -12,10 +12,6 @@ import { createClient } from "@/lib/supabase/client";
 import type { SessionState } from "@/components/SessionBanner";
 import type { Session } from "@/types/database";
 
-function secondsSince(iso: string): number {
-  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-}
-
 export type SessionActions = {
   clockIn: () => Promise<void>;
   clockOut: () => Promise<void>;
@@ -26,8 +22,6 @@ export type SessionActions = {
 type SessionContextValue = {
   // State values
   sessionState: SessionState;
-  sessionElapsed: number;
-  breakElapsed: number;
   clockInTime: string | null;
   breakStartTime: string | null;
   userId: string | null;
@@ -55,8 +49,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null);
   const [sessionState, setSessionState] = useState<SessionState>("idle");
   const [clockInTime, setClockInTime] = useState<string | null>(null);
-  const [sessionElapsed, setSessionElapsed] = useState(0);
-  const [breakElapsed, setBreakElapsed] = useState(0);
   const [breakStartTime, setBreakStartTime] = useState<string | null>(null);
   const [orgTimezone, setOrgTimezone] = useState("UTC");
   const [actionPending, setActionPending] = useState(false);
@@ -77,24 +69,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (!s || !s.clocked_in) {
       setSessionState("idle");
       setClockInTime(null);
-      setSessionElapsed(0);
-      setBreakElapsed(0);
       setBreakStartTime(null);
       return;
     }
     if (s.clock_in_time) {
       setClockInTime(s.clock_in_time);
-      setSessionElapsed(secondsSince(s.clock_in_time));
     }
     if ((s.active_task as { isBreak?: boolean } | null)?.isBreak) {
       setSessionState("on-break");
       const bt = (s.active_task as { start_time?: string }).start_time || null;
       setBreakStartTime(bt);
-      if (bt) setBreakElapsed(secondsSince(bt));
     } else {
       setSessionState("clocked-in");
       setBreakStartTime(null);
-      setBreakElapsed(0);
     }
   }, []);
 
@@ -130,25 +117,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Timer — ticks every second while clocked in or on break
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (sessionState === "idle") return;
-
-    timerRef.current = setInterval(() => {
-      if (clockInTimeRef.current) {
-        setSessionElapsed(secondsSince(clockInTimeRef.current));
-      }
-      if (sessionStateRef.current === "on-break" && breakStartTimeRef.current) {
-        setBreakElapsed(secondsSince(breakStartTimeRef.current));
-      }
-    }, 1000);
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [sessionState]);
+  // NOTE: sessionElapsed and breakElapsed have been intentionally removed from
+  // context. They were causing every useSession() consumer to re-render every
+  // second. The SessionBannerWrapper now maintains its own local timer for display.
 
   // Simple default actions (used on non-dashboard pages)
   const defaultClockIn = useCallback(async () => {
@@ -243,8 +214,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     <SessionContext.Provider
       value={{
         sessionState,
-        sessionElapsed,
-        breakElapsed,
         clockInTime,
         breakStartTime,
         userId,

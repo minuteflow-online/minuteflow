@@ -75,8 +75,6 @@ export default function DashboardPage() {
   const {
     sessionState,
     setSessionState,
-    sessionElapsed,
-    breakElapsed,
     breakStartTime,
     setBreakStartTime,
     actionPending: sessionActionPending,
@@ -1485,7 +1483,9 @@ export default function DashboardPage() {
     if (session?.active_task?.logId) {
       const logId = parseInt(session.active_task.logId, 10);
       if (logId) {
-        const breakDurationMs = breakElapsed * 1000;
+        const breakDurationMs = breakStartTime
+          ? Math.max(0, Date.now() - new Date(breakStartTime).getTime())
+          : 0;
         await supabase
           .from("time_logs")
           .update({ end_time: now, duration_ms: breakDurationMs })
@@ -1530,7 +1530,7 @@ export default function DashboardPage() {
       setShowPostBreakPrompt(true);
     }
     setSessionActionPending(false);
-  }, [userId, supabase, session, breakElapsed, preBreakTask, sessionActionPending, refreshSession]);
+  }, [userId, supabase, session, breakStartTime, preBreakTask, sessionActionPending, refreshSession]);
 
   // Register dashboard's complex action handlers with context so the layout's SessionBanner
   // calls these (wizard flows, memos, etc.) instead of the simple context defaults.
