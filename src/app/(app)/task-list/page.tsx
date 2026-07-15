@@ -3115,7 +3115,7 @@ export default function TaskListPage() {
                         {STATUS_FILTERS.filter((option): option is { value: AssignedTaskStatus; label: string } => {
                           if (option.value === "all") return false;
                           if (!isAdmin && selectedTask.assigned_tasks.review_required) {
-                            return (["pending", "on_queue", "in_progress", "submitted", "revision_needed"] as AssignedTaskStatus[]).includes(option.value as AssignedTaskStatus);
+                            return (["on_queue", "pending", "in_progress", "submitted"] as AssignedTaskStatus[]).includes(option.value as AssignedTaskStatus);
                           }
                           return true;
                         }).map((option) => (
@@ -3147,7 +3147,7 @@ export default function TaskListPage() {
                         {STATUS_FILTERS.filter((option): option is { value: AssignedTaskStatus; label: string } => {
                           if (option.value === "all") return false;
                           if (!isAdmin && selectedTask.assigned_tasks.review_required) {
-                            return (["pending", "on_queue", "in_progress", "submitted", "revision_needed"] as AssignedTaskStatus[]).includes(option.value as AssignedTaskStatus);
+                            return (["on_queue", "pending", "in_progress", "submitted"] as AssignedTaskStatus[]).includes(option.value as AssignedTaskStatus);
                           }
                           return true;
                         }).map((option) => (
