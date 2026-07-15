@@ -206,6 +206,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   // Miscellaneous amount (added on top of Amount to Pay)
   const [miscAmount, setMiscAmount] = useState<string>("");
 
+  // Custom line items (label + amount) — added on top of Amount to Pay
+  const [customLineItems, setCustomLineItems] = useState<{ label: string; amount: string }[]>([]);
+
+  // Processing fee — recorded as an expense, not part of VA pay
+  const [fee, setFee] = useState<string>("");
+
   // Payment fields
   const todayIso = new Date().toLocaleDateString("en-CA");
   const [customAmount, setCustomAmount] = useState<string>("");
@@ -260,6 +266,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     const range = getRange();
     if (!range || !range.start || !range.end) { setError("Please select a valid pay period."); return; }
 
+    setCustomLineItems([]);
+    setFee("");
     setLoading(true);
     try {
       const res = await fetch("/api/paystub/send", {
@@ -285,6 +293,20 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       setLoading(false);
     }
   }, [selectedUserId, preset, customStart, customEnd, orgTimezone]);
+
+  const lineItemsTotal = customLineItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+
+  function addLineItem() {
+    setCustomLineItems((prev) => [...prev, { label: "", amount: "" }]);
+  }
+
+  function updateLineItem(index: number, field: "label" | "amount", value: string) {
+    setCustomLineItems((prev) => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
+  }
+
+  function removeLineItem(index: number) {
+    setCustomLineItems((prev) => prev.filter((_, i) => i !== index));
+  }
 
   const handleSend = useCallback(async () => {
     if (!preview) return;
@@ -312,8 +334,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
           custom_amount: (() => {
             const base = customAmount !== "" ? parseFloat(customAmount) : (preview?.totalGrossPay ?? preview?.grossPay ?? 0);
             const misc = miscAmount !== "" ? parseFloat(miscAmount) : 0;
-            return base + misc;
+            return base + misc + lineItemsTotal;
           })(),
+          custom_line_items: customLineItems
+            .filter((item) => item.label.trim() || parseFloat(item.amount) > 0)
+            .map((item) => ({ label: item.label.trim(), amount: parseFloat(item.amount) || 0 })),
+          fee: fee !== "" ? parseFloat(fee) || 0 : 0,
           company_name: companyName.trim() || "MinuteFlow",
         }),
       });
@@ -334,7 +360,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, companyName]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, companyName, customLineItems, lineItemsTotal, fee]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -580,7 +606,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </div>
               </div>
               <button
-                onClick={() => { setPreview(null); setSent(false); setSelectedUserId(""); setPaymentWarning(null); }}
+                onClick={() => { setPreview(null); setSent(false); setSelectedUserId(""); setPaymentWarning(null); setCustomLineItems([]); setFee(""); }}
                 className="text-xs text-terracotta underline underline-offset-2 shrink-0"
               >
                 Send another
@@ -765,14 +791,88 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                   />
                 </div>
-                {miscAmount !== "" && parseFloat(miscAmount) > 0 && (
+                {(miscAmount !== "" && parseFloat(miscAmount) > 0) || lineItemsTotal > 0 ? (
                   <div className="mt-2 flex justify-between items-center rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark">
                     <span>Total to Send</span>
                     <span className="text-terracotta">
-                      {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : (preview.totalGrossPay ?? preview.grossPay)) + (parseFloat(miscAmount) || 0))}
+                      {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : (preview.totalGrossPay ?? preview.grossPay)) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
                     </span>
                   </div>
+                ) : null}
+              </div>
+
+              {/* Custom Line Items */}
+              <div className="px-5 pb-4">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide">
+                    Custom Line Items <span className="normal-case font-normal text-bark/40">(optional)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={addLineItem}
+                    className="text-xs text-terracotta font-semibold hover:underline"
+                  >
+                    + Add Line Item
+                  </button>
+                </div>
+                {customLineItems.length > 0 && (
+                  <div className="space-y-2">
+                    {customLineItems.map((item, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={item.label}
+                          onChange={(e) => updateLineItem(i, "label", e.target.value)}
+                          placeholder="e.g. Monthly Salary"
+                          className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                        />
+                        <div className="flex items-center gap-1 w-32">
+                          <span className="text-sm font-semibold text-bark/50">$</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={item.amount}
+                            onChange={(e) => updateLineItem(i, "amount", e.target.value)}
+                            placeholder="0.00"
+                            className="w-full border border-linen rounded-lg px-2 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeLineItem(i)}
+                          className="text-bark/30 hover:text-red-500 text-sm px-1"
+                          aria-label="Remove line item"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <div className="flex justify-between items-center text-xs font-semibold text-bark/60 pt-1">
+                      <span>Line Items Subtotal</span>
+                      <span>{formatCurrency(lineItemsTotal)}</span>
+                    </div>
+                  </div>
                 )}
+              </div>
+
+              {/* Processing Fee */}
+              <div className="px-5 pb-4">
+                <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                  Processing Fee <span className="normal-case font-normal text-bark/40">(PayPal, Wise, bank transfer fees)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-bark/50">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={fee}
+                    onChange={(e) => setFee(e.target.value)}
+                    placeholder="0.00"
+                    className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  />
+                </div>
               </div>
 
               {/* Payment Details */}

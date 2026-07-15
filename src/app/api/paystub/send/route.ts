@@ -43,7 +43,20 @@ export async function POST(request: Request) {
     personal_message,
     custom_amount,
     company_name,
+    custom_line_items,
+    fee,
   } = body;
+
+  const customLineItems: { label: string; amount: number }[] = Array.isArray(custom_line_items)
+    ? custom_line_items
+        .map((item: { label?: string; amount?: number }) => ({
+          label: String(item?.label ?? "").trim(),
+          amount: Number(item?.amount) || 0,
+        }))
+        .filter((item) => item.label || item.amount)
+    : [];
+  const customLineItemsTotal = customLineItems.reduce((sum, item) => sum + item.amount, 0);
+  const feeAmount = Number(fee) || 0;
 
   if (!user_id || !start_date || !end_date) {
     return Response.json(
@@ -157,7 +170,7 @@ export async function POST(request: Request) {
   }));
 
   const fixedTotal = fixedAssignments.reduce((sum, a) => sum + a.amount, 0);
-  const totalGrossPay = grossPay + fixedTotal;
+  const totalGrossPay = grossPay + fixedTotal + customLineItemsTotal;
 
   // Preview mode — return numbers only (include payment_accounts so UI can show account details)
   if (preview) {
@@ -255,6 +268,9 @@ export async function POST(request: Request) {
       personalMessage: personal_message ?? null,
       accountDetails,
       companyName: company_name || "MinuteFlow",
+      customLineItems,
+      customLineItemsTotal,
+      fee: feeAmount,
     });
 
     const resendRes = await fetch("https://api.resend.com/emails", {
@@ -317,10 +333,29 @@ export async function POST(request: Request) {
       personal_message: personal_message ?? null,
       created_by: user.id,
       resend_message_id: paystubResendMessageId,
+      custom_line_items: customLineItems,
+      fee: feeAmount,
     });
   } catch (snapErr) {
     // Non-fatal — log but don't fail the response
     console.error("paystub_snapshots insert error:", snapErr);
+  }
+
+  // Step 4: Record processing fee as an expense
+  if (feeAmount > 0) {
+    try {
+      await adminClient.from("financial_expenses").insert({
+        description: `Processing Fee - ${vaProfile.full_name}`,
+        amount: feeAmount,
+        expense_date: payment_date || new Date().toISOString().split("T")[0],
+        category: "Processing Fee",
+        account: "Virtual Concierge",
+        recorded_by: user.id,
+      });
+    } catch (feeErr) {
+      // Non-fatal — log but don't fail the response
+      console.error("financial_expenses insert error:", feeErr);
+    }
   }
 
   return Response.json({
@@ -411,6 +446,9 @@ interface PaystubData {
   personalMessage: string | null;
   accountDetails: Record<string, string> | null;
   companyName: string;
+  customLineItems: { label: string; amount: number }[];
+  customLineItemsTotal: number;
+  fee: number;
 }
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
@@ -421,7 +459,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
 
   const rowsHtml = Object.entries(byDate)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -445,6 +483,12 @@ function buildPaystubEmail(data: PaystubData): string {
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${a.task_name}${a.account ? ` <span style="color:#9e9080; font-size:11px;">· ${a.account}</span>` : ""}</td>
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${a.quantity > 1 ? `${a.quantity}× ${formatCurrency(a.rate)}` : formatCurrency(a.rate)}</td>
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency(a.amount)}</td>
+    </tr>`).join("");
+
+  const customLineItemsRowsHtml = customLineItems.map((item) => `
+    <tr>
+      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;" colspan="2">${item.label}</td>
+      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency(item.amount)}</td>
     </tr>`).join("");
 
   return `<!DOCTYPE html>
@@ -513,6 +557,17 @@ function buildPaystubEmail(data: PaystubData): string {
         </table>
       </div>` : ""}
 
+      ${customLineItems.length > 0 ? `
+      <!-- Custom Line Items -->
+      <div style="padding: 24px 32px 0;">
+        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 12px;">Custom Line Items</div>
+        <table style="width: 100%; border-collapse: collapse; border: 1px solid #e8e0d4; border-radius: 8px; overflow: hidden;">
+          <tbody>
+            ${customLineItemsRowsHtml}
+          </tbody>
+        </table>
+      </div>` : ""}
+
       <!-- Totals -->
       <div style="padding: 20px 32px 28px;">
         <table style="width: 240px; margin-left: auto; border-collapse: collapse;">
@@ -532,10 +587,18 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Fixed Assignments</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">+ ${formatCurrency(fixedTotal)}</td>
           </tr>` : ""}
+          ${customLineItemsTotal > 0 ? `<tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Custom Line Items</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">+ ${formatCurrency(customLineItemsTotal)}</td>
+          </tr>` : ""}
           <tr>
             <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Gross Pay</td>
             <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(totalGrossPay)}</td>
           </tr>
+          ${fee > 0 ? `<tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #9e9080;">Processing Fee</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #9e9080; text-align: right;">− ${formatCurrency(fee)}</td>
+          </tr>` : ""}
           ${previousTotal > 0 ? `<tr>
             <td style="padding: 6px 0; font-size: 12px; color: #9e9080;">Previous Payments</td>
             <td style="padding: 6px 0; font-size: 12px; color: #9e9080; text-align: right;">− ${formatCurrency(previousTotal)}</td>
