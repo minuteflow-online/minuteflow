@@ -6,6 +6,7 @@ import type { Profile, Project } from "@/types/database";
 interface VAProjectsTabProps {
   activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
   currentUserId: string;
+  isAdmin?: boolean;
 }
 
 interface SubtaskRow {
@@ -116,7 +117,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProjectsTabProps) {
+export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin = false }: VAProjectsTabProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -690,12 +691,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                     >
                       {selectedProject.is_active ? "Deactivate" : "Activate"}
                     </button>
-                    <button
-                      onClick={() => void handleDeleteProject(selectedProject)}
-                      className="px-3 py-1 rounded-lg text-[11px] font-semibold border border-red-200 text-red-600 hover:border-red-400 transition-colors"
-                    >
-                      Delete
-                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => void handleDeleteProject(selectedProject)}
+                        className="px-3 py-1 rounded-lg text-[11px] font-semibold border border-red-200 text-red-600 hover:border-red-400 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -923,13 +926,19 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
                                     Task Name
                                   </label>
-                                  <input
-                                    type="text"
+                                  <select
                                     value={editSubForm.task_name}
                                     onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_name: e.target.value }))}
-                                    placeholder="Enter task name..."
-                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                  />
+                                    disabled={!editSubForm.category}
+                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white disabled:opacity-60 disabled:bg-parchment"
+                                  >
+                                    <option value="">
+                                      {!editSubForm.category ? "Select objective first..." : "Select task..."}
+                                    </option>
+                                    {getObjectiveTaskOptions(editSubForm.category).map((t) => (
+                                      <option key={t} value={t}>{t}</option>
+                                    ))}
+                                  </select>
                                 </div>
                               </div>
 
@@ -1124,13 +1133,19 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                       Task Name
                     </label>
-                    <input
-                      type="text"
+                    <select
                       value={addForm.task_name}
                       onChange={(e) => setAddForm((prev) => ({ ...prev, task_name: e.target.value }))}
-                      placeholder="Enter task name..."
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
-                    />
+                      disabled={!addForm.category}
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white disabled:opacity-60 disabled:bg-parchment"
+                    >
+                      <option value="">
+                        {!addForm.category ? "Select objective first..." : "Select task..."}
+                      </option>
+                      {getObjectiveTaskOptions(addForm.category).map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>

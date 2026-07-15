@@ -502,7 +502,7 @@ export default function AssignedTasksWidget({
                           </button>
                         )}
 
-                        {task.status === "in_progress" && !detail.review_required && (
+                        {task.status === "in_progress" && (
                           <button
                             onClick={() => updateStatus(task, "submitted")}
                             disabled={isUpdating}

@@ -2275,6 +2275,7 @@ export default function TaskListPage() {
               <VAProjectsTab
                 activeProfiles={assignedByProfiles}
                 currentUserId={currentUserId ?? ""}
+                isAdmin={isAdmin}
               />
             </div>
           ) : activeView === "recurring" ? (
