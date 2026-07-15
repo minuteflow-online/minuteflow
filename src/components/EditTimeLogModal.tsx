@@ -431,6 +431,34 @@ export default function EditTimeLogModal({
               .eq("id", nextTask.id);
           }
         }
+
+        // Special cascade for "Clocked Out" entries: also pull the previous task's
+        // end_time back to match the new clock-out time, so hours calculate correctly.
+        if (log.category === "Clock Out") {
+          const { data: prevTask } = await supabase
+            .from("time_logs")
+            .select("id, start_time, end_time, duration_ms")
+            .eq("user_id", log.user_id)
+            .lt("start_time", log.start_time)
+            .is("deleted_at", null)
+            .order("start_time", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (prevTask && prevTask.task_name !== "Clock In") {
+            const newEndMs = new Date(newEndIso).getTime();
+            const prevStartMs = new Date(prevTask.start_time).getTime();
+            if (newEndMs > prevStartMs) {
+              await supabase
+                .from("time_logs")
+                .update({
+                  end_time: newEndIso,
+                  duration_ms: newEndMs - prevStartMs,
+                })
+                .eq("id", prevTask.id);
+            }
+          }
+        }
       }
 
       // Auto-cascade: if start_time changed, update the previous task's end_time to match
