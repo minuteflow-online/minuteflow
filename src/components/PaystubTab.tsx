@@ -224,6 +224,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
   // Editable payment fields (post-send, in expanded history row)
   const [editInputs, setEditInputs] = useState<Record<string, {
+    amount_paid: string;
     payment_method: string;
     confirmation_number: string;
     payment_date: string;
@@ -356,6 +357,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
   function getEditValues(snap: PaystubSnapshot) {
     return editInputs[snap.id] ?? {
+      amount_paid: String(snap.amount_paid ?? ""),
       payment_method: snap.payment_method ?? "gcash",
       confirmation_number: snap.confirmation_number ?? "",
       payment_date: snap.payment_date ?? "",
@@ -369,9 +371,11 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     setSavedEditId(null);
     try {
       const supabase = createClient();
+      const newAmountPaid = parseFloat(values.amount_paid);
       const { error: updateError } = await supabase
         .from("paystub_snapshots")
         .update({
+          amount_paid: isNaN(newAmountPaid) ? snap.amount_paid : newAmountPaid,
           payment_method: values.payment_method || null,
           confirmation_number: values.confirmation_number.trim() || null,
           payment_date: values.payment_date || null,
@@ -385,6 +389,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
           s.id === snap.id
             ? {
                 ...s,
+                amount_paid: isNaN(newAmountPaid) ? s.amount_paid : newAmountPaid,
                 payment_method: values.payment_method || null,
                 confirmation_number: values.confirmation_number.trim() || null,
                 payment_date: values.payment_date || null,
@@ -988,6 +993,22 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                   <div className="pt-3 mt-2 border-t border-linen space-y-2">
                                     {editingSnapId === snap.id ? (
                                       <>
+                                        <div>
+                                          <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Amount Paid ($)</label>
+                                          <input
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={getEditValues(snap).amount_paid}
+                                            onChange={(e) =>
+                                              setEditInputs((prev) => ({
+                                                ...prev,
+                                                [snap.id]: { ...getEditValues(snap), amount_paid: e.target.value },
+                                              }))
+                                            }
+                                            className="w-full border border-linen rounded-lg px-2 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                                          />
+                                        </div>
                                         <div>
                                           <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Payment Method</label>
                                           <select
