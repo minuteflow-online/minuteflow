@@ -268,8 +268,13 @@ function buildResendEmail(data: ResendEmailData): string {
             <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Gross Pay</td>
             <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(grossPay)}</td>
           </tr>
+          ${amountPaid > grossPay + 0.005 ? `
           <tr>
-            <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Amount Paid</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Additional Amount</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">+ ${formatCurrency(amountPaid - grossPay)}</td>
+          </tr>` : ""}
+          <tr>
+            <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #3d2b1f; border-top: 2px solid #e8e0d4;">${amountPaid > grossPay + 0.005 ? "Total Paid" : "Amount Paid"}</td>
             <td style="padding: 10px 0 6px; font-size: 15px; font-weight: 700; color: #c0704e; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(amountPaid)}</td>
           </tr>
         </table>

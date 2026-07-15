@@ -225,6 +225,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   // Editable payment fields (post-send, in expanded history row)
   const [editInputs, setEditInputs] = useState<Record<string, {
     amount_paid: string;
+    additional_amount: string;
     payment_method: string;
     confirmation_number: string;
     payment_date: string;
@@ -358,6 +359,10 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   function getEditValues(snap: PaystubSnapshot) {
     return editInputs[snap.id] ?? {
       amount_paid: String(snap.amount_paid ?? ""),
+      additional_amount: (() => {
+        const extra = (snap.amount_paid ?? 0) - (snap.gross_pay ?? 0);
+        return extra > 0.005 ? extra.toFixed(2) : "0";
+      })(),
       payment_method: snap.payment_method ?? "gcash",
       confirmation_number: snap.confirmation_number ?? "",
       payment_date: snap.payment_date ?? "",
@@ -371,11 +376,13 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     setSavedEditId(null);
     try {
       const supabase = createClient();
-      const newAmountPaid = parseFloat(values.amount_paid);
+      // Total = gross_pay + additional_amount
+      const additionalAmount = parseFloat(values.additional_amount) || 0;
+      const newAmountPaid = (snap.gross_pay ?? 0) + additionalAmount;
       const { error: updateError } = await supabase
         .from("paystub_snapshots")
         .update({
-          amount_paid: isNaN(newAmountPaid) ? snap.amount_paid : newAmountPaid,
+          amount_paid: newAmountPaid,
           payment_method: values.payment_method || null,
           confirmation_number: values.confirmation_number.trim() || null,
           payment_date: values.payment_date || null,
@@ -389,7 +396,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
           s.id === snap.id
             ? {
                 ...s,
-                amount_paid: isNaN(newAmountPaid) ? s.amount_paid : newAmountPaid,
+                amount_paid: newAmountPaid,
                 payment_method: values.payment_method || null,
                 confirmation_number: values.confirmation_number.trim() || null,
                 payment_date: values.payment_date || null,
@@ -993,21 +1000,34 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                   <div className="pt-3 mt-2 border-t border-linen space-y-2">
                                     {editingSnapId === snap.id ? (
                                       <>
+                                        {/* Gross Pay (read-only) */}
+                                        <div className="flex justify-between text-xs py-1 border-b border-linen">
+                                          <span className="text-bark/50">Gross Pay</span>
+                                          <span className="font-semibold text-bark">{formatCurrency(snap.gross_pay)}</span>
+                                        </div>
+                                        {/* Additional Amount (editable) */}
                                         <div>
-                                          <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Amount Paid ($)</label>
+                                          <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Additional Amount ($)</label>
                                           <input
                                             type="number"
                                             step="0.01"
                                             min="0"
-                                            value={getEditValues(snap).amount_paid}
+                                            value={getEditValues(snap).additional_amount}
                                             onChange={(e) =>
                                               setEditInputs((prev) => ({
                                                 ...prev,
-                                                [snap.id]: { ...getEditValues(snap), amount_paid: e.target.value },
+                                                [snap.id]: { ...getEditValues(snap), additional_amount: e.target.value },
                                               }))
                                             }
                                             className="w-full border border-linen rounded-lg px-2 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                                           />
+                                        </div>
+                                        {/* Total (computed, read-only display) */}
+                                        <div className="flex justify-between text-xs py-1.5 px-2 rounded-lg bg-parchment border border-linen">
+                                          <span className="font-semibold text-bark">Total</span>
+                                          <span className="font-bold text-terracotta">
+                                            {formatCurrency((snap.gross_pay ?? 0) + (parseFloat(getEditValues(snap).additional_amount) || 0))}
+                                          </span>
                                         </div>
                                         <div>
                                           <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Payment Method</label>
