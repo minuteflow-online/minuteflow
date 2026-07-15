@@ -1377,7 +1377,7 @@ export default function TaskListPage() {
               {STATUS_FILTERS.filter((option) => {
                 if (option.value === "all") return false;
                 if (!isAdmin && task.assigned_tasks.review_required) {
-                  return (["pending", "on_queue", "in_progress", "submitted", "revision_needed"] as string[]).includes(option.value);
+                  return (["pending", "on_queue", "in_progress", "submitted"] as string[]).includes(option.value);
                 }
                 return true;
               }).map((option) => (
