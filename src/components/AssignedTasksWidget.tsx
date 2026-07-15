@@ -100,6 +100,7 @@ export default function AssignedTasksWidget({
   const [updatingIds, setUpdatingIds] = useState<Set<number>>(new Set());
   const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [optimisticStatuses, setOptimisticStatuses] = useState<Record<number, AssignedTaskStatus>>({});
   const prevRefetchCountRef = useRef(refetchCount);
 
 
@@ -125,6 +126,7 @@ export default function AssignedTasksWidget({
               (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
           );
         setTasks(visible);
+        setOptimisticStatuses({});
       }
     } catch {
       // silently fail — widget is non-critical
@@ -227,6 +229,7 @@ export default function AssignedTasksWidget({
 
   const handlePlay = useCallback(
     (task: VAAssignedTask) => {
+      setOptimisticStatuses((prev) => ({ ...prev, [task.id]: "in_progress" }));
       onPlayAssignedTask(task);
     },
     [onPlayAssignedTask]
@@ -374,6 +377,7 @@ export default function AssignedTasksWidget({
             <div className="space-y-1.5">
               {tasks.map((task) => {
                 const detail = task.assigned_tasks;
+                const effectiveStatus = optimisticStatuses[task.id] ?? task.status;
                 const isUpdating = updatingIds.has(task.id);
                 const isCancelling = cancellingIds.has(task.id);
                 const isExpanded = expandedIds.has(task.id);
@@ -413,7 +417,7 @@ export default function AssignedTasksWidget({
                         </button>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <RevisionBadge count={detail.revision_count ?? 0} />
-                          {statusBadge(task.status)}
+                          {statusBadge(effectiveStatus)}
                           {rate != null && (
                             <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
                               ${Number(rate).toFixed(2)}
@@ -469,7 +473,7 @@ export default function AssignedTasksWidget({
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-2 mt-0.5 pl-[18px]">
-                        {task.status === "pending" && (
+                        {effectiveStatus === "pending" && (
                           <button
                             onClick={() => updateStatus(task, "on_queue")}
                             disabled={isUpdating}
@@ -479,7 +483,7 @@ export default function AssignedTasksWidget({
                           </button>
                         )}
 
-                        {task.status === "on_queue" && (
+                        {effectiveStatus === "on_queue" && (
                           <button
                             onClick={() => handlePlay(task)}
                             disabled={isUpdating}
@@ -492,7 +496,7 @@ export default function AssignedTasksWidget({
                           </button>
                         )}
 
-                        {detail.fixed_pay_task_id != null && task.status === "on_queue" && (
+                        {detail.fixed_pay_task_id != null && effectiveStatus === "on_queue" && (
                           <button
                             onClick={() => void cancelGrab(task)}
                             disabled={isCancelling}
@@ -502,7 +506,7 @@ export default function AssignedTasksWidget({
                           </button>
                         )}
 
-                        {task.status === "in_progress" && (
+                        {effectiveStatus === "in_progress" && (
                           <button
                             onClick={() => updateStatus(task, "submitted")}
                             disabled={isUpdating}

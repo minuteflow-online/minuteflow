@@ -1793,6 +1793,7 @@ export default function TaskListPage() {
             }
           : current
       );
+      void fetchTasks();
       if (statusChanged && nextStatus === "in_progress" && taskLogId) {
         activeLogIdRef.current = taskLogId;
         void (async () => {
@@ -1815,6 +1816,7 @@ export default function TaskListPage() {
     }
   }, [
     closePanel,
+    fetchTasks,
     panelAccount,
     panelAssignedBy,
     panelDetail,
