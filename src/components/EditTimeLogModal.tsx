@@ -437,7 +437,7 @@ export default function EditTimeLogModal({
         if (log.category === "Clock Out") {
           const { data: prevTask } = await supabase
             .from("time_logs")
-            .select("id, start_time, end_time, duration_ms")
+            .select("id, start_time, end_time, duration_ms, task_name")
             .eq("user_id", log.user_id)
             .lt("start_time", log.start_time)
             .is("deleted_at", null)
