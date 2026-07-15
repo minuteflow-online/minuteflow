@@ -535,7 +535,7 @@ export default function TaskListPage() {
   const isPerTaskVa = currentPosition === "Per Task VA";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
-  const canShowProjects = currentRole === "va" && currentPayRateType === "hourly";
+  const canShowProjects = isAdmin || (currentRole === "va" && currentPayRateType === "hourly");
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
