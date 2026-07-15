@@ -22,6 +22,7 @@ interface SubtaskRow {
   instructions?: string | null;
   account?: string | null;
   assigned_by: string | null;
+  review_required?: boolean;
   assigned_task_assignees: Array<{
     va_id: string;
     profiles?: { id: string; full_name: string; username: string } | null;
@@ -50,6 +51,7 @@ interface AddSubtaskForm {
   task_notes: string;
   instructions: string;
   status: string;
+  review_required: boolean;
 }
 
 function defaultSubtaskForm(assignedById = ""): AddSubtaskForm {
@@ -64,6 +66,7 @@ function defaultSubtaskForm(assignedById = ""): AddSubtaskForm {
     task_notes: "",
     instructions: "",
     status: "pending",
+    review_required: false,
   };
 }
 
@@ -123,6 +126,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
   const [editDescription, setEditDescription] = useState("");
   const [editDetails, setEditDetails] = useState("");
   const [editNotes, setEditNotes] = useState("");
+  const [editVaIds, setEditVaIds] = useState<string[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editNotice, setEditNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -132,6 +136,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
   const [createDescription, setCreateDescription] = useState("");
   const [createDetails, setCreateDetails] = useState("");
   const [createNotes, setCreateNotes] = useState("");
+  const [createVaIds, setCreateVaIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -175,14 +180,27 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
     setEditDescription(selectedProject.description ?? "");
     setEditDetails(selectedProject.details ?? "");
     setEditNotes(selectedProject.notes ?? "");
+    setEditVaIds([]);
     setEditNotice(null);
     setSubtasks([]);
     setAddForm(defaultSubtaskForm(currentUserId));
     setAddError(null);
     setEditingSubId(null);
     void fetchSubtasks(selectedProject.id);
+    void fetchVaAccess(selectedProject.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
+
+  const fetchVaAccess = useCallback(async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/projects?projectId=${projectId}&vaAccess=true`, { cache: "no-store" });
+      if (!res.ok) return;
+      const d = await res.json();
+      setEditVaIds(d.va_ids ?? []);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const fetchSubtasks = useCallback(async (projectId: string) => {
     setSubtasksLoading(true);
@@ -272,6 +290,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
           account: editAccount.trim() || null,
           details: editDetails.trim() || null,
           notes: editNotes.trim() || null,
+          va_ids: editVaIds,
         }),
       });
       const d = await res.json().catch(() => ({}));
@@ -348,6 +367,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
           description: createDescription.trim() || null,
           details: createDetails.trim() || null,
           notes: createNotes.trim() || null,
+          va_ids: createVaIds,
         }),
       });
       const d = await res.json().catch(() => ({}));
@@ -357,6 +377,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
       setCreateDescription("");
       setCreateDetails("");
       setCreateNotes("");
+      setCreateVaIds([]);
       setShowCreate(false);
       void fetchProjects();
       if (d.project) setSelectedProject(d.project as Project);
@@ -389,6 +410,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
         instructions: addForm.instructions.trim() || null,
         initial_status: addForm.status || "pending",
         assigned_by: addForm.assigned_by_id || null,
+        review_required: addForm.review_required,
       };
       if (addForm.va_id) {
         body.va_ids = [addForm.va_id];
@@ -430,6 +452,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
           due_date: editSubForm.due_date || null,
           assigned_by: editSubForm.assigned_by_id || null,
           va_ids: editSubForm.va_id ? [editSubForm.va_id] : [],
+          review_required: editSubForm.review_required,
         }),
       });
       if (!metaRes.ok) {
@@ -474,6 +497,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
             setCreateDescription("");
             setCreateDetails("");
             setCreateNotes("");
+            setCreateVaIds([]);
             setCreateError(null);
           }}
           className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
@@ -608,6 +632,28 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                 />
               </div>
 
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                  Assign VAs
+                </label>
+                <div className="flex flex-wrap gap-3 rounded-lg border border-sand bg-white px-3 py-2">
+                  {activeProfiles.map((p) => (
+                    <label key={p.id} className="flex items-center gap-1.5 text-[12px] text-espresso">
+                      <input
+                        type="checkbox"
+                        checked={createVaIds.includes(p.id)}
+                        onChange={(e) => {
+                          setCreateVaIds((prev) =>
+                            e.target.checked ? [...prev, p.id] : prev.filter((id) => id !== p.id)
+                          );
+                        }}
+                      />
+                      {profileLabel(p)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
               {createError && (
                 <p className="text-[12px] text-red-600">{createError}</p>
               )}
@@ -721,6 +767,28 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                   />
                 </div>
 
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                    Assigned VAs
+                  </label>
+                  <div className="flex flex-wrap gap-3 rounded-lg border border-sand bg-white px-3 py-2">
+                    {activeProfiles.map((p) => (
+                      <label key={p.id} className="flex items-center gap-1.5 text-[12px] text-espresso">
+                        <input
+                          type="checkbox"
+                          checked={editVaIds.includes(p.id)}
+                          onChange={(e) => {
+                            setEditVaIds((prev) =>
+                              e.target.checked ? [...prev, p.id] : prev.filter((id) => id !== p.id)
+                            );
+                          }}
+                        />
+                        {profileLabel(p)}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
                 {editNotice && (
                   <div className={`rounded-lg border px-3 py-2 text-[12px] ${
                     editNotice.type === "success"
@@ -816,6 +884,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                                     task_notes: sub.task_notes ?? "",
                                     instructions: sub.instructions ?? "",
                                     status: sub.status ?? "pending",
+                                    review_required: sub.review_required ?? false,
                                   });
                                   setEditSubError(null);
                                 }
@@ -979,6 +1048,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                                   </select>
                                 </div>
                               </div>
+
+                              <label className="flex items-center gap-1.5 text-[11px] font-semibold text-walnut">
+                                <input
+                                  type="checkbox"
+                                  checked={editSubForm.review_required}
+                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, review_required: e.target.checked }))}
+                                />
+                                Review Required
+                              </label>
 
                               {editSubError && (
                                 <p className="text-[11px] text-red-600">{editSubError}</p>
@@ -1170,6 +1248,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId }: VAProje
                       </select>
                     </div>
                   </div>
+
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-walnut">
+                    <input
+                      type="checkbox"
+                      checked={addForm.review_required}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, review_required: e.target.checked }))}
+                    />
+                    Review Required
+                  </label>
 
                   {addError && (
                     <p className="text-[12px] text-red-600">{addError}</p>

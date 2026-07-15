@@ -51,13 +51,48 @@ export async function GET(request: Request) {
     return Response.json({ project: data });
   }
 
-  if (mine) {
+  const vaAccess = searchParams.get("vaAccess") === "true";
+  const projectId = searchParams.get("projectId");
+  if (vaAccess && projectId) {
     const auth = await requireUser();
     if ("error" in auth) return auth.error;
     const { data, error } = await supabase
+      .from("project_va_access")
+      .select("va_id")
+      .eq("project_id", projectId);
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ va_ids: (data ?? []).map((row) => row.va_id) });
+  }
+
+  if (mine) {
+    const authResult = await getUserAndRole();
+    if ("error" in authResult) return authResult.error;
+    const { user, isAdmin } = authResult;
+
+    if (isAdmin) {
+      const { data, error } = await supabase
+        .from("projects")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) return Response.json({ error: error.message }, { status: 500 });
+      return Response.json({ projects: data ?? [] });
+    }
+
+    const { data: accessRows, error: accessError } = await supabase
+      .from("project_va_access")
+      .select("project_id")
+      .eq("va_id", user.id);
+    if (accessError) return Response.json({ error: accessError.message }, { status: 500 });
+    const accessIds = (accessRows ?? []).map((row) => row.project_id);
+
+    const { data, error } = await supabase
       .from("projects")
       .select("*")
-      .eq("created_by", auth.user.id)
+      .or(
+        accessIds.length > 0
+          ? `created_by.eq.${user.id},id.in.(${accessIds.join(",")})`
+          : `created_by.eq.${user.id}`
+      )
       .order("created_at", { ascending: false });
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ projects: data ?? [] });
@@ -81,6 +116,7 @@ export async function POST(request: Request) {
     account?: string;
     details?: string;
     notes?: string;
+    va_ids?: string[];
   };
   if (!body.name?.trim()) return Response.json({ error: "name is required" }, { status: 400 });
   const supabase = serviceClient();
@@ -94,6 +130,13 @@ export async function POST(request: Request) {
     is_active: true,
   }).select("*").single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
+
+  if (Array.isArray(body.va_ids) && body.va_ids.length > 0) {
+    await supabase.from("project_va_access").insert(
+      body.va_ids.map((vaId) => ({ project_id: data.id, va_id: vaId }))
+    );
+  }
+
   return Response.json({ project: data }, { status: 201 });
 }
 
@@ -121,6 +164,7 @@ export async function PATCH(request: Request) {
     details?: string;
     notes?: string;
     is_active?: boolean;
+    va_ids?: string[];
   };
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name.trim();
@@ -131,6 +175,16 @@ export async function PATCH(request: Request) {
   if (body.is_active !== undefined) updates.is_active = Boolean(body.is_active);
   const { data, error } = await supabase.from("projects").update(updates).eq("id", id).select("*").single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
+
+  if (Array.isArray(body.va_ids)) {
+    await supabase.from("project_va_access").delete().eq("project_id", id);
+    if (body.va_ids.length > 0) {
+      await supabase.from("project_va_access").insert(
+        body.va_ids.map((vaId) => ({ project_id: id, va_id: vaId }))
+      );
+    }
+  }
+
   return Response.json({ project: data });
 }
 
