@@ -335,6 +335,7 @@ export default function TaskListPage() {
     assigned_by: "",
     instructions: "",
     instructions_locked: false,
+    review_required: false,
   });
 
   const [selectedTask, setSelectedTask] = useState<VATaskRow | null>(null);
@@ -1461,6 +1462,7 @@ export default function TaskListPage() {
       assigned_by: currentUserId ?? "",
       instructions: "",
       instructions_locked: false,
+      review_required: false,
     });
   }, [currentUserId]);
 
@@ -1480,6 +1482,7 @@ export default function TaskListPage() {
       assigned_by: currentUserId ?? "",
       instructions: "",
       instructions_locked: false,
+      review_required: false,
     });
   }, [currentUserId]);
 
@@ -1560,6 +1563,7 @@ export default function TaskListPage() {
           assigned_by: addForm.assigned_by || currentUserId || null,
           instructions: addForm.instructions.trim() || null,
           instructions_locked: addForm.instructions_locked,
+          review_required: addForm.review_required,
           va_ids: currentUserId ? [currentUserId] : undefined,
         }),
       });
@@ -2812,6 +2816,18 @@ export default function TaskListPage() {
                     ))}
                   </div>
                 )}
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={addForm.review_required}
+                    onChange={(e) => setAddForm((form) => ({ ...form, review_required: e.target.checked }))}
+                    className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                  />
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-stone">Review Required</span>
+                </label>
               </div>
 
               {addError && <p className="text-xs font-medium text-red-500">{addError}</p>}
