@@ -2022,7 +2022,9 @@ export default function DashboardPage() {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: 'in_progress' }),
-          }).catch(console.error);
+          })
+            .then(() => setWidgetRefetchCount((c) => c + 1))
+            .catch(console.error);
         }
         return; // No timer, no active task, no screenshots
       }
