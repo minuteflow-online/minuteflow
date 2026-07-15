@@ -74,6 +74,7 @@ export default function DashboardPage() {
     breakStartTime,
     setBreakStartTime,
     actionPending: sessionActionPending,
+    actionPendingRef: sessionActionPendingRef,
     setActionPending: setSessionActionPending,
     refresh: refreshSession,
     registerActions,
@@ -808,8 +809,10 @@ export default function DashboardPage() {
   // ─── Actions ──────────────────────────────────────────────
 
   const clockIn = useCallback(async () => {
-    if (!userId || !profile || sessionActionPending) return;
-    setSessionActionPending(true);
+    // Check ref synchronously — state check alone has an async race that allows
+    // double-clicks to both pass before either setState has landed.
+    if (!userId || !profile || sessionActionPendingRef.current) return;
+    setSessionActionPending(true); // also sets the ref via setActionPendingSync
     const now = new Date().toISOString();
 
     await closeOpenNonBreakLogs(now);
@@ -907,7 +910,7 @@ export default function DashboardPage() {
       }
     }
     setSessionActionPending(false);
-  }, [userId, profile, supabase, sessionActionPending, notifyVA, refreshSession]);
+  }, [userId, profile, supabase, sessionActionPendingRef, notifyVA, refreshSession]);
 
   const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null, dayRating?: number | null, dayRatingNote?: string) => {
     if (!userId) return;
@@ -1455,7 +1458,7 @@ export default function DashboardPage() {
   const [showPostBreakPrompt, setShowPostBreakPrompt] = useState(false);
 
   const endBreak = useCallback(async () => {
-    if (!userId || sessionActionPending) return;
+    if (!userId || sessionActionPendingRef.current) return;
     setSessionActionPending(true);
     const now = new Date().toISOString();
 
@@ -1509,7 +1512,7 @@ export default function DashboardPage() {
       setShowPostBreakPrompt(true);
     }
     setSessionActionPending(false);
-  }, [userId, supabase, session, breakStartTime, preBreakTask, sessionActionPending, refreshSession]);
+  }, [userId, supabase, session, breakStartTime, preBreakTask, sessionActionPendingRef, refreshSession]);
 
   // Register dashboard's complex action handlers with context so the layout's SessionBanner
   // calls these (wizard flows, memos, etc.) instead of the simple context defaults.

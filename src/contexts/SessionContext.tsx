@@ -32,6 +32,7 @@ type SessionContextValue = {
   setSessionState: (s: SessionState) => void;
   setBreakStartTime: (t: string | null) => void;
   setActionPending: (p: boolean) => void;
+  actionPendingRef: React.MutableRefObject<boolean>;
 
   // Re-fetch session from DB
   refresh: () => Promise<void>;
@@ -52,6 +53,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [breakStartTime, setBreakStartTime] = useState<string | null>(null);
   const [orgTimezone, setOrgTimezone] = useState("UTC");
   const [actionPending, setActionPending] = useState(false);
+  // Synchronous guard — React state updates are async, so a rapid double-click
+  // can pass the `if (actionPending) return` check before either click's
+  // setState has landed. This ref is set in the same tick as the check.
+  const actionPendingRef = useRef(false);
+
+  // Wrap setActionPending so both state and ref stay in sync
+  const setActionPendingSync = useCallback((pending: boolean) => {
+    actionPendingRef.current = pending;
+    setActionPending(pending);
+  }, []);
 
   // Refs so interval callbacks always read current values
   const clockInTimeRef = useRef<string | null>(null);
@@ -219,9 +230,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         userId,
         orgTimezone,
         actionPending,
+        actionPendingRef,
         setSessionState,
         setBreakStartTime,
-        setActionPending,
+        setActionPending: setActionPendingSync,
         refresh,
         registerActions,
         actions,
