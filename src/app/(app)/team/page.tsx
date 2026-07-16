@@ -1416,7 +1416,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         const personalMs = dayLogs.filter(l => l.category === "Personal").reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
         const sortedDayLogs = [...dayLogs].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-        return { dateLabel, totalMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
+        return { dateLabel, isoDate, totalMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
       });
   }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type, userMoods]);
 
@@ -1621,7 +1621,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
                         {day.dateLabel}
                         {day.mood && <span className="ml-1.5" title={day.mood}>{moodEmoji[day.mood] || ""}</span>}
                       </span>
-                      <span className="text-[11px] text-bark">
+                      <span className="text-[11px] text-bark flex items-center gap-1">
                         {day.clockIn
                           ? day.clockIn.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true })
                           : "\u2014"}
@@ -1629,7 +1629,14 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
                         {day.hasActiveLog
                           ? "Still active"
                           : day.clockOut
-                            ? day.clockOut.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true })
+                            ? <>
+                                {day.clockOut.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true })}
+                                {day.clockOut.toLocaleDateString("en-CA", { timeZone: timezone }) !== day.isoDate && (
+                                  <span className="text-[9px] font-semibold bg-amber-soft text-amber px-1 py-[1px] rounded">
+                                    {day.clockOut.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: timezone })}
+                                  </span>
+                                )}
+                              </>
                             : "\u2014"}
                       </span>
                     </div>
@@ -1735,6 +1742,8 @@ function TaskLogList({ logs, showProgress, timezone = "UTC" }: { logs: TimeLog[]
           minute: "2-digit",
           hour12: true,
         });
+        const logDateStr = new Date(log.start_time).toLocaleDateString("en-CA", { timeZone: timezone });
+        const isNextDay = log.session_date && logDateStr !== log.session_date;
         const duration = log.duration_ms > 0
           ? formatDuration(log.duration_ms)
           : log.end_time
@@ -1777,7 +1786,14 @@ function TaskLogList({ logs, showProgress, timezone = "UTC" }: { logs: TimeLog[]
               <div className={`text-[11px] font-semibold ${isActive ? "text-sage" : "text-espresso"}`}>
                 {duration}
               </div>
-              <div className="text-[9px] text-stone">{startTime}</div>
+              <div className="text-[9px] text-stone flex items-center gap-1 justify-end">
+                {startTime}
+                {isNextDay && (
+                  <span className="text-[8px] font-semibold bg-amber-soft text-amber px-1 py-[1px] rounded">
+                    {new Date(log.start_time).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: timezone })}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         );
