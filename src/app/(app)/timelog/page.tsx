@@ -887,13 +887,19 @@ export default function TimeLogPage() {
           });
           const dayTotalMs = dayLogs
             .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+          const sortedDayLogs = [...dayLogs].sort(
+            (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+          );
           return [
             { _type: "header" as const, dateKey, dayLabel, dayTotalMs },
-            ...dayLogs.map((l) => ({ _type: "log" as const, log: l })),
+            ...sortedDayLogs.map((l) => ({ _type: "log" as const, log: l })),
           ];
         });
     }
-    return columnFilteredLogs.map((l) => ({ _type: "log" as const, log: l }));
+    // Day view: sort chronologically (oldest first) so the timeline reads top-to-bottom
+    return [...columnFilteredLogs]
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+      .map((l) => ({ _type: "log" as const, log: l }));
   }, [viewMode, logsByDay, columnFilteredLogs]);
 
   /* ── Render ────────────────────────────────────────────── */
