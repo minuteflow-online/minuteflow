@@ -68,6 +68,7 @@ interface PaystubSnapshot {
   company_name: string;
   personal_message: string | null;
   paystub_link: string | null;
+  fee?: number | null;
 }
 
 /* ── Date helpers ─────────────────────────────────────────── */
@@ -236,6 +237,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     confirmation_number: string;
     payment_date: string;
     personal_message: string;
+    fee: string;
   }>>({});
   const [savingEditId, setSavingEditId] = useState<string | null>(null);
   const [savedEditId, setSavedEditId] = useState<string | null>(null);
@@ -393,6 +395,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       confirmation_number: snap.confirmation_number ?? "",
       payment_date: snap.payment_date ?? "",
       personal_message: snap.personal_message ?? "",
+      fee: (snap.fee ?? 0).toString(),
     };
   }
 
@@ -413,6 +416,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
           confirmation_number: values.confirmation_number.trim() || null,
           payment_date: values.payment_date || null,
           personal_message: values.personal_message.trim() || null,
+          fee: parseFloat(values.fee) || 0,
         })
         .eq("id", snap.id);
       if (updateError) throw new Error(updateError.message);
@@ -427,6 +431,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 confirmation_number: values.confirmation_number.trim() || null,
                 payment_date: values.payment_date || null,
                 personal_message: values.personal_message.trim() || null,
+                fee: parseFloat(values.fee) || 0,
               }
             : s
         )
@@ -1180,6 +1185,23 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                               className="w-full border border-linen rounded-lg px-2 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                                             />
                                           </div>
+                                        </div>
+                                        <div>
+                                          <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Processing Fee</label>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            placeholder="0.00"
+                                            value={getEditValues(snap).fee}
+                                            onChange={(e) =>
+                                              setEditInputs((prev) => ({
+                                                ...prev,
+                                                [snap.id]: { ...getEditValues(snap), fee: e.target.value },
+                                              }))
+                                            }
+                                            className="w-full border border-linen rounded-lg px-2 py-1.5 text-xs text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                                          />
                                         </div>
                                         <div>
                                           <label className="block text-[10px] font-semibold text-bark/40 uppercase tracking-wide mb-1">Note</label>
