@@ -641,9 +641,15 @@ export default function TimeLogPage() {
     let onHoldCount = 0;
     const categoryMs: Record<string, number> = {};
 
+    const BREAK_EXCLUSION_DAY = "2026-07-06";
     filteredLogs.forEach((l) => {
       totalMs += l.duration_ms || 0;
-      if (l.billable) billableMs += l.duration_ms || 0;
+      // For Full-time VAs on/after July 6, breaks are never billable regardless of the flag
+      const logProfile = profiles.find((p) => p.id === l.user_id);
+      const isFullTimeVa = logProfile?.position === "Full-time VA";
+      const logDate = l.start_time ? l.start_time.slice(0, 10) : "";
+      const breakExcluded = l.category === "Break" && isFullTimeVa && logDate >= BREAK_EXCLUSION_DAY;
+      if (l.billable && !breakExcluded) billableMs += l.duration_ms || 0;
       wizardMs += l.form_fill_ms || 0;
 
       const rawCat = l.category || "Other";
@@ -680,7 +686,7 @@ export default function TimeLogPage() {
       .map(([name, ms]) => ({ name, formatted: formatDuration(ms) }));
 
     return { totalMs, billableMs, wizardMs, entryCount, categories, fixedCount, hourlyCount, inProgressCount, completedCount, onHoldCount };
-  }, [filteredLogs]);
+  }, [filteredLogs, profiles]);
 
   /* ── Mood summary for footer ────────────────────────────── */
 
