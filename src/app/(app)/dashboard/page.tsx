@@ -1005,7 +1005,7 @@ export default function DashboardPage() {
             end_time: now,
             duration_ms: 0,
             billable: false,
-            session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+            session_date: new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
           })
           .select()
           .single();
