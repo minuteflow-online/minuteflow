@@ -421,6 +421,24 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
         .eq("id", snap.id);
       if (updateError) throw new Error(updateError.message);
 
+      // Sync processing fee to financial_expenses
+      const feeVal = parseFloat(values.fee) || 0;
+      const expenseNoteKey = `paystub:${snap.id}`;
+      // Delete any existing expense record linked to this paystub
+      await supabase.from("financial_expenses").delete().eq("notes", expenseNoteKey);
+      // Insert fresh if fee > 0
+      if (feeVal > 0) {
+        const expenseDate = values.payment_date || snap.payment_date || new Date().toISOString().split("T")[0];
+        await supabase.from("financial_expenses").insert({
+          description: `Processing Fee - ${snap.full_name}`,
+          amount: feeVal,
+          expense_date: expenseDate,
+          category: "Processing Fee",
+          account: "Virtual Concierge",
+          notes: expenseNoteKey,
+        });
+      }
+
       setHistory((prev) =>
         prev.map((s) =>
           s.id === snap.id

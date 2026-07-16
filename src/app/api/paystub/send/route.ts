@@ -313,8 +313,9 @@ export async function POST(request: Request) {
   }
 
   // Step 3: Save paystub snapshot for history/reprinting
+  let snapshotId: string | null = null;
   try {
-    await adminClient.from("paystub_snapshots").insert({
+    const { data: snapData } = await adminClient.from("paystub_snapshots").insert({
       user_id,
       full_name: vaProfile.full_name,
       period_start: start_date,
@@ -335,7 +336,8 @@ export async function POST(request: Request) {
       resend_message_id: paystubResendMessageId,
       custom_line_items: customLineItems,
       fee: feeAmount,
-    });
+    }).select("id").single();
+    snapshotId = snapData?.id ?? null;
   } catch (snapErr) {
     // Non-fatal — log but don't fail the response
     console.error("paystub_snapshots insert error:", snapErr);
@@ -351,6 +353,7 @@ export async function POST(request: Request) {
         category: "Processing Fee",
         account: "Virtual Concierge",
         recorded_by: user.id,
+        notes: snapshotId ? `paystub:${snapshotId}` : null,
       });
     } catch (feeErr) {
       // Non-fatal — log but don't fail the response
