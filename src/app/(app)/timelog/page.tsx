@@ -620,7 +620,7 @@ export default function TimeLogPage() {
     const grouped: Record<string, TimeLog[]> = {};
     columnFilteredLogs.forEach((l) => {
       if (!l.start_time) return;
-      const key = toDateInTz(l.start_time, orgTimezone);
+      const key = l.session_date || toDateInTz(l.start_time, orgTimezone);
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(l);
     });
