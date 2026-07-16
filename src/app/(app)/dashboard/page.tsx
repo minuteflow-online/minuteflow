@@ -1005,7 +1005,9 @@ export default function DashboardPage() {
             end_time: now,
             duration_ms: 0,
             billable: false,
-            session_date: new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+            // Use the session's start date so the clock-out entry groups under
+            // the same day as the rest of the shift (handles overnight clock-outs).
+            session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
           })
           .select()
           .single();

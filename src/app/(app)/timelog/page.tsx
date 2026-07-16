@@ -620,7 +620,10 @@ export default function TimeLogPage() {
     const grouped: Record<string, TimeLog[]> = {};
     columnFilteredLogs.forEach((l) => {
       if (!l.start_time) return;
-      const key = toDateInTz(l.start_time, orgTimezone);
+      // Group by session_date (the day the session started) so that cross-midnight
+      // entries (e.g. clock-out at 12:51 AM) stay under the clock-in day.
+      const key = (l as TimeLog & { session_date?: string }).session_date
+        || toDateInTz(l.start_time, orgTimezone);
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(l);
     });
