@@ -1,3 +1,10 @@
+/** Count words in a string (trims and splits on whitespace) */
+export function countWords(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
+
 /** Format milliseconds to "Xh Ym" display */
 export function formatDuration(ms: number): string {
   if (ms <= 0) return "0:00";

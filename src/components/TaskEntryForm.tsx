@@ -2,6 +2,15 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { BillingType } from "@/types/database";
+import { countWords } from "@/lib/utils";
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 
 const CATEGORIES = [
   { label: "Task", value: "Task" },
@@ -609,11 +618,14 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                 <input
                   type="text"
                   value={clientMemo}
-                  onChange={(e) => setClientMemo(e.target.value)}
+                  onChange={(e) => setClientMemo(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
                   onFocus={handleFormFieldFocus}
                   placeholder="Notes for this task..."
                   className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone"
                 />
+                <p className="text-[10px] text-stone mt-1">
+                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(clientMemo))} words remaining
+                </p>
               </div>
             )}
           </div>
@@ -737,14 +749,19 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                     </span>
                   </button>
                   {showClientMemo && (
-                    <textarea
-                      value={clientMemoText}
-                      onChange={(e) => setClientMemoText(e.target.value)}
-                      placeholder="Notes visible to the client..."
-                      rows={2}
-                      autoFocus
-                      className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
-                    />
+                    <>
+                      <textarea
+                        value={clientMemoText}
+                        onChange={(e) => setClientMemoText(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
+                        placeholder="Notes visible to the client..."
+                        rows={2}
+                        autoFocus
+                        className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
+                      />
+                      <p className="text-[10px] text-stone mt-1">
+                        {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(clientMemoText))} words remaining
+                      </p>
+                    </>
                   )}
                 </div>
 
@@ -935,14 +952,19 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
                     </span>
                   </button>
                   {showClientMemo && (
-                    <textarea
-                      value={clientMemoText}
-                      onChange={(e) => setClientMemoText(e.target.value)}
-                      placeholder="Notes visible to the client..."
-                      rows={2}
-                      autoFocus
-                      className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
-                    />
+                    <>
+                      <textarea
+                        value={clientMemoText}
+                        onChange={(e) => setClientMemoText(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
+                        placeholder="Notes visible to the client..."
+                        rows={2}
+                        autoFocus
+                        className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
+                      />
+                      <p className="text-[10px] text-stone mt-1">
+                        {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(clientMemoText))} words remaining
+                      </p>
+                    </>
                   )}
                 </div>
 
