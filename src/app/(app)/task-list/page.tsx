@@ -10,6 +10,15 @@ import { useScreenCapture } from "@/hooks/useScreenCapture";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import type { RecurringTaskTemplate } from "@/types/database";
 import VAProjectsTab from "@/components/VAProjectsTab";
+import { countWords } from "@/lib/utils";
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 
 type VATaskRow = {
   id: number;
@@ -2997,13 +3006,18 @@ export default function TaskListPage() {
                   </div>
                 </div>
                 {panelCanEditFields ? (
-                  <textarea
-                    value={panelDetail}
-                    onChange={(e) => setPanelDetail(e.target.value)}
-                    rows={2}
-                    placeholder="Added to client memo — keep it short and sensible"
-                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
+                  <>
+                    <textarea
+                      value={panelDetail}
+                      onChange={(e) => setPanelDetail(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
+                      rows={2}
+                      placeholder="Added to client memo — keep it short and sensible"
+                      className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                    />
+                    <p className="text-[10px] text-stone mt-1">
+                      {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(panelDetail))} words remaining
+                    </p>
+                  </>
                 ) : (
                   <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
                     {selectedTask.assigned_tasks.task_detail || <span className="text-stone/60">No detail provided.</span>}
