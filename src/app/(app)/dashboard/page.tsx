@@ -16,7 +16,7 @@ import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
-import { getTodayBoundsInTimezone } from "@/lib/utils";
+import { getTodayBoundsInTimezone, countWords } from "@/lib/utils";
 import type {
   Profile,
   Session,
@@ -29,6 +29,14 @@ import type {
 } from "@/types/database";
 
 type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number };
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 
 // ─── Helpers ───────────────────────────────────────────────
 
@@ -3308,11 +3316,14 @@ export default function DashboardPage() {
                 )}
                 <textarea
                   value={closeOldClientMemo}
-                  onChange={(e) => setCloseOldClientMemo(e.target.value)}
+                  onChange={(e) => setCloseOldClientMemo(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
                   placeholder="Notes visible to the client..."
                   rows={3}
                   className="w-full py-2.5 px-[13px] border border-sand rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-terracotta focus:shadow-[0_0_0_3px_rgba(194,105,79,0.08)] placeholder:text-stone resize-none"
                 />
+                <p className="text-[10px] text-stone mt-1">
+                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(closeOldClientMemo))} words remaining
+                </p>
               </div>
 
               {/* Internal Memo */}
@@ -3442,11 +3453,14 @@ export default function DashboardPage() {
                 </label>
                 <textarea
                   value={notesClientMemo}
-                  onChange={(e) => setNotesClientMemo(e.target.value)}
+                  onChange={(e) => setNotesClientMemo(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
                   placeholder="Notes visible to the client..."
                   rows={3}
                   className="w-full py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
                 />
+                <p className="text-[10px] text-stone mt-1">
+                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(notesClientMemo))} words remaining
+                </p>
               </div>
               <div className="mb-4">
                 <label className="block text-[11px] font-semibold text-walnut mb-1">
@@ -3570,14 +3584,19 @@ export default function DashboardPage() {
                     </span>
                   </button>
                   {showClockOutClientMemo && (
-                    <textarea
-                      value={clockOutClientMemo}
-                      onChange={(e) => setClockOutClientMemo(e.target.value)}
-                      placeholder="Notes visible to the client..."
-                      rows={2}
-                      autoFocus
-                      className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
-                    />
+                    <>
+                      <textarea
+                        value={clockOutClientMemo}
+                        onChange={(e) => setClockOutClientMemo(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
+                        placeholder="Notes visible to the client..."
+                        rows={2}
+                        autoFocus
+                        className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
+                      />
+                      <p className="text-[10px] text-stone mt-1">
+                        {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(clockOutClientMemo))} words remaining
+                      </p>
+                    </>
                   )}
                 </div>
 
@@ -3801,11 +3820,14 @@ export default function DashboardPage() {
                     </label>
                     <textarea
                       value={postBreakClientMemo}
-                      onChange={(e) => setPostBreakClientMemo(e.target.value)}
+                      onChange={(e) => setPostBreakClientMemo(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
                       placeholder="Notes visible to the client..."
                       rows={2}
                       className="w-full rounded-lg border border-sand px-3 py-2 text-xs text-espresso outline-none focus:border-slate-blue resize-none"
                     />
+                    <p className="text-[10px] text-stone mt-1">
+                      {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(postBreakClientMemo))} words remaining
+                    </p>
                   </div>
 
                   {/* Internal Memo */}

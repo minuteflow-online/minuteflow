@@ -5,6 +5,15 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
 import { signOut } from "@/app/actions/auth";
 import { createClient } from "@/lib/supabase/client";
+import { countWords } from "@/lib/utils";
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 
 type NavItem = {
   label: string;
@@ -511,14 +520,19 @@ export default function TopNav({ user }: TopNavProps) {
                     </span>
                   </button>
                   {showLogoutClientMemo && (
-                    <textarea
-                      value={logoutClientMemo}
-                      onChange={(e) => setLogoutClientMemo(e.target.value)}
-                      placeholder="Notes visible to the client..."
-                      rows={2}
-                      autoFocus
-                      className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
-                    />
+                    <>
+                      <textarea
+                        value={logoutClientMemo}
+                        onChange={(e) => setLogoutClientMemo(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
+                        placeholder="Notes visible to the client..."
+                        rows={2}
+                        autoFocus
+                        className="w-full mt-1.5 py-2.5 px-[13px] border border-slate-blue/30 rounded-lg text-[13px] text-ink bg-white outline-none transition-all focus:border-slate-blue focus:shadow-[0_0_0_3px_rgba(100,116,139,0.08)] placeholder:text-stone resize-none"
+                      />
+                      <p className="text-[10px] text-stone mt-1">
+                        {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(logoutClientMemo))} words remaining
+                      </p>
+                    </>
                   )}
                 </div>
 
