@@ -2,6 +2,15 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import type { Profile, Project } from "@/types/database";
+import { countWords } from "@/lib/utils";
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.split(/\s+/);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 
 interface ProjectsManagerProps {
   projects: Project[];
@@ -584,11 +593,12 @@ export default function ProjectsManager({
                 </label>
                 <textarea
                   value={createDetails}
-                  onChange={(e) => setCreateDetails(e.target.value)}
+                  onChange={(e) => setCreateDetails(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
                   placeholder="Optional details"
                   rows={4}
                   className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
                 />
+                <p className="mt-1 text-[10px] text-stone">{Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(createDetails))} words remaining</p>
               </div>
 
               <div>
@@ -697,11 +707,12 @@ export default function ProjectsManager({
                   </label>
                   <textarea
                     value={editDetails}
-                    onChange={(e) => setEditDetails(e.target.value)}
+                    onChange={(e) => setEditDetails(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
                     rows={4}
                     placeholder="Optional details"
                     className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
                   />
+                  <p className="mt-1 text-[10px] text-stone">{Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(editDetails))} words remaining</p>
                 </div>
 
                 <div>
@@ -880,11 +891,12 @@ export default function ProjectsManager({
                                 </label>
                                 <textarea
                                   value={editSubForm.task_detail}
-                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_detail: e.target.value }))}
+                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
                                   rows={1}
                                   placeholder="Task detail"
                                   className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
                                 />
+                                <p className="mt-1 text-[10px] text-stone">{Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(editSubForm.task_detail))} words remaining</p>
                               </div>
 
                               <div>
@@ -1080,11 +1092,12 @@ export default function ProjectsManager({
                     </label>
                     <textarea
                       value={addForm.task_detail}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_detail: e.target.value }))}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
                       rows={1}
                       placeholder="Task detail"
                       className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
                     />
+                    <p className="mt-1 text-[10px] text-stone">{Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(addForm.task_detail))} words remaining</p>
                   </div>
 
                   <div>

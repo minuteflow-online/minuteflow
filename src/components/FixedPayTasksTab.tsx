@@ -2,6 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement } from "react";
 import type { FixedPayTaskAttachment, FixedPayTaskWithClaimer, Profile } from "@/types/database";
+import { countWords } from "@/lib/utils";
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.split(/\s+/);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "all", label: "All" },
@@ -1152,10 +1161,11 @@ export default function FixedPayTasksTab() {
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Detail</label>
                 <textarea
                   value={form.task_detail}
-                  onChange={(event) => setForm((current) => ({ ...current, task_detail: event.target.value }))}
+                  onChange={(event) => setForm((current) => ({ ...current, task_detail: limitToWords(event.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
                   className="min-h-[96px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                   placeholder="Task detail"
                 />
+                <p className="mt-1 text-[10px] text-stone">{Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(form.task_detail))} words remaining</p>
               </div>
 
               <div>
