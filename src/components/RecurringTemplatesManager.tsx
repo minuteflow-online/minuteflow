@@ -1,6 +1,15 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { countWords } from "@/lib/utils";
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 import type { Profile, RecurringTaskTemplate } from "@/types/database";
 
 interface FormObjective {
@@ -917,10 +926,13 @@ export default function RecurringTemplatesManager({
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Detail</label>
                   <input
                     value={form.task_detail}
-                    onChange={(e) => setForm((prev) => ({ ...prev, task_detail: e.target.value }))}
+                    onChange={(e) => setForm((prev) => ({ ...prev, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
                     placeholder="Short summary or reference"
                     className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
                   />
+                  <p className="text-[10px] text-stone mt-1">
+                    {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(form.task_detail))} words remaining
+                  </p>
                 </div>
 
                 <div>

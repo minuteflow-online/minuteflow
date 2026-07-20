@@ -1,6 +1,15 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import { countWords } from "@/lib/utils";
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 import type { Profile, Project } from "@/types/database";
 
 interface VAProjectsTabProps {
@@ -948,11 +957,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                                 </label>
                                 <textarea
                                   value={editSubForm.task_detail}
-                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_detail: e.target.value }))}
+                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
                                   rows={1}
                                   placeholder="Task detail"
                                   className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
                                 />
+                                <p className="text-[10px] text-stone mt-1">
+                                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(editSubForm.task_detail))} words remaining
+                                </p>
                               </div>
 
                               <div>
@@ -1154,11 +1166,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     </label>
                     <textarea
                       value={addForm.task_detail}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_detail: e.target.value }))}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
                       rows={1}
                       placeholder="Task detail"
                       className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
                     />
+                    <p className="text-[10px] text-stone mt-1">
+                      {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(addForm.task_detail))} words remaining
+                    </p>
                   </div>
 
                   <div>
