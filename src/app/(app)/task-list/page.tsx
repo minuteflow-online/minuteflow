@@ -2719,10 +2719,13 @@ export default function TaskListPage() {
                 <input
                   type="text"
                   value={addForm.task_detail}
-                  onChange={(e) => setAddForm((form) => ({ ...form, task_detail: e.target.value }))}
+                  onChange={(e) => setAddForm((form) => ({ ...form, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
                   placeholder="Added to client memo — keep it short and sensible"
                   className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                 />
+                <p className="text-[10px] text-stone mt-1">
+                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(addForm.task_detail))} words remaining
+                </p>
               </div>
 
               <div>
