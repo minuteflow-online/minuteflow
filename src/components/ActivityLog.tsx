@@ -2,10 +2,19 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { countWords } from "@/lib/utils";
 import type { TimeLog, TaskScreenshot, Profile } from "@/types/database";
 import EditTimeLogModal from "./EditTimeLogModal";
 import CorrectionRequestModal from "./CorrectionRequestModal";
 import ScreenshotLightbox from "./ScreenshotLightbox";
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 
 interface ActivityLogProps {
   logs: TimeLog[];
@@ -854,11 +863,14 @@ export default function ActivityLog({
                                 <span className="font-semibold text-slate-blue text-[9px] uppercase tracking-wide">Client</span>
                                 <textarea
                                   value={editClientMemo}
-                                  onChange={(e) => setEditClientMemo(e.target.value)}
+                                  onChange={(e) => setEditClientMemo(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
                                   placeholder="Add client notes..."
                                   className="w-full mt-1 p-1.5 rounded text-[11px] text-espresso bg-white/80 border border-slate-blue/20 resize-none focus:outline-none focus:ring-1 focus:ring-slate-blue/40"
                                   rows={2}
                                 />
+                                <p className="text-[10px] text-stone mt-1">
+                                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(editClientMemo))} words remaining
+                                </p>
                               </div>
                               <div className="p-2 rounded bg-amber-soft/50 border border-amber/20">
                                 <span className="font-semibold text-walnut text-[9px] uppercase tracking-wide">Internal</span>

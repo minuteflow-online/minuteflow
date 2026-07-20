@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { countWords } from "@/lib/utils";
 import type {
   Profile,
   AssignedTaskWithAssignees,
@@ -13,6 +14,14 @@ import type {
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import ProjectsManager from "@/components/ProjectsManager";
+
+const CLIENT_MEMO_WORD_LIMIT = 15;
+
+function limitToWords(text: string, limit: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= limit) return text;
+  return words.slice(0, limit).join(" ");
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -2366,10 +2375,13 @@ export default function TaskAssignmentsAdminTab({
                 <input
                   type="text"
                   value={detailForm.task_detail}
-                  onChange={(e) => setDetailForm((f) => ({ ...f, task_detail: e.target.value }))}
+                  onChange={(e) => setDetailForm((f) => ({ ...f, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
                   placeholder="Short summary or reference..."
                   className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
                 />
+                <p className="text-[10px] text-stone mt-1">
+                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(detailForm.task_detail))} words remaining
+                </p>
               </div>
 
               {/* Notes (larger) */}
