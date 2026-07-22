@@ -749,15 +749,21 @@ export default function DashboardPage() {
   }, [activeTask, userId, supabase, session]);
 
   const closeOpenNonBreakLogs = useCallback(
-    async (now: string) => {
+    async (now: string, excludeLogId?: number) => {
       if (!userId) return;
 
-      const { data: openLogs } = await supabase
+      let query = supabase
         .from("time_logs")
         .select("id, start_time")
         .eq("user_id", userId)
         .is("end_time", null)
         .neq("category", "Clock Out");
+
+      if (excludeLogId !== undefined) {
+        query = query.neq("id", excludeLogId);
+      }
+
+      const { data: openLogs } = await query;
 
       if (openLogs && openLogs.length > 0) {
         const nowDate = new Date(now).toDateString();
@@ -811,8 +817,11 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!userId) return;
     const now = new Date().toISOString();
-    closeOpenNonBreakLogs(now);
-  }, [userId, closeOpenNonBreakLogs]);
+    const activeLogId = session?.active_task?.logId
+      ? parseInt(session.active_task.logId, 10)
+      : undefined;
+    closeOpenNonBreakLogs(now, activeLogId);
+  }, [userId, closeOpenNonBreakLogs, session]);
 
   // ─── Actions ──────────────────────────────────────────────
 
