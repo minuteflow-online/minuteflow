@@ -2536,6 +2536,9 @@ export default function DashboardPage() {
   // Close old task with details, then start new task
   const closeOldAndStartNew = useCallback(async () => {
     if (!liveSessionData || !userId) return;
+    // Don't close the old task unless we actually have something to switch to —
+    // otherwise the old task ends with nothing started, leaving a coverage gap.
+    if (!breakPending && !pendingFormData) return;
     const now = new Date().toISOString();
     const logId = liveSessionData.id;
     const durationMs = Date.now() - new Date(liveSessionData.start_time).getTime();
