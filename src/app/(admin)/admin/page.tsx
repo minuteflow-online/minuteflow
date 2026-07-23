@@ -1689,7 +1689,7 @@ function OverviewTab({
           <button onClick={() => onRefresh()} className="rounded-md bg-sand px-3 py-1 text-[11px] font-medium text-espresso hover:bg-parchment transition-colors">↻ Refresh</button>
         </div>
         <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
-          {monitorMembers.map((member) => (
+          {monitorMembers.filter((m) => m.status !== "off").map((member) => (
             <TeamMemberCard
               key={member.profile.id}
               member={member}
