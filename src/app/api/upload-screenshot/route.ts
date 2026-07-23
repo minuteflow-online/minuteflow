@@ -15,6 +15,26 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9_\-. ]/g, "_").replace(/\s+/g, "_");
 }
 
+// Screenshot filenames previously used raw UTC (new Date().toISOString()), which required
+// manual timezone conversion to read. Format in Eastern time instead so the filename itself
+// is directly readable — this only changes the display string, never the DB created_at
+// timestamp that all real sorting/logic actually uses.
+function formatEasternTimestamp(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  const ms = String(date.getMilliseconds()).padStart(3, "0");
+  return `${map.year}-${map.month}-${map.day}_${map.hour}-${map.minute}-${map.second}-${ms}_ET`;
+}
+
 /** Returns true if the error looks like an auth/token problem. */
 function isAuthError(err: unknown): boolean {
   if (err instanceof Error) {
@@ -135,12 +155,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Build Drive filename
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .replace("T", "_")
-      .replace("Z", "");
+    // Build Drive filename (Eastern time, directly readable — see formatEasternTimestamp)
+    const timestamp = formatEasternTimestamp(new Date());
     const driveFilename = `${sanitizeFilename(vaName)}_${sanitizeFilename(taskName)}_${timestamp}.png`;
 
     // Convert Blob to Buffer once
