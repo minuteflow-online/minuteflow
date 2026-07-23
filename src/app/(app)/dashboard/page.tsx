@@ -823,6 +823,107 @@ export default function DashboardPage() {
     closeOpenNonBreakLogs(now, activeLogId);
   }, [userId, closeOpenNonBreakLogs, session]);
 
+  // ─── Close-the-gap safety net: recover from an ended break with no active task ──────────
+  // endBreak() clears active_task and relies on showPostBreakPrompt (pure client state) to get
+  // the VA into a new task. If the VA reloads, disconnects, or otherwise never resolves that
+  // prompt, they're left clocked in with no running log. Runs once per page load — if a prior
+  // session was left in that gap state, auto-resume the last task that was actually running
+  // before the break so time keeps being logged instead of silently vanishing.
+  const postBreakGapCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!userId || !profile || !session) return;
+    if (postBreakGapCheckedRef.current) return;
+    if (!session.clocked_in || session.active_task) return;
+    postBreakGapCheckedRef.current = true;
+
+    let cancelled = false;
+    (async () => {
+      const { data: openLogs } = await supabase
+        .from("time_logs")
+        .select("id")
+        .eq("user_id", userId)
+        .is("end_time", null)
+        .neq("category", "Break")
+        .neq("category", "Clock Out")
+        .limit(1);
+      if (cancelled || (openLogs && openLogs.length > 0)) return;
+
+      const { data: lastLogs } = await supabase
+        .from("time_logs")
+        .select("*")
+        .eq("user_id", userId)
+        .neq("category", "Break")
+        .neq("category", "Clock Out")
+        .not("end_time", "is", null)
+        .order("end_time", { ascending: false })
+        .limit(1);
+      if (cancelled || !lastLogs || lastLogs.length === 0) return;
+
+      const lastLog = lastLogs[0] as TimeLog;
+      const now = new Date().toISOString();
+      const isBillable = lastLog.category !== "Personal";
+
+      const { data: logData } = await supabase
+        .from("time_logs")
+        .insert({
+          user_id: userId,
+          username: profile.username,
+          full_name: profile.full_name,
+          department: profile.department,
+          position: profile.position,
+          task_name: lastLog.task_name,
+          category: lastLog.category,
+          project: lastLog.project || null,
+          account: lastLog.account || null,
+          client_name: lastLog.client_name || null,
+          start_time: now,
+          billable: isBillable,
+          billing_type: lastLog.billing_type || "hourly",
+          task_rate: lastLog.task_rate ?? null,
+          session_date: session.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+        })
+        .select()
+        .single();
+      if (cancelled) return;
+
+      const resumedTask: ActiveTask = {
+        task_name: lastLog.task_name,
+        category: lastLog.category,
+        project: lastLog.project || "",
+        account: lastLog.account || "",
+        client_name: lastLog.client_name || "",
+        client_memo: "",
+        internal_memo: "",
+        start_time: now,
+        end_time: null,
+        duration_ms: 0,
+        logId: logData?.id?.toString() || "",
+        _startMs: Date.now(),
+        billing_type: lastLog.billing_type || "hourly",
+        task_rate: lastLog.task_rate ?? undefined,
+      };
+
+      await supabase.from("sessions").upsert(
+        {
+          user_id: userId,
+          clocked_in: true,
+          clock_in_time: session.clock_in_time || now,
+          active_task: resumedTask,
+          updated_at: now,
+        },
+        { onConflict: "user_id" }
+      );
+
+      setActiveTask(resumedTask);
+      setSession((prev) => (prev ? { ...prev, active_task: resumedTask } : prev));
+      if (logData) {
+        setTimeLogs((prev) => [logData as TimeLog, ...prev]);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [userId, profile, session, supabase, orgTimezone]);
+
   // ─── Actions ──────────────────────────────────────────────
 
   const clockIn = useCallback(async () => {
