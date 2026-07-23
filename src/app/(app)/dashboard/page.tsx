@@ -757,6 +757,7 @@ export default function DashboardPage() {
         .select("id, start_time")
         .eq("user_id", userId)
         .is("end_time", null)
+        .neq("category", "Break")
         .neq("category", "Clock Out");
 
       if (excludeLogId !== undefined) {
@@ -1026,12 +1027,18 @@ export default function DashboardPage() {
           notifyVA("⚠️ SCE not connected", "Log in to your SCE extension to enable screenshots.");
         }
       }
+    } else {
+      console.error("clockIn: sessions upsert failed", error);
+      notifyVA("⚠️ Clock In may not have registered", "Something went wrong saving your clock-in. Please refresh and check your status before continuing.");
     }
     setSessionActionPending(false);
   }, [userId, profile, supabase, sessionActionPendingRef, notifyVA, refreshSession]);
 
   const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null, dayRating?: number | null, dayRatingNote?: string) => {
-    if (!userId) return;
+    // Check ref synchronously — state check alone has an async race that allows
+    // double-clicks to both pass before either setState has landed.
+    if (!userId || sessionActionPendingRef.current) return;
+    setSessionActionPending(true);
     const now = new Date().toISOString();
 
     // ─── Safety net: close any orphaned open task logs before clocking out ───
@@ -1302,8 +1309,12 @@ export default function DashboardPage() {
       }
       stopStream();
       activeLogIdRef.current = null;
+    } else {
+      console.error("performClockOut: sessions upsert failed", error);
+      notifyVA("⚠️ Clock Out may not have registered", "Something went wrong saving your clock-out. Please refresh and check your status before trying again.");
     }
-  }, [userId, profile, supabase, stopStream, refreshSession]);
+    setSessionActionPending(false);
+  }, [userId, profile, supabase, stopStream, refreshSession, sessionActionPendingRef, notifyVA]);
 
   const clockOut = useCallback(async () => {
     if (!userId) return;
