@@ -7,11 +7,11 @@ export const dynamic = "force-dynamic";
 // refreshed every 60s while a tab is open) has gone stale for this long. Covers the
 // case where a VA's computer goes idle, the lid closes, or it loses power/network
 // while a task is active — nothing else in the app currently detects or caps that.
-const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes (Toni's preference, 2026-07-23)
 
 /**
  * GET /api/cron/idle-timeout
- * Every 5 min: find sessions with an active task whose heartbeat has gone stale,
+ * Every 10 min (triggered by VPS crontab, not Vercel Cron): find sessions with an active task whose heartbeat has gone stale,
  * and close that task's time_logs row using the LAST KNOWN heartbeat time as
  * end_time (never "now") — so dead/offline time is never counted as worked time.
  * The VA can file a time_correction_requests request for Tony's approval if the
