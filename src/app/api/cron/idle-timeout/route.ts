@@ -19,8 +19,11 @@ const STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
  * Secured by CRON_SECRET (set in Vercel env + vercel.json crons).
  */
 export async function GET(request: NextRequest) {
+  // Dedicated secret (not the shared Vercel CRON_SECRET) — this endpoint is triggered
+  // by the VPS crontab, not Vercel Cron, since Vercel Cron on the Hobby plan only
+  // supports daily schedules and this needs to run every ~10 minutes.
   const authHeader = request.headers.get("authorization");
-  const expectedSecret = process.env.CRON_SECRET;
+  const expectedSecret = process.env.IDLE_TIMEOUT_CRON_SECRET;
   if (!expectedSecret || authHeader !== `Bearer ${expectedSecret}`) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
