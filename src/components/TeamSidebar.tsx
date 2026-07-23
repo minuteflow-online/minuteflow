@@ -94,7 +94,7 @@ export default function TeamSidebar({ members, timeLogs = [], timezone = "UTC" }
         </span>
       </div>
       <div className="p-[18px_20px]">
-        {members.map((member, i) => {
+        {members.filter((member) => getMemberStatus(member.session) !== "away").map((member, i) => {
           const status = getMemberStatus(member.session);
           const currentTask = member.session?.active_task;
           const taskLabel = currentTask
