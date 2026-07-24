@@ -55,6 +55,21 @@ export async function GET(request: NextRequest) {
     const lastHeartbeat = s.updated_at as string;
     const logId = activeTask?.logId ? parseInt(activeTask.logId, 10) : null;
 
+    // The session's own updated_at heartbeat (refreshed by the open tab) is not the
+    // only liveness signal — the SCE browser extension sends its own heartbeat to
+    // extension_heartbeats.last_seen independently. If that heartbeat is still fresh,
+    // the VA's machine is genuinely active (extension running) even though the tab's
+    // updated_at went stale, so don't kill the task.
+    const { data: extHeartbeat } = await supabase
+      .from("extension_heartbeats")
+      .select("last_seen")
+      .eq("user_id", s.user_id)
+      .single();
+
+    if (extHeartbeat?.last_seen && new Date(extHeartbeat.last_seen).getTime() >= new Date(cutoff).getTime()) {
+      continue;
+    }
+
     if (logId) {
       const { data: log } = await supabase
         .from("time_logs")
