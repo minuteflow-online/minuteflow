@@ -7706,6 +7706,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     }
     setPaymentError("");
 
+    // Delete the mirrored financial_payments row (inserted alongside invoice_payments
+    // in handleAddPayment/handleMarkPaid). There's no FK, so match on the same fields
+    // used to construct it at insert time.
+    const mirrorNotes = `Invoice #${selectedInvoice.invoice_number}${payment.notes ? ` — ${payment.notes}` : ""}`;
+    await supabase
+      .from("financial_payments")
+      .delete()
+      .eq("amount", payment.amount)
+      .eq("payment_date", payment.payment_date)
+      .eq("notes", mirrorNotes);
+
     // Recalculate amount_paid and status
     const newAmountPaid = Math.max(0, Number(selectedInvoice.amount_paid || 0) - Number(payment.amount));
     const invoiceTotal = Number(selectedInvoice.total);
@@ -8214,6 +8225,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (!confirm(`Permanently delete invoice ${invoice.invoice_number}? This cannot be undone.`)) return;
     await supabase.from("invoice_line_items").delete().eq("invoice_id", invoice.id);
     await supabase.from("invoice_payments").delete().eq("invoice_id", invoice.id);
+    // Delete mirrored financial_payments rows (see handleAddPayment/handleMarkPaid inserts)
+    await supabase.from("financial_payments").delete().like("notes", `Invoice #${invoice.invoice_number}%`);
     await supabase.from("invoices").delete().eq("id", invoice.id);
     fetchInvoices();
   };
