@@ -6747,6 +6747,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [paymentNotes, setPaymentNotes] = useState("");
   const [savingPayment, setSavingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState("");
+  const [deletingPaymentId, setDeletingPaymentId] = useState<number | null>(null);
 
   // Edit invoice state
   const [editingInvoice, setEditingInvoice] = useState(false);
@@ -7686,6 +7687,55 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setPaymentNotes("");
     setShowPaymentForm(false);
     setSavingPayment(false);
+    fetchInvoices();
+  };
+
+  /* ── Delete a single payment from an invoice ─────────────── */
+
+  const handleDeletePayment = async (payment: InvoicePayment) => {
+    if (!selectedInvoice) return;
+    if (!confirm(`Delete this payment of ${formatCurrency(Number(payment.amount))}? This cannot be undone.`)) return;
+
+    setDeletingPaymentId(payment.id);
+
+    const { error } = await supabase.from("invoice_payments").delete().eq("id", payment.id);
+    if (error) {
+      setPaymentError(error.message || "Failed to delete payment. Please try again.");
+      setDeletingPaymentId(null);
+      return;
+    }
+    setPaymentError("");
+
+    // Recalculate amount_paid and status
+    const newAmountPaid = Math.max(0, Number(selectedInvoice.amount_paid || 0) - Number(payment.amount));
+    const invoiceTotal = Number(selectedInvoice.total);
+    const prevBalance = Number(selectedInvoice.previous_balance || 0);
+    const grandTotal = invoiceTotal + prevBalance;
+
+    let newStatus: Invoice["status"] = selectedInvoice.status;
+    if (newAmountPaid >= grandTotal - 0.01) {
+      newStatus = "paid";
+    } else if (newAmountPaid > 0) {
+      newStatus = "partially_paid";
+    } else if (selectedInvoice.status === "paid" || selectedInvoice.status === "partially_paid") {
+      newStatus = "sent";
+    }
+
+    await supabase
+      .from("invoices")
+      .update({
+        amount_paid: newAmountPaid,
+        status: newStatus,
+        ...(newStatus !== "paid" ? { paid_date: null } : {}),
+      })
+      .eq("id", selectedInvoice.id);
+
+    setSelectedInvoice((prev) =>
+      prev ? { ...prev, amount_paid: newAmountPaid, status: newStatus, ...(newStatus !== "paid" ? { paid_date: null } : {}) } : null
+    );
+
+    setInvoicePayments((prev) => prev.filter((p) => p.id !== payment.id));
+    setDeletingPaymentId(null);
     fetchInvoices();
   };
 
@@ -10483,6 +10533,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     <th className="px-3 py-2.5">Method</th>
                     <th className="px-3 py-2.5">Reference</th>
                     <th className="px-3 py-2.5">Notes</th>
+                    <th className="px-3 py-2.5 text-right"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-parchment">
@@ -10495,6 +10546,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       <td className="px-3 py-2.5 text-bark capitalize">{pmt.payment_method?.replace("_", " ") || "-"}</td>
                       <td className="px-3 py-2.5 text-bark">{pmt.reference_number || "-"}</td>
                       <td className="px-3 py-2.5 text-bark text-[11px]">{pmt.notes || "-"}</td>
+                      <td className="px-3 py-2.5 text-right">
+                        <button
+                          onClick={() => handleDeletePayment(pmt)}
+                          disabled={deletingPaymentId === pmt.id}
+                          className="text-[11px] text-red-400 hover:text-red-600 hover:underline disabled:opacity-50"
+                        >
+                          {deletingPaymentId === pmt.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
