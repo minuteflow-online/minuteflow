@@ -17,6 +17,7 @@ import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone, countWords } from "@/lib/utils";
+import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import type {
   Profile,
   Session,
@@ -2149,16 +2150,12 @@ export default function DashboardPage() {
         // Auto-update assignment status for fixed tasks too
         await autoUpdateAssignmentStatus(formData.task_name);
         if (formData._assignedTaskId) {
-          fetch('/api/assigned-tasks/' + formData._assignedTaskId, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              status: 'in_progress',
-              ...(role === "admin" || role === "manager" ? { va_id: userId } : {}),
-            }),
-          })
-            .then(() => setWidgetRefetchCount((c) => c + 1))
-            .catch(console.error);
+          void setAssignedTaskStatus({
+            assignedTaskId: formData._assignedTaskId,
+            status: "in_progress",
+            vaId: userId,
+            logId: logData?.id ?? null,
+          }).then(() => setWidgetRefetchCount((c) => c + 1));
         }
         return; // No timer, no active task, no screenshots
       }
@@ -2278,18 +2275,12 @@ export default function DashboardPage() {
       if (assignedTaskIdToMark && logData) {
         setPendingAssignedTaskId(null);
         pendingAssignedTaskIdRef.current = null;
-        fetch(`/api/assigned-tasks/${assignedTaskIdToMark}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            status: "in_progress",
-            log_id: logData.id,
-            // Admin/manager users need va_id so the API knows which assignee row to update
-            ...(role === "admin" || role === "manager" ? { va_id: userId } : {}),
-          }),
-        })
-          .then(() => setWidgetRefetchCount((c) => c + 1))
-          .catch(console.error);
+        void setAssignedTaskStatus({
+          assignedTaskId: assignedTaskIdToMark,
+          status: "in_progress",
+          vaId: userId,
+          logId: logData.id,
+        }).then(() => setWidgetRefetchCount((c) => c + 1));
       }
 
       const newActiveTask: ActiveTask = {

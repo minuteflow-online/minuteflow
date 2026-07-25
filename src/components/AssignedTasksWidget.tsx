@@ -2,6 +2,7 @@
 
 import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import type { VAAssignedTask, AssignedTaskStatus } from "@/types/database";
+import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 
 interface AssignedTasksWidgetProps {
   userId: string;
@@ -162,15 +163,13 @@ export default function AssignedTasksWidget({
       setUpdatingIds((prev) => new Set(prev).add(id));
 
       try {
-        const body: Record<string, unknown> = { status: newStatus };
-        if (isAdmin) body.va_id = userId;
-        const res = await fetch(`/api/assigned-tasks/${task.assigned_tasks.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+        const ok = await setAssignedTaskStatus({
+          assignedTaskId: task.assigned_tasks.id,
+          status: newStatus,
+          vaId: userId,
         });
 
-        if (!res.ok) {
+        if (!ok) {
           setTasks((prev) =>
             prev
               .map((t) => (t.id === id ? { ...t, status: task.status } : t))
@@ -212,7 +211,7 @@ export default function AssignedTasksWidget({
         });
       }
     },
-    [isAdmin, userId]
+    [userId]
   );
 
   const toggleExpand = useCallback((id: number) => {

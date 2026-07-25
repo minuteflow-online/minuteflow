@@ -395,12 +395,21 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ ok: true });
   }
 
-  // Task owners (non-admin) may pass va_id to target a specific assignee row for
-  // status-only updates (e.g., reviewing a submitted task). Block everything else.
+  // A task owner acting on their OWN assignee row is just an ordinary assignee and must
+  // be allowed the same log_id/notes writes as anyone else. Without this, a VA who is
+  // both the assigner and an assignee (the normal shape for tasks created from the
+  // Projects tab) got a 403 when hitting Start, because the Start PATCH carries log_id —
+  // so their assignee row never moved to in_progress and the button stayed on "Start".
+  const isSelfTargetedAssigneeUpdate = bodyVaId === undefined || bodyVaId === user.id;
+
+  // Task owners (non-admin) may pass va_id to target ANOTHER assignee's row, but only for
+  // status-only updates (e.g., reviewing submitted work). Block everything else.
   if (
     isTaskOwner &&
     !isAdminOrManager &&
-    (hasCoreMetadataUpdate || log_id !== undefined || notes !== undefined || hasDeleteUpdate)
+    (hasCoreMetadataUpdate ||
+      hasDeleteUpdate ||
+      ((log_id !== undefined || notes !== undefined) && !isSelfTargetedAssigneeUpdate))
   ) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
