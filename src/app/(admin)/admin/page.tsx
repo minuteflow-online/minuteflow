@@ -10560,13 +10560,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       <td className="px-3 py-2.5 text-bark">{pmt.reference_number || "-"}</td>
                       <td className="px-3 py-2.5 text-bark text-[11px]">{pmt.notes || "-"}</td>
                       <td className="px-3 py-2.5 text-right">
-                        <button
-                          onClick={() => handleDeletePayment(pmt)}
-                          disabled={deletingPaymentId === pmt.id}
-                          className="text-[11px] text-red-400 hover:text-red-600 hover:underline disabled:opacity-50"
-                        >
-                          {deletingPaymentId === pmt.id ? "Deleting..." : "Delete"}
-                        </button>
+                        {!pmt.square_payment_id && (
+                          <button
+                            onClick={() => handleDeletePayment(pmt)}
+                            disabled={deletingPaymentId === pmt.id}
+                            className="text-[11px] text-red-400 hover:text-red-600 hover:underline disabled:opacity-50"
+                          >
+                            {deletingPaymentId === pmt.id ? "Deleting..." : "Delete"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
