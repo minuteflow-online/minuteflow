@@ -3,25 +3,31 @@ import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// A task is considered abandoned once its session's heartbeat (sessions.updated_at,
-// refreshed every 60s while a tab is open) has gone stale for this long. Covers the
-// case where a VA's computer goes idle, the lid closes, or it loses power/network
-// while a task is active — nothing else in the app currently detects or caps that.
-const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes (Toni's preference, 2026-07-23)
+// How long a session heartbeat (sessions.updated_at, refreshed every 60s while a tab
+// is open) must be stale before we consider the session *possibly* idle. This is used
+// for REPORTING ONLY — see the note below.
+const STALE_THRESHOLD_MS = 15 * 60 * 1000;
 
 /**
  * GET /api/cron/idle-timeout
- * Every 10 min (triggered by VPS crontab, not Vercel Cron): find sessions with an active task whose heartbeat has gone stale,
- * and close that task's time_logs row using the LAST KNOWN heartbeat time as
- * end_time (never "now") — so dead/offline time is never counted as worked time.
- * The VA can file a time_correction_requests request for Tony's approval if the
- * stop was wrong (e.g. a legitimate brief disconnect).
- * Secured by CRON_SECRET (set in Vercel env + vercel.json crons).
+ *
+ * REPORT-ONLY as of 2026-07-24. This endpoint no longer ends anything.
+ *
+ * The time model (authoritative, per Regie): a SESSION (clock-in -> clock-out) is one
+ * continuous span. TASKS only ever START — starting a new task hands off from the
+ * previous one. A task may ONLY be ended by a task-switch or a logout, NEVER by
+ * inactivity. A task with an end and no successor is a bug, not a fact.
+ *
+ * The previous version auto-closed time_logs rows and cleared sessions.active_task
+ * when a heartbeat went stale, which read to the client as the system losing worked
+ * time. It also gated that kill on extension_heartbeats.last_seen being fresh, which
+ * failed for 9 of 10 VAs (stale/old extension versions), so the guard never protected
+ * them. Both behaviours are removed. This route now only reports candidates so the
+ * pattern stays observable in the cron log.
+ *
+ * Secured by IDLE_TIMEOUT_CRON_SECRET (VPS crontab, every 10 min).
  */
 export async function GET(request: NextRequest) {
-  // Dedicated secret (not the shared Vercel CRON_SECRET) — this endpoint is triggered
-  // by the VPS crontab, not Vercel Cron, since Vercel Cron on the Hobby plan only
-  // supports daily schedules and this needs to run every ~10 minutes.
   const authHeader = request.headers.get("authorization");
   const expectedSecret = process.env.IDLE_TIMEOUT_CRON_SECRET;
   if (!expectedSecret || authHeader !== `Bearer ${expectedSecret}`) {
@@ -48,67 +54,21 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: "Failed to query sessions" }, { status: 500 });
   }
 
-  const results: { user_id: string; log_id: number | null; stopped_at: string }[] = [];
-
-  for (const s of staleSessions || []) {
+  const candidates = (staleSessions || []).map((s) => {
     const activeTask = s.active_task as { logId?: string; start_time?: string } | null;
-    const lastHeartbeat = s.updated_at as string;
-    const logId = activeTask?.logId ? parseInt(activeTask.logId, 10) : null;
+    return {
+      user_id: s.user_id as string,
+      log_id: activeTask?.logId ? parseInt(activeTask.logId, 10) : null,
+      last_heartbeat: s.updated_at as string,
+    };
+  });
 
-    // The session's own updated_at heartbeat (refreshed by the open tab) is not the
-    // only liveness signal — the SCE browser extension sends its own heartbeat to
-    // extension_heartbeats.last_seen independently. If that heartbeat is still fresh,
-    // the VA's machine is genuinely active (extension running) even though the tab's
-    // updated_at went stale, so don't kill the task.
-    const { data: extHeartbeat } = await supabase
-      .from("extension_heartbeats")
-      .select("last_seen")
-      .eq("user_id", s.user_id)
-      .single();
-
-    if (extHeartbeat?.last_seen && new Date(extHeartbeat.last_seen).getTime() >= new Date(cutoff).getTime()) {
-      continue;
-    }
-
-    if (logId) {
-      const { data: log } = await supabase
-        .from("time_logs")
-        .select("id, start_time, end_time, internal_memo")
-        .eq("id", logId)
-        .single();
-
-      // Only close it if it's genuinely still open — avoid clobbering a log that
-      // was already closed through a normal path between our query and this write.
-      if (log && !log.end_time) {
-        const startMs = log.start_time ? new Date(log.start_time).getTime() : new Date(lastHeartbeat).getTime();
-        const endMs = new Date(lastHeartbeat).getTime();
-        const durationMs = Math.max(0, endMs - startMs);
-        const note = `[Auto-stopped by idle-timeout cron: no heartbeat since ${lastHeartbeat}]`;
-
-        await supabase
-          .from("time_logs")
-          .update({
-            end_time: lastHeartbeat,
-            duration_ms: durationMs,
-            internal_memo: log.internal_memo ? `${log.internal_memo}\n${note}` : note,
-          })
-          .eq("id", logId);
-      }
-    }
-
-    // Clear active_task but leave clocked_in as-is — this stops the task, it
-    // does not clock the VA out. They'll see the post-stop state on next load.
-    await supabase
-      .from("sessions")
-      .update({ active_task: null })
-      .eq("user_id", s.user_id);
-
-    results.push({ user_id: s.user_id, log_id: logId, stopped_at: lastHeartbeat });
+  if (candidates.length > 0) {
+    console.log(
+      `idle-timeout cron (REPORT-ONLY, no action taken): ${candidates.length} session(s) with a stale heartbeat`,
+      candidates
+    );
   }
 
-  if (results.length > 0) {
-    console.log(`idle-timeout cron: auto-stopped ${results.length} stale task(s)`, results);
-  }
-
-  return Response.json({ stopped: results.length, results });
+  return Response.json({ mode: "report-only", stopped: 0, candidates });
 }
