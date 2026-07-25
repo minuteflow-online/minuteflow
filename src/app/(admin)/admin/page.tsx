@@ -7710,12 +7710,19 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     // in handleAddPayment/handleMarkPaid). There's no FK, so match on the same fields
     // used to construct it at insert time.
     const mirrorNotes = `Invoice #${selectedInvoice.invoice_number}${payment.notes ? ` — ${payment.notes}` : ""}`;
-    await supabase
+    // Resolve a single mirror row first: two identical payments on the same invoice produce
+    // two identical mirror rows, and an unbounded delete would remove both.
+    const { data: mirrorRows } = await supabase
       .from("financial_payments")
-      .delete()
+      .select("id")
       .eq("amount", payment.amount)
       .eq("payment_date", payment.payment_date)
-      .eq("notes", mirrorNotes);
+      .eq("notes", mirrorNotes)
+      .order("id", { ascending: true })
+      .limit(1);
+    if (mirrorRows && mirrorRows.length > 0) {
+      await supabase.from("financial_payments").delete().eq("id", mirrorRows[0].id);
+    }
 
     // Recalculate amount_paid and status
     const newAmountPaid = Math.max(0, Number(selectedInvoice.amount_paid || 0) - Number(payment.amount));
@@ -8225,8 +8232,13 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     if (!confirm(`Permanently delete invoice ${invoice.invoice_number}? This cannot be undone.`)) return;
     await supabase.from("invoice_line_items").delete().eq("invoice_id", invoice.id);
     await supabase.from("invoice_payments").delete().eq("invoice_id", invoice.id);
-    // Delete mirrored financial_payments rows (see handleAddPayment/handleMarkPaid inserts)
-    await supabase.from("financial_payments").delete().like("notes", `Invoice #${invoice.invoice_number}%`);
+    // Delete mirrored financial_payments rows (see handleAddPayment/handleMarkPaid inserts).
+    // Those inserts write notes as either `Invoice #<number>` or `Invoice #<number> — <notes>`,
+    // so match those two shapes exactly. A bare `Invoice #<number>%` prefix match would also
+    // delete rows belonging to any invoice whose number merely starts with this one.
+    const mirrorNotesPrefix = `Invoice #${invoice.invoice_number}`;
+    await supabase.from("financial_payments").delete().eq("notes", mirrorNotesPrefix);
+    await supabase.from("financial_payments").delete().like("notes", `${mirrorNotesPrefix} — %`);
     await supabase.from("invoices").delete().eq("id", invoice.id);
     fetchInvoices();
   };
