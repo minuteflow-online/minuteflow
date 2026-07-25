@@ -40,12 +40,13 @@ const COLOR_POOL = [
   "var(--color-amber)",
 ];
 
-function getUserColor(username: string): string {
-  if (!AVATAR_COLORS[username]) {
+function getUserColor(username: string | null | undefined): string {
+  const key = username || "Unknown";
+  if (!AVATAR_COLORS[key]) {
     const idx = Object.keys(AVATAR_COLORS).length % COLOR_POOL.length;
-    AVATAR_COLORS[username] = COLOR_POOL[idx];
+    AVATAR_COLORS[key] = COLOR_POOL[idx];
   }
-  return AVATAR_COLORS[username];
+  return AVATAR_COLORS[key];
 }
 
 /** Normalize old DB category names to current display names */
@@ -152,7 +153,7 @@ function PencilIcon({ className }: { className?: string }) {
 }
 
 export default function ActivityLog({
-  logs,
+  logs: rawLogs,
   screenshots,
   onAddScreenshot,
   role = "va",
@@ -164,6 +165,17 @@ export default function ActivityLog({
   onUpdateProgress,
 }: ActivityLogProps) {
   const isAdminOrManager = role === "admin" || role === "manager";
+
+  // Defensive: a null/empty username in time_logs previously crashed the entire
+  // dashboard render (TypeError: Cannot read properties of null (reading '0')).
+  // Normalize once here so every downstream filter/memo/render is null-safe.
+  const logs = useMemo(
+    () =>
+      (rawLogs ?? []).map((log) =>
+        log && log.username ? log : { ...log, username: (log && log.full_name) || "Unknown" }
+      ),
+    [rawLogs]
+  );
   const [search, setSearch] = useState("");
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -374,9 +386,9 @@ export default function ActivityLog({
       if (search) {
         const q = search.toLowerCase();
         const match =
-          log.task_name.toLowerCase().includes(q) ||
-          log.username.toLowerCase().includes(q) ||
-          log.full_name.toLowerCase().includes(q) ||
+          (log.task_name ?? "").toLowerCase().includes(q) ||
+          (log.username ?? "").toLowerCase().includes(q) ||
+          (log.full_name ?? "").toLowerCase().includes(q) ||
           (log.account || "").toLowerCase().includes(q) ||
           (log.project || "").toLowerCase().includes(q);
         if (!match) return false;
@@ -410,9 +422,9 @@ export default function ActivityLog({
       if (search) {
         const q = search.toLowerCase();
         const match =
-          log.task_name.toLowerCase().includes(q) ||
-          log.username.toLowerCase().includes(q) ||
-          log.full_name.toLowerCase().includes(q) ||
+          (log.task_name ?? "").toLowerCase().includes(q) ||
+          (log.username ?? "").toLowerCase().includes(q) ||
+          (log.full_name ?? "").toLowerCase().includes(q) ||
           (log.account || "").toLowerCase().includes(q) ||
           (log.project || "").toLowerCase().includes(q);
         if (!match) return false;
@@ -437,9 +449,9 @@ export default function ActivityLog({
       if (search) {
         const q = search.toLowerCase();
         const match =
-          log.task_name.toLowerCase().includes(q) ||
-          log.username.toLowerCase().includes(q) ||
-          log.full_name.toLowerCase().includes(q) ||
+          (log.task_name ?? "").toLowerCase().includes(q) ||
+          (log.username ?? "").toLowerCase().includes(q) ||
+          (log.full_name ?? "").toLowerCase().includes(q) ||
           (log.account || "").toLowerCase().includes(q) ||
           (log.project || "").toLowerCase().includes(q);
         if (!match) return false;
@@ -603,7 +615,7 @@ export default function ActivityLog({
                 className="w-[18px] h-[18px] rounded-full text-[9px] font-bold text-white inline-flex items-center justify-center"
                 style={{ backgroundColor: getUserColor(user.username) }}
               >
-                {user.username[0]?.toUpperCase()}
+                {user.username?.[0]?.toUpperCase() ?? "?"}
               </span>
               {user.username}
               <span className="text-[10px] opacity-60">{user.count}</span>
@@ -812,7 +824,7 @@ export default function ActivityLog({
                             className="w-[24px] h-[24px] rounded-full text-[9px] font-bold text-white flex items-center justify-center shrink-0"
                             style={{ backgroundColor: getUserColor(log.username) }}
                           >
-                            {log.username[0]?.toUpperCase()}
+                            {log.username?.[0]?.toUpperCase() ?? "?"}
                           </div>
                           <span className="text-[12px] text-espresso">{log.username}</span>
                         </div>
@@ -1275,7 +1287,7 @@ export default function ActivityLog({
                             className="w-[20px] h-[20px] rounded-full text-[8px] font-bold text-white flex items-center justify-center shrink-0"
                             style={{ backgroundColor: getUserColor(log.username) }}
                           >
-                            {log.username[0]?.toUpperCase()}
+                            {log.username?.[0]?.toUpperCase() ?? "?"}
                           </div>
                           <span className="text-[11px] text-espresso">{log.username}</span>
                         </div>
@@ -1351,7 +1363,7 @@ export default function ActivityLog({
                             className="w-[20px] h-[20px] rounded-full text-[8px] font-bold text-white flex items-center justify-center shrink-0"
                             style={{ backgroundColor: getUserColor(log.username) }}
                           >
-                            {log.username[0]?.toUpperCase()}
+                            {log.username?.[0]?.toUpperCase() ?? "?"}
                           </div>
                           <span className="text-[11px] text-espresso">{log.username}</span>
                         </div>
