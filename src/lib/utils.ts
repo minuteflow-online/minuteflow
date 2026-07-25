@@ -120,10 +120,15 @@ export function getTimezoneAbbr(timezone: string): string {
 }
 
 /**
- * Get the start/end boundaries of a specific day (as represented in a given timezone)
- * for any reference Date, returned as UTC ISO strings.
+ * Convert local midnight (year/month/day, month is 0-indexed) in a given timezone
+ * to the equivalent UTC instant.
+ *
+ * The UTC offset is derived from the target instant itself (not from "now"), so this
+ * stays correct across DST transitions — reusing a single "now"-based offset for a
+ * boundary date on the other side of a DST change silently shifts it by a day/hour.
  */
-export function getDayBoundsInTimezone(date: Date, timezone: string): { start: string; end: string } {
+function localMidnightToUtc(year: number, month: number, day: number, timezone: string): Date {
+  const guess = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
@@ -134,22 +139,38 @@ export function getDayBoundsInTimezone(date: Date, timezone: string): { start: s
     second: "2-digit",
     hour12: false,
   });
+  const parts = formatter.formatToParts(guess);
+  const gYear = parseInt(parts.find(p => p.type === "year")!.value);
+  const gMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
+  const gDay = parseInt(parts.find(p => p.type === "day")!.value);
+  const gHour = parseInt(parts.find(p => p.type === "hour")!.value);
+  const gMinute = parseInt(parts.find(p => p.type === "minute")!.value);
+  const gSecond = parseInt(parts.find(p => p.type === "second")!.value);
+  const tzAsUtc = Date.UTC(gYear, gMonth, gDay, gHour, gMinute, gSecond);
+  const offsetMs = tzAsUtc - guess.getTime();
+  return new Date(guess.getTime() - offsetMs);
+}
+
+/**
+ * Get the start/end boundaries of a specific day (as represented in a given timezone)
+ * for any reference Date, returned as UTC ISO strings.
+ */
+export function getDayBoundsInTimezone(date: Date, timezone: string): { start: string; end: string } {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour12: false,
+  });
   const parts = formatter.formatToParts(date);
   const tzYear = parseInt(parts.find(p => p.type === "year")!.value);
   const tzMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
   const tzDay = parseInt(parts.find(p => p.type === "day")!.value);
-  const tzHour = parseInt(parts.find(p => p.type === "hour")!.value);
-  const tzMinute = parseInt(parts.find(p => p.type === "minute")!.value);
-  const tzSecond = parseInt(parts.find(p => p.type === "second")!.value);
 
-  // Compute the UTC offset for this timezone at this moment
-  const tzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, tzHour, tzMinute, tzSecond));
-  const offsetMs = tzAsUtc.getTime() - date.getTime();
-
-  // Midnight of that day in tz → UTC
-  const midnightTzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, 0, 0, 0, 0));
-  const startUtc = new Date(midnightTzAsUtc.getTime() - offsetMs);
-  const endUtc = new Date(midnightTzAsUtc.getTime() - offsetMs + 24 * 60 * 60 * 1000 - 1);
+  const startUtc = localMidnightToUtc(tzYear, tzMonth, tzDay, timezone);
+  const nextDayUtc = localMidnightToUtc(tzYear, tzMonth, tzDay + 1, timezone);
+  const endUtc = new Date(nextDayUtc.getTime() - 1);
 
   return { start: startUtc.toISOString(), end: endUtc.toISOString() };
 }
@@ -172,27 +193,20 @@ export function getWeekBoundsInTimezone(timezone: string): { start: string; end:
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
     hour12: false,
   });
   const parts = formatter.formatToParts(now);
   const tzYear = parseInt(parts.find(p => p.type === "year")!.value);
   const tzMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
   const tzDay = parseInt(parts.find(p => p.type === "day")!.value);
-  const tzHour = parseInt(parts.find(p => p.type === "hour")!.value);
-  const tzMinute = parseInt(parts.find(p => p.type === "minute")!.value);
-  const tzSecond = parseInt(parts.find(p => p.type === "second")!.value);
-  const tzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, tzHour, tzMinute, tzSecond));
-  const offsetMs = tzAsUtc.getTime() - now.getTime();
   // Find Monday of current week in timezone
   const jsDay = new Date(tzYear, tzMonth, tzDay).getDay(); // 0=Sun
   const diffToMonday = jsDay === 0 ? -6 : 1 - jsDay;
   const mondayDate = new Date(tzYear, tzMonth, tzDay + diffToMonday);
   const sundayDate = new Date(tzYear, tzMonth, tzDay + diffToMonday + 6);
-  const startUtc = new Date(Date.UTC(mondayDate.getFullYear(), mondayDate.getMonth(), mondayDate.getDate(), 0, 0, 0) - offsetMs);
-  const endUtc = new Date(Date.UTC(sundayDate.getFullYear(), sundayDate.getMonth(), sundayDate.getDate(), 0, 0, 0) - offsetMs + 24 * 60 * 60 * 1000 - 1);
+  const startUtc = localMidnightToUtc(mondayDate.getFullYear(), mondayDate.getMonth(), mondayDate.getDate(), timezone);
+  const nextWeekStartUtc = localMidnightToUtc(sundayDate.getFullYear(), sundayDate.getMonth(), sundayDate.getDate() + 1, timezone);
+  const endUtc = new Date(nextWeekStartUtc.getTime() - 1);
   return { start: startUtc.toISOString(), end: endUtc.toISOString() };
 }
 
@@ -206,24 +220,16 @@ export function getMonthBoundsForDate(date: Date, timezone: string): { start: st
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
     hour12: false,
   });
   const parts = formatter.formatToParts(date);
   const tzYear = parseInt(parts.find(p => p.type === "year")!.value);
   const tzMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
-  const tzDay = parseInt(parts.find(p => p.type === "day")!.value);
-  const tzHour = parseInt(parts.find(p => p.type === "hour")!.value);
-  const tzMinute = parseInt(parts.find(p => p.type === "minute")!.value);
-  const tzSecond = parseInt(parts.find(p => p.type === "second")!.value);
-  const tzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, tzHour, tzMinute, tzSecond));
-  const offsetMs = tzAsUtc.getTime() - date.getTime();
   const firstDay = new Date(tzYear, tzMonth, 1);
   const lastDay = new Date(tzYear, tzMonth + 1, 0);
-  const startUtc = new Date(Date.UTC(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate(), 0, 0, 0) - offsetMs);
-  const endUtc = new Date(Date.UTC(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate(), 0, 0, 0) - offsetMs + 24 * 60 * 60 * 1000 - 1);
+  const startUtc = localMidnightToUtc(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate(), timezone);
+  const nextMonthStartUtc = localMidnightToUtc(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate() + 1, timezone);
+  const endUtc = new Date(nextMonthStartUtc.getTime() - 1);
   return { start: startUtc.toISOString(), end: endUtc.toISOString() };
 }
 
@@ -238,26 +244,13 @@ export function getYearBoundsInTimezone(timezone: string): { start: string; end:
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
     hour12: false,
   });
   const parts = formatter.formatToParts(now);
   const tzYear = parseInt(parts.find(p => p.type === "year")!.value);
-  const tzMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
-  const tzDay = parseInt(parts.find(p => p.type === "day")!.value);
-  const tzHour = parseInt(parts.find(p => p.type === "hour")!.value);
-  const tzMinute = parseInt(parts.find(p => p.type === "minute")!.value);
-  const tzSecond = parseInt(parts.find(p => p.type === "second")!.value);
-  const tzAsUtc = new Date(Date.UTC(tzYear, tzMonth, tzDay, tzHour, tzMinute, tzSecond));
-  const offsetMs = tzAsUtc.getTime() - now.getTime();
-  const firstDay = new Date(tzYear, 0, 1);
-  const lastDay = new Date(tzYear, 11, 31);
-  const startUtc = new Date(Date.UTC(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate(), 0, 0, 0) - offsetMs);
-  const endUtc = new Date(Date.UTC(lastDay.getFullYear(), lastDay.getMonth(), lastDay.getDate(), 0, 0, 0) - offsetMs + 24 * 60 * 60 * 1000 - 1);
+  const startUtc = localMidnightToUtc(tzYear, 0, 1, timezone);
+  const nextYearStartUtc = localMidnightToUtc(tzYear + 1, 0, 1, timezone);
+  const endUtc = new Date(nextYearStartUtc.getTime() - 1);
   return { start: startUtc.toISOString(), end: endUtc.toISOString() };
 }
 
