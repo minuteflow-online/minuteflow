@@ -2541,15 +2541,21 @@ export default function DashboardPage() {
     // Don't close the old task unless we actually have something to switch to —
     // otherwise the old task ends with nothing started, leaving a coverage gap.
     if (!breakPending && !pendingFormData) return;
-    const now = new Date().toISOString();
     const logId = liveSessionData.id;
-    const durationMs = Date.now() - new Date(liveSessionData.start_time).getTime();
 
-    // Update old task with end_time, duration, and memos
-    const updatePayload: Record<string, unknown> = {
-      end_time: now,
-      duration_ms: durationMs,
-    };
+    // NOTE: we deliberately do NOT write end_time/duration_ms here.
+    // Closing this row and starting the next one must be atomic (same
+    // timestamp, back-to-back) or a real-world gap opens between them
+    // (VA fills out the wizard, upload is slow, etc.) with no active task
+    // during that window — that gap is exactly what caused the July 23
+    // ari incident (rows 4605/4611, ~75.7 min lost). startTask() and
+    // doStartBreak() below already close ALL open time_logs rows and
+    // insert the new row using ONE shared now-timestamp, so the old row's
+    // end_time and the new row's start_time land identically with zero
+    // gap. If startTask()/doStartBreak() never fires (user abandons the
+    // wizard) or throws, this row simply stays open and keeps accruing
+    // time — fail-safe toward not losing time.
+    const updatePayload: Record<string, unknown> = {};
     // Save both memo fields
     if (closeOldClientMemo.trim()) {
       updatePayload.client_memo = closeOldClientMemo.trim();
@@ -2575,16 +2581,20 @@ export default function DashboardPage() {
       updatePayload.task_rating_note = closeOldRatingNote.trim();
     }
 
-    await supabase.from("time_logs").update(updatePayload).eq("id", logId);
+    if (Object.keys(updatePayload).length > 0) {
+      await supabase.from("time_logs").update(updatePayload).eq("id", logId);
 
-    // Update local state for the closed log
-    setTimeLogs((prev) =>
-      prev.map((log) =>
-        log.id === logId
-          ? { ...log, ...updatePayload, end_time: now, duration_ms: durationMs } as TimeLog
-          : log
-      )
-    );
+      // Update local state for the closed log (memos/status/rating only —
+      // end_time/duration_ms are set later, atomically, inside
+      // startTask()/doStartBreak() when the hand-off actually completes).
+      setTimeLogs((prev) =>
+        prev.map((log) =>
+          log.id === logId
+            ? { ...log, ...updatePayload } as TimeLog
+            : log
+        )
+      );
+    }
 
     // Upload screenshot for old task if captured
     if (closeOldScreenshotBlob && userId) {
@@ -2622,7 +2632,8 @@ export default function DashboardPage() {
 
     // Now start the new task if we have pending form data
     if (pendingFormData) {
-      // Slight delay to ensure old task is closed before starting new
+      // startTask() will atomically close this (still-open) row and
+      // insert the new one using a single shared timestamp.
       const formData = pendingFormData;
       setPendingFormData(null);
       await startTask(formData);
