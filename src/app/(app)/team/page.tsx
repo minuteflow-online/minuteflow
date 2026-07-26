@@ -1415,6 +1415,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
           return true;
         });
         const totalMs = payableLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+        const billedMs = payableLogs.filter(l => l.billable).reduce((sum, l) => sum + (l.duration_ms || 0), 0);
         const dayPayable = computePayable(totalMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
 
         // Clock in: earliest start_time of non-break logs
@@ -1443,7 +1444,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         const personalMs = dayLogs.filter(l => l.category === "Personal").reduce((sum, l) => sum + (l.duration_ms || 0), 0);
 
         const sortedDayLogs = [...dayLogs].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-        return { dateLabel, isoDate, totalMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
+        return { dateLabel, isoDate, totalMs, billedMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
       });
   }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type, userMoods]);
 
@@ -1687,7 +1688,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
                       <span className="text-[11px] text-bark">{day.taskCount} tasks</span>
                       <span className="text-[12px] font-bold text-espresso">{formatDuration(day.totalMs)}</span>
                       <span className="text-[10px] text-bark/70 flex items-center gap-1">
-                        <span className="text-sage font-semibold">Billed: {formatDuration(day.totalMs - day.personalMs)}</span>
+                        <span className="text-sage font-semibold">Billed: {formatDuration(day.billedMs)}</span>
                         <span className="text-bark/40">·</span>
                         <span className="text-clay-rose font-semibold">Personal: {formatDuration(day.personalMs)}</span>
                       </span>
