@@ -23,6 +23,7 @@ import {
   type PaymentScheduleItem,
   type PaymentTemplate,
 } from "@/types/database";
+import AddRateModal from "@/components/AddRateModal";
 import {
   formatDuration,
   formatDateLocalTZ,
@@ -2059,6 +2060,7 @@ function TeamManagementTab({
 
   // Inline editing state
   const [editingCell, setEditingCell] = useState<{ userId: string; field: string } | null>(null);
+  const [rateModalUser, setRateModalUser] = useState<Profile | null>(null);
   const [editValue, setEditValue] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -2471,13 +2473,8 @@ function TeamManagementTab({
     try {
       const payload: Record<string, unknown> = {
         user_id: editingCell.userId,
+        [editingCell.field]: editValue,
       };
-
-      if (editingCell.field === "pay_rate") {
-        payload.pay_rate = parseFloat(editValue) || 0;
-      } else {
-        payload[editingCell.field] = editValue;
-      }
 
       const res = await fetch("/api/users", {
         method: "PATCH",
@@ -2537,6 +2534,16 @@ function TeamManagementTab({
 
   return (
     <>
+      {rateModalUser && (
+        <AddRateModal
+          userId={rateModalUser.id}
+          userName={rateModalUser.full_name}
+          currentRate={rateModalUser.pay_rate || 0}
+          currentRateType={rateModalUser.pay_rate_type || "hourly"}
+          onClose={() => setRateModalUser(null)}
+          onSaved={fetchData}
+        />
+      )}
       {/* Header with Add + Invite buttons */}
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -3059,56 +3066,25 @@ function TeamManagementTab({
                       </button>
                     )}
                   </td>
-                  {/* Pay Rate - editable */}
+                  {/* Pay Rate - opens Add New Rate modal */}
                   <td className="px-3 py-3 text-right">
-                    {editingCell?.userId === p.id && editingCell.field === "pay_rate" ? (
-                      <div className="flex items-center justify-end gap-1">
-                        <input
-                          type="number"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          className="w-20 rounded border border-terracotta px-1.5 py-0.5 text-[11px] text-right outline-none"
-                          autoFocus
-                          step="0.01"
-                          onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
-                        />
-                        <button onClick={saveEdit} disabled={savingEdit} className="text-sage text-sm font-bold">{savingEdit ? "..." : "OK"}</button>
-                        <button onClick={cancelEdit} className="text-bark hover:text-terracotta text-sm">&times;</button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => startEditing(p.id, "pay_rate", String(p.pay_rate || 0))}
-                        className="cursor-pointer font-semibold text-espresso hover:text-terracotta transition-colors"
-                      >
-                        ${(p.pay_rate || 0).toFixed(2)}
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setRateModalUser(p)}
+                      title="Add New Rate / view rate history"
+                      className="cursor-pointer font-semibold text-espresso hover:text-terracotta transition-colors"
+                    >
+                      ${(p.pay_rate || 0).toFixed(2)}
+                    </button>
                   </td>
-                  {/* Pay Rate Type - editable */}
+                  {/* Pay Rate Type - opens Add New Rate modal */}
                   <td className="px-3 py-3">
-                    {editingCell?.userId === p.id && editingCell.field === "pay_rate_type" ? (
-                      <div className="flex items-center gap-1">
-                        <select
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          className="rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
-                          autoFocus
-                        >
-                          <option value="hourly">hourly</option>
-                          <option value="daily">daily</option>
-                          <option value="monthly">monthly</option>
-                        </select>
-                        <button onClick={saveEdit} disabled={savingEdit} className="text-sage text-sm font-bold">{savingEdit ? "..." : "OK"}</button>
-                        <button onClick={cancelEdit} className="text-bark hover:text-terracotta text-sm">&times;</button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => startEditing(p.id, "pay_rate_type", p.pay_rate_type || "hourly")}
-                        className="cursor-pointer text-bark hover:text-terracotta transition-colors text-[11px]"
-                      >
-                        {p.pay_rate_type || "hourly"}
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setRateModalUser(p)}
+                      title="Add New Rate / view rate history"
+                      className="cursor-pointer text-bark hover:text-terracotta transition-colors text-[11px]"
+                    >
+                      {p.pay_rate_type || "hourly"}
+                    </button>
                   </td>
                   {/* Category Assignments */}
                   <td className="px-3 py-3">

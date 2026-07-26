@@ -38,6 +38,16 @@ export interface Profile {
   extension_popup_shown: boolean;
 }
 
+export interface PayRateHistory {
+  id: string;
+  user_id: string;
+  rate_amount: number;
+  rate_type: 'hourly' | 'daily' | 'monthly' | 'per_task';
+  effective_date: string; // YYYY-MM-DD
+  end_date: string | null; // YYYY-MM-DD, null = currently active
+  created_at: string;
+}
+
 export interface Session {
   id: number;
   user_id: string;

@@ -75,6 +75,15 @@ export async function POST(request: Request) {
         visible_for_collaboration: false,
       })
       .eq("id", newUser.user.id);
+
+    // Seed the pay rate history with the initial rate as the open entry
+    await adminClient.from("pay_rate_history").insert({
+      user_id: newUser.user.id,
+      rate_amount: pay_rate || 0,
+      rate_type: pay_rate_type || "hourly",
+      effective_date: new Date().toISOString().slice(0, 10),
+      end_date: null,
+    });
   }
 
   return Response.json({ user: newUser.user }, { status: 201 });

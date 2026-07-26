@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
+import AddRateModal from "@/components/AddRateModal";
 import {
   formatDuration,
   getInitials,
@@ -818,6 +819,7 @@ export default function TeamPage() {
                   isSelected={false}
                   onSelect={() => toggleMember(member.profile.id)}
                   onForceLogout={isAdmin ? handleForceLogout : undefined}
+                  onRateSaved={isAdmin ? fetchTeamData : undefined}
                   timezone={orgTimezone}
                 />
               ))}
@@ -860,16 +862,18 @@ function StatCard({
 
 /* ── Member Card (Compact) ───────────────────────────────── */
 
-function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLogout, timezone = "UTC" }: {
+function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLogout, onRateSaved, timezone = "UTC" }: {
   member: TeamMember;
   isAdmin: boolean;
   isToday: boolean;
   isSelected: boolean;
   onSelect: () => void;
   onForceLogout?: (userId: string, fullName: string) => void;
+  onRateSaved?: () => void;
   timezone?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showRateModal, setShowRateModal] = useState(false);
   const { profile, status, activeCategory, currentTaskName, currentTaskMeta } = member;
   const avatarColor = getAvatarColor(profile.id);
 
@@ -1015,15 +1019,38 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
       )}
 
       {/* Pay Rate + Payable (admin only) */}
-      {isAdmin && profile.pay_rate > 0 && (
+      {isAdmin && (
         <div className="px-5 pb-3 flex items-center justify-between">
-          <span className="text-[10px] text-bark">
-            {formatCurrency(profile.pay_rate)}/{profile.pay_rate_type || "hourly"}
-          </span>
-          <span className="text-[11px] font-semibold text-sage">
-            {formatCurrency(payable)} {isToday ? "today" : ""}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-bark">
+              {profile.pay_rate > 0
+                ? `${formatCurrency(profile.pay_rate)}/${profile.pay_rate_type || "hourly"}`
+                : "No rate set"}
+            </span>
+            <button
+              onClick={() => setShowRateModal(true)}
+              className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-parchment text-walnut border border-sand hover:bg-sand transition-colors cursor-pointer"
+            >
+              Add New Rate
+            </button>
+          </div>
+          {profile.pay_rate > 0 && (
+            <span className="text-[11px] font-semibold text-sage">
+              {formatCurrency(payable)} {isToday ? "today" : ""}
+            </span>
+          )}
         </div>
+      )}
+
+      {showRateModal && (
+        <AddRateModal
+          userId={profile.id}
+          userName={profile.full_name}
+          currentRate={profile.pay_rate || 0}
+          currentRateType={profile.pay_rate_type || "hourly"}
+          onClose={() => setShowRateModal(false)}
+          onSaved={() => onRateSaved?.()}
+        />
       )}
 
       {/* Force Logout (admin only, when VA is active, today only) */}
