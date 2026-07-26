@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import type { Profile } from "@/types/database";
 import { createClient } from "@/lib/supabase/client";
+import { normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
 
 interface Props {
   profiles: Profile[];
@@ -40,6 +41,8 @@ interface PreviewData {
   payRate: number;
   grossPay: number;
   byDate: Record<string, number>;
+  rateByDate?: Record<string, number>;
+  rateSegments?: RateSegment[];
   fixedAssignments: FixedAssignment[];
   fixedTotal: number;
   totalGrossPay: number;
@@ -63,7 +66,7 @@ interface PaystubSnapshot {
   payment_method: string | null;
   confirmation_number: string | null;
   payment_date: string | null;
-  by_date: Record<string, number>;
+  by_date: Record<string, ByDateValue>;
   email_sent_to: string;
   company_name: string;
   personal_message: string | null;
@@ -679,7 +682,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                             <td className="py-1.5 text-bark/70">{formatDateLabel(date)}</td>
                             <td className="py-1.5 text-right text-bark/70">{formatHours(ms)}</td>
                             <td className="py-1.5 text-right text-bark/70">
-                              {formatCurrency((ms / 3_600_000) * preview.payRate)}
+                              {formatCurrency((ms / 3_600_000) * (preview.rateByDate?.[date] ?? preview.payRate))}
                             </td>
                           </tr>
                         ))}
@@ -724,10 +727,19 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <span>Total Hours</span>
                   <span>{preview.totalHours.toFixed(2)} hrs</span>
                 </div>
-                <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
-                  <span>Rate</span>
-                  <span>{formatCurrency(preview.payRate)}/hr</span>
-                </div>
+                {preview.rateSegments && preview.rateSegments.length > 1 ? (
+                  preview.rateSegments.map((s) => (
+                    <div key={s.rate} className="flex justify-between items-center text-xs text-bark/60 mb-1">
+                      <span>{s.hours.toFixed(2)}h @ {formatCurrency(s.rate)}/hr</span>
+                      <span>{formatCurrency(s.amount)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
+                    <span>Rate</span>
+                    <span>{formatCurrency(preview.payRate)}/hr</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
                   <span>Hourly Pay</span>
                   <span>{formatCurrency(preview.grossPay)}</span>
@@ -1077,12 +1089,13 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                                     </thead>
                                     <tbody>
                                       {Object.entries(snap.by_date)
-                                        .sort(([a], [b]) => a.localeCompare(b))
-                                        .map(([date, ms]) => (
+                                        .map(([date, v]) => [date, normalizeByDateValue(v, snap.pay_rate)] as const)
+                                        .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+                                        .map(([date, { ms, rate }]) => (
                                           <tr key={date} className="border-b border-linen/40">
                                             <td className="py-1 text-bark/70">{formatDateLabel(date)}</td>
                                             <td className="py-1 text-right text-bark/70">{(ms / 3_600_000).toFixed(2)} hrs</td>
-                                            <td className="py-1 text-right text-bark/70">{formatCurrency((ms / 3_600_000) * snap.pay_rate)}</td>
+                                            <td className="py-1 text-right text-bark/70">{formatCurrency((ms / 3_600_000) * (rate ?? snap.pay_rate))}</td>
                                           </tr>
                                         ))}
                                     </tbody>

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types/database";
 import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 import VAProfileTab from "@/components/VAProfileTab";
+import { normalizeByDateValue, type ByDateValue } from "@/lib/payroll";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -1392,7 +1393,7 @@ interface PaystubRecord {
   confirmation_number: string | null;
   payment_date: string | null;
   personal_message: string | null;
-  by_date: Record<string, number> | null;
+  by_date: Record<string, ByDateValue> | null;
 }
 
 interface PerTaskEarning {
@@ -1554,8 +1555,13 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                   : "—";
               const isExpanded = expandedId === p.id;
               const byDateEntries = p.by_date
-                ? Object.entries(p.by_date).sort(([a], [b]) => a.localeCompare(b))
+                ? Object.entries(p.by_date)
+                    .map(([date, v]) => [date, normalizeByDateValue(v, p.pay_rate)] as const)
+                    .sort(([a], [b]) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
                 : [];
+              // Distinct per-day rates (chronological) — more than one means
+              // the period spans a rate change.
+              const distinctRates = [...new Set(byDateEntries.map(([, { rate }]) => rate).filter((r): r is number => r != null))];
               return (
                 <div key={p.id} className="rounded-xl border border-sand bg-white shadow-sm overflow-hidden">
                   {/* Header — click to expand/collapse */}
@@ -1609,7 +1615,9 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                     <div>
                       <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Pay Rate</p>
                       <p className="text-[13px] text-espresso">
-                        {p.pay_rate != null ? `${fmtCurrency(p.pay_rate)}/hr` : "—"}
+                        {distinctRates.length > 1
+                          ? distinctRates.map((r) => `${fmtCurrency(r)}/hr`).join(" → ")
+                          : p.pay_rate != null ? `${fmtCurrency(p.pay_rate)}/hr` : "—"}
                       </p>
                     </div>
                     <div>
@@ -1657,9 +1665,9 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
                             </tr>
                           </thead>
                           <tbody>
-                            {byDateEntries.map(([date, ms]) => {
+                            {byDateEntries.map(([date, { ms, rate }]) => {
                               const hrs = ms / 3_600_000;
-                              const amt = p.pay_rate != null ? hrs * p.pay_rate : null;
+                              const amt = rate != null ? hrs * rate : null;
                               return (
                                 <tr key={date} className="border-b border-sand/50 last:border-0">
                                   <td className="py-1.5 pr-4 text-espresso">

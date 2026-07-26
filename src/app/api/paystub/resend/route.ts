@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
 
 export const dynamic = "force-dynamic";
 
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
     vaName: snap.full_name as string,
     vaEmail: snap.email_sent_to as string,
     payPeriod: snap.pay_period_label as string,
-    byDate: (snap.by_date ?? {}) as Record<string, number>,
+    byDate: (snap.by_date ?? {}) as Record<string, ByDateValue>,
     totalHours: (snap.total_hours_ms as number) / 3_600_000,
     payRate: snap.pay_rate as number,
     grossPay: snap.gross_pay as number,
@@ -148,7 +149,7 @@ interface ResendEmailData {
   vaName: string;
   vaEmail: string;
   payPeriod: string;
-  byDate: Record<string, number>;
+  byDate: Record<string, ByDateValue>;
   totalHours: number;
   payRate: number;
   grossPay: number;
@@ -178,14 +179,30 @@ function buildResendEmail(data: ResendEmailData): string {
     originalSentAt,
   } = data;
 
-  const rowsHtml = Object.entries(byDate)
-    .sort(([a], [b]) => a.localeCompare(b))
+  // by_date values are legacy plain ms numbers or {ms, rate} — normalize.
+  const byDateEntries = Object.entries(byDate)
+    .map(([date, v]) => [date, normalizeByDateValue(v, payRate)] as const)
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  const msByRate = new Map<number, number>();
+  for (const [, { ms, rate }] of byDateEntries) {
+    const r = rate ?? payRate;
+    msByRate.set(r, (msByRate.get(r) || 0) + ms);
+  }
+  const rateSegments: RateSegment[] = [...msByRate].map(([rate, ms]) => ({
+    rate,
+    ms,
+    hours: ms / 3_600_000,
+    amount: (ms / 3_600_000) * rate,
+  }));
+
+  const rowsHtml = byDateEntries
     .map(
-      ([date, ms]) => `
+      ([date, { ms, rate }]) => `
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${formatDateLabel(date)}</td>
         <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatHours(ms)}</td>
-        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency((ms / 3_600_000) * payRate)}</td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency((ms / 3_600_000) * (rate ?? payRate))}</td>
       </tr>`
     )
     .join("");
@@ -233,7 +250,7 @@ function buildResendEmail(data: ResendEmailData): string {
       <div style="padding: 20px 32px; background: #faf6f0; border-bottom: 1px solid #e8e0d4;">
         <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 4px;">Prepared for</div>
         <div style="font-size: 16px; font-weight: 700; color: #3d2b1f;">${vaName}</div>
-        <div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">Rate: ${formatCurrency(payRate)}/hr</div>
+        <div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">Rate: ${rateSegments.length > 1 ? rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ") : `${formatCurrency(payRate)}/hr`}</div>
       </div>
 
       <!-- Hours Breakdown -->
@@ -260,10 +277,15 @@ function buildResendEmail(data: ResendEmailData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Total Hours</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${totalHours.toFixed(2)} hrs</td>
           </tr>
-          <tr>
+          ${rateSegments.length > 1
+            ? rateSegments.map((s) => `<tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">${s.hours.toFixed(2)}h @ ${formatCurrency(s.rate)}/hr</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(s.amount)}</td>
+          </tr>`).join("")
+            : `<tr>
             <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Hourly Rate</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}</td>
-          </tr>
+          </tr>`}
           <tr>
             <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; border-top: 2px solid #e8e0d4;">Gross Pay</td>
             <td style="padding: 10px 0 6px; font-size: 14px; font-weight: 600; color: #3d2b1f; text-align: right; border-top: 2px solid #e8e0d4;">${formatCurrency(grossPay)}</td>

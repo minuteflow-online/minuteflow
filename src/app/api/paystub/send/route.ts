@@ -1,5 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import {
+  computeHourlyGross,
+  formatRateSegments,
+  type PayRateHistoryRow,
+  type RateSegment,
+} from "@/lib/payroll";
 
 export const dynamic = "force-dynamic";
 
@@ -125,7 +131,28 @@ export async function POST(request: Request) {
 
   const totalHours = totalMs / 3_600_000;
   const payRate = Number(vaProfile.pay_rate) || 0;
-  const grossPay = totalHours * payRate;
+
+  // Rate-history-aware gross: each day is paid at the rate in effect that day.
+  const { data: rateHistoryRaw } = await adminClient
+    .from("pay_rate_history")
+    .select("rate_amount, rate_type, effective_date, end_date")
+    .eq("user_id", user_id)
+    .order("effective_date", { ascending: false });
+  const rateHistory = (rateHistoryRaw ?? []) as PayRateHistoryRow[];
+
+  const { grossPay, segments, rateByDate } = computeHourlyGross(
+    byDate,
+    rateHistory,
+    payRate
+  );
+
+  // Snapshot by_date carries the per-day rate so portal/print can display
+  // correct amounts without re-querying history. Legacy snapshots hold
+  // plain ms numbers — readers handle both.
+  const byDateWithRates: Record<string, { ms: number; rate: number }> = {};
+  for (const [date, ms] of Object.entries(byDate)) {
+    byDateWithRates[date] = { ms, rate: rateByDate[date] ?? payRate };
+  }
   const periodLabel =
     pay_period_label ||
     `${formatDate(start_date)} – ${formatDate(end_date)}`;
@@ -183,6 +210,8 @@ export async function POST(request: Request) {
       payRate,
       grossPay,
       byDate,
+      rateByDate,
+      rateSegments: segments,
       fixedAssignments,
       fixedTotal,
       totalGrossPay,
@@ -255,6 +284,8 @@ export async function POST(request: Request) {
       totalHours,
       payRate,
       grossPay,
+      rateByDate,
+      rateSegments: segments,
       fixedAssignments,
       fixedTotal,
       totalGrossPay,
@@ -328,7 +359,7 @@ export async function POST(request: Request) {
       payment_method: payment_method ?? null,
       confirmation_number: confirmation_number ?? null,
       payment_date: payment_date ?? null,
-      by_date: byDate,
+      by_date: byDateWithRates,
       email_sent_to: vaEmail,
       company_name: company_name || "MinuteFlow",
       personal_message: personal_message ?? null,
@@ -436,6 +467,8 @@ interface PaystubData {
   totalHours: number;
   payRate: number;
   grossPay: number;
+  rateByDate: Record<string, number>;
+  rateSegments: RateSegment[];
   fixedAssignments: FixedAssignment[];
   fixedTotal: number;
   totalGrossPay: number;
@@ -462,7 +495,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function buildPaystubEmail(data: PaystubData): string {
-  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
+  const { vaName, payPeriod, byDate, totalHours, payRate, grossPay, rateByDate, rateSegments, fixedAssignments, fixedTotal, totalGrossPay, amountPaid, remainingBalance, previousPayments, previousTotal, paymentMethod, confirmationNumber, paymentDate, personalMessage, accountDetails, companyName, customLineItems, customLineItemsTotal, fee } = data;
 
   const rowsHtml = Object.entries(byDate)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -471,7 +504,7 @@ function buildPaystubEmail(data: PaystubData): string {
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${formatDateLabel(date)}</td>
         <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatHours(ms)}</td>
-        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency((ms / 3_600_000) * payRate)}</td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency((ms / 3_600_000) * (rateByDate[date] ?? payRate))}</td>
       </tr>`
     )
     .join("");
@@ -522,7 +555,7 @@ function buildPaystubEmail(data: PaystubData): string {
       <div style="padding: 20px 32px; background: #faf6f0; border-bottom: 1px solid #e8e0d4;">
         <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 4px;">Prepared for</div>
         <div style="font-size: 16px; font-weight: 700; color: #3d2b1f;">${vaName}</div>
-        <div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">Rate: ${formatCurrency(payRate)}/hr</div>
+        <div style="font-size: 12px; color: #6b5e52; margin-top: 2px;">${rateSegments.length > 1 ? `Rate: ${rateSegments.map((s) => `${formatCurrency(s.rate)}/hr`).join(" → ")}` : `Rate: ${formatCurrency(payRate)}/hr`}</div>
       </div>
 
       <!-- Hours Breakdown -->
@@ -578,12 +611,17 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Total Hours</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${totalHours.toFixed(2)} hrs</td>
           </tr>
-          <tr>
+          ${rateSegments.length > 1
+            ? rateSegments.map((s) => `<tr>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">${s.hours.toFixed(2)}h @ ${formatCurrency(s.rate)}/hr</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(s.amount)}</td>
+          </tr>`).join("")
+            : `<tr>
             <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Hourly Rate</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}</td>
-          </tr>
+          </tr>`}
           <tr>
-            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Hourly Pay</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Hourly Pay${rateSegments.length > 1 ? ` (${formatRateSegments(rateSegments)})` : ""}</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(grossPay)}</td>
           </tr>
           ${fixedTotal > 0 ? `<tr>
