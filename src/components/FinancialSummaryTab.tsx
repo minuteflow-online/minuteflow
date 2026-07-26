@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, Fragment } from "react";
 import { createClient } from "@/lib/supabase/client";
 import CSVUploadModal from "@/components/CSVUploadModal";
+import { computeHourlyGross, type PayRateHistoryRow } from "@/lib/payroll";
 
 
 /* ── Types ──────────────────────────────────────────────── */
@@ -211,6 +212,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const [clientPayments, setClientPayments] = useState<ClientPaymentRow[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [vaFixedAssignments, setVaFixedAssignments] = useState<VaFixedAssignment[]>([]);
+  const [rateHistories, setRateHistories] = useState<Record<string, (PayRateHistoryRow & { rate_type?: string })[]>>({});
   const [loading, setLoading] = useState(true);
 
   // Expand/collapse state
@@ -308,7 +310,24 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const accData = await accRes.json();
     setAccounts(accData.accounts ?? []);
     setMappings(accData.mappings ?? []);
-    setProfiles((profileRes.data as ProfileRow[]) ?? []);
+    const profileRows = (profileRes.data as ProfileRow[]) ?? [];
+    setProfiles(profileRows);
+
+    // Per-user rate history via the admin pay-rates API — pay_rate_history RLS
+    // is service-role-only, so a client-side select would return nothing.
+    const historyEntries = await Promise.all(
+      profileRows.map(async (p) => {
+        try {
+          const res = await fetch(`/api/pay-rates?user_id=${p.id}`);
+          if (!res.ok) return [p.id, []] as const;
+          const json = await res.json();
+          return [p.id, (json.history ?? []) as (PayRateHistoryRow & { rate_type?: string })[]] as const;
+        } catch {
+          return [p.id, []] as const;
+        }
+      })
+    );
+    setRateHistories(Object.fromEntries(historyEntries));
     setLogs((logRes.data as LogRow[]) ?? []);
     setVaPayments((vaPayRes.data as VaPaymentRow[]) ?? []);
     setClientPayments((clientPayRes.data as ClientPaymentRow[]) ?? []);
@@ -592,8 +611,24 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         if (profile.pay_rate_type === "daily") hourlyRate = profile.pay_rate / 8;
         if (profile.pay_rate_type === "monthly") hourlyRate = profile.pay_rate / 160;
 
-        const paidHours = msToHours(data.paidMs);
-        const hourlyPay = paidHours * hourlyRate;
+        // Rate-history-aware hourly pay: each day is paid at the rate in
+        // effect that day (history converted to hourly equivalents).
+        const history = (rateHistories[userId] ?? []).map((h) => ({
+          ...h,
+          rate_amount:
+            h.rate_type === "daily" ? Number(h.rate_amount) / 8 :
+            h.rate_type === "monthly" ? Number(h.rate_amount) / 160 :
+            Number(h.rate_amount),
+        }));
+        const paidMsByDay: Record<string, number> = {};
+        Object.entries(data.dayBreakdown).forEach(([d, v]) => {
+          paidMsByDay[d] = v.paidMs;
+        });
+        const { grossPay: hourlyPay, rateByDate } = computeHourlyGross(
+          paidMsByDay,
+          history,
+          hourlyRate
+        );
 
         // Fixed tasks come from assignments, not time_logs
         const fixedTasks = assignmentsByVa[userId] ?? [];
@@ -619,7 +654,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
             date,
             ms: d.ms,
             paidMs: d.paidMs,
-            amount: msToHours(d.paidMs) * hourlyRate,
+            amount: msToHours(d.paidMs) * (rateByDate[date] ?? hourlyRate),
           }));
 
         return {
@@ -665,7 +700,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const totalVaPaid = rows.reduce((s, r) => s + r.totalPaid, 0);
 
     return { rows, totalCost, totalPaidMs, totalVaPaid };
-  }, [filteredLogs, profiles, vaProfiles, vaPaymentsByUser, vaFixedAssignments]);
+  }, [filteredLogs, profiles, vaProfiles, vaPaymentsByUser, vaFixedAssignments, rateHistories]);
 
   /* ── Category Breakdown ──────────────────────────────── */
 
