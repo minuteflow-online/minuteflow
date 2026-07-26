@@ -632,7 +632,7 @@ export default function TimeLogPage() {
 
   /* ── Day summary stats (dynamic categories + type/status) ──── */
 
-  const daySummary = useMemo(() => {
+  const computeSummary = useCallback((logs: TimeLog[]) => {
     let totalMs = 0;
     let billableMs = 0;
     let personalMs = 0;
@@ -645,7 +645,7 @@ export default function TimeLogPage() {
     const categoryMs: Record<string, number> = {};
 
     const BREAK_EXCLUSION_DAY = "2026-07-06";
-    filteredLogs.forEach((l) => {
+    logs.forEach((l) => {
       totalMs += l.duration_ms || 0;
       // For Full-time VAs on/after July 6, breaks are never billable regardless of the flag
       const logProfile = profiles.find((p) => p.id === l.user_id);
@@ -676,7 +676,7 @@ export default function TimeLogPage() {
       else if (l.progress === "on_hold") onHoldCount++;
     });
 
-    const entryCount = filteredLogs.length;
+    const entryCount = logs.length;
 
     // Build sorted category entries (alphabetical, Personal last)
     const categories = Object.entries(categoryMs)
@@ -689,7 +689,9 @@ export default function TimeLogPage() {
       .map(([name, ms]) => ({ name, formatted: formatDuration(ms) }));
 
     return { totalMs, billableMs, wizardMs, entryCount, categories, fixedCount, hourlyCount, inProgressCount, completedCount, onHoldCount };
-  }, [filteredLogs, profiles]);
+  }, [profiles]);
+
+  const daySummary = useMemo(() => computeSummary(filteredLogs), [computeSummary, filteredLogs]);
 
   /* ── Mood summary for footer ────────────────────────────── */
 
@@ -878,8 +880,10 @@ export default function TimeLogPage() {
 
   /* ── Build flat item list for table ─────────────────────── */
 
+  type DaySummary = ReturnType<typeof computeSummary>;
+
   type TableItem =
-    | { _type: "header"; dateKey: string; dayLabel: string; dayTotalMs: number }
+    | { _type: "header"; dateKey: string; dayLabel: string; dayTotalMs: number; summary: DaySummary }
     | { _type: "log"; log: TimeLog };
 
   const tableItems: TableItem[] = useMemo(() => {
@@ -899,8 +903,9 @@ export default function TimeLogPage() {
           const sortedDayLogs = [...dayLogs].sort(
             (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
           );
+          const summary = computeSummary(dayLogs);
           return [
-            { _type: "header" as const, dateKey, dayLabel, dayTotalMs },
+            { _type: "header" as const, dateKey, dayLabel, dayTotalMs, summary },
             ...sortedDayLogs.map((l) => ({ _type: "log" as const, log: l })),
           ];
         });
@@ -909,7 +914,7 @@ export default function TimeLogPage() {
     return [...columnFilteredLogs]
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
       .map((l) => ({ _type: "log" as const, log: l }));
-  }, [viewMode, logsByDay, columnFilteredLogs]);
+  }, [viewMode, logsByDay, columnFilteredLogs, computeSummary]);
 
   /* ── Render ────────────────────────────────────────────── */
 
@@ -1290,13 +1295,23 @@ export default function TimeLogPage() {
                       if (item._type === "header") {
                         // cols: checkbox(admin) + user(admin) + project + task + category + account + duration + memos + screenshots + actions
                         const colSpan = isAdminOrManager ? 10 : 9;
+                        const s = item.summary;
                         return (
                           <tr key={`hdr-${item.dateKey}`} className="bg-parchment/40">
-                            <td colSpan={colSpan - 1} className="px-4 py-2 text-[11px] font-bold text-espresso">
-                              {item.dayLabel}
-                            </td>
-                            <td className="px-3 py-2 text-right text-[11px] font-bold text-sage" colSpan={1}>
-                              {formatDuration(item.dayTotalMs)}
+                            <td colSpan={colSpan} className="px-4 py-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-espresso">{item.dayLabel}</span>
+                                <span className="text-[11px] font-bold text-sage">{formatDuration(item.dayTotalMs)}</span>
+                              </div>
+                              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                                <MiniSummaryItem value={formatDuration(s.totalMs)} label="Total" colorClass="text-espresso" />
+                                <MiniSummaryItem value={formatDuration(s.billableMs)} label="Billable" colorClass="text-sage" />
+                                {s.categories.map((cat) => (
+                                  <MiniSummaryItem key={cat.name} value={cat.formatted} label={cat.name} colorClass="text-bark" />
+                                ))}
+                                <MiniSummaryItem value={formatDuration(s.wizardMs)} label="Wizard Time" colorClass="text-walnut" />
+                                <MiniSummaryItem value={s.entryCount.toString()} label="Entries" colorClass="text-espresso" />
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1411,8 +1426,16 @@ export default function TimeLogPage() {
                           </td>
 
                           {/* Duration */}
-                          <td className={`px-3 py-2.5 text-right align-top font-serif font-bold whitespace-nowrap ${isLive ? "text-terracotta" : isBreak ? "text-amber" : "text-sage"}`}>
-                            {isLive ? "live" : log.duration_ms > 0 ? formatDurationShort(log.duration_ms) : "0:00"}
+                          <td className="px-3 py-2.5 text-right align-top whitespace-nowrap">
+                            <div className={`font-serif font-bold ${isLive ? "text-terracotta" : isBreak ? "text-amber" : "text-sage"}`}>
+                              {isLive ? "live" : log.duration_ms > 0 ? formatDurationShort(log.duration_ms) : "0:00"}
+                            </div>
+                            <div className="text-[10px] text-stone mt-0.5 tabular-nums">
+                              {log.start_time ? formatTimeTZ(log.start_time, orgTimezone) : "—"}
+                              {log.end_time && log.end_time !== log.start_time && (
+                                <>{" "}<span className="text-stone/50">&ndash;</span>{" "}{formatTimeTZ(log.end_time, orgTimezone)}</>
+                              )}
+                            </div>
                           </td>
 
                           {/* Memos */}
@@ -1748,6 +1771,25 @@ function SummaryItem({
         {value}
       </div>
       <div className="mt-0.5 text-[10px] font-semibold text-bark">{label}</div>
+    </div>
+  );
+}
+
+/* ── Mini Summary Item (per-day header row) ─────────────────── */
+
+function MiniSummaryItem({
+  value,
+  label,
+  colorClass,
+}: {
+  value: string;
+  label: string;
+  colorClass: string;
+}) {
+  return (
+    <div className="flex items-baseline gap-1">
+      <span className={`text-[11px] font-bold ${colorClass}`}>{value}</span>
+      <span className="text-[9px] font-semibold text-bark">{label}</span>
     </div>
   );
 }
