@@ -66,11 +66,14 @@ export default function AvailableTasksWidget({
   canSeeFixedPay = true,
   fixedPayOnly = false,
   currentUserId,
+  refreshKey = 0,
 }: {
   onClaimed?: () => void;
   canSeeFixedPay?: boolean;
   fixedPayOnly?: boolean;
   currentUserId?: string;
+  /** Bump to force a refetch (e.g. after creating a fixed-pay task from the parent) */
+  refreshKey?: number;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [viewMode, setViewMode] = useState<"fixed_pay" | "hourly">(
@@ -210,7 +213,7 @@ export default function AvailableTasksWidget({
 
   useEffect(() => {
     void fetchTasks();
-  }, [fetchTasks]);
+  }, [fetchTasks, refreshKey]);
 
   const handleClaim = useCallback(
     async (taskId: number) => {

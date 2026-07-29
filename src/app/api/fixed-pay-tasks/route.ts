@@ -23,7 +23,7 @@ async function getAuthedProfile() {
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, position, pay_rate_type, can_see_available_tasks")
     .eq("id", user.id)
     .single();
 
@@ -31,7 +31,14 @@ async function getAuthedProfile() {
     return { error: Response.json({ error: error.message }, { status: 500 }) as Response };
   }
 
-  return { supabase, userId: user.id, role: profile?.role ?? null };
+  return {
+    supabase,
+    userId: user.id,
+    role: profile?.role ?? null,
+    position: profile?.position ?? null,
+    payRateType: profile?.pay_rate_type ?? null,
+    canSeeAvailableTasks: Boolean(profile?.can_see_available_tasks),
+  };
 }
 
 function makeAdminClient() {
@@ -141,15 +148,21 @@ export async function POST(request: Request) {
   const auth = await getAuthedProfile();
   if ("error" in auth) return auth.error;
 
-  const { role, userId } = auth;
-  if (role !== "admin" && role !== "manager") {
+  const { role, userId, position, payRateType, canSeeAvailableTasks } = auth;
+  const isAdminOrManager = role === "admin" || role === "manager";
+  // VAs who see the fixed-pay pool may create tasks into it: per-task/fixed-pay
+  // VAs, or hourly VAs with the hybrid "Avail. Tasks" toggle on.
+  const isEligibleVa =
+    role === "va" && (position === "Per Task VA" || payRateType === "per_task" || canSeeAvailableTasks);
+  if (!isAdminOrManager && !isEligibleVa) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const body = await request.json();
   const taskName = String(body.task_name ?? "").trim();
   const rate = parseRate(body.rate);
-  const status = body.status === undefined ? "open" : String(body.status);
+  // VA-created tasks always land in the open pool: no assignment, active, status open.
+  const status = isAdminOrManager && body.status !== undefined ? String(body.status) : "open";
 
   if (!taskName) {
     return Response.json({ error: "task_name is required" }, { status: 400 });
@@ -177,9 +190,9 @@ export async function POST(request: Request) {
       instructions: normalizeText(body.instructions),
       instructions_locked: body.instructions_locked === true,
       status,
-      assigned_to: normalizeText(body.assigned_to),
-      assigned_by: normalizeText(body.assigned_by),
-      is_active: body.is_active !== false,
+      assigned_to: isAdminOrManager ? normalizeText(body.assigned_to) : null,
+      assigned_by: isAdminOrManager ? normalizeText(body.assigned_by) : null,
+      is_active: isAdminOrManager ? body.is_active !== false : true,
       created_by: userId,
     })
     .select(TASK_SELECT)
