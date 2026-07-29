@@ -98,6 +98,11 @@ export default function DashboardPage() {
   const [claimRefreshKey, setClaimRefreshKey] = useState(0);
   const [preBreakTask, setPreBreakTask] = useState<ActiveTask | null>(null);
 
+  // One in-flight submission per action type — synchronous refs so a rapid
+  // double-click can't create two time_logs rows for the same action.
+  const isStartingBreakRef = useRef(false);
+  const isStartingTaskRef = useRef(false);
+
   // Active task
   const [activeTask, setActiveTask] = useState<ActiveTask | null>(null);
 
@@ -933,106 +938,109 @@ export default function DashboardPage() {
     // double-clicks to both pass before either setState has landed.
     if (!userId || !profile || sessionActionPendingRef.current) return;
     setSessionActionPending(true); // also sets the ref via setActionPendingSync
-    const now = new Date().toISOString();
+    try {
+      const now = new Date().toISOString();
 
-    await closeOpenNonBreakLogs(now);
+      await closeOpenNonBreakLogs(now);
 
-    // Create a "Planning" time_log entry so clock-in registers in activity log
-    const clockInSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
-    const { data: sortingLog } = await supabase
-      .from("time_logs")
-      .insert({
-        user_id: userId,
-        username: profile.username,
-        full_name: profile.full_name,
-        department: profile.department,
-        position: profile.position,
+      // Create a "Planning" time_log entry so clock-in registers in activity log
+      const clockInSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
+      const { data: sortingLog } = await supabase
+        .from("time_logs")
+        .insert({
+          user_id: userId,
+          username: profile.username,
+          full_name: profile.full_name,
+          department: profile.department,
+          position: profile.position,
+          task_name: "Clock In",
+          category: "Planning",
+          project: "Set-up",
+          account: "Virtual Concierge",
+          client_name: "Toni Colina",
+          start_time: now,
+          billable: true,
+          billing_type: "hourly",
+          session_date: clockInSessionDate,
+        })
+        .select()
+        .single();
+
+      const sortingTask: ActiveTask = {
         task_name: "Clock In",
         category: "Planning",
         project: "Set-up",
         account: "Virtual Concierge",
         client_name: "Toni Colina",
+        client_memo: "",
+        internal_memo: "",
         start_time: now,
-        billable: true,
+        end_time: null,
+        duration_ms: 0,
+        logId: sortingLog?.id?.toString() || "",
+        _startMs: Date.now(),
         billing_type: "hourly",
-        session_date: clockInSessionDate,
-      })
-      .select()
-      .single();
+      };
 
-    const sortingTask: ActiveTask = {
-      task_name: "Clock In",
-      category: "Planning",
-      project: "Set-up",
-      account: "Virtual Concierge",
-      client_name: "Toni Colina",
-      client_memo: "",
-      internal_memo: "",
-      start_time: now,
-      end_time: null,
-      duration_ms: 0,
-      logId: sortingLog?.id?.toString() || "",
-      _startMs: Date.now(),
-      billing_type: "hourly",
-    };
-
-    const { error } = await supabase.from("sessions").upsert(
-      {
-        user_id: userId,
-        clocked_in: true,
-        clock_in_time: now,
-        active_task: sortingTask,
-        session_date: clockInSessionDate,
-        updated_at: now,
-      },
-      { onConflict: "user_id" }
-    );
-
-    if (!error) {
-      setSession((prev) => ({
-        ...(prev || {
-          id: 0,
+      const { error } = await supabase.from("sessions").upsert(
+        {
           user_id: userId,
-          clock_out_time: null,
+          clocked_in: true,
+          clock_in_time: now,
+          active_task: sortingTask,
+          session_date: clockInSessionDate,
           updated_at: now,
-        }),
-        clocked_in: true,
-        clock_in_time: now,
-        active_task: sortingTask,
-        session_date: clockInSessionDate,
-      } as Session));
-      setActiveTask(sortingTask);
-      if (sortingLog) {
-        setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
-      }
-      await refreshSession();
+        },
+        { onConflict: "user_id" }
+      );
 
-      // Request notification permission at clock-in so off-tab alerts work
-      if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
-      }
-
-      // Check SCE at clock-in — alert immediately if extension isn't connected
-      if (userId) {
-        const { data: hb } = await supabase
-          .from("extension_heartbeats")
-          .select("last_seen")
-          .eq("user_id", userId)
-          .single();
-        const sceStaleMs = hb?.last_seen
-          ? Date.now() - new Date(hb.last_seen).getTime()
-          : Infinity;
-        if (sceStaleMs > 5 * 60 * 1000) {
-          setBannerReason('sce-login');
-          setShowCaptureDropBanner(true);
-          notifyVA("⚠️ SCE not connected", "Log in to your SCE extension to enable screenshots.");
+      if (!error) {
+        setSession((prev) => ({
+          ...(prev || {
+            id: 0,
+            user_id: userId,
+            clock_out_time: null,
+            updated_at: now,
+          }),
+          clocked_in: true,
+          clock_in_time: now,
+          active_task: sortingTask,
+          session_date: clockInSessionDate,
+        } as Session));
+        setActiveTask(sortingTask);
+        if (sortingLog) {
+          setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
         }
+        await refreshSession();
+
+        // Request notification permission at clock-in so off-tab alerts work
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          Notification.requestPermission().catch(() => {});
+        }
+
+        // Check SCE at clock-in — alert immediately if extension isn't connected
+        if (userId) {
+          const { data: hb } = await supabase
+            .from("extension_heartbeats")
+            .select("last_seen")
+            .eq("user_id", userId)
+            .single();
+          const sceStaleMs = hb?.last_seen
+            ? Date.now() - new Date(hb.last_seen).getTime()
+            : Infinity;
+          if (sceStaleMs > 5 * 60 * 1000) {
+            setBannerReason('sce-login');
+            setShowCaptureDropBanner(true);
+            notifyVA("⚠️ SCE not connected", "Log in to your SCE extension to enable screenshots.");
+          }
+        }
+      } else {
+        console.error("clockIn: sessions upsert failed", error);
+        notifyVA("⚠️ Clock In may not have registered", "Something went wrong saving your clock-in. Please refresh and check your status before continuing.");
       }
-    } else {
-      console.error("clockIn: sessions upsert failed", error);
-      notifyVA("⚠️ Clock In may not have registered", "Something went wrong saving your clock-in. Please refresh and check your status before continuing.");
+    } finally {
+      setSessionActionPending(false);
     }
-    setSessionActionPending(false);
   }, [userId, profile, supabase, sessionActionPendingRef, notifyVA, refreshSession]);
 
   const performClockOut = useCallback(async (mood?: 'bad' | 'neutral' | 'good' | null, dayRating?: number | null, dayRatingNote?: string) => {
@@ -1464,124 +1472,131 @@ export default function DashboardPage() {
 
   // Actually start the break (called after wizard or directly)
   const doStartBreak = useCallback(async () => {
-    if (!userId || !profile) return;
-    const now = new Date().toISOString();
+    // One in-flight submission per action type: bail if a break-start
+    // submission is already running (rapid double-click protection).
+    if (!userId || !profile || isStartingBreakRef.current) return;
+    isStartingBreakRef.current = true;
+    try {
+      const now = new Date().toISOString();
 
-    // Close any orphaned break logs first
-    await supabase
-      .from("time_logs")
-      .update({ end_time: now, duration_ms: 0 })
-      .eq("user_id", userId)
-      .eq("category", "Break")
-      .is("end_time", null);
-
-    // Save current task info so we can resume after break
-    if (activeTask && !activeTask.isBreak) {
-      setPreBreakTask({ ...activeTask });
-      await stopCurrentTask();
-    } else {
-      setPreBreakTask(null);
-    }
-
-    // Safety net: close ANY open non-break task logs at DB level.
-    // stopCurrentTask() bails if activeTask.logId is empty (e.g. Clock In Planning log
-    // whose insert returned null). This catches those orphaned Planning logs.
-    {
-      const { data: openLogs } = await supabase
+      // Close any orphaned break logs first
+      await supabase
         .from("time_logs")
-        .select("id, start_time")
+        .update({ end_time: now, duration_ms: 0 })
         .eq("user_id", userId)
-        .is("end_time", null)
-        .neq("category", "Break")
-        .neq("category", "Clock Out");
+        .eq("category", "Break")
+        .is("end_time", null);
 
-      if (openLogs && openLogs.length > 0) {
-        for (const openLog of openLogs) {
-          const logStartMs = openLog.start_time
-            ? new Date(openLog.start_time).getTime()
-            : Date.now();
-          const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
-          await supabase
-            .from("time_logs")
-            .update({ end_time: now, duration_ms: logDurationMs })
-            .eq("id", openLog.id);
-        }
-        setTimeLogs((prev) =>
-          prev.map((log) => {
-            const match = openLogs.find((o) => o.id === log.id);
-            if (match && !log.end_time) {
-              const logStartMs = match.start_time
-                ? new Date(match.start_time).getTime()
-                : Date.now();
-              return {
-                ...log,
-                end_time: now,
-                duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
-              } as TimeLog;
-            }
-            return log;
-          })
-        );
+      // Save current task info so we can resume after break
+      if (activeTask && !activeTask.isBreak) {
+        setPreBreakTask({ ...activeTask });
+        await stopCurrentTask();
+      } else {
+        setPreBreakTask(null);
       }
-    }
 
-    // Create a break time log
-    const { data: logData } = await supabase
-      .from("time_logs")
-      .insert({
-        user_id: userId,
-        username: profile.username,
-        full_name: profile.full_name,
-        department: profile.department,
-        position: profile.position,
+      // Safety net: close ANY open non-break task logs at DB level.
+      // stopCurrentTask() bails if activeTask.logId is empty (e.g. Clock In Planning log
+      // whose insert returned null). This catches those orphaned Planning logs.
+      {
+        const { data: openLogs } = await supabase
+          .from("time_logs")
+          .select("id, start_time")
+          .eq("user_id", userId)
+          .is("end_time", null)
+          .neq("category", "Break")
+          .neq("category", "Clock Out");
+
+        if (openLogs && openLogs.length > 0) {
+          for (const openLog of openLogs) {
+            const logStartMs = openLog.start_time
+              ? new Date(openLog.start_time).getTime()
+              : Date.now();
+            const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+            await supabase
+              .from("time_logs")
+              .update({ end_time: now, duration_ms: logDurationMs })
+              .eq("id", openLog.id);
+          }
+          setTimeLogs((prev) =>
+            prev.map((log) => {
+              const match = openLogs.find((o) => o.id === log.id);
+              if (match && !log.end_time) {
+                const logStartMs = match.start_time
+                  ? new Date(match.start_time).getTime()
+                  : Date.now();
+                return {
+                  ...log,
+                  end_time: now,
+                  duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
+                } as TimeLog;
+              }
+              return log;
+            })
+          );
+        }
+      }
+
+      // Create a break time log
+      const { data: logData } = await supabase
+        .from("time_logs")
+        .insert({
+          user_id: userId,
+          username: profile.username,
+          full_name: profile.full_name,
+          department: profile.department,
+          position: profile.position,
+          task_name: "Break",
+          category: "Break",
+          account: "Virtual Concierge",
+          client_name: "Toni Colina",
+          start_time: now,
+          billable: true,
+          billing_type: "hourly",
+          session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+        })
+        .select()
+        .single();
+
+      const breakTask: ActiveTask = {
         task_name: "Break",
         category: "Break",
-        account: "Virtual Concierge",
-        client_name: "Toni Colina",
+        project: "",
+        account: "",
+        client_name: "",
+        client_memo: "",
+        internal_memo: "",
         start_time: now,
-        billable: true,
+        end_time: null,
+        duration_ms: 0,
+        logId: logData?.id?.toString() || "",
+        _startMs: Date.now(),
+        isBreak: true,
         billing_type: "hourly",
-        session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
-      })
-      .select()
-      .single();
+      };
 
-    const breakTask: ActiveTask = {
-      task_name: "Break",
-      category: "Break",
-      project: "",
-      account: "",
-      client_name: "",
-      client_memo: "",
-      internal_memo: "",
-      start_time: now,
-      end_time: null,
-      duration_ms: 0,
-      logId: logData?.id?.toString() || "",
-      _startMs: Date.now(),
-      isBreak: true,
-      billing_type: "hourly",
-    };
+      await supabase.from("sessions").upsert(
+        {
+          user_id: userId,
+          clocked_in: true,
+          clock_in_time: session?.clock_in_time || now,
+          active_task: breakTask,
+          updated_at: now,
+        },
+        { onConflict: "user_id" }
+      );
 
-    await supabase.from("sessions").upsert(
-      {
-        user_id: userId,
-        clocked_in: true,
-        clock_in_time: session?.clock_in_time || now,
-        active_task: breakTask,
-        updated_at: now,
-      },
-      { onConflict: "user_id" }
-    );
+      setActiveTask(null);
+      // Update local session state so endBreak can find the break logId
+      setSession((prev) => prev ? { ...prev, active_task: breakTask } : prev);
 
-    setActiveTask(null);
-    // Update local session state so endBreak can find the break logId
-    setSession((prev) => prev ? { ...prev, active_task: breakTask } : prev);
-
-    if (logData) {
-      setTimeLogs((prev) => [logData as TimeLog, ...prev]);
+      if (logData) {
+        setTimeLogs((prev) => [logData as TimeLog, ...prev]);
+      }
+      await refreshSession();
+    } finally {
+      isStartingBreakRef.current = false;
     }
-    await refreshSession();
   }, [userId, profile, supabase, session, activeTask, stopCurrentTask, refreshSession]);
 
 
@@ -2101,21 +2116,150 @@ export default function DashboardPage() {
 
   const startTask = useCallback(
     async (formData: TaskFormData) => {
-      if (!userId || !profile) return;
-      const now = new Date().toISOString();
-      const skipClockIn = Boolean((formData as DashboardTaskFormData)._skipClockIn);
+      // One in-flight submission per action type: bail if a start-task
+      // submission is already running (rapid double-click protection).
+      if (!userId || !profile || isStartingTaskRef.current) return;
+      isStartingTaskRef.current = true;
+      try {
+        const now = new Date().toISOString();
+        const skipClockIn = Boolean((formData as DashboardTaskFormData)._skipClockIn);
 
-      // ─── Fixed Task Log: instant insert, no timer, no screenshots ───
-      if (formData._isFixedTaskLog) {
-        if (activeTask?.logId) {
-          await stopCurrentTask();
+        // ─── Fixed Task Log: instant insert, no timer, no screenshots ───
+        if (formData._isFixedTaskLog) {
+          if (activeTask?.logId) {
+            await stopCurrentTask();
+          }
+          await closeOpenNonBreakLogs(now);
+
+          const progressValue = formData.task_status
+            ? formData.task_status.toLowerCase().replace(" ", "_")
+            : "in_progress";
+
+          const { data: logData } = await supabase
+            .from("time_logs")
+            .insert({
+              user_id: userId,
+              username: profile.username,
+              full_name: profile.full_name,
+              department: profile.department,
+              position: profile.position,
+              task_name: formData.task_name,
+              category: formData.category,
+              project: formData.project || null,
+              account: formData.account || null,
+              client_name: formData.client_name || null,
+              start_time: now,
+              end_time: now,
+              duration_ms: 0,
+              billable: formData.category !== "Personal",
+              client_memo: formData.client_memo || null,
+              internal_memo: formData.internal_memo || null,
+              form_fill_ms: formData.form_fill_ms || 0,
+              billing_type: "fixed",
+              task_rate: formData.task_rate ?? null,
+              progress: progressValue,
+              session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+            })
+            .select()
+            .single();
+
+          if (logData) {
+            setTimeLogs((prev) => [logData as TimeLog, ...prev]);
+          }
+          // Auto-update assignment status for fixed tasks too
+          await autoUpdateAssignmentStatus(formData.task_name);
+          if (formData._assignedTaskId) {
+            void setAssignedTaskStatus({
+              assignedTaskId: formData._assignedTaskId,
+              status: "in_progress",
+              vaId: userId,
+              logId: logData?.id ?? null,
+            }).then(() => setWidgetRefetchCount((c) => c + 1));
+          }
+          return; // No timer, no active task, no screenshots
         }
-        await closeOpenNonBreakLogs(now);
 
-        const progressValue = formData.task_status
-          ? formData.task_status.toLowerCase().replace(" ", "_")
-          : "in_progress";
+        // Capture end screenshot for the previous task before stopping it
+        if (activeTask?.logId && screenShareActive) {
+          const prevLogId = parseInt(activeTask.logId, 10);
+          silentCapture(prevLogId, "end");
+          clearCaptureTimers();
+        }
 
+        // If closing an old task via wizard, save the memos + rating to the OLD task (not the new one)
+        if (formData.task_status && activeTask?.logId) {
+          const oldLogId = parseInt(activeTask.logId, 10);
+          const oldTaskUpdate: Record<string, unknown> = {};
+          if (formData.client_memo) oldTaskUpdate.client_memo = formData.client_memo;
+          if (formData.internal_memo) oldTaskUpdate.internal_memo = formData.internal_memo;
+          if (formData.task_status) oldTaskUpdate.progress = formData.task_status.toLowerCase().replace(' ', '_');
+          if (formData.task_rating != null) oldTaskUpdate.task_rating = formData.task_rating;
+          if (formData.task_rating_note) oldTaskUpdate.task_rating_note = formData.task_rating_note;
+          if (Object.keys(oldTaskUpdate).length > 0) {
+            await supabase.from("time_logs").update(oldTaskUpdate).eq("id", oldLogId);
+            setTimeLogs((prev) =>
+              prev.map((log) =>
+                log.id === oldLogId ? { ...log, ...oldTaskUpdate } as TimeLog : log
+              )
+            );
+          }
+        }
+
+        // ─── No negotiations: close ALL open task logs at DB level ───
+        // This prevents concurrent running tasks even if React state is out of sync.
+        // Rule: when a new task starts, every previous task ends. No exceptions.
+        {
+          const { data: openLogs } = await supabase
+            .from("time_logs")
+            .select("id, start_time")
+            .eq("user_id", userId)
+            .is("end_time", null)
+            .neq("category", "Break")
+            .neq("category", "Clock Out");
+
+          if (openLogs && openLogs.length > 0) {
+            for (const openLog of openLogs) {
+              const logStartMs = openLog.start_time
+                ? new Date(openLog.start_time).getTime()
+                : Date.now();
+              const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+              await supabase
+                .from("time_logs")
+                .update({ end_time: now, duration_ms: logDurationMs })
+                .eq("id", openLog.id);
+            }
+            // Sync React state to match
+            setTimeLogs((prev) =>
+              prev.map((log) => {
+                const match = openLogs.find((o) => o.id === log.id);
+                if (match && !log.end_time) {
+                  const logStartMs = match.start_time
+                    ? new Date(match.start_time).getTime()
+                    : Date.now();
+                  return {
+                    ...log,
+                    end_time: now,
+                    duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
+                  } as TimeLog;
+                }
+                return log;
+              })
+            );
+          }
+        }
+        setActiveTask(null);
+        setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
+
+        const isBillable =
+          formData.category !== "Personal";
+
+        // If memos were for the old task (wizard flow), use new_task_client_memo for the new task
+        const newTaskClientMemo = formData.task_status
+          ? (formData.new_task_client_memo || null)
+          : (formData.client_memo || null);
+        const newTaskInternalMemo = formData.task_status ? null : formData.internal_memo || null;
+
+        // Insert time log
         const { data: logData } = await supabase
           .from("time_logs")
           .insert({
@@ -2130,263 +2274,141 @@ export default function DashboardPage() {
             account: formData.account || null,
             client_name: formData.client_name || null,
             start_time: now,
-            end_time: now,
-            duration_ms: 0,
-            billable: formData.category !== "Personal",
-            client_memo: formData.client_memo || null,
-            internal_memo: formData.internal_memo || null,
+            billable: isBillable,
+            client_memo: newTaskClientMemo,
+            internal_memo: newTaskInternalMemo,
             form_fill_ms: formData.form_fill_ms || 0,
-            billing_type: "fixed",
+            billing_type: formData.billing_type || "hourly",
             task_rate: formData.task_rate ?? null,
-            progress: progressValue,
-            session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+            session_date: new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
           })
           .select()
           .single();
 
+        // Auto-update assignment status to "in_progress" when VA starts working
+        await autoUpdateAssignmentStatus(formData.task_name);
+
+        // If this task was started from the assigned tasks widget, mark it in_progress now.
+        // Use the ref so we read the latest value synchronously (avoids the timing issues of the old useEffect).
+        const assignedTaskIdToMark = pendingAssignedTaskIdRef.current;
+        if (assignedTaskIdToMark && logData) {
+          setPendingAssignedTaskId(null);
+          pendingAssignedTaskIdRef.current = null;
+          void setAssignedTaskStatus({
+            assignedTaskId: assignedTaskIdToMark,
+            status: "in_progress",
+            vaId: userId,
+            logId: logData.id,
+          }).then(() => setWidgetRefetchCount((c) => c + 1));
+        }
+
+        const newActiveTask: ActiveTask = {
+          task_name: formData.task_name,
+          category: formData.category,
+          project: formData.project,
+          account: formData.account,
+          client_name: formData.client_name,
+          client_memo: newTaskClientMemo || "",
+          internal_memo: newTaskInternalMemo || "",
+          start_time: now,
+          end_time: null,
+          duration_ms: 0,
+          logId: logData?.id?.toString() || "",
+          _startMs: Date.now(),
+          billing_type: formData.billing_type || "hourly",
+          task_rate: formData.task_rate ?? null,
+        };
+
+        if (!skipClockIn) {
+          // Auto-clock in if idle
+          const clockInTime =
+            sessionState === "idle" ? now : session?.clock_in_time || now;
+          const taskSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
+
+          await supabase.from("sessions").upsert(
+            {
+              user_id: userId,
+              clocked_in: true,
+              clock_in_time: clockInTime,
+              active_task: newActiveTask,
+              session_date: taskSessionDate,
+              updated_at: now,
+            },
+            { onConflict: "user_id" }
+          );
+
+          if (sessionState === "idle") {
+            setSession((prev) => ({
+              ...(prev || {
+                id: 0,
+                user_id: userId,
+                clock_out_time: null,
+              }),
+              clocked_in: true,
+              clock_in_time: now,
+              active_task: newActiveTask,
+              session_date: taskSessionDate,
+              updated_at: now,
+            } as Session));
+          } else if (sessionState === "on-break") {
+            // Close any open break logs when starting a new task from break
+            if (session?.active_task?.logId && session.active_task.isBreak) {
+              const breakLogId = parseInt(session.active_task.logId, 10);
+              if (breakLogId) {
+                const breakDurationMs = Date.now() - new Date(session.active_task.start_time || now).getTime();
+                await supabase
+                  .from("time_logs")
+                  .update({ end_time: now, duration_ms: breakDurationMs })
+                  .eq("id", breakLogId);
+                setTimeLogs((prev) =>
+                  prev.map((log) =>
+                    log.id === breakLogId
+                      ? { ...log, end_time: now, duration_ms: breakDurationMs }
+                      : log
+                  )
+                );
+              }
+            }
+            // Also close any other orphaned break logs
+            await supabase
+              .from("time_logs")
+              .update({ end_time: now, duration_ms: 0 })
+              .eq("user_id", userId)
+              .eq("category", "Break")
+              .is("end_time", null);
+          }
+          await refreshSession();
+        }
+
+        // Always update active task state (even when skipping clock-in for assigned tasks)
+        setActiveTask(newActiveTask);
+
         if (logData) {
           setTimeLogs((prev) => [logData as TimeLog, ...prev]);
         }
-        // Auto-update assignment status for fixed tasks too
-        await autoUpdateAssignmentStatus(formData.task_name);
-        if (formData._assignedTaskId) {
-          void setAssignedTaskStatus({
-            assignedTaskId: formData._assignedTaskId,
-            status: "in_progress",
-            vaId: userId,
-            logId: logData?.id ?? null,
-          }).then(() => setWidgetRefetchCount((c) => c + 1));
-        }
-        return; // No timer, no active task, no screenshots
-      }
 
-      // Capture end screenshot for the previous task before stopping it
-      if (activeTask?.logId && screenShareActive) {
-        const prevLogId = parseInt(activeTask.logId, 10);
-        silentCapture(prevLogId, "end");
-        clearCaptureTimers();
-      }
-
-      // If closing an old task via wizard, save the memos + rating to the OLD task (not the new one)
-      if (formData.task_status && activeTask?.logId) {
-        const oldLogId = parseInt(activeTask.logId, 10);
-        const oldTaskUpdate: Record<string, unknown> = {};
-        if (formData.client_memo) oldTaskUpdate.client_memo = formData.client_memo;
-        if (formData.internal_memo) oldTaskUpdate.internal_memo = formData.internal_memo;
-        if (formData.task_status) oldTaskUpdate.progress = formData.task_status.toLowerCase().replace(' ', '_');
-        if (formData.task_rating != null) oldTaskUpdate.task_rating = formData.task_rating;
-        if (formData.task_rating_note) oldTaskUpdate.task_rating_note = formData.task_rating_note;
-        if (Object.keys(oldTaskUpdate).length > 0) {
-          await supabase.from("time_logs").update(oldTaskUpdate).eq("id", oldLogId);
-          setTimeLogs((prev) =>
-            prev.map((log) =>
-              log.id === oldLogId ? { ...log, ...oldTaskUpdate } as TimeLog : log
-            )
-          );
-        }
-      }
-
-      // ─── No negotiations: close ALL open task logs at DB level ───
-      // This prevents concurrent running tasks even if React state is out of sync.
-      // Rule: when a new task starts, every previous task ends. No exceptions.
-      {
-        const { data: openLogs } = await supabase
-          .from("time_logs")
-          .select("id, start_time")
-          .eq("user_id", userId)
-          .is("end_time", null)
-          .neq("category", "Break")
-          .neq("category", "Clock Out");
-
-        if (openLogs && openLogs.length > 0) {
-          for (const openLog of openLogs) {
-            const logStartMs = openLog.start_time
-              ? new Date(openLog.start_time).getTime()
-              : Date.now();
-            const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
-            await supabase
-              .from("time_logs")
-              .update({ end_time: now, duration_ms: logDurationMs })
-              .eq("id", openLog.id);
-          }
-          // Sync React state to match
-          setTimeLogs((prev) =>
-            prev.map((log) => {
-              const match = openLogs.find((o) => o.id === log.id);
-              if (match && !log.end_time) {
-                const logStartMs = match.start_time
-                  ? new Date(match.start_time).getTime()
-                  : Date.now();
-                return {
-                  ...log,
-                  end_time: now,
-                  duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
-                } as TimeLog;
-              }
-              return log;
-            })
-          );
-        }
-      }
-      setActiveTask(null);
-      setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
-
-      const isBillable =
-        formData.category !== "Personal";
-
-      // If memos were for the old task (wizard flow), use new_task_client_memo for the new task
-      const newTaskClientMemo = formData.task_status
-        ? (formData.new_task_client_memo || null)
-        : (formData.client_memo || null);
-      const newTaskInternalMemo = formData.task_status ? null : formData.internal_memo || null;
-
-      // Insert time log
-      const { data: logData } = await supabase
-        .from("time_logs")
-        .insert({
-          user_id: userId,
-          username: profile.username,
-          full_name: profile.full_name,
-          department: profile.department,
-          position: profile.position,
-          task_name: formData.task_name,
-          category: formData.category,
-          project: formData.project || null,
-          account: formData.account || null,
-          client_name: formData.client_name || null,
-          start_time: now,
-          billable: isBillable,
-          client_memo: newTaskClientMemo,
-          internal_memo: newTaskInternalMemo,
-          form_fill_ms: formData.form_fill_ms || 0,
-          billing_type: formData.billing_type || "hourly",
-          task_rate: formData.task_rate ?? null,
-          session_date: new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
-        })
-        .select()
-        .single();
-
-      // Auto-update assignment status to "in_progress" when VA starts working
-      await autoUpdateAssignmentStatus(formData.task_name);
-
-      // If this task was started from the assigned tasks widget, mark it in_progress now.
-      // Use the ref so we read the latest value synchronously (avoids the timing issues of the old useEffect).
-      const assignedTaskIdToMark = pendingAssignedTaskIdRef.current;
-      if (assignedTaskIdToMark && logData) {
-        setPendingAssignedTaskId(null);
-        pendingAssignedTaskIdRef.current = null;
-        void setAssignedTaskStatus({
-          assignedTaskId: assignedTaskIdToMark,
-          status: "in_progress",
-          vaId: userId,
-          logId: logData.id,
-        }).then(() => setWidgetRefetchCount((c) => c + 1));
-      }
-
-      const newActiveTask: ActiveTask = {
-        task_name: formData.task_name,
-        category: formData.category,
-        project: formData.project,
-        account: formData.account,
-        client_name: formData.client_name,
-        client_memo: newTaskClientMemo || "",
-        internal_memo: newTaskInternalMemo || "",
-        start_time: now,
-        end_time: null,
-        duration_ms: 0,
-        logId: logData?.id?.toString() || "",
-        _startMs: Date.now(),
-        billing_type: formData.billing_type || "hourly",
-        task_rate: formData.task_rate ?? null,
-      };
-
-      if (!skipClockIn) {
-        // Auto-clock in if idle
-        const clockInTime =
-          sessionState === "idle" ? now : session?.clock_in_time || now;
-        const taskSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
-
-        await supabase.from("sessions").upsert(
-          {
-            user_id: userId,
-            clocked_in: true,
-            clock_in_time: clockInTime,
-            active_task: newActiveTask,
-            session_date: taskSessionDate,
-            updated_at: now,
-          },
-          { onConflict: "user_id" }
-        );
-
-        if (sessionState === "idle") {
-          setSession((prev) => ({
-            ...(prev || {
-              id: 0,
-              user_id: userId,
-              clock_out_time: null,
-            }),
-            clocked_in: true,
-            clock_in_time: now,
-            active_task: newActiveTask,
-            session_date: taskSessionDate,
-            updated_at: now,
-          } as Session));
-        } else if (sessionState === "on-break") {
-          // Close any open break logs when starting a new task from break
-          if (session?.active_task?.logId && session.active_task.isBreak) {
-            const breakLogId = parseInt(session.active_task.logId, 10);
-            if (breakLogId) {
-              const breakDurationMs = Date.now() - new Date(session.active_task.start_time || now).getTime();
-              await supabase
-                .from("time_logs")
-                .update({ end_time: now, duration_ms: breakDurationMs })
-                .eq("id", breakLogId);
-              setTimeLogs((prev) =>
-                prev.map((log) =>
-                  log.id === breakLogId
-                    ? { ...log, end_time: now, duration_ms: breakDurationMs }
-                    : log
-                )
-              );
+        // ─── Screen capture: request stream on first task, then schedule ───
+        // Skip screenshots during Break and Personal tasks
+        const shouldCapture = formData.category !== "Break" && formData.category !== "Personal";
+        if (logData && shouldCapture) {
+          const newLogId = logData.id;
+          if (screenShareActive) {
+            // Stream already active — just start the capture schedule
+            scheduleCaptureSequence(newLogId);
+          } else if (!disclaimerShownRef.current) {
+            // First time this session — show disclaimer before prompting
+            pendingCaptureLogIdRef.current = newLogId;
+            setShowScreenShareDisclaimer(true);
+          } else {
+            // Disclaimer already acknowledged — go straight to share picker
+            const result = await requestStream();
+            if (result === 'granted') {
+              scheduleCaptureSequence(newLogId);
             }
           }
-          // Also close any other orphaned break logs
-          await supabase
-            .from("time_logs")
-            .update({ end_time: now, duration_ms: 0 })
-            .eq("user_id", userId)
-            .eq("category", "Break")
-            .is("end_time", null);
         }
-        await refreshSession();
-      }
-
-      // Always update active task state (even when skipping clock-in for assigned tasks)
-      setActiveTask(newActiveTask);
-
-      if (logData) {
-        setTimeLogs((prev) => [logData as TimeLog, ...prev]);
-      }
-
-      // ─── Screen capture: request stream on first task, then schedule ───
-      // Skip screenshots during Break and Personal tasks
-      const shouldCapture = formData.category !== "Break" && formData.category !== "Personal";
-      if (logData && shouldCapture) {
-        const newLogId = logData.id;
-        if (screenShareActive) {
-          // Stream already active — just start the capture schedule
-          scheduleCaptureSequence(newLogId);
-        } else if (!disclaimerShownRef.current) {
-          // First time this session — show disclaimer before prompting
-          pendingCaptureLogIdRef.current = newLogId;
-          setShowScreenShareDisclaimer(true);
-        } else {
-          // Disclaimer already acknowledged — go straight to share picker
-          const result = await requestStream();
-          if (result === 'granted') {
-            scheduleCaptureSequence(newLogId);
-          }
-        }
+      } finally {
+        isStartingTaskRef.current = false;
       }
     },
     [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA, refreshSession]
