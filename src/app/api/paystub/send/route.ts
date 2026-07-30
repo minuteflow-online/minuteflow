@@ -53,12 +53,21 @@ export async function POST(request: Request) {
     fee,
   } = body;
 
-  const customLineItems: { label: string; amount: number }[] = Array.isArray(custom_line_items)
+  // Each item = rate × quantity (amount computed server-side). Older payloads
+  // may carry only { label, amount } — treated as rate = amount, quantity = 1.
+  const customLineItems: { label: string; rate: number; quantity: number; amount: number }[] = Array.isArray(custom_line_items)
     ? custom_line_items
-        .map((item: { label?: string; amount?: number }) => ({
-          label: String(item?.label ?? "").trim(),
-          amount: Number(item?.amount) || 0,
-        }))
+        .map((item: { label?: string; rate?: number; quantity?: number; amount?: number }) => {
+          const hasRate = item?.rate != null;
+          const rate = hasRate ? Number(item?.rate) || 0 : Number(item?.amount) || 0;
+          const quantity = hasRate ? Number(item?.quantity) || 0 : 1;
+          return {
+            label: String(item?.label ?? "").trim(),
+            rate,
+            quantity,
+            amount: rate * quantity,
+          };
+        })
         .filter((item) => item.label || item.amount)
     : [];
   const customLineItemsTotal = customLineItems.reduce((sum, item) => sum + item.amount, 0);
@@ -482,7 +491,7 @@ interface PaystubData {
   personalMessage: string | null;
   accountDetails: Record<string, string> | null;
   companyName: string;
-  customLineItems: { label: string; amount: number }[];
+  customLineItems: { label: string; rate: number; quantity: number; amount: number }[];
   customLineItemsTotal: number;
   fee: number;
 }
@@ -523,7 +532,8 @@ function buildPaystubEmail(data: PaystubData): string {
 
   const customLineItemsRowsHtml = customLineItems.map((item) => `
     <tr>
-      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;" colspan="2">${item.label}</td>
+      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${item.label}</td>
+      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${item.quantity > 1 ? `${item.quantity}× ${formatCurrency(item.rate)}` : formatCurrency(item.rate)}</td>
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency(item.amount)}</td>
     </tr>`).join("");
 
@@ -598,6 +608,13 @@ function buildPaystubEmail(data: PaystubData): string {
       <div style="padding: 24px 32px 0;">
         <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 12px;">Custom Line Items</div>
         <table style="width: 100%; border-collapse: collapse; border: 1px solid #e8e0d4; border-radius: 8px; overflow: hidden;">
+          <thead>
+            <tr style="background: #faf6f0;">
+              <th style="padding: 9px 12px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Description</th>
+              <th style="padding: 9px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Rate</th>
+              <th style="padding: 9px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Amount</th>
+            </tr>
+          </thead>
           <tbody>
             ${customLineItemsRowsHtml}
           </tbody>

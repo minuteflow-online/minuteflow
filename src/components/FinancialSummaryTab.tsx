@@ -59,6 +59,13 @@ interface VaFixedAssignment {
   status: "not_started" | "submitted" | "revision_needed" | "approved";
 }
 
+interface CustomPaystubItem {
+  label: string;
+  rate: number;
+  quantity: number;
+  amount: number;
+}
+
 interface VaPaymentRow {
   id: number;
   va_id: string;
@@ -212,6 +219,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const [clientPayments, setClientPayments] = useState<ClientPaymentRow[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [vaFixedAssignments, setVaFixedAssignments] = useState<VaFixedAssignment[]>([]);
+  // Custom paystub line items per VA (from paystub_snapshots) — fallback when a VA
+  // has no fixed-rate task-list assignments for the period
+  const [customPaystubByVa, setCustomPaystubByVa] = useState<Record<string, CustomPaystubItem[]>>({});
   const [rateHistories, setRateHistories] = useState<Record<string, (PayRateHistoryRow & { rate_type?: string })[]>>({});
   const [loading, setLoading] = useState(true);
 
@@ -264,7 +274,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const rangeStart = `${startDate}T00:00:00.000Z`;
     const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes] = await Promise.all([
+    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes, paystubSnapRes] = await Promise.all([
       fetch("/api/accounts"),
       supabase
         .from("profiles")
@@ -305,6 +315,13 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .eq("billing_type", "fixed")
         .gt("rate", 0)
         .eq("assignment_type", "include"),
+      // Custom paystub line items sent for pay periods overlapping the range
+      supabase
+        .from("paystub_snapshots")
+        .select("user_id, custom_line_items")
+        .not("custom_line_items", "is", null)
+        .lte("period_start", endDate)
+        .gte("period_end", startDate),
     ]);
 
     const accData = await accRes.json();
@@ -351,6 +368,26 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       };
     });
     setVaFixedAssignments(parsedFixed);
+
+    // Flatten custom paystub line items per VA. Older snapshots stored
+    // { label, amount } only — normalized to rate = amount, quantity = 1.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const snapRows = (paystubSnapRes.data ?? []) as any[];
+    const customByVa: Record<string, CustomPaystubItem[]> = {};
+    snapRows.forEach((snap) => {
+      const items = Array.isArray(snap.custom_line_items) ? snap.custom_line_items : [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      items.forEach((item: any) => {
+        const hasRate = item?.rate != null;
+        const rate = hasRate ? Number(item.rate) || 0 : Number(item?.amount) || 0;
+        const quantity = hasRate ? Number(item.quantity) || 0 : 1;
+        const amount = item?.amount != null ? Number(item.amount) || 0 : rate * quantity;
+        if (!item?.label && !amount) return;
+        if (!customByVa[snap.user_id]) customByVa[snap.user_id] = [];
+        customByVa[snap.user_id].push({ label: String(item?.label ?? ""), rate, quantity, amount });
+      });
+    });
+    setCustomPaystubByVa(customByVa);
 
     setLoading(false);
   }, [startDate, endDate, supabase]);
@@ -591,6 +628,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       ...Object.keys(userTotals),
       ...Object.keys(assignmentsByVa),
       ...Object.keys(vaPaymentsByUser),
+      ...Object.keys(customPaystubByVa),
     ]);
 
     const rows = Array.from(allVaIds)
@@ -633,6 +671,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         // Fixed tasks come from assignments, not time_logs
         const fixedTasks = assignmentsByVa[userId] ?? [];
         const fixedPay = fixedTasks.reduce((s, t) => s + t.rate, 0);
+        // Fallback: no task-list fixed data for this VA/period → show custom
+        // paystub line items instead (display only — these were already paid
+        // via the paystub send, so they don't add to grossPay/balance)
+        const customItems = fixedTasks.length === 0 ? (customPaystubByVa[userId] ?? []) : [];
+        const customTotal = customItems.reduce((s, t) => s + t.amount, 0);
         const earnedFixedPay = fixedTasks.filter((t) => t.earned).reduce((s, t) => s + t.rate, 0);
         // Only count approved fixed tasks toward gross pay and balance
         const grossPay = hourlyPay + earnedFixedPay;
@@ -672,6 +715,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
           breakdown,
           days,
           fixedTasks,
+          customItems,
+          customTotal,
           payments,
         };
       })
@@ -690,6 +735,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       breakdown: string;
       days: { date: string; ms: number; paidMs: number; amount: number }[];
       fixedTasks: { task_name: string; account: string | null; project_name: string | null; rate: number; earned: boolean }[];
+      customItems: CustomPaystubItem[];
+      customTotal: number;
       payments: VaPaymentRow[];
     }[];
 
@@ -700,7 +747,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const totalVaPaid = rows.reduce((s, r) => s + r.totalPaid, 0);
 
     return { rows, totalCost, totalPaidMs, totalVaPaid };
-  }, [filteredLogs, profiles, vaProfiles, vaPaymentsByUser, vaFixedAssignments, rateHistories]);
+  }, [filteredLogs, profiles, vaProfiles, vaPaymentsByUser, vaFixedAssignments, rateHistories, customPaystubByVa]);
 
   /* ── Category Breakdown ──────────────────────────────── */
 
@@ -1313,7 +1360,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                             {fmtMoney(row.hourlyRate)}/hr
                           </td>
                           <td className="px-3 py-3 text-right text-bark">
-                            {row.fixedPay > 0 ? fmtMoney(row.fixedPay) : "—"}
+                            {row.fixedPay > 0 ? fmtMoney(row.fixedPay) : row.customTotal > 0 ? fmtMoney(row.customTotal) : "—"}
                           </td>
                           <td className="px-3 py-3 text-right font-semibold text-terracotta">
                             {fmtMoney(row.grossPay)}
@@ -1408,6 +1455,41 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                                               <td className="py-0.5 text-right text-sage font-medium">{fmtMoney(row.earnedFixedPay)}</td>
                                             </tr>
                                           )}
+                                        </tfoot>
+                                      </table>
+                                    </div>
+                                  )}
+
+                                  {/* Custom paystub line items (fallback when no fixed task-list data) */}
+                                  {row.fixedTasks.length === 0 && row.customItems.length > 0 && (
+                                    <div className="mt-4">
+                                      <h4 className="text-[11px] font-bold uppercase tracking-wider text-bark mb-2">
+                                        Custom Paystub Items
+                                      </h4>
+                                      <table className="w-full text-[11px]">
+                                        <thead>
+                                          <tr className="text-[9px] font-semibold uppercase tracking-wider text-bark/60">
+                                            <th className="py-1 text-left">Description</th>
+                                            <th className="py-1 text-right">Rate</th>
+                                            <th className="py-1 text-right">Amount</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {row.customItems.map((t, i) => (
+                                            <tr key={i} className="border-t border-parchment/50">
+                                              <td className="py-1 text-espresso">{t.label || "—"}</td>
+                                              <td className="py-1 text-right text-bark">
+                                                {t.quantity > 1 ? `${t.quantity}× ${fmtMoney(t.rate)}` : fmtMoney(t.rate)}
+                                              </td>
+                                              <td className="py-1 text-right font-medium text-espresso">{fmtMoney(t.amount)}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                        <tfoot>
+                                          <tr className="border-t border-bark/20 font-semibold">
+                                            <td className="py-1" colSpan={2}>Total Custom Items</td>
+                                            <td className="py-1 text-right text-terracotta">{fmtMoney(row.customTotal)}</td>
+                                          </tr>
                                         </tfoot>
                                       </table>
                                     </div>

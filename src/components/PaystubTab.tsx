@@ -210,8 +210,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   // Miscellaneous amount (added on top of Amount to Pay)
   const [miscAmount, setMiscAmount] = useState<string>("");
 
-  // Custom line items (label + amount) — added on top of Amount to Pay
-  const [customLineItems, setCustomLineItems] = useState<{ label: string; amount: string }[]>([]);
+  // Custom line items (label + rate × quantity) — added on top of Amount to Pay
+  const [customLineItems, setCustomLineItems] = useState<{ label: string; rate: string; quantity: string }[]>([]);
 
   // Processing fee — recorded as an expense, not part of VA pay
   const [fee, setFee] = useState<string>("");
@@ -299,13 +299,16 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     }
   }, [selectedUserId, preset, customStart, customEnd, orgTimezone]);
 
-  const lineItemsTotal = customLineItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  const lineItemAmount = (item: { rate: string; quantity: string }) =>
+    (parseFloat(item.rate) || 0) * (parseFloat(item.quantity) || 0);
+
+  const lineItemsTotal = customLineItems.reduce((sum, item) => sum + lineItemAmount(item), 0);
 
   function addLineItem() {
-    setCustomLineItems((prev) => [...prev, { label: "", amount: "" }]);
+    setCustomLineItems((prev) => [...prev, { label: "", rate: "", quantity: "1" }]);
   }
 
-  function updateLineItem(index: number, field: "label" | "amount", value: string) {
+  function updateLineItem(index: number, field: "label" | "rate" | "quantity", value: string) {
     setCustomLineItems((prev) => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
   }
 
@@ -342,8 +345,13 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             return base + misc + lineItemsTotal;
           })(),
           custom_line_items: customLineItems
-            .filter((item) => item.label.trim() || parseFloat(item.amount) > 0)
-            .map((item) => ({ label: item.label.trim(), amount: parseFloat(item.amount) || 0 })),
+            .filter((item) => item.label.trim() || lineItemAmount(item) > 0)
+            .map((item) => ({
+              label: item.label.trim(),
+              rate: parseFloat(item.rate) || 0,
+              quantity: parseFloat(item.quantity) || 0,
+              amount: lineItemAmount(item),
+            })),
           fee: fee !== "" ? parseFloat(fee) || 0 : 0,
           company_name: companyName.trim() || "MinuteFlow",
         }),
@@ -852,37 +860,59 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </div>
                 {customLineItems.length > 0 && (
                   <div className="space-y-2">
-                    {customLineItems.map((item, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={item.label}
-                          onChange={(e) => updateLineItem(i, "label", e.target.value)}
-                          placeholder="e.g. Monthly Salary"
-                          className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
-                        />
-                        <div className="flex items-center gap-1 w-32">
-                          <span className="text-sm font-semibold text-bark/50">$</span>
+                    {customLineItems.map((item, i) => {
+                      const qty = parseFloat(item.quantity) || 0;
+                      const rate = parseFloat(item.rate) || 0;
+                      return (
+                        <div key={i} className="flex items-center gap-2">
                           <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={item.amount}
-                            onChange={(e) => updateLineItem(i, "amount", e.target.value)}
-                            placeholder="0.00"
-                            className="w-full border border-linen rounded-lg px-2 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                            type="text"
+                            value={item.label}
+                            onChange={(e) => updateLineItem(i, "label", e.target.value)}
+                            placeholder="e.g. Monthly Salary"
+                            className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
                           />
+                          <div className="flex items-center gap-1 w-28">
+                            <span className="text-sm font-semibold text-bark/50">$</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={item.rate}
+                              onChange={(e) => updateLineItem(i, "rate", e.target.value)}
+                              placeholder="Rate"
+                              className="w-full border border-linen rounded-lg px-2 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1 w-20">
+                            <span className="text-sm font-semibold text-bark/50">×</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={item.quantity}
+                              onChange={(e) => updateLineItem(i, "quantity", e.target.value)}
+                              placeholder="Qty"
+                              className="w-full border border-linen rounded-lg px-2 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                            />
+                          </div>
+                          <span className="w-24 text-right text-xs text-bark/70 shrink-0">
+                            <span className="block text-[10px] text-bark/40">
+                              {qty > 1 ? `${qty}× ${formatCurrency(rate)}` : formatCurrency(rate)}
+                            </span>
+                            <span className="font-semibold">{formatCurrency(lineItemAmount(item))}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeLineItem(i)}
+                            className="text-bark/30 hover:text-red-500 text-sm px-1"
+                            aria-label="Remove line item"
+                          >
+                            ✕
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeLineItem(i)}
-                          className="text-bark/30 hover:text-red-500 text-sm px-1"
-                          aria-label="Remove line item"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                     <div className="flex justify-between items-center text-xs font-semibold text-bark/60 pt-1">
                       <span>Line Items Subtotal</span>
                       <span>{formatCurrency(lineItemsTotal)}</span>
