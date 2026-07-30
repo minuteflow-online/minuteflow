@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTask, AssignedTaskStatus, TaskScreenshot } from "@/types/database";
-import AvailableTasksWidget from "@/components/AvailableTasksWidget";
+import Link from "next/link";
 import ProjectInfoModal from "@/components/ProjectInfoModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
@@ -342,7 +342,6 @@ export default function TaskListPage() {
   const [fpError, setFpError] = useState<string | null>(null);
   const [fpForm, setFpForm] = useState(EMPTY_FIXED_PAY_FORM);
   const [fpCategories, setFpCategories] = useState<string[]>([]);
-  const [availableRefreshKey, setAvailableRefreshKey] = useState(0);
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(false);
   const [selectedVaId, setSelectedVaId] = useState<string | null>(null);
@@ -750,7 +749,6 @@ export default function TaskListPage() {
       }
       setFpCreateOpen(false);
       setFpForm(EMPTY_FIXED_PAY_FORM);
-      setAvailableRefreshKey((key) => key + 1);
     } catch (err) {
       setFpError(err instanceof Error ? err.message : "Failed to create task.");
     } finally {
@@ -1710,11 +1708,6 @@ export default function TaskListPage() {
     }
   }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
 
-  const handleClaimedTaskRefresh = useCallback(async () => {
-    await Promise.all([fetchTasks(), canShowHourlyPool ? fetchHourlyPool() : Promise.resolve()]);
-    setActiveView("my_tasks");
-  }, [canShowHourlyPool, fetchHourlyPool, fetchTasks]);
-
   const handleHourlyGrab = useCallback(
     async (taskId: number) => {
       setHourlyGrabbingId(taskId);
@@ -2286,7 +2279,16 @@ export default function TaskListPage() {
                   Create Fixed-Pay Task
                 </button>
               </div>
-              <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} fixedPayOnly={true} currentUserId={currentUserId ?? undefined} refreshKey={availableRefreshKey} />
+              <Link
+                href="/fixed-pay-tasks"
+                className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-[13px] font-semibold text-espresso leading-tight">Fixed Pay Tasks</span>
+                  <span className="text-[11px] font-semibold text-sage">Open →</span>
+                </div>
+                <div className="text-[11px] text-stone/80">Browse, claim, and manage your fixed pay tasks on the Fixed Pay Tasks page.</div>
+              </Link>
             </div>
           ) : canShowHourlyPool && activeView === "hourly_pool" ? (
             <div className="space-y-3">

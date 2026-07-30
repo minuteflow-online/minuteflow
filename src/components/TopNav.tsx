@@ -24,6 +24,7 @@ const allNavItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Time Log", href: "/timelog" },
   { label: "Tasks", href: "/task-list" },
+  { label: "Fixed Pay", href: "/fixed-pay-tasks" },
   { label: "Team", href: "/team" },
   { label: "Reports", href: "/reports" },
   { label: "Portal", href: "/portal" },
@@ -112,10 +113,42 @@ export default function TopNav({ user }: TopNavProps) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutMood, setLogoutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
 
+  // Fixed Pay eligibility mirrors /fixed-pay-tasks: admins/managers always,
+  // VAs only when per-task or hybrid (can_see_available_tasks)
+  const [canSeeFixedPayNav, setCanSeeFixedPayNav] = useState(false);
+
+  useEffect(() => {
+    if (user.role !== "va") {
+      setCanSeeFixedPayNav(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("position, pay_rate_type, can_see_available_tasks")
+        .eq("id", authUser.id)
+        .single();
+      if (cancelled || !profile) return;
+      const isPerTask = profile.position === "Per Task VA" || profile.pay_rate_type === "per_task";
+      setCanSeeFixedPayNav(isPerTask || Boolean(profile.can_see_available_tasks));
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.role]);
+
   // Filter nav items based on role
   // VAs see: Dashboard, Time Log, Task List, Reports, Portal (no Team)
   // Admins/managers see: Dashboard, Time Log, Team, Task List, Reports, Portal
+  // Fixed Pay only shows for eligible VAs (per-task or hybrid) and admins/managers
   const navItems = allNavItems.filter((item) => {
+    if (item.href === "/fixed-pay-tasks") {
+      return canSeeFixedPayNav;
+    }
     if (user.role === "va") {
       return item.href !== "/team";
     }
