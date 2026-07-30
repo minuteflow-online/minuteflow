@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
 import { countWords } from "@/lib/utils";
@@ -148,7 +147,14 @@ function FilterDropdown<T extends FilterOptionValue>({ label, options, selected,
   );
 }
 
-export default function FixedPayTasksPage() {
+type FixedPayTasksPanelProps = {
+  // Bumped by the parent (e.g. after a claim in AvailableTasksWidget) to refetch.
+  refreshKey?: number;
+  // Hybrid VAs picking "Hourly Task" in the create panel jump back to My Tasks.
+  onSwitchToHourly?: () => void;
+};
+
+export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }: FixedPayTasksPanelProps) {
   const supabase = useMemo(() => createClient(), []);
 
   const [profileLoading, setProfileLoading] = useState(true);
@@ -257,7 +263,7 @@ export default function FixedPayTasksPage() {
 
   useEffect(() => {
     void fetchTasks();
-  }, [fetchTasks]);
+  }, [fetchTasks, refreshKey]);
 
   useEffect(() => {
     void fetchLookups();
@@ -412,33 +418,29 @@ export default function FixedPayTasksPage() {
 
   if (profileLoading) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        <div className="space-y-2">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-14 animate-pulse rounded-xl bg-parchment" />
-          ))}
-        </div>
+      <div className="space-y-2">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-14 animate-pulse rounded-xl bg-parchment" />
+        ))}
       </div>
     );
   }
 
   if (!canViewPage) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
-          Fixed pay tasks are not enabled for your account.
-        </div>
+      <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
+        Fixed pay tasks are not enabled for your account.
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
+    <div>
       <div className="rounded-2xl border border-sand bg-white shadow-sm">
         <div className="border-b border-parchment px-5 py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
-              <h1 className="text-lg font-bold text-espresso">Fixed Pay Tasks</h1>
+              <h2 className="text-lg font-bold text-espresso">Fixed Pay Tasks</h2>
               <p className="text-xs text-stone">Your fixed-pay tasks and claims.</p>
             </div>
 
@@ -724,13 +726,17 @@ export default function FixedPayTasksPage() {
                   {isHybrid && createMode === "hourly" ? (
                     <div className="rounded-xl border border-sand bg-parchment/20 p-4">
                       <p className="text-[13px] text-espresso">Hourly tasks are created from the Task List.</p>
-                      <p className="mt-1 text-[11px] text-stone">Head over to the Task List to log or submit an hourly task.</p>
-                      <Link
-                        href="/task-list"
+                      <p className="mt-1 text-[11px] text-stone">Head over to My Tasks to log or submit an hourly task.</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          closePanel();
+                          onSwitchToHourly?.();
+                        }}
                         className="mt-3 inline-block rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840]"
                       >
-                        Go to Task List
-                      </Link>
+                        Go to My Tasks
+                      </button>
                     </div>
                   ) : (
                     <>

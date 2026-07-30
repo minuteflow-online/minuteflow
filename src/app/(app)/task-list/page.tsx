@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTask, AssignedTaskStatus, TaskScreenshot } from "@/types/database";
-import Link from "next/link";
+import AvailableTasksWidget from "@/components/AvailableTasksWidget";
+import FixedPayTasksPanel from "@/components/FixedPayTasksPanel";
 import ProjectInfoModal from "@/components/ProjectInfoModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
@@ -19,19 +20,6 @@ function limitToWords(text: string, limit: number): string {
   if (words.length <= limit) return text;
   return words.slice(0, limit).join(" ");
 }
-
-// Mirrors the create form on Admin → Team → Fixed Pay Tasks (FixedPayTasksTab)
-const EMPTY_FIXED_PAY_FORM = {
-  task_name: "",
-  account: "",
-  category: "",
-  rate: "",
-  task_detail: "",
-  task_notes: "",
-  link: "",
-  instructions: "",
-  instructions_locked: false,
-};
 
 type VATaskRow = {
   id: number;
@@ -337,11 +325,7 @@ export default function TaskListPage() {
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
   const [hourlyGrabbingId, setHourlyGrabbingId] = useState<number | null>(null);
   const [hourlyExpandedIds, setHourlyExpandedIds] = useState<number[]>([]);
-  const [fpCreateOpen, setFpCreateOpen] = useState(false);
-  const [fpSaving, setFpSaving] = useState(false);
-  const [fpError, setFpError] = useState<string | null>(null);
-  const [fpForm, setFpForm] = useState(EMPTY_FIXED_PAY_FORM);
-  const [fpCategories, setFpCategories] = useState<string[]>([]);
+  const [availableRefreshKey, setAvailableRefreshKey] = useState(0);
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(false);
   const [selectedVaId, setSelectedVaId] = useState<string | null>(null);
@@ -692,69 +676,12 @@ export default function TaskListPage() {
     }
   }, [canShowAvailableTasks, canShowHourlyPool]);
 
+  // Fixed-rate-only VAs have no tab bar — the fixed-pay box is the only view.
   useEffect(() => {
-    if (!canShowAvailableTasks) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/task-categories", { cache: "no-store" });
-        if (!res.ok) return;
-        const json = await res.json();
-        if (!cancelled) {
-          setFpCategories(
-            ((json.categories ?? []) as { category_name: string }[]).map((category) => category.category_name)
-          );
-        }
-      } catch {
-        // category dropdown stays empty; task can still be created without one
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [canShowAvailableTasks]);
-
-  const handleCreateFixedPayTask = useCallback(async () => {
-    if (!fpForm.task_name.trim()) {
-      setFpError("Task name is required.");
-      return;
+    if (isPerTaskVa) {
+      setActiveView("available_tasks");
     }
-    const rate = Number(fpForm.rate);
-    if (!fpForm.rate.trim() || !Number.isFinite(rate)) {
-      setFpError("Enter a valid rate.");
-      return;
-    }
-
-    setFpSaving(true);
-    setFpError(null);
-    try {
-      const res = await fetch("/api/fixed-pay-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task_name: fpForm.task_name.trim(),
-          account: fpForm.account || null,
-          category: fpForm.category || null,
-          rate,
-          task_detail: fpForm.task_detail.trim() || null,
-          task_notes: fpForm.task_notes.trim() || null,
-          link: fpForm.link.trim() || null,
-          instructions: fpForm.instructions.trim() || null,
-          instructions_locked: fpForm.instructions_locked,
-        }),
-      });
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        throw new Error(json?.error ?? `HTTP ${res.status}`);
-      }
-      setFpCreateOpen(false);
-      setFpForm(EMPTY_FIXED_PAY_FORM);
-    } catch (err) {
-      setFpError(err instanceof Error ? err.message : "Failed to create task.");
-    } finally {
-      setFpSaving(false);
-    }
-  }, [fpForm]);
+  }, [isPerTaskVa]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1708,6 +1635,12 @@ export default function TaskListPage() {
     }
   }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
 
+  const handleClaimedTaskRefresh = useCallback(async () => {
+    await Promise.all([fetchTasks(), canShowHourlyPool ? fetchHourlyPool() : Promise.resolve()]);
+    setAvailableRefreshKey((key) => key + 1);
+    if (!isPerTaskVa) setActiveView("my_tasks");
+  }, [canShowHourlyPool, fetchHourlyPool, fetchTasks, isPerTaskVa]);
+
   const handleHourlyGrab = useCallback(
     async (taskId: number) => {
       setHourlyGrabbingId(taskId);
@@ -2066,6 +1999,8 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+              {/* Fixed-rate-only VAs see only the fixed-pay box — no tab bar. */}
+              {!isPerTaskVa && (
               <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
                 <button
                   type="button"
@@ -2111,6 +2046,7 @@ export default function TaskListPage() {
                   </button>
                 )}
               </div>
+              )}
 
               {isAdmin && assignedByProfilesLoaded && activeView === "my_tasks" && (
                 <div className="flex items-center gap-2">
@@ -2267,28 +2203,11 @@ export default function TaskListPage() {
         <div className="px-5 py-4">
           {canShowAvailableTasks && activeView === "available_tasks" ? (
             <div className="space-y-4">
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFpError(null);
-                    setFpCreateOpen(true);
-                  }}
-                  className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840]"
-                >
-                  Create Fixed-Pay Task
-                </button>
-              </div>
-              <Link
-                href="/fixed-pay-tasks"
-                className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-[13px] font-semibold text-espresso leading-tight">Fixed Pay Tasks</span>
-                  <span className="text-[11px] font-semibold text-sage">Open →</span>
-                </div>
-                <div className="text-[11px] text-stone/80">Browse, claim, and manage your fixed pay tasks on the Fixed Pay Tasks page.</div>
-              </Link>
+              <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} fixedPayOnly={true} currentUserId={currentUserId ?? undefined} refreshKey={availableRefreshKey} />
+              <FixedPayTasksPanel
+                refreshKey={availableRefreshKey}
+                onSwitchToHourly={isPerTaskVa ? undefined : () => setActiveView("my_tasks")}
+              />
             </div>
           ) : canShowHourlyPool && activeView === "hourly_pool" ? (
             <div className="space-y-3">
@@ -3436,152 +3355,6 @@ export default function TaskListPage() {
               </div>
             </div>
           </div>
-      )}
-      {fpCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-espresso/40 px-4" onClick={() => !fpSaving && setFpCreateOpen(false)}>
-          <div
-            className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-sand bg-white shadow-xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="shrink-0 border-b border-parchment px-5 py-4">
-              <span className="block text-[13px] font-semibold text-walnut">Create Fixed-Pay Task</span>
-              <span className="block text-[11px] text-stone">Create a task for the fixed-pay pool.</span>
-            </div>
-
-            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                <input
-                  value={fpForm.task_name}
-                  onChange={(event) => setFpForm((current) => ({ ...current, task_name: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="Task name"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                <select
-                  value={fpForm.account}
-                  onChange={(event) => setFpForm((current) => ({ ...current, account: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  <option value="">Select account...</option>
-                  {formAccounts.map((account) => (
-                    <option key={account} value={account}>
-                      {account}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
-                <select
-                  value={fpForm.category}
-                  onChange={(event) => setFpForm((current) => ({ ...current, category: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  <option value="">Select category...</option>
-                  {fpCategories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Rate</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={fpForm.rate}
-                  onChange={(event) => setFpForm((current) => ({ ...current, rate: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="0.00"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Detail</label>
-                <textarea
-                  value={fpForm.task_detail}
-                  onChange={(event) => setFpForm((current) => ({ ...current, task_detail: limitToWords(event.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
-                  className="min-h-[96px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="Task detail"
-                />
-                <p className="mt-1 text-[10px] text-stone">{Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(fpForm.task_detail))} words remaining</p>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
-                <textarea
-                  value={fpForm.task_notes}
-                  onChange={(event) => setFpForm((current) => ({ ...current, task_notes: event.target.value }))}
-                  className="min-h-[96px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="Task notes"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Link</label>
-                <input
-                  type="text"
-                  value={fpForm.link}
-                  onChange={(event) => setFpForm((current) => ({ ...current, link: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="https://..."
-                />
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
-                  <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-stone">
-                    <input
-                      type="checkbox"
-                      checked={fpForm.instructions_locked}
-                      onChange={(event) => setFpForm((current) => ({ ...current, instructions_locked: event.target.checked }))}
-                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                    />
-                    Locked
-                  </label>
-                </div>
-                <textarea
-                  value={fpForm.instructions}
-                  onChange={(event) => setFpForm((current) => ({ ...current, instructions: event.target.value }))}
-                  className="min-h-[120px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="Instructions"
-                />
-              </div>
-            </div>
-
-            <div className="shrink-0 border-t border-sand px-5 py-4">
-              {fpError && (
-                <div className="mb-3 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{fpError}</div>
-              )}
-              <div className="flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setFpCreateOpen(false)}
-                  disabled={fpSaving}
-                  className="text-xs text-stone hover:text-espresso disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleCreateFixedPayTask()}
-                  disabled={fpSaving}
-                  className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {fpSaving ? "Saving..." : "Create Task"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
       )}
       {lightboxUrls && lightboxUrls.length > 0 && (
         <ScreenshotLightbox
