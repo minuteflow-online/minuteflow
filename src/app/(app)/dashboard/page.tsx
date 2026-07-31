@@ -750,6 +750,16 @@ export default function DashboardPage() {
       { onConflict: "user_id" }
     );
 
+    // Stop the capture sequence for the closed task (keep the screen-share
+    // stream alive — the next task may schedule its own captures). Inlined
+    // instead of clearCaptureTimers() because that callback is declared later.
+    captureTimersRef.current.forEach((t) => clearTimeout(t));
+    captureTimersRef.current = [];
+    if (captureWorkerRef.current) {
+      captureWorkerRef.current.postMessage({ type: "stop" });
+    }
+    activeLogIdRef.current = null;
+
     setActiveTask(null);
     setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
   }, [activeTask, userId, supabase, session]);
