@@ -634,7 +634,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <div className="text-sm font-semibold text-bark">Paystub sent!</div>
                   {preview && (
                     <div className="text-xs text-bark/60">
-                      Sent to {preview.vaEmail} · {formatCurrency(customAmount !== "" ? parseFloat(customAmount) : preview.grossPay)}
+                      Sent to {preview.vaEmail} · {formatCurrency((customAmount !== "" ? parseFloat(customAmount) : (preview.totalGrossPay ?? preview.grossPay)) + (parseFloat(miscAmount) || 0) + lineItemsTotal)}
                     </div>
                   )}
                 </div>
@@ -666,6 +666,83 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   <div className="text-xs text-bark/50">Period</div>
                   <div className="text-xs font-semibold text-bark">{preview.payPeriod}</div>
                 </div>
+              </div>
+
+              {/* Custom Line Items */}
+              <div className="px-5 py-3 border-b border-linen">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide">
+                    Custom Line Items <span className="normal-case font-normal text-bark/40">(optional)</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={addLineItem}
+                    className="text-xs text-terracotta font-semibold hover:underline"
+                  >
+                    + Add Line Item
+                  </button>
+                </div>
+                {customLineItems.length > 0 && (
+                  <div className="space-y-2">
+                    {customLineItems.map((item, i) => {
+                      const qty = parseFloat(item.quantity) || 0;
+                      const rate = parseFloat(item.rate) || 0;
+                      return (
+                        <div key={i} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={item.label}
+                            onChange={(e) => updateLineItem(i, "label", e.target.value)}
+                            placeholder="e.g. Monthly Salary"
+                            className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                          />
+                          <div className="flex items-center gap-1 w-28">
+                            <span className="text-sm font-semibold text-bark/50">$</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={item.rate}
+                              onChange={(e) => updateLineItem(i, "rate", e.target.value)}
+                              placeholder="Rate"
+                              className="w-full border border-linen rounded-lg px-2 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1 w-20">
+                            <span className="text-sm font-semibold text-bark/50">×</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={item.quantity}
+                              onChange={(e) => updateLineItem(i, "quantity", e.target.value)}
+                              placeholder="Qty"
+                              className="w-full border border-linen rounded-lg px-2 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                            />
+                          </div>
+                          <span className="w-24 text-right text-xs text-bark/70 shrink-0">
+                            <span className="block text-[10px] text-bark/40">
+                              {qty > 1 ? `${qty}× ${formatCurrency(rate)}` : formatCurrency(rate)}
+                            </span>
+                            <span className="font-semibold">{formatCurrency(lineItemAmount(item))}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeLineItem(i)}
+                            className="text-bark/30 hover:text-red-500 text-sm px-1"
+                            aria-label="Remove line item"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <div className="flex justify-between items-center text-xs font-semibold text-bark/60 pt-1">
+                      <span>Line Items Subtotal</span>
+                      <span>{formatCurrency(lineItemsTotal)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Daily breakdown */}
@@ -758,9 +835,15 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     <span>+ {formatCurrency(preview.fixedTotal)}</span>
                   </div>
                 )}
+                {lineItemsTotal > 0 && (
+                  <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
+                    <span>Custom Line Items</span>
+                    <span>+ {formatCurrency(lineItemsTotal)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center font-semibold text-bark border-t border-linen pt-2 mt-1">
                   <span className="text-sm">Gross Pay</span>
-                  <span className="text-sm">{formatCurrency(preview.totalGrossPay ?? preview.grossPay)}</span>
+                  <span className="text-sm">{formatCurrency((preview.totalGrossPay ?? preview.grossPay) + lineItemsTotal)}</span>
                 </div>
                 {preview.previousTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/50 mt-1">
@@ -842,83 +925,6 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     </span>
                   </div>
                 ) : null}
-              </div>
-
-              {/* Custom Line Items */}
-              <div className="px-5 pb-4">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide">
-                    Custom Line Items <span className="normal-case font-normal text-bark/40">(optional)</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={addLineItem}
-                    className="text-xs text-terracotta font-semibold hover:underline"
-                  >
-                    + Add Line Item
-                  </button>
-                </div>
-                {customLineItems.length > 0 && (
-                  <div className="space-y-2">
-                    {customLineItems.map((item, i) => {
-                      const qty = parseFloat(item.quantity) || 0;
-                      const rate = parseFloat(item.rate) || 0;
-                      return (
-                        <div key={i} className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={item.label}
-                            onChange={(e) => updateLineItem(i, "label", e.target.value)}
-                            placeholder="e.g. Monthly Salary"
-                            className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
-                          />
-                          <div className="flex items-center gap-1 w-28">
-                            <span className="text-sm font-semibold text-bark/50">$</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={item.rate}
-                              onChange={(e) => updateLineItem(i, "rate", e.target.value)}
-                              placeholder="Rate"
-                              className="w-full border border-linen rounded-lg px-2 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
-                            />
-                          </div>
-                          <div className="flex items-center gap-1 w-20">
-                            <span className="text-sm font-semibold text-bark/50">×</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={item.quantity}
-                              onChange={(e) => updateLineItem(i, "quantity", e.target.value)}
-                              placeholder="Qty"
-                              className="w-full border border-linen rounded-lg px-2 py-2 text-sm text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
-                            />
-                          </div>
-                          <span className="w-24 text-right text-xs text-bark/70 shrink-0">
-                            <span className="block text-[10px] text-bark/40">
-                              {qty > 1 ? `${qty}× ${formatCurrency(rate)}` : formatCurrency(rate)}
-                            </span>
-                            <span className="font-semibold">{formatCurrency(lineItemAmount(item))}</span>
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => removeLineItem(i)}
-                            className="text-bark/30 hover:text-red-500 text-sm px-1"
-                            aria-label="Remove line item"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      );
-                    })}
-                    <div className="flex justify-between items-center text-xs font-semibold text-bark/60 pt-1">
-                      <span>Line Items Subtotal</span>
-                      <span>{formatCurrency(lineItemsTotal)}</span>
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Processing Fee */}
