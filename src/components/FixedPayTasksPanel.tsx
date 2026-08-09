@@ -198,7 +198,10 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   const isEligibleVa = currentRole === "va" && (isPerTaskVa || canSeeAvailableTasks);
   const isAdminOrManager = currentRole === "admin" || currentRole === "manager";
   const canViewPage = isEligibleVa || isAdminOrManager;
-  const isHybrid = canSeeAvailableTasks && currentPayRateType === "hourly";
+  // Hybrid = labeled as an hourly VA (Part-time or Full-time position) with
+  // the "Available Tasks" toggle on in Team management. Keyed on position,
+  // not pay_rate_type, so it can't be thrown off by rate-field edge cases.
+  const isHybrid = (currentPosition === "Part-time VA" || currentPosition === "Full-time VA") && canSeeAvailableTasks;
 
   const fetchCurrentUser = useCallback(async () => {
     try {
