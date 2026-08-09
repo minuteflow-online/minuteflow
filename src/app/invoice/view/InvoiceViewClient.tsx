@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -109,10 +108,7 @@ function statusColor(s: string) {
 
 /* ── Public invoice fetch (client-side via API route) ─────── */
 
-export default function PublicInvoicePage() {
-  const params = useParams();
-  const token = params?.token as string;
-
+export default function InvoiceViewClient({ token }: { token: string }) {
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [orgSettings, setOrgSettings] = useState<OrgSettings | null>(null);

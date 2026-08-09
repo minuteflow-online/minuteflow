@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { redirect, notFound } from "next/navigation";
+import InvoiceViewClient from "../InvoiceViewClient";
 
 /* ── Month name → number map ─────────────────────────────── */
 const MONTH_NUMS: Record<string, number> = {
@@ -21,14 +22,7 @@ function slugify(str: string): string {
  *  - client: slugified account_name (or to_name if account_name is null)
  *  - number: invoice_number as-is (will be compared case-insensitively)
  */
-export default async function SlugInvoicePage({
-  params,
-}: {
-  params: Promise<{ month: string; client: string; number: string }>;
-}) {
-  const { month, client, number } = await params;
-
-  /* Parse month slug: "june2025" → { monthNum: 6, year: 2025 } */
+async function resolveSlugUrl(month: string, client: string, number: string) {
   const monthMatch = month.match(/^([a-z]+)(\d{4})$/i);
   if (!monthMatch) return notFound();
 
@@ -64,4 +58,30 @@ export default async function SlugInvoicePage({
   if (!match?.share_token) return notFound();
 
   redirect(`/invoice/view/${match.share_token}`);
+}
+
+/**
+ * Single catch-all route serving two distinct public invoice URL formats,
+ * which can't coexist as separate dynamic folders (Next.js requires every
+ * dynamic segment at a given path level to share one param name):
+ *
+ *  - /invoice/view/{share_token}                — 1 segment, renders directly
+ *  - /invoice/view/{month}/{client}/{number}     — 3 segments, resolves + redirects
+ */
+export default async function InvoiceViewPage({
+  params,
+}: {
+  params: Promise<{ slug: string[] }>;
+}) {
+  const { slug } = await params;
+
+  if (slug.length === 1) {
+    return <InvoiceViewClient token={slug[0]} />;
+  }
+
+  if (slug.length === 3) {
+    return resolveSlugUrl(slug[0], slug[1], slug[2]);
+  }
+
+  return notFound();
 }
