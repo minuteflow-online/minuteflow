@@ -536,13 +536,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
 
   /* ── VA Costs Calculation (Enhanced with day breakdown + fixed tasks from assignments) ── */
 
-  const BREAK_EXCLUSION_DATE = "2026-07-06";
-
   const vaCostData = useMemo(() => {
-    // Build profile map first so we can apply position-based exclusions in the log loop
-    const profileMapForLoop: Record<string, ProfileRow> = {};
-    profiles.forEach((p) => (profileMapForLoop[p.id] = p));
-
     // Group time logs by user_id
     const userTotals: Record<
       string,
@@ -569,13 +563,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       ut.totalMs += log.duration_ms;
 
       const day = log.session_date || log.start_time.slice(0, 10);
-      // Break logs are unpaid for Full-Time VAs on sessions dated July 6, 2026 or later
-      const isFullTimeVaBreak =
-        log.category === "Break" &&
-        day >= BREAK_EXCLUSION_DATE &&
-        profileMapForLoop[log.user_id]?.position === "Full-time VA";
-
-      const isUnpaid = UNPAID_CATEGORIES.includes(log.category) || isFullTimeVaBreak;
+      // Payable follows the billable flag directly — breaks are always billable:false.
+      const isUnpaid = UNPAID_CATEGORIES.includes(log.category) || !log.billable;
 
       if (!isUnpaid) {
         ut.paidMs += log.duration_ms;

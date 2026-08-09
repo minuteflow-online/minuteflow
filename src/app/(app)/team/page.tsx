@@ -23,6 +23,7 @@ type TeamMember = {
   profile: Profile;
   session: Session | null;
   todayHoursMs: number;
+  todayBillableMs: number;
   todayTaskCount: number;
   todayScreenshots: number;
   currentTaskName: string | null;
@@ -247,25 +248,12 @@ export default function TeamPage() {
 
       const userLogs = logs.filter((l) => l.user_id === profile.id);
       const nonBreakLogs = userLogs.filter((l) => l.category !== "Break" && l.category !== "Clock Out");
-      const isFullTimeVa = profile.position === "Full-time VA";
-      const BREAK_EXCLUSION_DATE = "2026-07-06";
-      const payableLogs = userLogs.filter((l) => {
-        if (l.category === "Personal" || l.category === "Clock Out") return false;
-        if (l.category === "Break") {
-          // Full-time VAs: breaks on/after July 6 2026 are unpaid
-          if (isFullTimeVa) {
-            const logDate = (l.session_date as string) || (l.start_time as string).split("T")[0];
-            return logDate < BREAK_EXCLUSION_DATE;
-          }
-          // Non-full-time VAs: all breaks count
-          return true;
-        }
-        return true;
-      });
-      const todayHoursMs = payableLogs.reduce(
-        (sum, l) => sum + (l.duration_ms || 0),
-        0
-      );
+      // Total = every logged minute, no exclusions — matches the Time Log page's definition.
+      const todayHoursMs = userLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+      // Billable/payable = only what's flagged billable (breaks are billable:false, see doStartBreak).
+      const todayBillableMs = userLogs
+        .filter((l) => l.billable)
+        .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
       const todayTaskCount = nonBreakLogs.length;
       const todayScreenshots = screenshots.filter(
         (s) => s.user_id === profile.id
@@ -334,6 +322,7 @@ export default function TeamPage() {
         profile,
         session,
         todayHoursMs,
+        todayBillableMs,
         todayTaskCount,
         todayScreenshots,
         currentTaskName,
@@ -473,7 +462,7 @@ export default function TeamPage() {
 
     members.forEach((m) => {
       const payable = computePayable(
-        m.todayHoursMs,
+        m.todayBillableMs,
         m.profile.pay_rate || 0,
         m.profile.pay_rate_type || "hourly"
       );
@@ -901,7 +890,7 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
   }[status];
 
   const payable = computePayable(
-    member.todayHoursMs,
+    member.todayBillableMs,
     profile.pay_rate || 0,
     profile.pay_rate_type || "hourly"
   );
@@ -1357,7 +1346,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   }[status];
 
   const payable = computePayable(
-    member.todayHoursMs,
+    member.todayBillableMs,
     profile.pay_rate || 0,
     profile.pay_rate_type || "hourly"
   );
@@ -1404,19 +1393,11 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
       .sort((a, b) => b[1].dateSort - a[1].dateSort) // newest first
       .map(([dateLabel, { logs: dayLogs, isoDate }]) => {
         const nonBreakLogs = dayLogs.filter(l => l.category !== "Break" && l.category !== "Clock Out");
-        const isFullTimeVaDay = profile.position === "Full-time VA";
-        const BREAK_EXCLUSION_DAY = "2026-07-06";
-        const payableLogs = dayLogs.filter(l => {
-          if (l.category === "Personal" || l.category === "Clock Out") return false;
-          if (l.category === "Break") {
-            if (isFullTimeVaDay) return isoDate < BREAK_EXCLUSION_DAY;
-            return true;
-          }
-          return true;
-        });
-        const totalMs = payableLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-        const billedMs = payableLogs.filter(l => l.billable).reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-        const dayPayable = computePayable(totalMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
+        // Total = every logged minute that day, no exclusions — matches the Time Log page.
+        const totalMs = dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+        // Billable/payable = only what's flagged billable (breaks are billable:false).
+        const billedMs = dayLogs.filter(l => l.billable).reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+        const dayPayable = computePayable(billedMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
 
         // Clock in: earliest start_time of non-break logs
         const clockIn = nonBreakLogs.length > 0
