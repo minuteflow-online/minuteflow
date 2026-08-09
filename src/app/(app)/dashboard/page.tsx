@@ -63,6 +63,41 @@ function formatDateLong(timezone?: string): string {
   });
 }
 
+// Single source of truth for "what session_date should this new time_log get."
+// A stored session.session_date can go stale if Clock Out ever fails to
+// register (network blip, closed tab, etc.) — without this check, every
+// later insert would keep blindly copying that old date forward, sometimes
+// for days. Rule: a shift that's still going in the early morning hours is
+// treated as a real overnight continuation (kept on the Clock In day, per
+// policy). Anything older than that is stale and gets today's real date
+// instead, so a missed Clock Out can only ever corrupt one day, not several.
+const OVERNIGHT_CUTOFF_HOUR = 6;
+
+function getCorrectSessionDate(
+  session: { session_date?: string | null } | null | undefined,
+  orgTimezone: string
+): string {
+  const now = new Date();
+  const todayStr = now.toLocaleDateString("en-CA", { timeZone: orgTimezone });
+  const storedDate = session?.session_date;
+
+  if (!storedDate || storedDate === todayStr) {
+    return storedDate || todayStr;
+  }
+
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayStr = yesterday.toLocaleDateString("en-CA", { timeZone: orgTimezone });
+  const currentHour = Number(
+    now.toLocaleString("en-US", { timeZone: orgTimezone, hour: "numeric", hour12: false })
+  );
+
+  if (storedDate === yesterdayStr && currentHour < OVERNIGHT_CUTOFF_HOUR) {
+    return storedDate; // genuine overnight shift — keep it on the Clock In day
+  }
+
+  return todayStr; // stale (missed Clock Out) — start fresh
+}
+
 function formatHoursMinutes(ms: number): string {
   const totalMinutes = Math.floor(ms / 60000);
   const hours = Math.floor(totalMinutes / 60);
@@ -897,7 +932,7 @@ export default function DashboardPage() {
           billable: isBillable,
           billing_type: lastLog.billing_type || "hourly",
           task_rate: lastLog.task_rate ?? null,
-          session_date: session.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+          session_date: getCorrectSessionDate(session, orgTimezone),
         })
         .select()
         .single();
@@ -1127,7 +1162,7 @@ export default function DashboardPage() {
     if (!error) {
       // Persist mood to mood_logs for historical tracking
       if (mood) {
-        const moodDate = session?.session_date || new Date().toISOString().split("T")[0];
+        const moodDate = getCorrectSessionDate(session, orgTimezone);
         await supabase.from("mood_logs").upsert(
           { user_id: userId, session_date: moodDate, mood },
           { onConflict: "user_id,session_date" }
@@ -1151,7 +1186,7 @@ export default function DashboardPage() {
             billable: false,
             // Use the session's start date so the clock-out entry groups under
             // the same day as the rest of the shift (handles overnight clock-outs).
-            session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+            session_date: getCorrectSessionDate(session, orgTimezone),
           })
           .select()
           .single();
@@ -1419,7 +1454,7 @@ export default function DashboardPage() {
           start_time: now,
           billable: false,
           billing_type: "hourly",
-          session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+          session_date: getCorrectSessionDate(session, orgTimezone),
         })
         .select()
         .single();
@@ -1558,7 +1593,7 @@ export default function DashboardPage() {
         billable: isBillable,
         billing_type: preBreakTask.billing_type || "hourly",
         task_rate: preBreakTask.task_rate ?? null,
-        session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+        session_date: getCorrectSessionDate(session, orgTimezone),
       })
       .select()
       .single();
@@ -1664,7 +1699,7 @@ export default function DashboardPage() {
         billable: isBillable,
         billing_type: log.billing_type || "hourly",
         task_rate: log.task_rate ?? null,
-        session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+        session_date: getCorrectSessionDate(session, orgTimezone),
       })
       .select()
       .single();
@@ -2024,7 +2059,7 @@ export default function DashboardPage() {
               billing_type: "fixed",
               task_rate: formData.task_rate ?? null,
               progress: progressValue,
-              session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+              session_date: getCorrectSessionDate(session, orgTimezone),
             })
             .select()
             .single();
@@ -2146,7 +2181,7 @@ export default function DashboardPage() {
             form_fill_ms: formData.form_fill_ms || 0,
             billing_type: formData.billing_type || "hourly",
             task_rate: formData.task_rate ?? null,
-            session_date: new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+            session_date: getCorrectSessionDate(session, orgTimezone),
           })
           .select()
           .single();
@@ -2189,7 +2224,7 @@ export default function DashboardPage() {
           // Auto-clock in if idle
           const clockInTime =
             sessionState === "idle" ? now : session?.clock_in_time || now;
-          const taskSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
+          const taskSessionDate = getCorrectSessionDate(session, orgTimezone);
 
           await supabase.from("sessions").upsert(
             {
@@ -2394,7 +2429,7 @@ export default function DashboardPage() {
           clocked_in: true,
           clock_in_time: session?.clock_in_time || liveLog.start_time,
           active_task: task,
-          session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+          session_date: getCorrectSessionDate(session, orgTimezone),
           updated_at: now,
         },
         { onConflict: "user_id" }
@@ -2410,7 +2445,7 @@ export default function DashboardPage() {
           clocked_in: true,
           clock_in_time: session?.clock_in_time || liveLog.start_time,
           active_task: task,
-          session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+          session_date: getCorrectSessionDate(session, orgTimezone),
           updated_at: now,
         } as Session));
         await refreshSession();
@@ -2628,7 +2663,7 @@ export default function DashboardPage() {
         billing_type: "hourly",
         is_manual: true,
         form_fill_ms: 0,
-        session_date: session?.session_date || new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone }),
+        session_date: getCorrectSessionDate(session, orgTimezone),
       });
       if (error) throw error;
       setTimeLogs((prev) => [
