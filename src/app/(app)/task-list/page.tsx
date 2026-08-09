@@ -319,7 +319,7 @@ export default function TaskListPage() {
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [assignedByProfilesLoaded, setAssignedByProfilesLoaded] = useState(false);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "hourly_pool" | "recurring" | "projects">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "projects">("my_tasks");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
@@ -2004,10 +2004,10 @@ export default function TaskListPage() {
               <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
                 <button
                   type="button"
-                  onClick={() => setActiveView("my_tasks")}
+                  onClick={() => { setActiveView("my_tasks"); if (canShowHourlyPool) void fetchHourlyPool(); }}
                   className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "my_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                 >
-                  My Tasks
+                  Hourly Task
                 </button>
                 {canShowAvailableTasks && (
                   <button
@@ -2015,16 +2015,7 @@ export default function TaskListPage() {
                     onClick={() => setActiveView("available_tasks")}
                     className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                   >
-                    Available Tasks
-                  </button>
-                )}
-                {canShowHourlyPool && (
-                  <button
-                    type="button"
-                    onClick={() => { setActiveView("hourly_pool"); void fetchHourlyPool(); }}
-                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "hourly_pool" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                  >
-                    Unassigned Tasks
+                    Fixed Pay Tasks
                   </button>
                 )}
                 {!isPerTaskVa && (
@@ -2209,97 +2200,6 @@ export default function TaskListPage() {
                 onSwitchToHourly={isPerTaskVa ? undefined : () => setActiveView("my_tasks")}
               />
             </div>
-          ) : canShowHourlyPool && activeView === "hourly_pool" ? (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-[11px] text-stone">
-                <span className="rounded-full bg-parchment px-2 py-0.5 font-semibold text-walnut">{hourlyPoolTasks.length}</span>
-                <span>task{hourlyPoolTasks.length === 1 ? "" : "s"}</span>
-                <span className="rounded-full bg-sage-soft px-2 py-0.5 font-semibold text-sage">Unassigned Pool</span>
-              </div>
-
-              {hourlyPoolError && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{hourlyPoolError}</div>
-              )}
-
-              {hourlyPoolLoading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-20 animate-pulse rounded-xl bg-parchment" />
-                  ))}
-                </div>
-              ) : hourlyPoolTasks.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
-                  No unassigned tasks found.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {hourlyPoolTasks.map((task) => {
-                    const due = formatDueDate(task.due_date);
-                    const isGrabbing = hourlyGrabbingId === task.id;
-                    const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
-
-                    const isExpanded = hourlyExpandedIds.includes(task.id);
-
-                    return (
-                      <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
-                        <div className="px-2.5 py-2 bg-parchment/20">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
-                                {due.label === "—" ? "No due date" : `Due ${due.label}`}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setHourlyExpandedIds((current) => current.includes(task.id) ? current.filter((id) => id !== task.id) : [...current, task.id])}
-                                className="flex h-5 w-5 items-center justify-center rounded-full border border-sand bg-white text-stone transition-colors hover:bg-parchment"
-                                aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
-                              >
-                                <svg className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <path d="M6 9l6 6 6-6" />
-                                </svg>
-                              </button>
-                            </div>
-                          </div>
-                          <div className="mt-0.5 truncate text-[10px] text-stone">
-                            {task.account ?? ""}
-                            {task.project ? ` / ${task.project}` : ""}
-                          </div>
-                        </div>
-
-                        <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
-                          {isExpanded && (
-                            <div className="space-y-1 rounded-lg border border-sand bg-white px-2.5 py-2 text-[11px] text-stone">
-                              <div>
-                                <span className="font-semibold text-espresso">Detail: </span>
-                                {task.task_detail || "—"}
-                              </div>
-                              <div>
-                                <span className="font-semibold text-espresso">Notes: </span>
-                                {task.task_notes || "—"}
-                              </div>
-                              <div>
-                                <span className="font-semibold text-espresso">Instructions: </span>
-                                {task.instructions || "—"}
-                              </div>
-                            </div>
-                          )}
-                          <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
-                          <button
-                            type="button"
-                            onClick={() => void handleHourlyGrab(task.id)}
-                            disabled={isGrabbing}
-                            className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {isGrabbing ? "Grabbing..." : "Grab"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
           ) : canShowProjects && activeView === "projects" ? (
             <div className="p-4">
               <VAProjectsTab
@@ -2332,6 +2232,98 @@ export default function TaskListPage() {
             </div>
           ) : (
             <>
+              {canShowHourlyPool && activeView === "my_tasks" && (
+                <div className="mb-4 space-y-3 rounded-xl border border-sand bg-parchment/20 p-3">
+                  <div className="flex items-center gap-2 text-[11px] text-stone">
+                    <span className="rounded-full bg-parchment px-2 py-0.5 font-semibold text-walnut">{hourlyPoolTasks.length}</span>
+                    <span>task{hourlyPoolTasks.length === 1 ? "" : "s"}</span>
+                    <span className="rounded-full bg-sage-soft px-2 py-0.5 font-semibold text-sage">Unassigned Pool</span>
+                  </div>
+
+                  {hourlyPoolError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{hourlyPoolError}</div>
+                  )}
+
+                  {hourlyPoolLoading ? (
+                    <div className="space-y-2">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="h-20 animate-pulse rounded-xl bg-parchment" />
+                      ))}
+                    </div>
+                  ) : hourlyPoolTasks.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
+                      No unassigned tasks found.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {hourlyPoolTasks.map((task) => {
+                        const due = formatDueDate(task.due_date);
+                        const isGrabbing = hourlyGrabbingId === task.id;
+                        const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
+
+                        const isExpanded = hourlyExpandedIds.includes(task.id);
+
+                        return (
+                          <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
+                            <div className="px-2.5 py-2 bg-parchment/20">
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
+                                    {due.label === "—" ? "No due date" : `Due ${due.label}`}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setHourlyExpandedIds((current) => current.includes(task.id) ? current.filter((id) => id !== task.id) : [...current, task.id])}
+                                    className="flex h-5 w-5 items-center justify-center rounded-full border border-sand bg-white text-stone transition-colors hover:bg-parchment"
+                                    aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
+                                  >
+                                    <svg className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M6 9l6 6 6-6" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="mt-0.5 truncate text-[10px] text-stone">
+                                {task.account ?? ""}
+                                {task.project ? ` / ${task.project}` : ""}
+                              </div>
+                            </div>
+
+                            <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
+                              {isExpanded && (
+                                <div className="space-y-1 rounded-lg border border-sand bg-white px-2.5 py-2 text-[11px] text-stone">
+                                  <div>
+                                    <span className="font-semibold text-espresso">Detail: </span>
+                                    {task.task_detail || "—"}
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-espresso">Notes: </span>
+                                    {task.task_notes || "—"}
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold text-espresso">Instructions: </span>
+                                    {task.instructions || "—"}
+                                  </div>
+                                </div>
+                              )}
+                              <div className="text-[11px] text-stone">Open pool — grab this task to assign it to yourself.</div>
+                              <button
+                                type="button"
+                                onClick={() => void handleHourlyGrab(task.id)}
+                                disabled={isGrabbing}
+                                className="w-full cursor-pointer rounded-lg bg-sage px-3 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isGrabbing ? "Grabbing..." : "Grab"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
               {selectedTaskIds.length > 0 && (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sand bg-parchment/40 px-4 py-3 text-sm">
               <div className="text-stone">
