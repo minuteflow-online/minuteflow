@@ -20,7 +20,7 @@ const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archive
   { value: "trash", label: "Trash" },
 ];
 
-const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"];
+const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"];
 const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "Open",
   pending: "Pending",
@@ -30,6 +30,7 @@ const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   revision_needed: "Revision Needed",
   completed: "Completed",
   cancelled: "Cancelled",
+  paid: "Paid",
 };
 const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "bg-slate-blue-soft text-slate-blue",
@@ -40,6 +41,7 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   revision_needed: "bg-amber-soft text-amber",
   completed: "bg-sage-soft text-sage",
   cancelled: "bg-red-100 text-red-500",
+  paid: "bg-plum-soft text-plum",
 };
 
 const EMPTY_FORM = {

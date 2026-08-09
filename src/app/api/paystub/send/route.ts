@@ -205,7 +205,30 @@ export async function POST(request: Request) {
     status: a.status as string,
   }));
 
-  const fixedTotal = fixedAssignments.reduce((sum, a) => sum + a.amount, 0);
+  // Fetch Fixed Pay Tasks (the Team/VA "Fixed Pay Tasks" tab) this VA has
+  // completed but not yet been paid for. Separate table from the legacy
+  // va_task_assignments fixed-rate flow above — folded into the same
+  // "Fixed Assignments" section on the paystub so they show up together.
+  const { data: fixedPayTasksRaw } = await adminClient
+    .from("fixed_pay_tasks")
+    .select("id, task_name, account, category, rate")
+    .eq("claimed_by", user_id)
+    .eq("status", "completed")
+    .is("deleted_at", null);
+
+  const fixedPayTaskItems = (fixedPayTasksRaw ?? []).map((t) => ({
+    id: t.id as number,
+    task_name: (t.task_name as string) ?? "Fixed Pay Task",
+    account: (t.account as string) ?? "",
+    project: (t.category as string) ?? "",
+    rate: Number(t.rate) || 0,
+    quantity: 1,
+    amount: Number(t.rate) || 0,
+    status: "completed",
+  }));
+
+  const allFixedItems = [...fixedAssignments, ...fixedPayTaskItems];
+  const fixedTotal = allFixedItems.reduce((sum, a) => sum + a.amount, 0);
   const totalGrossPay = grossPay + fixedTotal + customLineItemsTotal;
 
   // Preview mode — return numbers only (include payment_accounts so UI can show account details)
@@ -221,7 +244,7 @@ export async function POST(request: Request) {
       byDate,
       rateByDate,
       rateSegments: segments,
-      fixedAssignments,
+      fixedAssignments: allFixedItems,
       fixedTotal,
       totalGrossPay,
       paymentAccounts: (vaProfile.payment_accounts ?? {}) as Record<string, Record<string, string>>,
@@ -270,6 +293,15 @@ export async function POST(request: Request) {
       .in("id", fixedIds);
   }
 
+  // Step 1c: Mark included Fixed Pay Tasks as paid (separate table, own status enum)
+  if (fixedPayTaskItems.length > 0) {
+    const fixedPayTaskIds = fixedPayTaskItems.map((t) => t.id);
+    await adminClient
+      .from("fixed_pay_tasks")
+      .update({ status: "paid" })
+      .in("id", fixedPayTaskIds);
+  }
+
   // Step 2: Send paystub email
   const resendKey = process.env.RESEND_API_KEY;
   let emailSent = false;
@@ -295,7 +327,7 @@ export async function POST(request: Request) {
       grossPay,
       rateByDate,
       rateSegments: segments,
-      fixedAssignments,
+      fixedAssignments: allFixedItems,
       fixedTotal,
       totalGrossPay,
       amountPaid: paymentAmount,

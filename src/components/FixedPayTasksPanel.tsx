@@ -21,7 +21,10 @@ const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archive
   { value: "trash", label: "Trash" },
 ];
 
-const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"];
+const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"];
+// Statuses the VA themselves may pick from the task panel — mirrors
+// VA_EDITABLE_STATUSES on the server, which is the actual enforcement point.
+const VA_STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted"];
 const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "Open",
   pending: "Pending",
@@ -31,6 +34,7 @@ const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   revision_needed: "Revision Needed",
   completed: "Completed",
   cancelled: "Cancelled",
+  paid: "Paid",
 };
 const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "bg-slate-blue-soft text-slate-blue",
@@ -41,6 +45,7 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   revision_needed: "bg-amber-soft text-amber",
   completed: "bg-sage-soft text-sage",
   cancelled: "bg-red-100 text-red-500",
+  paid: "bg-plum-soft text-plum",
 };
 
 const EMPTY_FORM = {
@@ -180,6 +185,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   const [createMode, setCreateMode] = useState<CreateMode>("fixed_pay");
   const [form, setForm] = useState<TaskFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
 
   const [accounts, setAccounts] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -362,6 +368,38 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
       return Array.from(new Set([...current, ...visibleIds]));
     });
   }, [filteredTasks]);
+
+  const handleStatusChange = useCallback(
+    async (taskId: number, status: FixedPayTaskWithClaimer["status"]) => {
+      setStatusSaving(true);
+      setMessage(null);
+      try {
+        const res = await fetch(`/api/fixed-pay-tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        });
+        if (!res.ok) {
+          let errorText = `HTTP ${res.status}`;
+          try {
+            const data = (await res.json()) as { error?: string };
+            if (data.error) errorText = data.error;
+          } catch {
+            // ignore parse failures
+          }
+          throw new Error(errorText);
+        }
+        const { task } = (await res.json()) as { task: FixedPayTaskWithClaimer };
+        setTasks((current) => current.map((t) => (t.id === taskId ? { ...t, ...task } : t)));
+        setSelectedTask((current) => (current && current.id === taskId ? { ...current, ...task } : current));
+      } catch (error) {
+        setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to update status." });
+      } finally {
+        setStatusSaving(false);
+      }
+    },
+    []
+  );
 
   const handleSubmit = useCallback(async () => {
     if (!form.task_name.trim()) {
@@ -873,9 +911,25 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                     </div>
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[selectedTask.status]}`}>
-                        {STATUS_LABELS[selectedTask.status]}
-                      </span>
+                      {(selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
+                      VA_STATUS_OPTIONS.includes(selectedTask.status) ? (
+                        <select
+                          value={selectedTask.status}
+                          disabled={statusSaving}
+                          onChange={(event) => void handleStatusChange(selectedTask.id, event.target.value as FixedPayTaskWithClaimer["status"])}
+                          className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta disabled:opacity-50"
+                        >
+                          {VA_STATUS_OPTIONS.map((status) => (
+                            <option key={status} value={status}>
+                              {STATUS_LABELS[status]}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[selectedTask.status]}`}>
+                          {STATUS_LABELS[selectedTask.status]}
+                        </span>
+                      )}
                     </div>
                   </div>
 

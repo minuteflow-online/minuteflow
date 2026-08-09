@@ -583,7 +583,7 @@ export interface FixedPayTaskWithClaimer {
   link: string | null;
   instructions: string | null;
   instructions_locked: boolean;
-  status: "open" | "pending" | "on_queue" | "in_progress" | "submitted" | "revision_needed" | "completed" | "cancelled";
+  status: "open" | "pending" | "on_queue" | "in_progress" | "submitted" | "revision_needed" | "completed" | "cancelled" | "paid";
   assigned_to: string | null;
   assigned_by: string | null;
   claimed_by: string | null;

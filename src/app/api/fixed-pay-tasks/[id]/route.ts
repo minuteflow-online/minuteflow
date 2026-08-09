@@ -6,7 +6,10 @@ export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"]);
+const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"]);
+// Statuses a VA may set on their own claimed task. Revision Needed, Completed,
+// Cancelled, and Paid are review/payroll actions — admin only.
+const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted"]);
 const TASK_SELECT =
   "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
 
@@ -36,6 +39,30 @@ async function requireAdmin() {
   }
 
   return { userId: user.id };
+}
+
+// Like requireAdmin, but also lets an authenticated VA through — callers
+// branch on `role` to decide what that VA is actually allowed to do.
+async function requireAuthed() {
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) as Response };
+  }
+
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  if (error) {
+    return { error: Response.json({ error: error.message }, { status: 500 }) as Response };
+  }
+
+  return { userId: user.id, role: profile?.role ?? null };
 }
 
 function makeAdminClient() {
@@ -94,13 +121,57 @@ async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: F
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireAdmin();
+  const auth = await requireAuthed();
   if ("error" in auth) return auth.error;
 
   const { id } = await params;
   const taskId = Number(id);
   if (!Number.isFinite(taskId)) {
     return Response.json({ error: "Invalid task id" }, { status: 400 });
+  }
+
+  const isAdminOrManager = auth.role === "admin" || auth.role === "manager";
+
+  if (!isAdminOrManager) {
+    // VA self-service: status-only, restricted to non-review/payroll values,
+    // and only on a task they've actually claimed.
+    const body = await request.json();
+    const bodyKeys = Object.keys(body);
+    if (bodyKeys.length !== 1 || bodyKeys[0] !== "status") {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const status = String(body.status ?? "");
+    if (!VA_EDITABLE_STATUSES.has(status)) {
+      return Response.json({ error: "That status can only be set by an admin" }, { status: 403 });
+    }
+
+    const admin = makeAdminClient();
+    const { data: existing, error: existingError } = await admin
+      .from("fixed_pay_tasks")
+      .select("claimed_by")
+      .eq("id", taskId)
+      .single();
+
+    if (existingError || !existing) {
+      return Response.json({ error: existingError?.message || "Task not found" }, { status: 404 });
+    }
+    if (existing.claimed_by !== auth.userId) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const { data, error } = await admin
+      .from("fixed_pay_tasks")
+      .update({ status })
+      .eq("id", taskId)
+      .select(TASK_SELECT)
+      .single();
+
+    if (error) {
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+
+    const [task] = await hydrateTaskProfiles(admin, [data as FixedPayTaskWithClaimer]);
+    return Response.json({ task });
   }
 
   const body = await request.json();

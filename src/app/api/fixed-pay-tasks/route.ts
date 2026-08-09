@@ -6,7 +6,10 @@ export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled"]);
+const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"]);
+// Statuses a VA may set on their own claimed task. Revision Needed, Completed,
+// Cancelled, and Paid are review/payroll actions — admin only.
+const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted"]);
 const TASK_SELECT =
   "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
 
@@ -161,7 +164,9 @@ export async function POST(request: Request) {
   const body = await request.json();
   const taskName = String(body.task_name ?? "").trim();
   const rate = parseRate(body.rate);
-  // VA-created tasks always land in the open pool: no assignment, active, status open.
+  // Admin-created tasks default to the open pool (anyone can grab). A VA
+  // creating their own task is auto-claimed below, so "open" here is just
+  // the row's resting status until they move it themselves.
   const status = isAdminOrManager && body.status !== undefined ? String(body.status) : "open";
 
   if (!taskName) {
@@ -175,6 +180,11 @@ export async function POST(request: Request) {
   }
 
   const admin = makeAdminClient();
+  // A VA creating a task for themselves shouldn't have to grab it from the
+  // open pool afterward — claim it immediately, same as hitting "Grab".
+  const autoClaim = isEligibleVa && !isAdminOrManager;
+  const now = new Date().toISOString();
+
   const { data, error } = await admin
     .from("fixed_pay_tasks")
     .insert({
@@ -194,12 +204,50 @@ export async function POST(request: Request) {
       assigned_by: isAdminOrManager ? normalizeText(body.assigned_by) : null,
       is_active: isAdminOrManager ? body.is_active !== false : true,
       created_by: userId,
+      claimed_by: autoClaim ? userId : null,
+      claimed_at: autoClaim ? now : null,
     })
     .select(TASK_SELECT)
     .single();
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  if (autoClaim) {
+    const { data: assignedTask, error: assignedTaskError } = await admin
+      .from("assigned_tasks")
+      .insert({
+        account: data.account,
+        project: data.category,
+        task_name: data.task_name,
+        task_detail: null,
+        task_notes: null,
+        due_date: null,
+        created_by: userId,
+        fixed_pay_task_id: data.id,
+      })
+      .select("id")
+      .single();
+
+    if (assignedTaskError || !assignedTask) {
+      await admin.from("fixed_pay_tasks").update({ claimed_by: null, claimed_at: null }).eq("id", data.id);
+      return Response.json({ error: assignedTaskError?.message || "Unable to create assigned task" }, { status: 500 });
+    }
+
+    const { error: assigneeError } = await admin
+      .from("assigned_task_assignees")
+      .insert({
+        assigned_task_id: assignedTask.id,
+        va_id: userId,
+        status: "on_queue",
+      });
+
+    if (assigneeError) {
+      await admin.from("assigned_tasks").delete().eq("id", assignedTask.id);
+      await admin.from("fixed_pay_tasks").update({ claimed_by: null, claimed_at: null }).eq("id", data.id);
+      return Response.json({ error: assigneeError.message || "Unable to create task assignment" }, { status: 500 });
+    }
   }
 
   const [task] = await hydrateTaskProfiles(admin, [data as FixedPayTaskWithClaimer]);
