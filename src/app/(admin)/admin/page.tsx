@@ -6857,6 +6857,20 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setEditSubtotal((timeSubtotal + customTotal).toFixed(2));
   };
 
+  // Many invoices never had an explicit Hourly Rate saved (rate_amount is
+  // null) — they were generated from subtotal/hours directly. When that's the
+  // case, infer the rate from the CURRENT (pre-edit) subtotal and hours so
+  // editing minutes or adding items still updates the total, instead of
+  // silently no-oping because rateAmount is blank.
+  const getEffectiveRate = (): number => {
+    const explicit = parseFloat(rateAmount) || 0;
+    if (explicit > 0) return explicit;
+    const currentGrossHours = editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0);
+    const currentCustomTotal = editCustomItems.reduce((s, ci) => s + (parseFloat(ci.amount) || 0), 0);
+    const currentTimeSubtotal = (parseFloat(editSubtotal) || 0) - currentCustomTotal;
+    return currentGrossHours > 0 ? currentTimeSubtotal / currentGrossHours : 0;
+  };
+
   // Parses a simple two-column CSV (description, amount) for manually adding
   // invoice line items in bulk. Handles quoted fields with embedded commas.
   const parseDescriptionAmountCSV = (text: string): Array<{ id: string; description: string; amount: string }> => {
@@ -10142,7 +10156,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                             if (rows.length > 0) {
                               const updated = [...editCustomItems, ...rows];
                               setEditCustomItems(updated);
-                              recomputeEditSubtotal(editLineItemsState, parseFloat(rateAmount) || 0, updated);
+                              recomputeEditSubtotal(editLineItemsState, getEffectiveRate(), updated);
                             }
                           };
                           reader.readAsText(file);
@@ -10195,7 +10209,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                                 onChange={(e) => {
                                   const updated = editCustomItems.map((ci, i) => i === idx ? { ...ci, amount: e.target.value } : ci);
                                   setEditCustomItems(updated);
-                                  recomputeEditSubtotal(editLineItemsState, parseFloat(rateAmount) || 0, updated);
+                                  recomputeEditSubtotal(editLineItemsState, getEffectiveRate(), updated);
                                 }}
                                 placeholder="0.00"
                                 className="w-full bg-transparent text-right text-[12px] text-espresso outline-none placeholder:text-stone border-b border-transparent hover:border-sand focus:border-terracotta transition-colors"
@@ -10208,7 +10222,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                                   onClick={() => {
                                     const updated = editCustomItems.filter((_, i) => i !== idx);
                                     setEditCustomItems(updated);
-                                    recomputeEditSubtotal(editLineItemsState, parseFloat(rateAmount) || 0, updated);
+                                    recomputeEditSubtotal(editLineItemsState, getEffectiveRate(), updated);
                                   }}
                                   className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-amber-soft hover:text-amber cursor-pointer"
                                 >&times;</button>
@@ -10508,10 +10522,10 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       const rows = parseTimeEntryCSV(String(reader.result || ""));
                       if (rows.length > 0) {
                         const next = [...rows, ...editLineItemsState];
+                        const effectiveRate = getEffectiveRate();
                         setEditUndoStack((prev) => [...prev.slice(-19), editLineItemsState]);
                         setEditLineItemsState(next);
-                        const rate = parseFloat(rateAmount) || 0;
-                        if (rate > 0) recomputeEditSubtotal(next, rate, editCustomItems);
+                        recomputeEditSubtotal(next, effectiveRate, editCustomItems);
                       } else {
                         alert('CSV needs at least "task_description" (or "task") and "min" (or "minutes") columns. "date", "time", "va", "deliverables", and "memo" are optional.');
                       }
@@ -10719,9 +10733,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                                 const mins = parseFloat(e.target.value) || 0;
                                 const nextQuantity = mins / 60;
                                 const next = editLineItemsState.map((x, i) => i === realIdx ? { ...x, quantity: nextQuantity } : x);
+                                const effectiveRate = getEffectiveRate();
                                 setEditLineItemsState(next);
-                                const rate = parseFloat(rateAmount) || 0;
-                                if (rate > 0) recomputeEditSubtotal(next, rate, editCustomItems);
+                                recomputeEditSubtotal(next, effectiveRate, editCustomItems);
                               }}
                               className="w-16 bg-transparent border-b border-transparent text-right text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors"
                             />
