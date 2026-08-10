@@ -825,7 +825,7 @@ export default function DashboardPage() {
   }, [activeTask, userId, supabase, session]);
 
   const closeOpenNonBreakLogs = useCallback(
-    async (now: string, excludeLogId?: number) => {
+    async (now: string, excludeLogId?: number, minAgeMs?: number) => {
       if (!userId) return;
 
       let query = supabase
@@ -838,6 +838,12 @@ export default function DashboardPage() {
 
       if (excludeLogId !== undefined) {
         query = query.neq("id", excludeLogId);
+      }
+      if (minAgeMs !== undefined) {
+        // Never touch anything that started too recently to be a genuine
+        // orphan — protects against the id-exclusion race below.
+        const cutoff = new Date(new Date(now).getTime() - minAgeMs).toISOString();
+        query = query.lt("start_time", cutoff);
       }
 
       const { data: openLogs } = await query;
@@ -891,22 +897,30 @@ export default function DashboardPage() {
   );
 
   // ─── Auto-close stale open logs on page load ──────────────
-  // Guard on `loading`: session starts as null before the initial fetch
-  // resolves, which used to make the very first fire of this effect compute
-  // activeLogId as undefined — closing every open log with no exclusion,
-  // including whatever task was genuinely running. That silently ended a
-  // live task within seconds of any page refresh while the DB's sessions row
-  // (never cleared by this path) kept claiming it was still active, so the
-  // UI kept showing a live timer for a task that had already stopped
-  // accumulating time. Waiting for the initial load to finish before this
-  // can run at all closes the race.
+  // Two layers of protection, because either alone still raced in testing:
+  // 1. Guard on `loading` — session starts as null before the initial fetch
+  //    resolves, so without this the very first fire computed activeLogId as
+  //    undefined and closed every open log with no exclusion at all.
+  // 2. A minimum age (2 min) on top of the id exclusion — session.active_task
+  //    is written by a *separate*, later upsert in startTask (after the log
+  //    insert). If a refresh lands in that gap, session hasn't caught up to
+  //    the brand-new log yet even once `loading` is false, so id-exclusion
+  //    alone still couldn't recognize it and this sweep closed a task within
+  //    milliseconds of it starting. Because that close path never touches
+  //    sessions.active_task, the session row kept claiming the (now-closed)
+  //    task was still live — the UI showed a running timer for a task that
+  //    had already stopped accumulating time in the database. Requiring the
+  //    log to be at least 2 minutes old means a task that just started can
+  //    never be touched here regardless of session's state, while genuinely
+  //    orphaned logs (crash, closed laptop) are always much older than that
+  //    by the time the VA reloads.
   useEffect(() => {
     if (!userId || loading) return;
     const now = new Date().toISOString();
     const activeLogId = session?.active_task?.logId
       ? parseInt(session.active_task.logId, 10)
       : undefined;
-    closeOpenNonBreakLogs(now, activeLogId);
+    closeOpenNonBreakLogs(now, activeLogId, 2 * 60 * 1000);
   }, [userId, loading, closeOpenNonBreakLogs, session]);
 
   // ─── Close-the-gap safety net: recover from an ended break with no active task ──────────
