@@ -313,21 +313,21 @@ export default function AvailableTasksWidget({
   const totalCount = viewMode === "fixed_pay" ? pendingAssigned.length + openTasks.length : hourlyTasks.length;
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
+    <div className="rounded-xl border border-amber/30 bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
       <button
         type="button"
         onClick={() => setCollapsed((prev) => !prev)}
-        className="sticky top-0 z-10 flex w-full cursor-pointer items-center gap-1.5 bg-white pb-1 text-left"
+        className="sticky top-0 z-10 flex w-full cursor-pointer items-center gap-1.5 rounded-lg border border-amber/30 bg-amber-soft px-3 py-2.5 text-left transition-colors hover:bg-amber-soft/70"
       >
-        <svg className="h-3.5 w-3.5 shrink-0 text-terracotta" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg className="h-3.5 w-3.5 shrink-0 text-amber-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M12 2L2 7l10 5 10-5-10-5z" />
           <path d="M2 17l10 5 10-5" />
           <path d="M2 12l10 5 10-5" />
         </svg>
-        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">
-          Available Tasks <span className="text-stone font-normal normal-case">({totalCount})</span>
+        <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide">
+          Available Tasks <span className="text-amber-700 font-normal normal-case">({totalCount})</span>
         </h3>
-        <span className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-sand bg-parchment text-espresso transition-colors hover:bg-clay/40">
+        <span className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber/40 bg-white text-amber-700 transition-colors hover:bg-amber-100">
           <svg className={`h-4 w-4 transition-transform ${collapsed ? "" : "rotate-180"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <path d="M6 9l6 6 6-6" />
           </svg>
