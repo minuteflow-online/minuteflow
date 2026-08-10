@@ -53,6 +53,8 @@ const EMPTY_FORM = {
   account: "",
   category: "",
   rate: "",
+  duration_value: "",
+  duration_unit: "hours" as "hours" | "minutes",
   task_detail: "",
   task_notes: "",
   link: "",
@@ -168,6 +170,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   const [currentPosition, setCurrentPosition] = useState<string | null>(null);
   const [currentPayRateType, setCurrentPayRateType] = useState<string | null>(null);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
+  const [currentPayRate, setCurrentPayRate] = useState<number | null>(null);
 
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -203,6 +206,18 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   // not pay_rate_type, so it can't be thrown off by rate-field edge cases.
   const isHybrid = (currentPosition === "Part-time VA" || currentPosition === "Full-time VA") && canSeeAvailableTasks;
 
+  // Reference calculation for the create panel: duration entered by the VA,
+  // converted to hours, times their own hourly pay_rate (set in Team
+  // Management). This is display-only — it never overwrites the flat
+  // "Rate per Task" the VA enters, it's just a comparison point.
+  const durationHours = form.duration_unit === "hours"
+    ? Number(form.duration_value)
+    : Number(form.duration_value) / 60;
+  const hourlyEquivalentTotal =
+    currentPayRate != null && Number.isFinite(durationHours) && durationHours > 0
+      ? durationHours * currentPayRate
+      : null;
+
   const fetchCurrentUser = useCallback(async () => {
     try {
       const { data } = await supabase.auth.getUser();
@@ -212,7 +227,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role, position, pay_rate_type, can_see_available_tasks")
+        .select("role, position, pay_rate_type, can_see_available_tasks, pay_rate")
         .eq("id", data.user.id)
         .single();
 
@@ -220,6 +235,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
       setCurrentPosition(profile?.position ?? null);
       setCurrentPayRateType(profile?.pay_rate_type ?? null);
       setCanSeeAvailableTasks(Boolean(profile?.can_see_available_tasks));
+      setCurrentPayRate(profile?.pay_rate != null ? Number(profile.pay_rate) : null);
     } catch {
       // leave the page in its access-denied state if the profile lookup fails
     } finally {
@@ -824,7 +840,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                       </div>
 
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Rate</label>
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Rate per Task</label>
                         <input
                           type="number"
                           step="0.01"
@@ -833,6 +849,46 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                           className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                           placeholder="0.00"
                         />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">
+                          Estimated Duration <span className="font-normal normal-case text-stone/70">(optional)</span>
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            value={form.duration_value}
+                            onChange={(event) => setForm((current) => ({ ...current, duration_value: event.target.value }))}
+                            className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                            placeholder="e.g. 2"
+                          />
+                          <select
+                            value={form.duration_unit}
+                            onChange={(event) => setForm((current) => ({ ...current, duration_unit: event.target.value as "hours" | "minutes" }))}
+                            className="w-32 shrink-0 rounded-lg border border-sand bg-white px-2 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                          >
+                            <option value="hours">Hours</option>
+                            <option value="minutes">Minutes</option>
+                          </select>
+                        </div>
+                        {form.duration_value.trim() !== "" && (
+                          <p className="mt-1.5 text-[11px] text-stone">
+                            {hourlyEquivalentTotal != null ? (
+                              <>
+                                At your hourly rate, that&apos;s worth{" "}
+                                <span className="font-semibold text-espresso">${hourlyEquivalentTotal.toFixed(2)}</span>
+                                {" "}— compare that to the Rate per Task above.
+                              </>
+                            ) : currentPayRate == null ? (
+                              "No hourly rate is set for your profile in Team Management, so this can't be compared yet."
+                            ) : (
+                              "Enter a valid duration to see the comparison."
+                            )}
+                          </p>
+                        )}
                       </div>
 
                       <div>
