@@ -24,6 +24,13 @@ function computeHourlyEquivalent(
   return hours * hourlyRate;
 }
 
+function computeQuantityTotal(unitRate: string, quantity: string): number | null {
+  const rate = Number(unitRate);
+  const qty = Number(quantity);
+  if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(qty) || qty <= 0) return null;
+  return rate * qty;
+}
+
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
@@ -63,6 +70,8 @@ const EMPTY_FORM = {
   task_name: "",
   account: "",
   category: "",
+  unit_rate: "",
+  quantity: "",
   rate: "",
   duration_value: "",
   duration_unit: "hours" as "hours" | "minutes",
@@ -217,12 +226,12 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   // not pay_rate_type, so it can't be thrown off by rate-field edge cases.
   const isHybrid = (currentPosition === "Part-time VA" || currentPosition === "Full-time VA") && canSeeAvailableTasks;
 
-  // Reference calculation for the create panel: duration entered by the VA,
-  // converted to hours, times their own hourly pay_rate (set in Team
-  // Management). Also auto-fills Rate per Task (see the duration field's
-  // onChange handlers below) so entering a duration alone is enough to
-  // satisfy the required Rate field — the VA can still overwrite it by hand.
+  // Two independent ways to arrive at Final Rate, both display-only helpers
+  // that auto-fill form.rate (see each field's onChange handlers below) —
+  // whichever the VA touches most recently wins, and either can be
+  // overwritten by hand afterward.
   const hourlyEquivalentTotal = computeHourlyEquivalent(form.duration_value, form.duration_unit, currentPayRate);
+  const quantityTotal = computeQuantityTotal(form.unit_rate, form.quantity);
 
   const fetchCurrentUser = useCallback(async () => {
     try {
@@ -846,15 +855,62 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                       </div>
 
                       <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Rate per Task</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={form.rate}
-                          onChange={(event) => setForm((current) => ({ ...current, rate: event.target.value }))}
-                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          placeholder="0.00"
-                        />
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">
+                          Rate per Task <span className="font-normal normal-case text-stone/70">(optional)</span>
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={form.unit_rate}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setForm((current) => {
+                                const total = computeQuantityTotal(value, current.quantity);
+                                return {
+                                  ...current,
+                                  unit_rate: value,
+                                  rate: total != null ? total.toFixed(2) : current.rate,
+                                };
+                              });
+                            }}
+                            className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                            placeholder="0.00"
+                          />
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={form.quantity}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setForm((current) => {
+                                const total = computeQuantityTotal(current.unit_rate, value);
+                                return {
+                                  ...current,
+                                  quantity: value,
+                                  rate: total != null ? total.toFixed(2) : current.rate,
+                                };
+                              });
+                            }}
+                            className="w-32 shrink-0 rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                            placeholder="Quantity"
+                          />
+                        </div>
+                        {(form.unit_rate.trim() !== "" || form.quantity.trim() !== "") && (
+                          <p className="mt-1.5 text-[11px] text-stone">
+                            {quantityTotal != null ? (
+                              <>
+                                {form.unit_rate} × {form.quantity} ={" "}
+                                <span className="font-semibold text-espresso">${quantityTotal.toFixed(2)}</span>
+                                {" "}— we filled in Final Rate below with this; edit it if you want a different amount.
+                              </>
+                            ) : (
+                              "Enter both a rate and a quantity to auto-fill Final Rate."
+                            )}
+                          </p>
+                        )}
                       </div>
 
                       <div>
@@ -906,15 +962,27 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                               <>
                                 At your hourly rate, that&apos;s worth{" "}
                                 <span className="font-semibold text-espresso">${hourlyEquivalentTotal.toFixed(2)}</span>
-                                {" "}— we filled in Rate per Task above with this; edit it if you want a different amount.
+                                {" "}— we filled in Final Rate below with this; edit it if you want a different amount.
                               </>
                             ) : currentPayRate == null ? (
                               "No hourly rate is set for your profile in Team Management, so we can't fill in a rate for you — enter one manually."
                             ) : (
-                              "Enter a valid duration to auto-fill Rate per Task."
+                              "Enter a valid duration to auto-fill Final Rate."
                             )}
                           </p>
                         )}
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Final Rate</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={form.rate}
+                          onChange={(event) => setForm((current) => ({ ...current, rate: event.target.value }))}
+                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                          placeholder="0.00"
+                        />
                       </div>
 
                       <div>
