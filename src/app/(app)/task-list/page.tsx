@@ -543,7 +543,7 @@ export default function TaskListPage() {
   }, [supabase]);
 
   const isSubmittedView = activeView === "submitted";
-  const isAdmin = currentRole === "admin";
+  const isAdmin = currentRole === "admin" || currentRole === "manager";
   const isPerTaskVa = currentPosition === "Per Task VA";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
