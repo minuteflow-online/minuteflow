@@ -10507,7 +10507,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                     reader.onload = () => {
                       const rows = parseTimeEntryCSV(String(reader.result || ""));
                       if (rows.length > 0) {
-                        const next = [...editLineItemsState, ...rows];
+                        const next = [...rows, ...editLineItemsState];
                         setEditUndoStack((prev) => [...prev.slice(-19), editLineItemsState]);
                         setEditLineItemsState(next);
                         const rate = parseFloat(rateAmount) || 0;
@@ -10529,7 +10529,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                 <button
                   type="button"
                   onClick={() => {
-                    const next = [...editLineItemsState, makeManualLineItem()];
+                    const next = [makeManualLineItem(), ...editLineItemsState];
                     setEditUndoStack((prev) => [...prev.slice(-19), editLineItemsState]);
                     setEditLineItemsState(next);
                   }}
