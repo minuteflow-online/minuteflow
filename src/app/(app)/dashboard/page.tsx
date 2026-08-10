@@ -98,6 +98,17 @@ function getCorrectSessionDate(
   return todayStr; // stale (missed Clock Out) — start fresh
 }
 
+// The dashboard's Activity Log needs "today" (any timezone) fully intact, plus
+// recently unresolved (in_progress/on_hold) tasks from prior days. A flat
+// row-count limit truncated by team-wide volume, not by relevance — a team
+// logging >200 rows/day could lose part of *today's own* data. A rolling
+// date window guarantees "today" is never cut off, while staying bounded so
+// months-old abandoned on_hold/in_progress rows don't pile up forever.
+const ACTIVITY_LOOKBACK_DAYS = 14;
+function activityLogFloorIso(): string {
+  return new Date(Date.now() - ACTIVITY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
 function formatHoursMinutes(ms: number): string {
   const totalMinutes = Math.floor(ms / 60000);
   const hours = Math.floor(totalMinutes / 60);
@@ -430,8 +441,8 @@ export default function DashboardPage() {
           supabase
             .from("time_logs")
             .select("*")
-            .order("start_time", { ascending: false })
-            .limit(200),
+            .gte("start_time", activityLogFloorIso())
+            .order("start_time", { ascending: false }),
           supabase.from("task_screenshots").select("*"),
           supabase.from("organization_settings").select("timezone").limit(1).single(),
         ]);
@@ -760,10 +771,21 @@ export default function DashboardPage() {
     const durationMs = Math.max(0, new Date(now).getTime() - startMs);
 
     if (logId) {
-      await supabase
+      const { error: closeError } = await supabase
         .from("time_logs")
         .update({ end_time: now, duration_ms: durationMs })
         .eq("id", logId);
+
+      if (closeError) {
+        // Don't clear the on-screen "active task" if the DB row is still open —
+        // that would make a running task look like it silently stopped, when it's
+        // actually still live in the database with no end_time. Leave the UI
+        // matching reality so the VA notices and can retry, instead of orphaning
+        // an open log that only surfaces later as a corrupted multi-hour entry.
+        console.error("[stopCurrentTask] failed to close log", logId, closeError.message);
+        alert("Couldn't stop the current task (it's still being tracked): " + closeError.message + ". Please try again.");
+        return;
+      }
 
       setTimeLogs((prev) =>
         prev.map((log) =>
@@ -774,7 +796,7 @@ export default function DashboardPage() {
       );
     }
 
-    await supabase.from("sessions").upsert(
+    const { error: stopSessionError } = await supabase.from("sessions").upsert(
       {
         user_id: userId,
         clocked_in: true,
@@ -784,6 +806,9 @@ export default function DashboardPage() {
       },
       { onConflict: "user_id" }
     );
+    if (stopSessionError) {
+      console.error("[stopCurrentTask] session upsert failed:", stopSessionError.message);
+    }
 
     // Stop the capture sequence for the closed task (keep the screen-share
     // stream alive — the next task may schedule its own captures). Inlined
@@ -2036,7 +2061,7 @@ export default function DashboardPage() {
             ? formData.task_status.toLowerCase().replace(" ", "_")
             : "in_progress";
 
-          const { data: logData } = await supabase
+          const { data: logData, error: fixedLogError } = await supabase
             .from("time_logs")
             .insert({
               user_id: userId,
@@ -2064,9 +2089,11 @@ export default function DashboardPage() {
             .select()
             .single();
 
-          if (logData) {
-            setTimeLogs((prev) => [logData as TimeLog, ...prev]);
+          if (fixedLogError || !logData) {
+            alert("Failed to save task: " + (fixedLogError?.message || "unknown error") + ". Please try again.");
+            return;
           }
+          setTimeLogs((prev) => [logData as TimeLog, ...prev]);
           // Auto-update assignment status for fixed tasks too
           await autoUpdateAssignmentStatus(formData.task_name);
           if (formData._assignedTaskId) {
@@ -2124,10 +2151,17 @@ export default function DashboardPage() {
                 ? new Date(openLog.start_time).getTime()
                 : Date.now();
               const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
-              await supabase
+              const { error: closeError } = await supabase
                 .from("time_logs")
                 .update({ end_time: now, duration_ms: logDurationMs })
                 .eq("id", openLog.id);
+              if (closeError) {
+                // Bail rather than start a new task on top of one that failed to
+                // close — that would create the exact overlapping-duplicate-log
+                // situation this whole block exists to prevent.
+                alert("Couldn't switch tasks (failed to close previous task): " + closeError.message + ". Please try again.");
+                return;
+              }
             }
             // Sync React state to match
             setTimeLogs((prev) =>
@@ -2161,7 +2195,7 @@ export default function DashboardPage() {
         const newTaskInternalMemo = formData.task_status ? null : formData.internal_memo || null;
 
         // Insert time log
-        const { data: logData } = await supabase
+        const { data: logData, error: newLogError } = await supabase
           .from("time_logs")
           .insert({
             user_id: userId,
@@ -2185,6 +2219,15 @@ export default function DashboardPage() {
           })
           .select()
           .single();
+
+        if (newLogError || !logData) {
+          // The old task was already closed above — if we silently kept going here,
+          // the UI would show the new task as "live" with nothing actually being
+          // recorded (looks exactly like "the task stopped on its own"). Surface the
+          // failure and leave the VA idle instead, so it's obvious and retryable.
+          alert("Failed to start task: " + (newLogError?.message || "unknown error") + ". Please try again — nothing is being tracked right now.");
+          return;
+        }
 
         // Auto-update assignment status to "in_progress" when VA starts working
         await autoUpdateAssignmentStatus(formData.task_name);
@@ -2226,7 +2269,7 @@ export default function DashboardPage() {
             sessionState === "idle" ? now : session?.clock_in_time || now;
           const taskSessionDate = getCorrectSessionDate(session, orgTimezone);
 
-          await supabase.from("sessions").upsert(
+          const { error: sessionUpsertError } = await supabase.from("sessions").upsert(
             {
               user_id: userId,
               clocked_in: true,
@@ -2237,6 +2280,14 @@ export default function DashboardPage() {
             },
             { onConflict: "user_id" }
           );
+          if (sessionUpsertError) {
+            // The time_log row above was already created — real time is being
+            // tracked. But the persisted session's active_task (what a page
+            // refresh restores, and what Team/admin views read) is now stale,
+            // which can make it look like the task "switched back" or vanished.
+            console.error("[startTask] session upsert failed:", sessionUpsertError.message);
+            alert("Task started, but your session status may not update everywhere until you refresh. (" + sessionUpsertError.message + ")");
+          }
 
           if (sessionState === "idle") {
             setSession((prev) => ({
@@ -3219,8 +3270,8 @@ export default function DashboardPage() {
           const { data } = await supabase
             .from("time_logs")
             .select("*")
-            .order("start_time", { ascending: false })
-            .limit(200);
+            .gte("start_time", activityLogFloorIso())
+            .order("start_time", { ascending: false });
           if (data) setTimeLogs(data as TimeLog[]);
         }}
       />

@@ -325,6 +325,7 @@ export default function TaskListPage() {
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
   const [hourlyGrabbingId, setHourlyGrabbingId] = useState<number | null>(null);
   const [hourlyExpandedIds, setHourlyExpandedIds] = useState<number[]>([]);
+  const [hourlyPoolCollapsed, setHourlyPoolCollapsed] = useState(true);
   const [availableRefreshKey, setAvailableRefreshKey] = useState(0);
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(false);
@@ -2234,12 +2235,34 @@ export default function TaskListPage() {
             <>
               {canShowHourlyPool && activeView === "my_tasks" && (
                 <div className="mb-4 space-y-3 rounded-xl border border-sand bg-parchment/20 p-3">
-                  <div className="flex items-center gap-2 text-[11px] text-stone">
-                    <span className="rounded-full bg-parchment px-2 py-0.5 font-semibold text-walnut">{hourlyPoolTasks.length}</span>
-                    <span>task{hourlyPoolTasks.length === 1 ? "" : "s"}</span>
-                    <span className="rounded-full bg-sage-soft px-2 py-0.5 font-semibold text-sage">Unassigned Pool</span>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setHourlyPoolCollapsed((prev) => !prev)}
+                    className="flex w-full cursor-pointer items-center gap-2 text-left"
+                  >
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                        hourlyPoolTasks.length > 0
+                          ? "bg-amber-100 text-amber-700 border border-amber-200"
+                          : "bg-stone/10 text-stone border border-stone/20"
+                      }`}
+                    >
+                      {hourlyPoolTasks.length} unclaimed
+                    </span>
+                    <span className="rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-semibold text-sage">Unassigned Pool</span>
+                    <svg
+                      className={`ml-auto h-3.5 w-3.5 shrink-0 text-stone transition-transform ${hourlyPoolCollapsed ? "" : "rotate-180"}`}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
 
+                  {!hourlyPoolCollapsed && (
+                  <>
                   {hourlyPoolError && (
                     <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{hourlyPoolError}</div>
                   )}
@@ -2321,6 +2344,8 @@ export default function TaskListPage() {
                         );
                       })}
                     </div>
+                  )}
+                  </>
                   )}
                 </div>
               )}
