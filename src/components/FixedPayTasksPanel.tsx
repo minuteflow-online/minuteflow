@@ -13,6 +13,17 @@ function limitToWords(text: string, limit: number): string {
   return words.slice(0, limit).join(" ");
 }
 
+function computeHourlyEquivalent(
+  durationValue: string,
+  unit: "hours" | "minutes",
+  hourlyRate: number | null
+): number | null {
+  const raw = Number(durationValue);
+  if (!Number.isFinite(raw) || raw <= 0 || hourlyRate == null) return null;
+  const hours = unit === "hours" ? raw : raw / 60;
+  return hours * hourlyRate;
+}
+
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
@@ -208,15 +219,10 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
 
   // Reference calculation for the create panel: duration entered by the VA,
   // converted to hours, times their own hourly pay_rate (set in Team
-  // Management). This is display-only — it never overwrites the flat
-  // "Rate per Task" the VA enters, it's just a comparison point.
-  const durationHours = form.duration_unit === "hours"
-    ? Number(form.duration_value)
-    : Number(form.duration_value) / 60;
-  const hourlyEquivalentTotal =
-    currentPayRate != null && Number.isFinite(durationHours) && durationHours > 0
-      ? durationHours * currentPayRate
-      : null;
+  // Management). Also auto-fills Rate per Task (see the duration field's
+  // onChange handlers below) so entering a duration alone is enough to
+  // satisfy the required Rate field — the VA can still overwrite it by hand.
+  const hourlyEquivalentTotal = computeHourlyEquivalent(form.duration_value, form.duration_unit, currentPayRate);
 
   const fetchCurrentUser = useCallback(async () => {
     try {
@@ -861,13 +867,33 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                             step="0.1"
                             min="0"
                             value={form.duration_value}
-                            onChange={(event) => setForm((current) => ({ ...current, duration_value: event.target.value }))}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setForm((current) => {
+                                const equivalent = computeHourlyEquivalent(value, current.duration_unit, currentPayRate);
+                                return {
+                                  ...current,
+                                  duration_value: value,
+                                  rate: equivalent != null ? equivalent.toFixed(2) : current.rate,
+                                };
+                              });
+                            }}
                             className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                             placeholder="e.g. 2"
                           />
                           <select
                             value={form.duration_unit}
-                            onChange={(event) => setForm((current) => ({ ...current, duration_unit: event.target.value as "hours" | "minutes" }))}
+                            onChange={(event) => {
+                              const unit = event.target.value as "hours" | "minutes";
+                              setForm((current) => {
+                                const equivalent = computeHourlyEquivalent(current.duration_value, unit, currentPayRate);
+                                return {
+                                  ...current,
+                                  duration_unit: unit,
+                                  rate: equivalent != null ? equivalent.toFixed(2) : current.rate,
+                                };
+                              });
+                            }}
                             className="w-32 shrink-0 rounded-lg border border-sand bg-white px-2 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                           >
                             <option value="hours">Hours</option>
@@ -880,12 +906,12 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                               <>
                                 At your hourly rate, that&apos;s worth{" "}
                                 <span className="font-semibold text-espresso">${hourlyEquivalentTotal.toFixed(2)}</span>
-                                {" "}— compare that to the Rate per Task above.
+                                {" "}— we filled in Rate per Task above with this; edit it if you want a different amount.
                               </>
                             ) : currentPayRate == null ? (
-                              "No hourly rate is set for your profile in Team Management, so this can't be compared yet."
+                              "No hourly rate is set for your profile in Team Management, so we can't fill in a rate for you — enter one manually."
                             ) : (
-                              "Enter a valid duration to see the comparison."
+                              "Enter a valid duration to auto-fill Rate per Task."
                             )}
                           </p>
                         )}
