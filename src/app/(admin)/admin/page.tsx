@@ -7342,12 +7342,26 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const editFilteredHours = useMemo(() => Math.round(filteredEditLineItems.reduce((s, li) => s + Number(li.quantity), 0) * 100) / 100, [filteredEditLineItems]);
   const isEditFiltered = filteredEditLineItems.length !== editLineItemsState.length;
 
-  // Keep editSubtotal in sync with filtered line items when a filter is active
+  // When a column filter narrows the visible rows, preview the dollar total
+  // for just that filtered subset (quantity × rate — NOT the raw `amount`
+  // column, which is always 0 on timelog line items and would silently zero
+  // out or go stale here, clobbering whatever a real edit just computed).
+  // When no filter is active, this instead re-asserts the real full subtotal
+  // through the one shared recompute function, so it can't drift out of sync
+  // with edits made elsewhere (minutes, manual items, CSV import).
   useEffect(() => {
     if (!editingInvoice) return;
-    const total = filteredEditLineItems.reduce((sum, li) => sum + (li.amount || 0), 0).toFixed(2);
-    setEditSubtotal(total);
-  }, [filteredEditLineItems, editingInvoice]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (isEditFiltered) {
+      const rate = parseFloat(rateAmount) || 0;
+      if (rate > 0) {
+        const total = filteredEditLineItems.reduce((sum, li) => sum + Number(li.quantity) * rate, 0).toFixed(2);
+        setEditSubtotal(total);
+      }
+    } else {
+      recomputeEditSubtotal(editLineItemsState, getEffectiveRate(), editCustomItems);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredEditLineItems, editingInvoice, isEditFiltered, editCustomItems, rateAmount]);
 
   const editTaskDescOptions = useMemo(() => [...new Set(editLineItemsState.map(li => li.description))].sort(), [editLineItemsState]);
   const getEditDelivOptions = useCallback((taskDesc: string) => {
