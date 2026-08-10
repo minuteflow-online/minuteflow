@@ -6840,6 +6840,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editCustomCell, setEditCustomCell] = useState<{ idx: number; field: "desc" | "project" } | null>(null);
   const [editCustomItems, setEditCustomItems] = useState<Array<{ id: string; description: string; amount: string }>>([]);
   const editItemsCsvInputRef = useRef<HTMLInputElement>(null);
+  const timeEntriesCsvInputRef = useRef<HTMLInputElement>(null);
 
   // THE single subtotal calc for the invoice edit screen: time-based hours × rate
   // (0 for pure custom invoices, which have no time line items) plus any manual
@@ -6895,6 +6896,97 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
         description: cols[dCol]?.trim() || "",
         amount: (parseFloat(cols[aCol]) || 0).toString(),
       }));
+  };
+
+  // A manually-added time entry — negative id marks it as not-yet-saved so the
+  // save handler knows to INSERT it instead of UPDATE-by-id.
+  let manualLineItemCounter = 0;
+  const makeManualLineItem = (fields: Partial<InvoiceLineItem> = {}): InvoiceLineItem => {
+    manualLineItemCounter += 1;
+    return {
+      id: -(Date.now() + manualLineItemCounter),
+      invoice_id: selectedInvoice?.id ?? 0,
+      log_id: null,
+      expense_id: null,
+      description: "",
+      va_name: "",
+      account_name: null,
+      category: null,
+      project: "",
+      client_memo: "",
+      quantity: 0,
+      unit_price: 0,
+      amount: 0,
+      service_date: null,
+      start_time: null,
+      sort_order: 0,
+      created_at: new Date().toISOString(),
+      ...fields,
+    };
+  };
+
+  // Parses a CSV for manually adding full time-entry rows: date, time, va,
+  // deliverables, task_description, min, memo (headers matched loosely).
+  const parseTimeEntryCSV = (text: string): InvoiceLineItem[] => {
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 2) return [];
+    const parseLine = (line: string): string[] => {
+      const result: string[] = [];
+      let current = "";
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+          else inQuotes = !inQuotes;
+        } else if (ch === "," && !inQuotes) {
+          result.push(current.trim());
+          current = "";
+        } else {
+          current += ch;
+        }
+      }
+      result.push(current.trim());
+      return result;
+    };
+    const headers = parseLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_"));
+    const col = (...names: string[]) => headers.findIndex((h) => names.includes(h));
+    const dateIdx = col("date", "service_date");
+    const timeIdx = col("time", "start_time");
+    const vaIdx = col("va", "va_name", "user");
+    const delivIdx = col("deliverables", "project");
+    const taskIdx = col("task_description", "task", "description");
+    const minIdx = col("min", "minutes", "mins");
+    const memoIdx = col("memo", "client_memo", "notes");
+    if (taskIdx === -1 || minIdx === -1) return []; // require at minimum a task + minutes column
+
+    return lines.slice(1).map(parseLine).filter((cols) => cols[taskIdx]?.trim()).map((cols) => {
+      const dateStr = dateIdx !== -1 ? cols[dateIdx]?.trim() : "";
+      const timeStr = timeIdx !== -1 ? cols[timeIdx]?.trim() : "";
+      let startTime: string | null = null;
+      if (dateStr) {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) {
+          if (timeStr) {
+            const combined = new Date(`${dateStr} ${timeStr}`);
+            startTime = !isNaN(combined.getTime()) ? combined.toISOString() : d.toISOString();
+          } else {
+            startTime = d.toISOString();
+          }
+        }
+      }
+      const serviceDate = startTime ? startTime.slice(0, 10) : null;
+      const mins = parseFloat(cols[minIdx]) || 0;
+      return makeManualLineItem({
+        description: cols[taskIdx]?.trim() || "",
+        va_name: vaIdx !== -1 ? cols[vaIdx]?.trim() || "" : "",
+        project: delivIdx !== -1 ? cols[delivIdx]?.trim() || "" : "",
+        client_memo: memoIdx !== -1 ? cols[memoIdx]?.trim() || "" : "",
+        quantity: mins / 60,
+        service_date: serviceDate,
+        start_time: startTime,
+      });
+    });
   };
 
   // All project_tags from DB (for Deliverables dropdown)
@@ -8151,14 +8243,39 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
 
     await supabase.from("invoices").update(updateData).eq("id", selectedInvoice.id);
 
-    // Save line item changes
+    // Save line item changes. Negative ids mark manually-added rows that don't
+    // exist in the DB yet (from "+ Add Item" / CSV import) — insert those;
+    // update everything else by id. `quantity` must be saved here too (it
+    // wasn't previously — editing minutes updated the invoice total but the
+    // per-line-item hours silently reverted to their old value on next open).
     for (const li of editLineItemsState) {
-      await supabase.from("invoice_line_items").update({
-        description: li.description,
-        project: li.project,
-        client_memo: li.client_memo,
-        va_name: li.va_name,
-      }).eq("id", li.id);
+      if (li.id < 0) {
+        await supabase.from("invoice_line_items").insert({
+          invoice_id: selectedInvoice.id,
+          log_id: null,
+          expense_id: null,
+          description: li.description,
+          va_name: li.va_name,
+          account_name: li.account_name,
+          category: li.category,
+          project: li.project,
+          client_memo: li.client_memo,
+          quantity: li.quantity,
+          unit_price: li.unit_price,
+          amount: li.amount,
+          service_date: li.service_date,
+          start_time: li.start_time,
+          sort_order: li.sort_order,
+        });
+      } else {
+        await supabase.from("invoice_line_items").update({
+          description: li.description,
+          project: li.project,
+          client_memo: li.client_memo,
+          va_name: li.va_name,
+          quantity: li.quantity,
+        }).eq("id", li.id);
+      }
     }
     // Sync line item edits back to time_logs (X'd-out items are in removedEditItems — naturally excluded)
     for (const li of editLineItemsState) {
@@ -10365,18 +10482,60 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
               <h4 className="font-serif text-[14px] font-bold text-espresso">
                 Edit Time Entries ({isEditFiltered ? `${filteredEditLineItems.length} of ` : ""}{editLineItemsState.length} entries · {isEditFiltered ? `${editFilteredHours.toFixed(2)} of ` : ""}{editTotalHours.toFixed(2)} hrs)
               </h4>
-              {editUndoStack.length > 0 && (
+              <div className="flex items-center gap-2">
+                {editUndoStack.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const prev = editUndoStack[editUndoStack.length - 1];
+                      setEditUndoStack((s) => s.slice(0, -1));
+                      setEditLineItemsState(prev);
+                    }}
+                    className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                  >
+                    ↩ Undo {editUndoStack.length > 1 ? `(${editUndoStack.length})` : ""}
+                  </button>
+                )}
+                <input
+                  ref={timeEntriesCsvInputRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const rows = parseTimeEntryCSV(String(reader.result || ""));
+                      if (rows.length > 0) {
+                        const next = [...editLineItemsState, ...rows];
+                        setEditUndoStack((prev) => [...prev.slice(-19), editLineItemsState]);
+                        setEditLineItemsState(next);
+                        const rate = parseFloat(rateAmount) || 0;
+                        if (rate > 0) recomputeEditSubtotal(next, rate, editCustomItems);
+                      } else {
+                        alert('CSV needs at least "task_description" (or "task") and "min" (or "minutes") columns. "date", "time", "va", "deliverables", and "memo" are optional.');
+                      }
+                    };
+                    reader.readAsText(file);
+                    e.target.value = "";
+                  }}
+                />
                 <button
+                  type="button"
+                  onClick={() => timeEntriesCsvInputRef.current?.click()}
+                  title="CSV with date, time, va, deliverables, task_description, min, memo columns"
+                  className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                >↑ Upload CSV</button>
+                <button
+                  type="button"
                   onClick={() => {
-                    const prev = editUndoStack[editUndoStack.length - 1];
-                    setEditUndoStack((s) => s.slice(0, -1));
-                    setEditLineItemsState(prev);
+                    const next = [...editLineItemsState, makeManualLineItem()];
+                    setEditUndoStack((prev) => [...prev.slice(-19), editLineItemsState]);
+                    setEditLineItemsState(next);
                   }}
                   className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
-                >
-                  ↩ Undo {editUndoStack.length > 1 ? `(${editUndoStack.length})` : ""}
-                </button>
-              )}
+                >+ Add Item</button>
+              </div>
             </div>
 
             {/* Edit Filter Bar */}
@@ -10472,12 +10631,49 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                       return (
                         <tr key={li.id} className="hover:bg-parchment/20 transition-colors">
                           <td className="px-3 py-2 text-bark text-[11px] whitespace-nowrap">
-                            {li.service_date ? new Date(li.service_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone }) : "—"}
+                            {li.id < 0 ? (
+                              <input type="date" value={li.service_date || ""}
+                                onChange={(e) => {
+                                  const dateStr = e.target.value;
+                                  setEditLineItemsState(prev => prev.map((x, i) => {
+                                    if (i !== realIdx) return x;
+                                    const timePart = x.start_time ? new Date(x.start_time).toISOString().slice(11, 16) : "00:00";
+                                    const combined = dateStr ? new Date(`${dateStr}T${timePart}:00`) : null;
+                                    return { ...x, service_date: dateStr || null, start_time: combined && !isNaN(combined.getTime()) ? combined.toISOString() : x.start_time };
+                                  }));
+                                }}
+                                className="w-32 bg-transparent border-b border-transparent text-[11px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors" />
+                            ) : (
+                              li.service_date ? new Date(li.service_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: orgTimezone }) : "—"
+                            )}
                           </td>
                           <td className="px-3 py-2 text-bark text-[11px] whitespace-nowrap">
-                            {li.start_time ? new Date(li.start_time).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: orgTimezone }) : "—"}
+                            {li.id < 0 ? (
+                              <input type="time" value={li.start_time ? new Date(li.start_time).toISOString().slice(11, 16) : ""}
+                                onChange={(e) => {
+                                  const timeStr = e.target.value;
+                                  setEditLineItemsState(prev => prev.map((x, i) => {
+                                    if (i !== realIdx) return x;
+                                    const datePart = x.service_date || new Date().toISOString().slice(0, 10);
+                                    const combined = timeStr ? new Date(`${datePart}T${timeStr}:00`) : null;
+                                    return { ...x, service_date: x.service_date || datePart, start_time: combined && !isNaN(combined.getTime()) ? combined.toISOString() : x.start_time };
+                                  }));
+                                }}
+                                className="w-24 bg-transparent border-b border-transparent text-[11px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors" />
+                            ) : (
+                              li.start_time ? new Date(li.start_time).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: orgTimezone }) : "—"
+                            )}
                           </td>
-                          <td className="px-3 py-2 font-medium text-espresso text-[11px] whitespace-nowrap">{li.va_name || "—"}</td>
+                          <td className="px-3 py-2 font-medium text-espresso text-[11px] whitespace-nowrap">
+                            {li.id < 0 ? (
+                              <input type="text" value={li.va_name || ""}
+                                onChange={(e) => setEditLineItemsState(prev => prev.map((x, i) => i === realIdx ? { ...x, va_name: e.target.value } : x))}
+                                placeholder="VA name"
+                                className="w-24 bg-transparent border-b border-transparent text-[11px] text-espresso outline-none focus:border-terracotta hover:border-sand transition-colors placeholder:text-stone placeholder:font-normal" />
+                            ) : (
+                              li.va_name || "—"
+                            )}
+                          </td>
                           <td className="px-3 py-2 max-w-[220px]">
                             {editCustomCell?.idx === realIdx && editCustomCell?.field === "project" ? (
                               <input autoFocus value={li.project || ""} onChange={(e) => setEditLineItemsState(prev => prev.map((x, i) => i === realIdx ? {...x, project: e.target.value} : x))}
