@@ -891,14 +891,23 @@ export default function DashboardPage() {
   );
 
   // ─── Auto-close stale open logs on page load ──────────────
+  // Guard on `loading`: session starts as null before the initial fetch
+  // resolves, which used to make the very first fire of this effect compute
+  // activeLogId as undefined — closing every open log with no exclusion,
+  // including whatever task was genuinely running. That silently ended a
+  // live task within seconds of any page refresh while the DB's sessions row
+  // (never cleared by this path) kept claiming it was still active, so the
+  // UI kept showing a live timer for a task that had already stopped
+  // accumulating time. Waiting for the initial load to finish before this
+  // can run at all closes the race.
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || loading) return;
     const now = new Date().toISOString();
     const activeLogId = session?.active_task?.logId
       ? parseInt(session.active_task.logId, 10)
       : undefined;
     closeOpenNonBreakLogs(now, activeLogId);
-  }, [userId, closeOpenNonBreakLogs, session]);
+  }, [userId, loading, closeOpenNonBreakLogs, session]);
 
   // ─── Close-the-gap safety net: recover from an ended break with no active task ──────────
   // endBreak() clears active_task and relies on showPostBreakPrompt (pure client state) to get
