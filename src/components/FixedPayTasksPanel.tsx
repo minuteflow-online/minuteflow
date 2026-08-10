@@ -229,7 +229,8 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   // Two independent ways to arrive at Final Rate, both display-only helpers
   // that auto-fill form.rate (see each field's onChange handlers below) —
   // whichever the VA touches most recently wins, and either can be
-  // overwritten by hand afterward.
+  // overwritten by hand afterward. Quantity multiplies into ONE combined
+  // task total (e.g. 3 x $10 = one $30 task), not three separate $10 tasks.
   const hourlyEquivalentTotal = computeHourlyEquivalent(form.duration_value, form.duration_unit, currentPayRate);
   const quantityTotal = computeQuantityTotal(form.unit_rate, form.quantity);
 

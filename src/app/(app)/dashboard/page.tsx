@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useSession, type SessionActions } from "@/contexts/SessionContext";
 import { type SessionState } from "@/components/SessionBanner";
+import SessionBannerWrapper from "@/components/SessionBannerWrapper";
 import ActiveTaskBar from "@/components/ActiveTaskBar";
 import TaskEntryForm, { type TaskFormData } from "@/components/TaskEntryForm";
 import TeamSidebar from "@/components/TeamSidebar";
@@ -3042,6 +3043,8 @@ export default function DashboardPage() {
 
   return (
     <div>
+      <SessionBannerWrapper />
+
       {/* Screen Share Alert — shown after 3 consecutive capture failures */}
       {showScreenShareAlert && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
