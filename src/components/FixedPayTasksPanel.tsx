@@ -83,7 +83,7 @@ const EMPTY_FORM = {
 };
 
 type TaskFormState = typeof EMPTY_FORM;
-type PanelMode = "create" | "view" | null;
+type PanelMode = "create" | "edit" | "view" | null;
 type ActiveFilter = "all" | "active" | "inactive" | "archived" | "trash";
 type CreateMode = "hourly" | "fixed_pay";
 
@@ -209,6 +209,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   const [form, setForm] = useState<TaskFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [accounts, setAccounts] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -378,6 +379,24 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
     setMessage(null);
   }, []);
 
+  const openEditPanel = useCallback((task: FixedPayTaskWithClaimer) => {
+    setPanelMode("edit");
+    setSelectedTask(task);
+    setForm({
+      ...EMPTY_FORM,
+      task_name: task.task_name ?? "",
+      account: task.account ?? "",
+      category: task.category ?? "",
+      rate: task.rate != null ? String(task.rate) : "",
+      task_detail: task.task_detail ?? "",
+      task_notes: task.task_notes ?? "",
+      link: task.link ?? "",
+      instructions: task.instructions ?? "",
+      instructions_locked: task.instructions_locked ?? false,
+    });
+    setMessage(null);
+  }, []);
+
   const closePanel = useCallback(() => {
     setPanelMode(null);
     setSelectedTask(null);
@@ -436,6 +455,36 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
     []
   );
 
+  const handleDelete = useCallback(
+    async (taskId: number) => {
+      if (!confirm("Delete this task? This can't be undone.")) return;
+      setDeleting(true);
+      setMessage(null);
+      try {
+        const res = await fetch(`/api/fixed-pay-tasks/${taskId}`, { method: "DELETE" });
+        if (!res.ok) {
+          let errorText = `HTTP ${res.status}`;
+          try {
+            const data = (await res.json()) as { error?: string };
+            if (data.error) errorText = data.error;
+          } catch {
+            // ignore parse failures
+          }
+          throw new Error(errorText);
+        }
+        setTasks((current) => current.filter((t) => t.id !== taskId));
+        setPanelMode(null);
+        setSelectedTask(null);
+        setForm(EMPTY_FORM);
+      } catch (error) {
+        setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to delete task." });
+      } finally {
+        setDeleting(false);
+      }
+    },
+    []
+  );
+
   const handleSubmit = useCallback(async () => {
     if (!form.task_name.trim()) {
       setMessage({ type: "err", text: "Task name is required." });
@@ -444,29 +493,33 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
 
     const rate = Number(form.rate);
     if (!form.rate.trim() || !Number.isFinite(rate)) {
-      setMessage({ type: "err", text: "Rate is required." });
+      setMessage({ type: "err", text: "Final Rate is required." });
       return;
     }
 
+    const isEditing = panelMode === "edit" && selectedTask;
     setSaving(true);
     setMessage(null);
 
     try {
-      const res = await fetch("/api/fixed-pay-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task_name: form.task_name.trim(),
-          account: form.account.trim() || null,
-          category: form.category.trim() || null,
-          rate,
-          task_detail: form.task_detail.trim() || null,
-          task_notes: form.task_notes.trim() || null,
-          link: form.link.trim() || null,
-          instructions: form.instructions.trim() || null,
-          instructions_locked: form.instructions_locked,
-        }),
-      });
+      const res = await fetch(
+        isEditing ? `/api/fixed-pay-tasks/${selectedTask.id}` : "/api/fixed-pay-tasks",
+        {
+          method: isEditing ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            task_name: form.task_name.trim(),
+            account: form.account.trim() || null,
+            category: form.category.trim() || null,
+            rate,
+            task_detail: form.task_detail.trim() || null,
+            task_notes: form.task_notes.trim() || null,
+            link: form.link.trim() || null,
+            instructions: form.instructions.trim() || null,
+            ...(isEditing ? {} : { instructions_locked: form.instructions_locked }),
+          }),
+        }
+      );
 
       if (!res.ok) {
         let errorText = `HTTP ${res.status}`;
@@ -479,15 +532,28 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
         throw new Error(errorText);
       }
 
-      closePanel();
+      const { task } = (await res.json()) as { task: FixedPayTaskWithClaimer };
+      // Land on the details view instead of closing, so the VA sees exactly
+      // what was saved instead of having to reopen it from the list.
+      setPanelMode("view");
+      setSelectedTask(task);
+      setForm(EMPTY_FORM);
       await fetchTasks();
-      setMessage({ type: "ok", text: "Task created." });
+      setMessage({ type: "ok", text: isEditing ? "Task updated." : "Task created." });
     } catch (error) {
       setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to save task." });
     } finally {
       setSaving(false);
     }
-  }, [closePanel, fetchTasks, form]);
+  }, [fetchTasks, form, panelMode, selectedTask]);
+
+  // Mirrors the server-side check in the PATCH/DELETE routes: a VA may only
+  // edit or delete a task they claimed, and only before it's been reviewed.
+  const canEditSelectedTask = Boolean(
+    selectedTask &&
+    (selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
+    VA_STATUS_OPTIONS.includes(selectedTask.status)
+  );
 
   if (profileLoading) {
     return (
@@ -758,19 +824,23 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                 </button>
                 <div>
                   <span className="block text-[13px] font-semibold text-walnut">
-                    {panelMode === "view" ? "Task Details" : "New Task"}
+                    {panelMode === "view" ? "Task Details" : panelMode === "edit" ? "Edit Task" : "New Task"}
                   </span>
                   <span className="block text-[11px] text-stone">
-                    {panelMode === "view" && selectedTask ? `Task #${selectedTask.id}` : "Create a task for the fixed-pay pool."}
+                    {panelMode === "view" && selectedTask
+                      ? `Task #${selectedTask.id}`
+                      : panelMode === "edit"
+                        ? "Update this task before it's reviewed."
+                        : "Create a task for the fixed-pay pool."}
                   </span>
                 </div>
               </div>
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-              {panelMode === "create" && (
+              {(panelMode === "create" || panelMode === "edit") && (
                 <>
-                  {isHybrid && (
+                  {panelMode === "create" && isHybrid && (
                     <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Type</label>
                       <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
@@ -796,7 +866,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                     </div>
                   )}
 
-                  {isHybrid && createMode === "hourly" ? (
+                  {panelMode === "create" && isHybrid && createMode === "hourly" ? (
                     <div className="rounded-xl border border-sand bg-parchment/20 p-4">
                       <p className="text-[13px] text-espresso">Hourly tasks are created from the Task List.</p>
                       <p className="mt-1 text-[11px] text-stone">Head over to My Tasks to log or submit an hourly task.</p>
@@ -1142,20 +1212,43 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                 {message?.text}
               </div>
 
-              <div className="flex items-center justify-end gap-3">
-                <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
-                  {panelMode === "view" ? "Close" : "Cancel"}
-                </button>
-                {panelMode === "create" && !(isHybrid && createMode === "hourly") && (
-                  <button
-                    type="button"
-                    onClick={() => void handleSubmit()}
-                    disabled={saving}
-                    className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {saving ? "Saving..." : "Create Task"}
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  {panelMode === "view" && selectedTask && canEditSelectedTask && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(selectedTask.id)}
+                      disabled={deleting}
+                      className="text-xs font-semibold text-terracotta hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deleting ? "Deleting..." : "Delete"}
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
+                    {panelMode === "view" ? "Close" : "Cancel"}
                   </button>
-                )}
+                  {panelMode === "view" && selectedTask && canEditSelectedTask && (
+                    <button
+                      type="button"
+                      onClick={() => openEditPanel(selectedTask)}
+                      className="rounded-lg border border-sand bg-white px-5 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment"
+                    >
+                      Edit
+                    </button>
+                  )}
+                  {(panelMode === "create" || panelMode === "edit") && !(panelMode === "create" && isHybrid && createMode === "hourly") && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSubmit()}
+                      disabled={saving}
+                      className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {saving ? "Saving..." : panelMode === "edit" ? "Save Changes" : "Create Task"}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
