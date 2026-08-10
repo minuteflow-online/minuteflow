@@ -518,8 +518,8 @@ export default function InvoiceViewClient({ token }: { token: string }) {
               })()}
             </div>
 
-            {/* Custom Invoice: Line Items */}
-            {isCustomInvoice && invoice.custom_line_items && (
+            {/* Manual/custom line items — shown on any invoice type that has them */}
+            {invoice.custom_line_items && (
               <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
                 <h3 className="mb-3 font-semibold text-espresso">Invoice Items</h3>
                 <table className="w-full text-[13px]">

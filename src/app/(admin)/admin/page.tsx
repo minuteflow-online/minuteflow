@@ -6839,6 +6839,63 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [editFilterSearch, setEditFilterSearch] = useState("");
   const [editCustomCell, setEditCustomCell] = useState<{ idx: number; field: "desc" | "project" } | null>(null);
   const [editCustomItems, setEditCustomItems] = useState<Array<{ id: string; description: string; amount: string }>>([]);
+  const editItemsCsvInputRef = useRef<HTMLInputElement>(null);
+
+  // THE single subtotal calc for the invoice edit screen: time-based hours × rate
+  // (0 for pure custom invoices, which have no time line items) plus any manual
+  // extra items. Every edit-screen handler that can change the subtotal routes
+  // through here — do not add another ad-hoc calc path (see CLAUDE.md).
+  const recomputeEditSubtotal = (
+    lineItems: InvoiceLineItem[],
+    rate: number,
+    customItems: Array<{ description: string; amount: string }>
+  ) => {
+    const gross = lineItems.reduce((s, li) => s + Number(li.quantity), 0);
+    const timeSubtotal = rate > 0 ? gross * rate : 0;
+    const customTotal = customItems.reduce((s, ci) => s + (parseFloat(ci.amount) || 0), 0);
+    setEditSubtotal((timeSubtotal + customTotal).toFixed(2));
+  };
+
+  // Parses a simple two-column CSV (description, amount) for manually adding
+  // invoice line items in bulk. Handles quoted fields with embedded commas.
+  const parseDescriptionAmountCSV = (text: string): Array<{ id: string; description: string; amount: string }> => {
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length === 0) return [];
+    const parseLine = (line: string): string[] => {
+      const result: string[] = [];
+      let current = "";
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+          else inQuotes = !inQuotes;
+        } else if (ch === "," && !inQuotes) {
+          result.push(current.trim());
+          current = "";
+        } else {
+          current += ch;
+        }
+      }
+      result.push(current.trim());
+      return result;
+    };
+    const headers = parseLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_"));
+    const descIdx = headers.findIndex((h) => h === "description" || h === "desc" || h === "item");
+    const amountIdx = headers.findIndex((h) => h === "amount" || h === "amt" || h === "price");
+    // If headers don't match expected columns, assume no header row and use col 0/1 directly.
+    const hasHeader = descIdx !== -1 && amountIdx !== -1;
+    const dataLines = hasHeader ? lines.slice(1) : lines;
+    const [dCol, aCol] = hasHeader ? [descIdx, amountIdx] : [0, 1];
+    return dataLines
+      .map(parseLine)
+      .filter((cols) => cols[dCol]?.trim())
+      .map((cols, i) => ({
+        id: `csv-${Date.now()}-${i}`,
+        description: cols[dCol]?.trim() || "",
+        amount: (parseFloat(cols[aCol]) || 0).toString(),
+      }));
+  };
 
   // All project_tags from DB (for Deliverables dropdown)
   const [allProjectTags, setAllProjectTags] = useState<string[]>([]);
@@ -7865,18 +7922,20 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       setEditToAddress(invoice.to_address ?? "");
     }
     setEditDba(invoice.dba ?? orgSettings?.dba ?? "");
-    if (invoice.invoice_type === "custom" && invoice.custom_line_items) {
+    if (invoice.custom_line_items) {
       try {
         const parsed = JSON.parse(invoice.custom_line_items) as Array<{ description: string; amount: number }>;
         setEditCustomItems(parsed.map((item, i) => ({ id: `eci-${i}`, description: item.description, amount: String(item.amount) })));
-        // If the saved subtotal is 0 or missing, auto-calculate from line items
-        if (!invoice.subtotal || invoice.subtotal === 0) {
+        // If the saved subtotal is 0 or missing, auto-calculate from line items (custom invoices only)
+        if (invoice.invoice_type === "custom" && (!invoice.subtotal || invoice.subtotal === 0)) {
           const computedSubtotal = parsed.reduce((sum, item) => sum + (item.amount || 0), 0);
           setEditSubtotal(computedSubtotal.toFixed(2));
         }
-      } catch { setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]); }
+      } catch { setEditCustomItems(invoice.invoice_type === "custom" ? [{ id: "eci-0", description: "", amount: "" }] : []); }
     } else if (invoice.invoice_type === "custom") {
       setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]);
+    } else {
+      setEditCustomItems([]);
     }
 
     const [lineItemsRes, paymentsRes] = await Promise.all([
@@ -8083,12 +8142,12 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       period_end: editPeriodEnd || null,
     };
     if (editDueDate) updateData.due_date = editDueDate;
-    // Save custom line items for custom invoices
-    if (selectedInvoice.invoice_type === "custom") {
-      updateData.custom_line_items = JSON.stringify(
-        editCustomItems.filter(i => i.description).map(i => ({ description: i.description, amount: parseFloat(i.amount) || 0 }))
-      );
-    }
+    // Save manual line items — always set (not conditionally) so removing the
+    // last item actually clears stale items from the DB instead of leaving them.
+    const filledCustomItems = editCustomItems.filter(i => i.description);
+    updateData.custom_line_items = filledCustomItems.length > 0
+      ? JSON.stringify(filledCustomItems.map(i => ({ description: i.description, amount: parseFloat(i.amount) || 0 })))
+      : null;
 
     await supabase.from("invoices").update(updateData).eq("id", selectedInvoice.id);
 
@@ -9718,14 +9777,17 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   setEditDba(inv.dba ?? orgSettings?.dba ?? "");
                   setEditPeriodStart(inv.period_start ?? "");
                   setEditPeriodEnd(inv.period_end ?? "");
-                  // For custom invoices, populate editable line items from JSON
-                  if (inv.invoice_type === "custom" && inv.custom_line_items) {
+                  // Populate editable manual line items from JSON (custom invoices always
+                  // have these; timelog invoices may have optional extra items added on top)
+                  if (inv.custom_line_items) {
                     try {
                       const parsed = JSON.parse(inv.custom_line_items) as Array<{ description: string; amount: number }>;
                       setEditCustomItems(parsed.map((item, i) => ({ id: `eci-${i}`, description: item.description, amount: String(item.amount) })));
-                    } catch { setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]); }
+                    } catch { setEditCustomItems(inv.invoice_type === "custom" ? [{ id: "eci-0", description: "", amount: "" }] : []); }
                   } else if (inv.invoice_type === "custom") {
                     setEditCustomItems([{ id: "eci-0", description: "", amount: "" }]);
+                  } else {
+                    setEditCustomItems([]);
                   }
                 }
               }}
@@ -9911,9 +9973,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                         setRateAmount(v);
                         const rate = parseFloat(v) || 0;
                         if (rate > 0) {
-                          const gross = editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0);
+                          recomputeEditSubtotal(editLineItemsState, rate, editCustomItems);
                           const notBilled = parseFloat(hoursNotBilled) || 0;
-                          setEditSubtotal((gross * rate).toFixed(2));
                           setEditAdjustment((notBilled * rate).toFixed(2));
                         }
                       }}
@@ -9932,9 +9993,8 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                           setHoursNotBilled(v);
                           const rate = parseFloat(rateAmount) || 0;
                           if (rate > 0) {
-                            const gross = editLineItemsState.reduce((s, li) => s + Number(li.quantity), 0);
+                            recomputeEditSubtotal(editLineItemsState, rate, editCustomItems);
                             const notBilled = parseFloat(v) || 0;
-                            setEditSubtotal((gross * rate).toFixed(2));
                             setEditAdjustment((notBilled * rate).toFixed(2));
                           }
                         }}
@@ -9944,18 +10004,49 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   </div>
                 </>
               )}
-              {inv.invoice_type === "custom" && (
+              {(
                 <div className="col-span-2">
                   <div className="mb-2 flex items-center justify-between">
-                    <label className="text-[11px] font-semibold uppercase tracking-wider text-bark">Service / Task Items</label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newItems = [...editCustomItems, { id: `eci-${Date.now()}`, description: "", amount: "" }];
-                        setEditCustomItems(newItems);
-                      }}
-                      className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
-                    >+ Add Item</button>
+                    <label className="text-[11px] font-semibold uppercase tracking-wider text-bark">
+                      {inv.invoice_type === "custom" ? "Service / Task Items" : "Additional Items (optional)"}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={editItemsCsvInputRef}
+                        type="file"
+                        accept=".csv"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            const rows = parseDescriptionAmountCSV(String(reader.result || ""));
+                            if (rows.length > 0) {
+                              const updated = [...editCustomItems, ...rows];
+                              setEditCustomItems(updated);
+                              recomputeEditSubtotal(editLineItemsState, parseFloat(rateAmount) || 0, updated);
+                            }
+                          };
+                          reader.readAsText(file);
+                          e.target.value = "";
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => editItemsCsvInputRef.current?.click()}
+                        title="CSV with description, amount columns"
+                        className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                      >↑ Upload CSV</button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newItems = [...editCustomItems, { id: `eci-${Date.now()}`, description: "", amount: "" }];
+                          setEditCustomItems(newItems);
+                        }}
+                        className="flex items-center gap-1 rounded-lg border border-sand px-3 py-1.5 text-[11px] font-semibold text-bark transition-all hover:border-terracotta hover:text-terracotta cursor-pointer"
+                      >+ Add Item</button>
+                    </div>
                   </div>
                   <div className="rounded-lg border border-sand overflow-hidden">
                     <table className="w-full text-left text-[12px]">
@@ -9987,20 +10078,20 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                                 onChange={(e) => {
                                   const updated = editCustomItems.map((ci, i) => i === idx ? { ...ci, amount: e.target.value } : ci);
                                   setEditCustomItems(updated);
-                                  setEditSubtotal(updated.reduce((s, ci) => s + (parseFloat(ci.amount) || 0), 0).toFixed(2));
+                                  recomputeEditSubtotal(editLineItemsState, parseFloat(rateAmount) || 0, updated);
                                 }}
                                 placeholder="0.00"
                                 className="w-full bg-transparent text-right text-[12px] text-espresso outline-none placeholder:text-stone border-b border-transparent hover:border-sand focus:border-terracotta transition-colors"
                               />
                             </td>
                             <td className="px-3 py-2 text-center">
-                              {editCustomItems.length > 1 && (
+                              {(inv.invoice_type !== "custom" || editCustomItems.length > 1) && (
                                 <button
                                   type="button"
                                   onClick={() => {
                                     const updated = editCustomItems.filter((_, i) => i !== idx);
                                     setEditCustomItems(updated);
-                                    setEditSubtotal(updated.reduce((s, ci) => s + (parseFloat(ci.amount) || 0), 0).toFixed(2));
+                                    recomputeEditSubtotal(editLineItemsState, parseFloat(rateAmount) || 0, updated);
                                   }}
                                   className="inline-flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-amber-soft hover:text-amber cursor-pointer"
                                 >&times;</button>
@@ -10422,7 +10513,23 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                               </select>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right text-bark whitespace-nowrap">{Math.round(Number(li.quantity) * 60)}</td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={Math.round(Number(li.quantity) * 60)}
+                              onChange={(e) => {
+                                const mins = parseFloat(e.target.value) || 0;
+                                const nextQuantity = mins / 60;
+                                const next = editLineItemsState.map((x, i) => i === realIdx ? { ...x, quantity: nextQuantity } : x);
+                                setEditLineItemsState(next);
+                                const rate = parseFloat(rateAmount) || 0;
+                                if (rate > 0) recomputeEditSubtotal(next, rate, editCustomItems);
+                              }}
+                              className="w-16 bg-transparent border-b border-transparent text-right text-[12px] text-bark outline-none focus:border-terracotta hover:border-sand transition-colors"
+                            />
+                          </td>
                           <td className="px-3 py-2 max-w-[180px]">
                             <textarea value={li.client_memo || ""}
                               onChange={(e) => setEditLineItemsState(prev => prev.map((x, i) => i === realIdx ? {...x, client_memo: e.target.value} : x))}
