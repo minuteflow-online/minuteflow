@@ -6,8 +6,10 @@ export const dynamic = "force-dynamic";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-/** Verify the caller is an authenticated admin */
-async function verifyAdmin(): Promise<{ userId: string } | Response> {
+/** Verify the caller is an authenticated admin or IT staff member (Department
+ * = "IT"). IT gets team-management access but never pay rates or role
+ * escalation — those are enforced field-by-field in each handler below. */
+async function verifyAdmin(): Promise<{ userId: string; role: string } | Response> {
   const supabase = await createServerClient();
   const {
     data: { user },
@@ -17,28 +19,39 @@ async function verifyAdmin(): Promise<{ userId: string } | Response> {
   }
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (!profile || profile.role !== "admin") {
+  const isITStaff = profile?.department?.trim().toUpperCase() === "IT";
+  if (!profile || (profile.role !== "admin" && !isITStaff)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  return { userId: user.id };
+  return { userId: user.id, role: profile.role };
 }
 
 /** POST: Create a new user via Supabase Admin API */
 export async function POST(request: Request) {
   const authResult = await verifyAdmin();
   if (authResult instanceof Response) return authResult;
+  const isFullAdmin = authResult.role === "admin";
 
   const body = await request.json();
-  const { email, password, username, full_name, role, department, position, pay_rate, pay_rate_type } = body;
+  let { email, password, username, full_name, role, department, position, pay_rate, pay_rate_type } = body;
 
   if (!email || !password || !username || !full_name) {
     return Response.json(
       { error: "email, password, username, and full_name are required" },
       { status: 400 }
     );
+  }
+
+  // Only full admins may grant the admin role or set pay rates.
+  if (!isFullAdmin) {
+    if (role === "admin") {
+      return Response.json({ error: "Only admins can grant the admin role" }, { status: 403 });
+    }
+    pay_rate = 0;
+    pay_rate_type = "hourly";
   }
 
   const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -146,9 +159,19 @@ export async function PUT(request: Request) {
 export async function PATCH(request: Request) {
   const authResult = await verifyAdmin();
   if (authResult instanceof Response) return authResult;
+  const isFullAdmin = authResult.role === "admin";
 
   const body = await request.json();
   const { user_id, action, email, ...updates } = body;
+
+  // Only full admins may see/change pay rates or grant the admin role.
+  if (!isFullAdmin) {
+    delete updates.pay_rate;
+    delete updates.pay_rate_type;
+    if (updates.role === "admin") {
+      return Response.json({ error: "Only admins can grant the admin role" }, { status: 403 });
+    }
+  }
 
   // ── Send Password Reset Link ──────────────────────────────────────────────
   if (action === "send_reset_link") {

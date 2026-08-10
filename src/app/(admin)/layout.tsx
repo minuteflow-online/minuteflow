@@ -17,14 +17,17 @@ export default async function AdminLayout({
     redirect("/login");
   }
 
-  // Check role — only admins can access admin pages
+  // Check role — admins and staff whose Department is "IT" can access admin pages.
+  // (Department is used instead of a dedicated role because the `profiles.role`
+  // column has a DB check constraint limited to admin/manager/va.)
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, role")
+    .select("full_name, role, department")
     .eq("id", user.id)
     .single();
 
-  if (!profile || profile.role !== "admin") {
+  const isITStaff = profile?.department?.trim().toUpperCase() === "IT";
+  if (!profile || (profile.role !== "admin" && !isITStaff)) {
     redirect("/dashboard");
   }
 
@@ -34,7 +37,7 @@ export default async function AdminLayout({
 
   return (
     <>
-      <TopNav user={{ full_name: fullName, role }} />
+      <TopNav user={{ full_name: fullName, role, department: profile.department }} />
       <main className="flex-1">{children}</main>
     </>
   );

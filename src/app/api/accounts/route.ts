@@ -26,7 +26,18 @@ export async function GET() {
     .from("account_client_map")
     .select("account_id, client_id, clients(id, name)");
 
-  return Response.json({ accounts, mappings: mappings ?? [] });
+  // Billing rates are admin-only — strip them for everyone else.
+  const { data: callerProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const sanitizedAccounts =
+    callerProfile?.role === "admin"
+      ? accounts
+      : (accounts ?? []).map((a) => ({ ...a, billing_rate: null }));
+
+  return Response.json({ accounts: sanitizedAccounts, mappings: mappings ?? [] });
 }
 
 /** POST: Create a new account */
@@ -69,6 +80,13 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const { data: callerProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const isFullAdmin = callerProfile?.role === "admin";
+
   const body = await request.json();
   const { id, name, active, billing_rate, linkClientId, unlinkClientId } = body;
 
@@ -77,11 +95,11 @@ export async function PATCH(request: Request) {
   }
 
   // Update name/active/billing_rate
-  if (name !== undefined || active !== undefined || billing_rate !== undefined) {
+  if (name !== undefined || active !== undefined || (isFullAdmin && billing_rate !== undefined)) {
     const updates: Record<string, unknown> = {};
     if (name !== undefined) updates.name = name.trim();
     if (active !== undefined) updates.active = active;
-    if (billing_rate !== undefined) updates.billing_rate = billing_rate;
+    if (isFullAdmin && billing_rate !== undefined) updates.billing_rate = billing_rate;
 
     const { error } = await supabase
       .from("accounts")

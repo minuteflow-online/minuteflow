@@ -23,7 +23,7 @@ export default async function AppLayout({
   // Fetch role from profiles table
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, role")
+    .select("full_name, role, department")
     .eq("id", user.id)
     .single();
 
@@ -33,7 +33,7 @@ export default async function AppLayout({
 
   return (
     <>
-      <TopNav user={{ full_name: fullName, role }} />
+      <TopNav user={{ full_name: fullName, role, department: profile?.department }} />
       <ScreenCaptureProvider>
         <SceAlertBanner />
         <SessionProvider>

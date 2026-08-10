@@ -215,7 +215,9 @@ export default function TimeLogPage() {
   const [selectedTrashIds, setSelectedTrashIds] = useState<Set<number>>(new Set());
   const [showPermDeleteConfirm, setShowPermDeleteConfirm] = useState(false);
 
-  const isAdminOrManager = role === "admin" || role === "manager";
+  const [department, setDepartment] = useState<string | null>(null);
+  const isITStaff = department?.trim().toUpperCase() === "IT";
+  const isAdminOrManager = role === "admin" || role === "manager" || isITStaff;
 
   /* ── Fetch current user & profiles ─────────────────────── */
 
@@ -237,6 +239,7 @@ export default function TimeLogPage() {
 
       if (myProfile) {
         setRole(myProfile.role || "va");
+        setDepartment(myProfile.department ?? null);
       }
 
       // Fetch all profiles (for VA dropdown and edit modal)

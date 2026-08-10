@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   VA_POSITION_OPTIONS,
@@ -401,6 +402,18 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [...ADMIN_SIDEBAR_GROUPS, ...TEAM_SIDEBAR
 // Tab IDs that belong to the TEAM section
 const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "paystubs", "email_log", "reset_va_password"];
 
+// Tabs reserved for full admins only — financials, invoices, and paystubs stay
+// hidden from IT staff (Department = "IT") even though they can otherwise
+// use the rest of the admin panel.
+const ADMIN_ONLY_TABS: AdminTab[] = ["invoices", "financial", "paystubs"];
+
+function filterGroupsForRole(groups: SidebarGroup[], isFullAdmin: boolean): SidebarGroup[] {
+  if (isFullAdmin) return groups;
+  return groups
+    .map((g) => ({ ...g, tabs: g.tabs.filter((t) => !ADMIN_ONLY_TABS.includes(t.id)) }))
+    .filter((g) => g.tabs.length > 0);
+}
+
 /* ── Main Admin Page ─────────────────────────────────────── */
 
 export default function AdminPage() {
@@ -431,6 +444,27 @@ export default function AdminPage() {
   const [extensionUploadStatus, setExtensionUploadStatus] = useState<ExtensionUploadStatus[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // The caller's own role — only a true "admin" gets financials, invoices,
+  // paystubs, and VA/client rate figures. IT staff (Department = "IT") get
+  // everything else in the admin panel.
+  const currentUserRole = useMemo(
+    () => profiles.find((p) => p.id === currentUserId)?.role ?? null,
+    [profiles, currentUserId]
+  );
+  // ?viewAs=it lets a real admin preview the locked-down IT view. It can only
+  // ever hide more — it cannot grant access beyond the caller's real DB role.
+  const searchParams = useSearchParams();
+  const previewAsIT = searchParams.get("viewAs") === "it";
+  const isFullAdmin = currentUserRole === "admin" && !previewAsIT;
+
+  // Defense in depth: if a restricted tab is somehow active (e.g. stale
+  // state) for a non-admin role, bounce back to Overview.
+  useEffect(() => {
+    if (!isFullAdmin && ADMIN_ONLY_TABS.includes(activeTab)) {
+      setActiveTab("overview");
+    }
+  }, [isFullAdmin, activeTab]);
 
   // Screenshot viewer state
   const [selectedScreenshot, setSelectedScreenshot] = useState<TaskScreenshot | null>(null);
@@ -1263,7 +1297,7 @@ export default function AdminPage() {
           </div>
         </div>
         <nav className="flex-1 py-2 px-2 overflow-y-auto">
-          {(sidebarSection === "admin" ? ADMIN_SIDEBAR_GROUPS : TEAM_SIDEBAR_GROUPS).map((group) => {
+          {filterGroupsForRole(sidebarSection === "admin" ? ADMIN_SIDEBAR_GROUPS : TEAM_SIDEBAR_GROUPS, isFullAdmin).map((group) => {
             if (!group.label) {
               // Pinned tabs (Overview) — no group header
               return group.tabs.map((tab) => {
@@ -1468,6 +1502,7 @@ export default function AdminPage() {
               profiles={profiles}
               fetchData={fetchData}
               orgTimezone={orgTimezone}
+              isFullAdmin={isFullAdmin}
             />
           )}
 
@@ -1482,22 +1517,22 @@ export default function AdminPage() {
           )}
 
           {activeTab === "accounts" && (
-            <AccountsTab />
+            <AccountsTab isFullAdmin={isFullAdmin} />
           )}
 
           {activeTab === "clients" && (
-            <ClientsTab />
+            <ClientsTab isFullAdmin={isFullAdmin} />
           )}
 
-          {activeTab === "invoices" && (
+          {activeTab === "invoices" && isFullAdmin && (
             <InvoicesTab profiles={profiles} orgTimezone={orgTimezone} />
           )}
 
-          {activeTab === "paystubs" && (
+          {activeTab === "paystubs" && isFullAdmin && (
             <PaystubTab profiles={profiles} orgTimezone={orgTimezone} orgName={orgName} />
           )}
 
-          {activeTab === "financial" && (
+          {activeTab === "financial" && isFullAdmin && (
             <FinancialSummaryTab timezone={orgTimezone} />
           )}
 
@@ -2045,10 +2080,12 @@ function TeamManagementTab({
   profiles,
   fetchData,
   orgTimezone,
+  isFullAdmin,
 }: {
   profiles: Profile[];
   fetchData: () => void;
   orgTimezone: string;
+  isFullAdmin: boolean;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
@@ -2180,12 +2217,12 @@ function TeamManagementTab({
       role: u(profiles.map((p) => p.role)),
       department: u(profiles.map((p) => p.department)),
       position: u(profiles.map((p) => p.position)),
-      payRate: u(profiles.map((p) => `$${(p.pay_rate || 0).toFixed(2)}`), true),
-      rateType: u(profiles.map((p) => p.pay_rate_type || "hourly")),
+      payRate: isFullAdmin ? u(profiles.map((p) => `$${(p.pay_rate || 0).toFixed(2)}`), true) : [],
+      rateType: isFullAdmin ? u(profiles.map((p) => p.pay_rate_type || "hourly")) : [],
       assignments: u([...new Set(catNames)]),
       availTasks: ["On", "Off", "—"],
     };
-  }, [profiles, vaCatAssignments]);
+  }, [profiles, vaCatAssignments, isFullAdmin]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -2500,9 +2537,12 @@ function TeamManagementTab({
 
       if (res.ok) {
         fetchData();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || `Failed to save (status ${res.status})`);
       }
-    } catch {
-      // silently fail
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to save");
     }
 
     setSavingEdit(false);
@@ -2550,7 +2590,7 @@ function TeamManagementTab({
 
   return (
     <>
-      {rateModalUser && (
+      {rateModalUser && isFullAdmin && (
         <AddRateModal
           userId={rateModalUser.id}
           userName={rateModalUser.full_name}
@@ -2770,7 +2810,7 @@ function TeamManagementTab({
               >
                 <option value="va">VA</option>
                 <option value="manager">Manager</option>
-                <option value="admin">Admin</option>
+                {isFullAdmin && <option value="admin">Admin</option>}
               </select>
             </div>
             <div>
@@ -2782,6 +2822,7 @@ function TeamManagementTab({
                 className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
                 placeholder="Optional"
               />
+              <p className="mt-1 text-[10px] text-stone">Setting this to &ldquo;IT&rdquo; grants admin-panel access without financials, invoices, paystubs, or pay rates.</p>
             </div>
             <div>
               <label className="block text-[11px] font-semibold text-walnut mb-1">Position</label>
@@ -2796,6 +2837,7 @@ function TeamManagementTab({
                 ))}
               </select>
             </div>
+            {isFullAdmin && (
             <div className="flex gap-2">
               <div className="flex-1">
                 <label className="block text-[11px] font-semibold text-walnut mb-1">Pay Rate</label>
@@ -2821,6 +2863,7 @@ function TeamManagementTab({
                 </select>
               </div>
             </div>
+            )}
           </div>
           <div className="mt-4 flex justify-end">
             <button
@@ -3016,7 +3059,7 @@ function TeamManagementTab({
                         >
                           <option value="va">va</option>
                           <option value="manager">manager</option>
-                          <option value="admin">admin</option>
+                          {isFullAdmin && <option value="admin">admin</option>}
                         </select>
                         <button onClick={saveEdit} disabled={savingEdit} className="text-sage hover:text-sage text-sm font-bold">
                           {savingEdit ? "..." : "OK"}
@@ -3082,25 +3125,33 @@ function TeamManagementTab({
                       </button>
                     )}
                   </td>
-                  {/* Pay Rate - opens Add New Rate modal */}
+                  {/* Pay Rate - opens Add New Rate modal (admin only) */}
                   <td className="px-3 py-3 text-right">
-                    <button
-                      onClick={() => setRateModalUser(p)}
-                      title="Add New Rate / view rate history"
-                      className="cursor-pointer font-semibold text-espresso hover:text-terracotta transition-colors"
-                    >
-                      ${(p.pay_rate || 0).toFixed(2)}
-                    </button>
+                    {isFullAdmin ? (
+                      <button
+                        onClick={() => setRateModalUser(p)}
+                        title="Add New Rate / view rate history"
+                        className="cursor-pointer font-semibold text-espresso hover:text-terracotta transition-colors"
+                      >
+                        ${(p.pay_rate || 0).toFixed(2)}
+                      </button>
+                    ) : (
+                      <span title="Hidden" className="text-stone">🔒</span>
+                    )}
                   </td>
-                  {/* Pay Rate Type - opens Add New Rate modal */}
+                  {/* Pay Rate Type - opens Add New Rate modal (admin only) */}
                   <td className="px-3 py-3">
-                    <button
-                      onClick={() => setRateModalUser(p)}
-                      title="Add New Rate / view rate history"
-                      className="cursor-pointer text-bark hover:text-terracotta transition-colors text-[11px]"
-                    >
-                      {p.pay_rate_type || "hourly"}
-                    </button>
+                    {isFullAdmin ? (
+                      <button
+                        onClick={() => setRateModalUser(p)}
+                        title="Add New Rate / view rate history"
+                        className="cursor-pointer text-bark hover:text-terracotta transition-colors text-[11px]"
+                      >
+                        {p.pay_rate_type || "hourly"}
+                      </button>
+                    ) : (
+                      <span title="Hidden" className="text-stone text-[11px]">🔒</span>
+                    )}
                   </td>
                   {/* Category Assignments */}
                   <td className="px-3 py-3">
@@ -3281,7 +3332,7 @@ function TeamManagementTab({
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Pay Rate</span>
-                              <p className="mt-0.5 text-espresso font-medium">${(p.pay_rate || 0).toFixed(2)} / {p.pay_rate_type || "hourly"}</p>
+                              <p className="mt-0.5 text-espresso font-medium">{isFullAdmin ? `$${(p.pay_rate || 0).toFixed(2)} / ${p.pay_rate_type || "hourly"}` : "🔒 Hidden"}</p>
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Role</span>
@@ -3779,7 +3830,7 @@ interface ClientMapping {
   accounts: { id: number; name: string } | null;
 }
 
-function AccountsTab() {
+function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [allClients, setAllClients] = useState<ClientRow[]>([]);
   const [mappings, setMappings] = useState<AccountMapping[]>([]);
@@ -3978,7 +4029,9 @@ function AccountsTab() {
                       )}
                     </td>
                     <td className="px-3 py-3">
-                      {editingRateId === acc.id ? (
+                      {!isFullAdmin ? (
+                        <span title="Hidden" className="text-stone">🔒</span>
+                      ) : editingRateId === acc.id ? (
                         <div className="flex items-center gap-1">
                           <span className="text-[11px] text-bark">$</span>
                           <input
@@ -4106,7 +4159,7 @@ const PAYMENT_TERMS_OPTIONS = [
   { value: "net_60", label: "Net 60" },
 ] as const;
 
-function ClientsTab() {
+function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
   const supabase = createClient();
   const [clients, setClients] = useState<Client[]>([]);
   const [mappings, setMappings] = useState<ClientMapping[]>([]);
@@ -4544,18 +4597,24 @@ function ClientsTab() {
             </div>
             <div>
               <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Default Hourly Rate</label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[13px] text-stone">$</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={form.default_hourly_rate}
-                  onChange={(e) => updateForm("default_hourly_rate", e.target.value)}
-                  className="w-full rounded-lg border border-sand pl-7 pr-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="0.00"
-                />
-              </div>
+              {isFullAdmin ? (
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[13px] text-stone">$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={form.default_hourly_rate}
+                    onChange={(e) => updateForm("default_hourly_rate", e.target.value)}
+                    className="w-full rounded-lg border border-sand pl-7 pr-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                    placeholder="0.00"
+                  />
+                </div>
+              ) : (
+                <div className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-stone bg-parchment">
+                  🔒 Hidden
+                </div>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Tax ID</label>

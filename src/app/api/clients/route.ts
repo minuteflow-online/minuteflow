@@ -26,7 +26,18 @@ export async function GET() {
     .from("account_client_map")
     .select("account_id, client_id, accounts(id, name)");
 
-  return Response.json({ clients, mappings: mappings ?? [] });
+  // Client billing rates are admin-only — strip them for everyone else.
+  const { data: callerProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const sanitizedClients =
+    callerProfile?.role === "admin"
+      ? clients
+      : (clients ?? []).map((c) => ({ ...c, default_hourly_rate: null }));
+
+  return Response.json({ clients: sanitizedClients, mappings: mappings ?? [] });
 }
 
 /** POST: Create a new client */
@@ -38,6 +49,12 @@ export async function POST(request: Request) {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const { data: callerProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const isFullAdmin = callerProfile?.role === "admin";
 
   const body = await request.json();
   const { name, contact_name, email, phone, address, city, state, zip, country, logo_url, payment_terms, currency, tax_id, default_hourly_rate, notes } = body;
@@ -59,7 +76,7 @@ export async function POST(request: Request) {
   if (payment_terms !== undefined) insert.payment_terms = payment_terms;
   if (currency !== undefined) insert.currency = currency;
   if (tax_id !== undefined) insert.tax_id = tax_id || null;
-  if (default_hourly_rate !== undefined) insert.default_hourly_rate = default_hourly_rate || null;
+  if (isFullAdmin && default_hourly_rate !== undefined) insert.default_hourly_rate = default_hourly_rate || null;
   if (notes !== undefined) insert.notes = notes || null;
 
   const { data, error } = await supabase
@@ -84,6 +101,12 @@ export async function PATCH(request: Request) {
   if (!user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const { data: callerProfile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const isFullAdmin = callerProfile?.role === "admin";
 
   const body = await request.json();
   const { id, name, active, contact_name, email, phone, address, city, state, zip, country, logo_url, payment_terms, currency, tax_id, default_hourly_rate, notes } = body;
@@ -107,7 +130,7 @@ export async function PATCH(request: Request) {
   if (payment_terms !== undefined) updates.payment_terms = payment_terms;
   if (currency !== undefined) updates.currency = currency;
   if (tax_id !== undefined) updates.tax_id = tax_id || null;
-  if (default_hourly_rate !== undefined) updates.default_hourly_rate = default_hourly_rate || null;
+  if (isFullAdmin && default_hourly_rate !== undefined) updates.default_hourly_rate = default_hourly_rate || null;
   if (notes !== undefined) updates.notes = notes || null;
 
   const { error } = await supabase

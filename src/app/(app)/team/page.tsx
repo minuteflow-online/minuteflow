@@ -88,6 +88,7 @@ export default function TeamPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole | null>(null);
+  const [department, setDepartment] = useState<string | null>(null);
   const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
 
   // Date range state
@@ -117,12 +118,14 @@ export default function TeamPage() {
       if (!user) return;
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role, department")
         .eq("id", user.id)
         .single();
       const userRole = (profile?.role as UserRole) || "va";
       setRole(userRole);
-      if (userRole === "va") {
+      setDepartment(profile?.department ?? null);
+      const isITStaff = profile?.department?.trim().toUpperCase() === "IT";
+      if (userRole === "va" && !isITStaff) {
         router.replace("/dashboard");
       }
     }
@@ -507,11 +510,14 @@ export default function TeamPage() {
     away: members.filter((m) => m.status === "away").length,
   };
 
-  // Don't render anything for VAs (redirect in progress)
-  if (role === "va") {
+  const isITStaff = department?.trim().toUpperCase() === "IT";
+
+  // Don't render anything for VAs (redirect in progress) — IT staff are let through
+  if (role === "va" && !isITStaff) {
     return null;
   }
 
+  // Only a true "admin" sees pay rates / payable figures — IT staff never do.
   const isAdmin = role === "admin";
 
   // Dynamic labels based on date range

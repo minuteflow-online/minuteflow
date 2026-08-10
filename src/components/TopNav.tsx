@@ -36,6 +36,7 @@ type TopNavProps = {
   user: {
     full_name: string;
     role: UserRole;
+    department?: string | null;
   };
 };
 
@@ -114,9 +115,10 @@ export default function TopNav({ user }: TopNavProps) {
 
   // Filter nav items based on role
   // VAs see: Dashboard, Time Log, Task List, Reports, Portal (no Team)
-  // Admins/managers see: Dashboard, Time Log, Team, Task List, Reports, Portal
+  // Admins/managers/IT staff see: Dashboard, Time Log, Team, Task List, Reports, Portal
+  const isITStaff = user.department?.trim().toUpperCase() === "IT";
   const navItems = allNavItems.filter((item) => {
-    if (user.role === "va") {
+    if (user.role === "va" && !isITStaff) {
       return item.href !== "/team";
     }
     return true;
@@ -431,7 +433,7 @@ export default function TopNav({ user }: TopNavProps) {
               </div>
             </div>
 
-            {user.role === "admin" && (
+            {(user.role === "admin" || user.department?.trim().toUpperCase() === "IT") && (
               <Link
                 href="/admin"
                 className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso"
