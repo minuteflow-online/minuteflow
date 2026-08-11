@@ -917,15 +917,33 @@ export default function ProductivityCalendarPage() {
 
             {dueTodayItems.length > 0 && (
               <div className="mb-3 flex flex-wrap gap-1.5">
-                {dueTodayItems.map((item) => (
-                  <span
-                    key={item.id}
-                    className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${statusBadgeClasses(item.status)}`}
-                    title={item.account || undefined}
-                  >
-                    {item.dateType === "due" ? "Due" : "Starts"}: {item.title}
-                  </span>
-                ))}
+                {dueTodayItems.map((item) => {
+                  const rawId = item.source === "assigned" ? Number(item.id.replace("assigned-", "")) : null;
+                  const scheduleTarget = rawId ? daySchedule.find((t) => t.id === rawId) : undefined;
+                  const label = `${item.dateType === "due" ? "Due" : "Starts"}: ${item.title}`;
+                  if (!scheduleTarget) {
+                    return (
+                      <span
+                        key={item.id}
+                        className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${statusBadgeClasses(item.status)}`}
+                        title={item.account || undefined}
+                      >
+                        {label}
+                      </span>
+                    );
+                  }
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => openScheduleExisting(scheduleTarget, selectedDate)}
+                      title={`${item.account ? item.account + " — " : ""}Click to set hours`}
+                      className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border cursor-pointer hover:opacity-75 transition-opacity ${statusBadgeClasses(item.status)}`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
