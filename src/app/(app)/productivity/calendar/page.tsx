@@ -2,9 +2,24 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { PlannedTask, Project, UserRole } from "@/types/database";
+import type { Project, UserRole } from "@/types/database";
 
 type TeamMember = { id: string; full_name: string; username: string; role: string };
+
+// A normalized assigned_tasks row, regardless of which shape the API returned it in.
+type RawTask = {
+  id: number;
+  task_name: string;
+  account: string | null;
+  due_date: string | null;
+  start_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  status: string;
+  category: string | null;
+  projectId: string | null;
+  isRecurring: boolean;
+};
 
 type DueItem = {
   id: string;
@@ -104,6 +119,14 @@ function formatDayLabel(dateStr: string): string {
   return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
+function formatDayShort(dateStr: string): { weekday: string; day: number } {
+  const d = new Date(dateStr + "T12:00:00Z");
+  return {
+    weekday: d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }),
+    day: Number(dateStr.slice(8, 10)),
+  };
+}
+
 function buildMonthGrid(year: number, month: number): string[] {
   const firstOfMonth = new Date(year, month, 1);
   const startWeekday = firstOfMonth.getDay();
@@ -120,6 +143,69 @@ function buildMonthGrid(year: number, month: number): string[] {
   return days;
 }
 
+function buildWeekGrid(dateStr: string): string[] {
+  const d = new Date(dateStr + "T12:00:00Z");
+  const weekday = d.getUTCDay();
+  const days: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    days.push(addDaysToDateStr(dateStr, i - weekday));
+  }
+  return days;
+}
+
+// Local (browser) calendar date of a stored instant — matches how start/end times
+// are constructed (see saveBlock) so encode/decode stay consistent.
+function localDateOf(iso: string): string {
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// /api/assigned-tasks returns two different shapes depending on the query:
+// - admin/flat (bare ?view=, or ?view=&vaId=): task fields on the row itself,
+//   with an assigned_task_assignees[] array.
+// - VA/nested (?selfOnly=true, or ?viewAsVa=): the row is an assignee record
+//   with the task fields nested under assigned_tasks.
+function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, currentUserId: string): RawTask[] {
+  return rawRows
+    .map((row) => {
+      const nested = row.assigned_tasks as Record<string, unknown> | undefined;
+      if (nested && typeof nested === "object") {
+        return {
+          id: nested.id as number,
+          task_name: nested.task_name as string,
+          account: (nested.account as string | null) ?? null,
+          due_date: (nested.due_date as string | null) ?? null,
+          start_date: (nested.start_date as string | null) ?? null,
+          start_time: (nested.start_time as string | null) ?? null,
+          end_time: (nested.end_time as string | null) ?? null,
+          status: row.status as string,
+          category: (nested.category as string | null) ?? null,
+          projectId: (nested.project_id as string | null) ?? null,
+          isRecurring: Boolean(nested.recurring_template_id),
+        };
+      }
+      const assignees = (row.assigned_task_assignees ?? []) as Array<{ va_id: string; status: string }>;
+      const mine = assignees.find((a) => a.va_id === currentUserId);
+      return {
+        id: row.id as number,
+        task_name: row.task_name as string,
+        account: (row.account as string | null) ?? null,
+        due_date: (row.due_date as string | null) ?? null,
+        start_date: (row.start_date as string | null) ?? null,
+        start_time: (row.start_time as string | null) ?? null,
+        end_time: (row.end_time as string | null) ?? null,
+        status: mine?.status || assignees[0]?.status || "on_queue",
+        category: (row.category as string | null) ?? null,
+        projectId: (row.project_id as string | null) ?? null,
+        isRecurring: Boolean(row.recurring_template_id),
+      };
+    })
+    .filter((t): t is RawTask => Boolean(t.id && t.task_name));
+}
+
 export default function ProductivityCalendarPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -133,16 +219,16 @@ export default function ProductivityCalendarPage() {
   const todayStr = getDateInTimezone(orgTimezone);
   const isAdminOrManager = role === "admin" || role === "manager";
 
-  const [viewMode, setViewMode] = useState<"month" | "day">("month");
+  const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
   const [scope, setScope] = useState<string>("__self__");
   const [monthYear, setMonthYear] = useState<number>(new Date().getFullYear());
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
 
-  const [assignedItems, setAssignedItems] = useState<DueItem[]>([]);
+  const [assignedTasksAll, setAssignedTasksAll] = useState<RawTask[]>([]);
   const [fixedItems, setFixedItems] = useState<DueItem[]>([]);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
-  const [dayTasks, setDayTasks] = useState<PlannedTask[]>([]);
+  const [daySchedule, setDaySchedule] = useState<RawTask[]>([]);
   const [loadingDay, setLoadingDay] = useState(false);
 
   const [showFilters, setShowFilters] = useState(false);
@@ -154,6 +240,7 @@ export default function ProductivityCalendarPage() {
 
   const [showForm, setShowForm] = useState(false);
   const [editingBlockId, setEditingBlockId] = useState<number | null>(null);
+  const [formDate, setFormDate] = useState<string>(todayStr);
   const [formTaskName, setFormTaskName] = useState("");
   const [formAccount, setFormAccount] = useState("");
   const [formStart, setFormStart] = useState("09:00");
@@ -214,10 +301,17 @@ export default function ProductivityCalendarPage() {
       .catch(() => {});
   }, []);
 
-  // Fetch due-date items (assigned + fixed-pay), scoped
-  const fetchDueItems = useCallback(async () => {
-    if (!userId) return;
+  useEffect(() => {
+    fetch("/api/projects?mine=true", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setAllProjects(d.projects ?? []))
+      .catch(() => {});
+  }, []);
 
+  // Month-view overview: every active assigned task in the current scope
+  // (agency-wide, a specific teammate, or just me).
+  const fetchAssignedTasksAll = useCallback(async () => {
+    if (!userId) return;
     let assignedUrl = "/api/assigned-tasks?selfOnly=true&view=active";
     if (isAdminOrManager) {
       assignedUrl =
@@ -227,59 +321,17 @@ export default function ProductivityCalendarPage() {
           ? "/api/assigned-tasks?view=active"
           : `/api/assigned-tasks?view=active&vaId=${scope}`;
     }
-
     try {
       const res = await fetch(assignedUrl);
       const data = await res.json();
-      const rawRows = (data.tasks ?? []) as Array<Record<string, unknown>>;
-
-      // /api/assigned-tasks returns two different shapes depending on the query:
-      // - admin/flat (bare ?view=, or ?view=&vaId=): task fields on the row itself,
-      //   with an assigned_task_assignees[] array.
-      // - VA/nested (?selfOnly=true, or ?viewAsVa=): the row is an assignee record
-      //   with the task fields nested under assigned_tasks.
-      type TaskFields = {
-        id: number;
-        task_name: string;
-        account: string | null;
-        due_date: string | null;
-        start_date: string | null;
-        category: string | null;
-        project_id: string | null;
-        recurring_template_id: string | null;
-      };
-      const normalized = rawRows
-        .map((row) => {
-          const nested = row.assigned_tasks as TaskFields | undefined;
-          if (nested) {
-            // VA/nested shape — this row IS the current user's assignee record.
-            return { task: nested, status: row.status as string };
-          }
-          // Admin/flat shape — resolve status from the assignees array.
-          const task = row as unknown as TaskFields;
-          const assignees = (row.assigned_task_assignees ?? []) as Array<{ va_id: string; status: string }>;
-          const mine = assignees.find((a) => a.va_id === userId);
-          return { task, status: mine?.status || assignees[0]?.status || "on_queue" };
-        })
-        .filter((r) => r.task && (r.task.due_date || r.task.start_date));
-
-      const items: DueItem[] = normalized.map(({ task: t, status }) => ({
-        id: `assigned-${t.id}`,
-        source: "assigned" as const,
-        title: t.task_name,
-        account: t.account,
-        date: (t.due_date ?? t.start_date) as string,
-        dateType: t.due_date ? ("due" as const) : ("start" as const),
-        status,
-        category: t.category,
-        projectId: t.project_id,
-        isRecurring: Boolean(t.recurring_template_id),
-      }));
-      setAssignedItems(items);
+      setAssignedTasksAll(normalizeAssignedRows(data.tasks ?? [], userId));
     } catch {
-      setAssignedItems([]);
+      setAssignedTasksAll([]);
     }
+  }, [userId, isAdminOrManager, scope]);
 
+  const fetchFixedItems = useCallback(async () => {
+    if (!userId) return;
     try {
       const res = await fetch("/api/fixed-pay-tasks?view=active");
       const data = await res.json();
@@ -318,37 +370,56 @@ export default function ProductivityCalendarPage() {
   }, [userId, isAdminOrManager, scope]);
 
   useEffect(() => {
-    fetchDueItems();
-  }, [fetchDueItems]);
+    fetchAssignedTasksAll();
+    fetchFixedItems();
+  }, [fetchAssignedTasksAll, fetchFixedItems]);
 
-  useEffect(() => {
-    fetch("/api/projects?mine=true", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setAllProjects(d.projects ?? []))
-      .catch(() => {});
-  }, []);
-
-  // Day view always operates on one concrete person
+  // Day/Week view always operates on one concrete person's actual task list.
   const dayUserId = scope === "__all__" || scope === "__self__" ? userId : scope;
 
-  const fetchDayTasks = useCallback(async () => {
-    if (!dayUserId) return;
+  const fetchDaySchedule = useCallback(async () => {
+    if (!dayUserId || !userId) return;
     setLoadingDay(true);
-    const { data, error } = await supabase
-      .from("planned_tasks")
-      .select("*")
-      .eq("user_id", dayUserId)
-      .eq("plan_date", selectedDate)
-      .order("sort_order", { ascending: true });
-    if (!error && data) setDayTasks(data as PlannedTask[]);
-    setLoadingDay(false);
-  }, [supabase, dayUserId, selectedDate]);
+    try {
+      const url =
+        dayUserId === userId
+          ? "/api/assigned-tasks?selfOnly=true&view=active"
+          : `/api/assigned-tasks?viewAsVa=${dayUserId}&view=active`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setDaySchedule(normalizeAssignedRows(data.tasks ?? [], dayUserId));
+    } catch {
+      setDaySchedule([]);
+    } finally {
+      setLoadingDay(false);
+    }
+  }, [dayUserId, userId]);
 
   useEffect(() => {
-    if (viewMode === "day") fetchDayTasks();
-  }, [viewMode, fetchDayTasks]);
+    if (viewMode === "day" || viewMode === "week") fetchDaySchedule();
+  }, [viewMode, fetchDaySchedule]);
 
-  const allDueItems = useMemo(() => [...assignedItems, ...fixedItems], [assignedItems, fixedItems]);
+  // Month-view due/start dots, derived from the full assigned-task list
+  const assignedDueItems = useMemo<DueItem[]>(
+    () =>
+      assignedTasksAll
+        .filter((t) => t.due_date || t.start_date)
+        .map((t) => ({
+          id: `assigned-${t.id}`,
+          source: "assigned" as const,
+          title: t.task_name,
+          account: t.account,
+          date: (t.due_date ?? t.start_date) as string,
+          dateType: t.due_date ? ("due" as const) : ("start" as const),
+          status: t.status,
+          category: t.category,
+          projectId: t.projectId,
+          isRecurring: t.isRecurring,
+        })),
+    [assignedTasksAll]
+  );
+
+  const allDueItems = useMemo(() => [...assignedDueItems, ...fixedItems], [assignedDueItems, fixedItems]);
 
   const activeFilterCount =
     statusFilter.size + sourceFilter.size + categoryFilter.size + projectFilter.size + (recurringOnly ? 1 : 0);
@@ -402,6 +473,13 @@ export default function ProductivityCalendarPage() {
     () => new Date(monthYear, monthMonth, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" }),
     [monthYear, monthMonth]
   );
+  const weekGrid = useMemo(() => buildWeekGrid(selectedDate), [selectedDate]);
+  const weekLabel = useMemo(() => {
+    const start = weekGrid[0];
+    const end = weekGrid[6];
+    const fmt = (d: string) => new Date(d + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    return `${fmt(start)} – ${fmt(end)}`;
+  }, [weekGrid]);
 
   const goToPrevMonth = () => {
     if (monthMonth === 0) {
@@ -427,82 +505,102 @@ export default function ProductivityCalendarPage() {
 
   const goToPrevDay = () => setSelectedDate((d) => addDaysToDateStr(d, -1));
   const goToNextDay = () => setSelectedDate((d) => addDaysToDateStr(d, 1));
+  const goToPrevWeek = () => setSelectedDate((d) => addDaysToDateStr(d, -7));
+  const goToNextWeek = () => setSelectedDate((d) => addDaysToDateStr(d, 7));
 
-  const openAddBlock = (hour: number) => {
+  const openAddBlock = (hour: number, dateStr: string = selectedDate) => {
     setEditingBlockId(null);
     setFormTaskName("");
     setFormAccount("");
+    setFormDate(dateStr);
     setFormStart(`${String(hour).padStart(2, "0")}:00`);
     setFormEnd(`${String(Math.min(hour + 1, 23)).padStart(2, "0")}:00`);
     setShowForm(true);
   };
 
-  const openEditBlock = (task: PlannedTask) => {
+  const openEditBlock = (task: RawTask) => {
     if (!task.start_time || !task.end_time) return;
     setEditingBlockId(task.id);
     setFormTaskName(task.task_name);
     setFormAccount(task.account || "");
+    setFormDate(localDateOf(task.start_time));
     setFormStart(new Date(task.start_time).toTimeString().slice(0, 5));
     setFormEnd(new Date(task.end_time).toTimeString().slice(0, 5));
     setShowForm(true);
   };
 
-  const openScheduleExisting = (task: PlannedTask) => {
+  const openScheduleExisting = (task: RawTask, dateStr: string = selectedDate) => {
     setEditingBlockId(task.id);
     setFormTaskName(task.task_name);
     setFormAccount(task.account || "");
+    setFormDate(dateStr);
     setFormStart("09:00");
     setFormEnd("10:00");
     setShowForm(true);
   };
 
+  const refreshAfterScheduleChange = useCallback(async () => {
+    await Promise.all([fetchDaySchedule(), fetchAssignedTasksAll()]);
+  }, [fetchDaySchedule, fetchAssignedTasksAll]);
+
   const saveBlock = async () => {
     if (!formTaskName.trim() || !dayUserId || formEnd <= formStart) return;
     setSavingBlock(true);
-    const startIso = new Date(`${selectedDate}T${formStart}:00`).toISOString();
-    const endIso = new Date(`${selectedDate}T${formEnd}:00`).toISOString();
+    const startIso = new Date(`${formDate}T${formStart}:00`).toISOString();
+    const endIso = new Date(`${formDate}T${formEnd}:00`).toISOString();
 
-    if (editingBlockId) {
-      const { error } = await supabase
-        .from("planned_tasks")
-        .update({
-          task_name: formTaskName.trim(),
-          account: formAccount || null,
-          start_time: startIso,
-          end_time: endIso,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", editingBlockId);
-      if (!error) await fetchDayTasks();
-    } else {
-      const { error } = await supabase.from("planned_tasks").insert({
-        user_id: dayUserId,
-        task_name: formTaskName.trim(),
-        account: formAccount || null,
-        plan_date: selectedDate,
-        sort_order: dayTasks.length,
-        start_time: startIso,
-        end_time: endIso,
-      });
-      if (!error) await fetchDayTasks();
+    try {
+      if (editingBlockId) {
+        await fetch(`/api/assigned-tasks/${editingBlockId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ start_time: startIso, end_time: endIso }),
+        });
+      } else {
+        await fetch("/api/assigned-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            task_name: formTaskName.trim(),
+            account: formAccount || null,
+            start_time: startIso,
+            end_time: endIso,
+            va_ids: [dayUserId],
+            initial_status: "on_queue",
+          }),
+        });
+      }
+      await refreshAfterScheduleChange();
+    } finally {
+      setSavingBlock(false);
+      setShowForm(false);
     }
-    setSavingBlock(false);
-    setShowForm(false);
   };
 
-  const deleteBlock = async () => {
+  // Removes the task from the calendar (clears its schedule) — does not delete
+  // the underlying task, which may still carry status/assignee history managed
+  // from the Assignment tab.
+  const removeFromCalendar = async () => {
     if (!editingBlockId) return;
-    await supabase.from("planned_tasks").delete().eq("id", editingBlockId);
+    await fetch(`/api/assigned-tasks/${editingBlockId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start_time: null, end_time: null }),
+    });
     setShowForm(false);
-    await fetchDayTasks();
+    await refreshAfterScheduleChange();
   };
 
-  const scheduledTasks = dayTasks.filter((t) => t.start_time && t.end_time);
-  const unscheduledTasks = dayTasks.filter((t) => !t.start_time || !t.end_time);
+  const scheduledTasks = useMemo(() => daySchedule.filter((t) => t.start_time && t.end_time), [daySchedule]);
+  const unscheduledTasks = useMemo(() => daySchedule.filter((t) => !t.start_time || !t.end_time), [daySchedule]);
+  const scheduledForDate = useCallback(
+    (dateStr: string) => scheduledTasks.filter((t) => localDateOf(t.start_time as string) === dateStr),
+    [scheduledTasks]
+  );
   const dueTodayItems = dueItemsByDate[selectedDate] ?? [];
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i);
 
-  function blockPosition(task: PlannedTask) {
+  function blockPosition(task: RawTask) {
     const start = new Date(task.start_time!);
     const end = new Date(task.end_time!);
     const startMinutes = (start.getHours() - DAY_START_HOUR) * 60 + start.getMinutes();
@@ -512,7 +610,7 @@ export default function ProductivityCalendarPage() {
     return { top, height };
   }
 
-  function formatTimeRange(task: PlannedTask) {
+  function formatTimeRange(task: RawTask) {
     const start = new Date(task.start_time!);
     const end = new Date(task.end_time!);
     const fmt = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -536,6 +634,15 @@ export default function ProductivityCalendarPage() {
             }`}
           >
             Month
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("week")}
+            className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+              viewMode === "week" ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+            }`}
+          >
+            Week
           </button>
           <button
             type="button"
@@ -651,7 +758,7 @@ export default function ProductivityCalendarPage() {
         </div>
       </div>
 
-      {viewMode === "month" ? (
+      {viewMode === "month" && (
         <div className="rounded-xl border border-sand bg-white p-4">
           <div className="mb-3 flex items-center justify-between">
             <button
@@ -713,7 +820,110 @@ export default function ProductivityCalendarPage() {
             })}
           </div>
         </div>
-      ) : (
+      )}
+
+      {viewMode === "week" && (
+        <div className="rounded-xl border border-sand bg-white p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={goToPrevWeek}
+              className="px-2 py-1 rounded-md text-bark hover:bg-parchment hover:text-espresso text-sm"
+            >
+              &larr;
+            </button>
+            <h2 className="text-sm font-bold text-espresso">{weekLabel}</h2>
+            <button
+              type="button"
+              onClick={goToNextWeek}
+              className="px-2 py-1 rounded-md text-bark hover:bg-parchment hover:text-espresso text-sm"
+            >
+              &rarr;
+            </button>
+          </div>
+
+          {scope === "__all__" && isAdminOrManager && (
+            <p className="mb-3 text-[11px] text-stone">
+              Agency-wide view can&apos;t render every teammate&apos;s hour blocks at once — showing your own week. Pick a teammate above to view or add blocks to theirs.
+            </p>
+          )}
+
+          {loadingDay ? (
+            <div className="py-8 text-center text-xs text-stone">Loading…</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <div className="grid min-w-[760px] grid-cols-[48px_repeat(7,1fr)]">
+                <div />
+                {weekGrid.map((dateStr) => {
+                  const { weekday, day } = formatDayShort(dateStr);
+                  const isToday = dateStr === todayStr;
+                  return (
+                    <button
+                      key={dateStr}
+                      type="button"
+                      onClick={() => openDay(dateStr)}
+                      className={`flex flex-col items-center gap-0.5 rounded-md py-1.5 text-center hover:bg-cream transition-colors cursor-pointer ${
+                        isToday ? "bg-terracotta-soft" : ""
+                      }`}
+                    >
+                      <span className="text-[9px] font-semibold text-walnut uppercase tracking-wide">{weekday}</span>
+                      <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
+                    </button>
+                  );
+                })}
+
+                <div className="relative col-span-8 grid grid-cols-[48px_repeat(7,1fr)]" style={{ height: hours.length * HOUR_HEIGHT }}>
+                  {/* Hour labels */}
+                  <div className="relative">
+                    {hours.map((hour, i) => (
+                      <span
+                        key={hour}
+                        className="absolute left-0 w-12 pt-0.5 text-[10px] text-stone"
+                        style={{ top: i * HOUR_HEIGHT }}
+                      >
+                        {new Date(2000, 0, 1, hour).toLocaleTimeString("en-US", { hour: "numeric" })}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Day columns */}
+                  {weekGrid.map((dateStr) => (
+                    <div key={dateStr} className="relative border-l border-sand">
+                      {hours.map((hour, i) => (
+                        <button
+                          key={hour}
+                          type="button"
+                          onClick={() => openAddBlock(hour, dateStr)}
+                          className="absolute left-0 right-0 border-t border-sand hover:bg-cream transition-colors cursor-pointer"
+                          style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                        />
+                      ))}
+                      <div className="pointer-events-none absolute inset-0">
+                        {scheduledForDate(dateStr).map((task) => {
+                          const { top, height } = blockPosition(task);
+                          return (
+                            <button
+                              key={task.id}
+                              type="button"
+                              onClick={() => openEditBlock(task)}
+                              className="pointer-events-auto absolute left-0.5 right-0.5 overflow-hidden rounded-md border border-sage/30 bg-sage-soft px-1 py-0.5 text-left shadow-sm hover:border-sage cursor-pointer"
+                              style={{ top, height }}
+                            >
+                              <p className="truncate text-[9px] font-semibold text-sage leading-tight">{task.task_name}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {viewMode === "day" && (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
           {/* Hour grid */}
           <div className="rounded-xl border border-sand bg-white p-4">
@@ -777,7 +987,7 @@ export default function ProductivityCalendarPage() {
                 ))}
 
                 <div className="pointer-events-none absolute inset-0 pl-16">
-                  {scheduledTasks.map((task) => {
+                  {scheduledForDate(selectedDate).map((task) => {
                     const { top, height } = blockPosition(task);
                     return (
                       <button
@@ -801,9 +1011,9 @@ export default function ProductivityCalendarPage() {
           <div className="rounded-xl border border-sand bg-white p-4 space-y-3 h-fit">
             <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Unscheduled</h3>
             {unscheduledTasks.length === 0 ? (
-              <p className="text-[11px] text-stone">Nothing unscheduled for this day.</p>
+              <p className="text-[11px] text-stone">Nothing unscheduled.</p>
             ) : (
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
                 {unscheduledTasks.map((task) => (
                   <div
                     key={task.id}
@@ -849,6 +1059,9 @@ export default function ProductivityCalendarPage() {
               </button>
             </div>
             <div className="p-5 space-y-3">
+              {viewMode === "week" && (
+                <p className="text-[11px] text-stone">{formatDayLabel(formDate)}</p>
+              )}
               <div>
                 <p className="text-[11px] font-semibold text-walnut mb-1 tracking-wide">Task Name</p>
                 <input
@@ -856,7 +1069,8 @@ export default function ProductivityCalendarPage() {
                   onChange={(e) => setFormTaskName(e.target.value)}
                   placeholder="What are you working on?"
                   autoFocus
-                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                  disabled={Boolean(editingBlockId)}
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white disabled:bg-parchment/40 disabled:text-stone"
                 />
               </div>
               <div>
@@ -864,7 +1078,8 @@ export default function ProductivityCalendarPage() {
                 <select
                   value={formAccount}
                   onChange={(e) => setFormAccount(e.target.value)}
-                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                  disabled={Boolean(editingBlockId)}
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white disabled:bg-parchment/40 disabled:text-stone"
                 >
                   <option value="">—</option>
                   {accounts.map((a) => (
@@ -901,10 +1116,11 @@ export default function ProductivityCalendarPage() {
               <div className="flex gap-3 pt-2">
                 {editingBlockId && (
                   <button
-                    onClick={deleteBlock}
+                    onClick={removeFromCalendar}
+                    title="Clears the time, but keeps the task itself — manage it from Assignment."
                     className="px-3 py-2 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[12px] font-semibold cursor-pointer hover:bg-red-100 transition-colors"
                   >
-                    Delete
+                    Remove from Calendar
                   </button>
                 )}
                 <button

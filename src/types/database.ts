@@ -534,6 +534,8 @@ export interface AssignedTask {
   recurring_template_id: string | null;
   project_id?: string | null;
   parent_task_id: number | null;
+  start_time: string | null;
+  end_time: string | null;
   pay_type?: string | null;
   review_required: boolean;
   revision_count: number;
