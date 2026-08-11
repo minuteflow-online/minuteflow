@@ -205,7 +205,7 @@ export default function ProductivityCalendarPage() {
   const todayStr = getDateInTimezone(orgTimezone);
   const isAdminOrManager = role === "admin" || role === "manager";
 
-  const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
+  const [viewMode, setViewMode] = useState<"month" | "week" | "day" | "team">("month");
   const [scope, setScope] = useState<string>("__self__");
   const [monthYear, setMonthYear] = useState<number>(new Date().getFullYear());
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
@@ -216,6 +216,8 @@ export default function ProductivityCalendarPage() {
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [daySchedule, setDaySchedule] = useState<RawTask[]>([]);
   const [loadingDay, setLoadingDay] = useState(false);
+  const [teamSchedules, setTeamSchedules] = useState<Record<string, RawTask[]>>({});
+  const [loadingTeam, setLoadingTeam] = useState(false);
 
   const [showFilters, setShowFilters] = useState(false);
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
@@ -368,6 +370,35 @@ export default function ProductivityCalendarPage() {
       setLoadingDay(false);
     }
   }, [dayUserId, userId]);
+
+  const fetchTeamSchedules = useCallback(async () => {
+    if (!userId || teamMembers.length === 0) return;
+    setLoadingTeam(true);
+    try {
+      const entries = await Promise.all(
+        teamMembers.map(async (m) => {
+          const url =
+            m.id === userId
+              ? "/api/assigned-tasks?selfOnly=true&view=active"
+              : `/api/assigned-tasks?viewAsVa=${m.id}&view=active`;
+          try {
+            const res = await fetch(url);
+            const data = await res.json();
+            return [m.id, normalizeAssignedRows(data.tasks ?? [], m.id)] as const;
+          } catch {
+            return [m.id, []] as const;
+          }
+        })
+      );
+      setTeamSchedules(Object.fromEntries(entries));
+    } finally {
+      setLoadingTeam(false);
+    }
+  }, [userId, teamMembers]);
+
+  useEffect(() => {
+    if (viewMode === "team") void fetchTeamSchedules();
+  }, [viewMode, selectedDate, fetchTeamSchedules]);
 
   useEffect(() => {
     if (viewMode === "day" || viewMode === "week") fetchDaySchedule();
@@ -623,6 +654,17 @@ export default function ProductivityCalendarPage() {
           >
             Day
           </button>
+          {isAdminOrManager && (
+            <button
+              type="button"
+              onClick={() => setViewMode("team")}
+              className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                viewMode === "team" ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+              }`}
+            >
+              Team
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -1030,6 +1072,82 @@ export default function ProductivityCalendarPage() {
               + Add Hour Block
             </button>
           </div>
+        </div>
+      )}
+
+      {viewMode === "team" && (
+        <div className="rounded-xl border border-sand bg-white p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={goToPrevDay}
+              className="px-2 py-1 rounded-md text-bark hover:bg-parchment hover:text-espresso text-sm"
+            >
+              &larr;
+            </button>
+            <h2 className="text-sm font-bold text-espresso">
+              {selectedDate === todayStr ? "Today — " : ""}
+              {formatDayLabel(selectedDate)}
+            </h2>
+            <button
+              type="button"
+              onClick={goToNextDay}
+              className="px-2 py-1 rounded-md text-bark hover:bg-parchment hover:text-espresso text-sm"
+            >
+              &rarr;
+            </button>
+          </div>
+
+          {loadingTeam ? (
+            <div className="py-8 text-center text-xs text-stone">Loading team schedules…</div>
+          ) : (
+            <div className="flex gap-3 overflow-x-auto pb-2">
+              {teamMembers.map((m) => {
+                const dayTasks = (teamSchedules[m.id] ?? [])
+                  .filter((t) => t.start_time && t.end_time && localDateOf(t.start_time) === selectedDate)
+                  .sort((a, b) => (a.start_time! < b.start_time! ? -1 : 1));
+                const totalMinutes = dayTasks.reduce(
+                  (sum, t) => sum + (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000,
+                  0
+                );
+                const hrs = Math.floor(totalMinutes / 60);
+                const mins = Math.round(totalMinutes % 60);
+                const loadClass =
+                  totalMinutes === 0
+                    ? "bg-stone/10 text-stone border-stone/20"
+                    : totalMinutes >= 420
+                    ? "bg-red-50 text-red-500 border-red-200"
+                    : "bg-sage-soft text-sage border-sage/20";
+                return (
+                  <div key={m.id} className="w-56 shrink-0 rounded-lg border border-sand bg-cream/30 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-[12px] font-bold text-espresso">{m.full_name || m.username}</p>
+                      <span className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${loadClass}`}>
+                        {hrs}h{mins > 0 ? ` ${mins}m` : ""}
+                      </span>
+                    </div>
+                    {dayTasks.length === 0 ? (
+                      <p className="text-[11px] text-stone">No hours scheduled.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {dayTasks.map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => openEditBlock(t)}
+                            className="w-full overflow-hidden rounded-md border border-sage/30 bg-sage-soft px-2 py-1.5 text-left hover:border-sage cursor-pointer"
+                          >
+                            <p className="truncate text-[11px] font-semibold text-sage">{t.task_name}</p>
+                            <p className="truncate text-[10px] text-sage/80">{formatTimeRange(t)}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
