@@ -484,6 +484,15 @@ export default function ProductivityCalendarPage() {
     (dateStr: string) => scheduledTasks.filter((t) => localDateOf(t.start_time as string) === dateStr),
     [scheduledTasks]
   );
+  const dayTotalLabel = useMemo(() => {
+    const totalMinutes = scheduledForDate(selectedDate).reduce(
+      (sum, t) => sum + (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000,
+      0
+    );
+    const hrs = Math.floor(totalMinutes / 60);
+    const mins = Math.round(totalMinutes % 60);
+    return `${hrs}h${mins > 0 ? ` ${mins}m` : ""} blocked`;
+  }, [scheduledForDate, selectedDate]);
   // Exclude items already rendered as an hour block for this date — once a task
   // has scheduled hours, it shouldn't also sit up top as an unscheduled-looking badge.
   const dueTodayItems = useMemo(() => {
@@ -825,10 +834,15 @@ export default function ProductivityCalendarPage() {
               >
                 &larr;
               </button>
-              <h2 className="text-sm font-bold text-espresso">
-                {selectedDate === todayStr ? "Today — " : ""}
-                {formatDayLabel(selectedDate)}
-              </h2>
+              <div className="flex flex-col items-center gap-0.5">
+                <h2 className="text-sm font-bold text-espresso">
+                  {selectedDate === todayStr ? "Today — " : ""}
+                  {formatDayLabel(selectedDate)}
+                </h2>
+                <span className="text-[10px] font-semibold px-2 py-[1px] rounded-full border bg-sage-soft text-sage border-sage/20">
+                  {dayTotalLabel}
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={goToNextDay}
