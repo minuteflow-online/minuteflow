@@ -9,6 +9,7 @@ import ProjectInfoModal from "@/components/ProjectInfoModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
+import TeamWorkloadView from "@/components/TeamWorkloadView";
 import type { RecurringTaskTemplate } from "@/types/database";
 import { countWords } from "@/lib/utils";
 import ColumnHeader from "@/components/table/ColumnHeader";
@@ -349,7 +350,7 @@ export default function TaskListPage() {
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [assignedByProfilesLoaded, setAssignedByProfilesLoaded] = useState(false);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "team">("my_tasks");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
@@ -1962,6 +1963,15 @@ export default function TaskListPage() {
                     Recurring
                   </button>
                 )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveView("team")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "team" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    Team
+                  </button>
+                )}
               </div>
               )}
 
@@ -2211,6 +2221,10 @@ export default function TaskListPage() {
                 vaMode={true}
                 currentUserId={currentUserId ?? ""}
               />
+            </div>
+          ) : activeView === "team" ? (
+            <div className="p-4">
+              <TeamWorkloadView currentUserId={currentUserId ?? ""} teamMembers={assignedByProfiles} />
             </div>
           ) : (
             <>

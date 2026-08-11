@@ -3,24 +3,18 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import TaskForm from "@/components/TaskForm";
+import {
+  type RawTask,
+  getDateInTimezone,
+  addDaysToDateStr,
+  formatDayLabel,
+  localDateOf,
+  formatTimeRange,
+  normalizeAssignedRows,
+} from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 
 type TeamMember = { id: string; full_name: string; username: string; role: string };
-
-// A normalized assigned_tasks row, regardless of which shape the API returned it in.
-type RawTask = {
-  id: number;
-  task_name: string;
-  account: string | null;
-  due_date: string | null;
-  start_date: string | null;
-  start_time: string | null;
-  end_time: string | null;
-  status: string;
-  category: string | null;
-  projectId: string | null;
-  isRecurring: boolean;
-};
 
 type DueItem = {
   id: string;
@@ -91,21 +85,6 @@ function statusLabel(status: string): string {
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function getDateInTimezone(tz: string): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: tz });
-}
-
-function addDaysToDateStr(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T12:00:00Z");
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function formatDayLabel(dateStr: string): string {
-  const d = new Date(dateStr + "T12:00:00Z");
-  return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
-}
-
 function formatDayShort(dateStr: string): { weekday: string; day: number } {
   const d = new Date(dateStr + "T12:00:00Z");
   return {
@@ -140,59 +119,6 @@ function buildWeekGrid(dateStr: string): string[] {
   return days;
 }
 
-// Local (browser) calendar date of a stored instant — matches how start/end times
-// are constructed (see saveBlock) so encode/decode stay consistent.
-function localDateOf(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-// /api/assigned-tasks returns two different shapes depending on the query:
-// - admin/flat (bare ?view=, or ?view=&vaId=): task fields on the row itself,
-//   with an assigned_task_assignees[] array.
-// - VA/nested (?selfOnly=true, or ?viewAsVa=): the row is an assignee record
-//   with the task fields nested under assigned_tasks.
-function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, currentUserId: string): RawTask[] {
-  return rawRows
-    .map((row) => {
-      const nested = row.assigned_tasks as Record<string, unknown> | undefined;
-      if (nested && typeof nested === "object") {
-        return {
-          id: nested.id as number,
-          task_name: nested.task_name as string,
-          account: (nested.account as string | null) ?? null,
-          due_date: (nested.due_date as string | null) ?? null,
-          start_date: (nested.start_date as string | null) ?? null,
-          start_time: (nested.start_time as string | null) ?? null,
-          end_time: (nested.end_time as string | null) ?? null,
-          status: row.status as string,
-          category: (nested.category as string | null) ?? null,
-          projectId: (nested.project_id as string | null) ?? null,
-          isRecurring: Boolean(nested.recurring_template_id),
-        };
-      }
-      const assignees = (row.assigned_task_assignees ?? []) as Array<{ va_id: string; status: string }>;
-      const mine = assignees.find((a) => a.va_id === currentUserId);
-      return {
-        id: row.id as number,
-        task_name: row.task_name as string,
-        account: (row.account as string | null) ?? null,
-        due_date: (row.due_date as string | null) ?? null,
-        start_date: (row.start_date as string | null) ?? null,
-        start_time: (row.start_time as string | null) ?? null,
-        end_time: (row.end_time as string | null) ?? null,
-        status: mine?.status || assignees[0]?.status || "on_queue",
-        category: (row.category as string | null) ?? null,
-        projectId: (row.project_id as string | null) ?? null,
-        isRecurring: Boolean(row.recurring_template_id),
-      };
-    })
-    .filter((t): t is RawTask => Boolean(t.id && t.task_name));
-}
-
 export default function ProductivityCalendarPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -205,7 +131,7 @@ export default function ProductivityCalendarPage() {
   const todayStr = getDateInTimezone(orgTimezone);
   const isAdminOrManager = role === "admin" || role === "manager";
 
-  const [viewMode, setViewMode] = useState<"month" | "week" | "day" | "team">("month");
+  const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
   const [scope, setScope] = useState<string>("__self__");
   const [monthYear, setMonthYear] = useState<number>(new Date().getFullYear());
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
@@ -216,8 +142,6 @@ export default function ProductivityCalendarPage() {
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [daySchedule, setDaySchedule] = useState<RawTask[]>([]);
   const [loadingDay, setLoadingDay] = useState(false);
-  const [teamSchedules, setTeamSchedules] = useState<Record<string, RawTask[]>>({});
-  const [loadingTeam, setLoadingTeam] = useState(false);
 
   const [showFilters, setShowFilters] = useState(false);
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
@@ -370,35 +294,6 @@ export default function ProductivityCalendarPage() {
       setLoadingDay(false);
     }
   }, [dayUserId, userId]);
-
-  const fetchTeamSchedules = useCallback(async () => {
-    if (!userId || teamMembers.length === 0) return;
-    setLoadingTeam(true);
-    try {
-      const entries = await Promise.all(
-        teamMembers.map(async (m) => {
-          const url =
-            m.id === userId
-              ? "/api/assigned-tasks?selfOnly=true&view=active"
-              : `/api/assigned-tasks?viewAsVa=${m.id}&view=active`;
-          try {
-            const res = await fetch(url);
-            const data = await res.json();
-            return [m.id, normalizeAssignedRows(data.tasks ?? [], m.id)] as const;
-          } catch {
-            return [m.id, []] as const;
-          }
-        })
-      );
-      setTeamSchedules(Object.fromEntries(entries));
-    } finally {
-      setLoadingTeam(false);
-    }
-  }, [userId, teamMembers]);
-
-  useEffect(() => {
-    if (viewMode === "team") void fetchTeamSchedules();
-  }, [viewMode, selectedDate, fetchTeamSchedules]);
 
   useEffect(() => {
     if (viewMode === "day" || viewMode === "week") fetchDaySchedule();
@@ -611,12 +506,6 @@ export default function ProductivityCalendarPage() {
     return { top, height };
   }
 
-  function formatTimeRange(task: RawTask) {
-    const start = new Date(task.start_time!);
-    const end = new Date(task.end_time!);
-    const fmt = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    return `${fmt(start)} – ${fmt(end)}`;
-  }
 
   if (!ready) {
     return <div className="p-8 text-center text-xs text-stone">Loading calendar…</div>;
@@ -654,17 +543,6 @@ export default function ProductivityCalendarPage() {
           >
             Day
           </button>
-          {isAdminOrManager && (
-            <button
-              type="button"
-              onClick={() => setViewMode("team")}
-              className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
-                viewMode === "team" ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
-              }`}
-            >
-              Team
-            </button>
-          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -1072,82 +950,6 @@ export default function ProductivityCalendarPage() {
               + Add Hour Block
             </button>
           </div>
-        </div>
-      )}
-
-      {viewMode === "team" && (
-        <div className="rounded-xl border border-sand bg-white p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={goToPrevDay}
-              className="px-2 py-1 rounded-md text-bark hover:bg-parchment hover:text-espresso text-sm"
-            >
-              &larr;
-            </button>
-            <h2 className="text-sm font-bold text-espresso">
-              {selectedDate === todayStr ? "Today — " : ""}
-              {formatDayLabel(selectedDate)}
-            </h2>
-            <button
-              type="button"
-              onClick={goToNextDay}
-              className="px-2 py-1 rounded-md text-bark hover:bg-parchment hover:text-espresso text-sm"
-            >
-              &rarr;
-            </button>
-          </div>
-
-          {loadingTeam ? (
-            <div className="py-8 text-center text-xs text-stone">Loading team schedules…</div>
-          ) : (
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              {teamMembers.map((m) => {
-                const dayTasks = (teamSchedules[m.id] ?? [])
-                  .filter((t) => t.start_time && t.end_time && localDateOf(t.start_time) === selectedDate)
-                  .sort((a, b) => (a.start_time! < b.start_time! ? -1 : 1));
-                const totalMinutes = dayTasks.reduce(
-                  (sum, t) => sum + (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000,
-                  0
-                );
-                const hrs = Math.floor(totalMinutes / 60);
-                const mins = Math.round(totalMinutes % 60);
-                const loadClass =
-                  totalMinutes === 0
-                    ? "bg-stone/10 text-stone border-stone/20"
-                    : totalMinutes >= 420
-                    ? "bg-red-50 text-red-500 border-red-200"
-                    : "bg-sage-soft text-sage border-sage/20";
-                return (
-                  <div key={m.id} className="w-56 shrink-0 rounded-lg border border-sand bg-cream/30 p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-[12px] font-bold text-espresso">{m.full_name || m.username}</p>
-                      <span className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${loadClass}`}>
-                        {hrs}h{mins > 0 ? ` ${mins}m` : ""}
-                      </span>
-                    </div>
-                    {dayTasks.length === 0 ? (
-                      <p className="text-[11px] text-stone">No hours scheduled.</p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {dayTasks.map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            onClick={() => openEditBlock(t)}
-                            className="w-full overflow-hidden rounded-md border border-sage/30 bg-sage-soft px-2 py-1.5 text-left hover:border-sage cursor-pointer"
-                          >
-                            <p className="truncate text-[11px] font-semibold text-sage">{t.task_name}</p>
-                            <p className="truncate text-[10px] text-sage/80">{formatTimeRange(t)}</p>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
       )}
 
