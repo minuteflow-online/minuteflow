@@ -2066,10 +2066,16 @@ export default function DashboardPage() {
 
   const startTask = useCallback(
     async (formData: TaskFormData) => {
-      // One in-flight submission per action type: bail if a start-task
-      // submission is already running (rapid double-click protection).
-      if (!userId || !profile || isStartingTaskRef.current) return;
+      // Two guards: isStartingTaskRef blocks a double-click of Start Activity
+      // itself. sessionActionPendingRef is the SAME ref clockIn/clockOut/
+      // startBreak/endBreak use — without also checking it here, clicking
+      // Clock In and Start Activity within a couple seconds of each other
+      // could run concurrently (each with its own "close open logs, then
+      // insert my own" sequence), producing two overlapping logs for the
+      // same time window instead of one clean switch.
+      if (!userId || !profile || isStartingTaskRef.current || sessionActionPendingRef.current) return;
       isStartingTaskRef.current = true;
+      setSessionActionPending(true);
       try {
         const now = new Date().toISOString();
         const skipClockIn = Boolean((formData as DashboardTaskFormData)._skipClockIn);
@@ -2385,9 +2391,10 @@ export default function DashboardPage() {
         }
       } finally {
         isStartingTaskRef.current = false;
+        setSessionActionPending(false);
       }
     },
-    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA, refreshSession]
+    [userId, profile, supabase, session, activeTask, sessionState, stopCurrentTask, screenShareActive, silentCapture, clearCaptureTimers, scheduleCaptureSequence, requestStream, autoUpdateAssignmentStatus, notifyVA, refreshSession, sessionActionPendingRef, setSessionActionPending]
   );
 
   // ─── Screenshot (manual + fallback) ─────────────────────────
