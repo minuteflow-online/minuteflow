@@ -1422,10 +1422,15 @@ export default function DashboardPage() {
 
   // Actually start the break (called after wizard or directly)
   const doStartBreak = useCallback(async () => {
-    // One in-flight submission per action type: bail if a break-start
-    // submission is already running (rapid double-click protection).
-    if (!userId || !profile || isStartingBreakRef.current) return;
+    // isStartingBreakRef blocks a double-click of Break itself.
+    // sessionActionPendingRef is the same ref clockIn/clockOut/startTask/
+    // endBreak/resumePreBreakTask/resumeOnHoldTask all check — without it,
+    // Break and any of those could run concurrently (each with its own
+    // "close open logs, then insert my own"), producing two overlapping
+    // logs instead of one clean switch.
+    if (!userId || !profile || isStartingBreakRef.current || sessionActionPendingRef.current) return;
     isStartingBreakRef.current = true;
+    setSessionActionPending(true);
     try {
       const now = new Date().toISOString();
 
@@ -1546,8 +1551,9 @@ export default function DashboardPage() {
       await refreshSession();
     } finally {
       isStartingBreakRef.current = false;
+      setSessionActionPending(false);
     }
-  }, [userId, profile, supabase, session, activeTask, stopCurrentTask, refreshSession]);
+  }, [userId, profile, supabase, session, activeTask, stopCurrentTask, refreshSession, sessionActionPendingRef, setSessionActionPending]);
 
 
 
@@ -1620,7 +1626,13 @@ export default function DashboardPage() {
 
   // Resume the pre-break task
   const resumePreBreakTask = useCallback(async () => {
-    if (!preBreakTask || !userId || !profile) return;
+    // Had no guard at all before — a double-click, or racing with any other
+    // session action, could insert this task's log twice or alongside
+    // another action's own insert. Shares the same ref every other
+    // session-mutating action in this file checks.
+    if (!preBreakTask || !userId || !profile || sessionActionPendingRef.current) return;
+    setSessionActionPending(true);
+    try {
     const now = new Date().toISOString();
 
     const isBillable = preBreakTask.category !== "Personal";
@@ -1675,11 +1687,18 @@ export default function DashboardPage() {
 
     setShowPostBreakPrompt(false);
     setPreBreakTask(null);
-  }, [preBreakTask, userId, profile, supabase, session]);
+    } finally {
+      setSessionActionPending(false);
+    }
+  }, [preBreakTask, userId, profile, supabase, session, orgTimezone, sessionActionPendingRef, setSessionActionPending]);
 
   // Resume an on-hold task (Play button from Activity Log)
   const resumeOnHoldTask = useCallback(async (log: TimeLog) => {
-    if (!userId || !profile) return;
+    // Also had no guard at all before — same shared ref as every other
+    // session-mutating action in this file.
+    if (!userId || !profile || sessionActionPendingRef.current) return;
+    setSessionActionPending(true);
+    try {
     const now = new Date().toISOString();
 
     // Stop current task if any
@@ -1786,7 +1805,10 @@ export default function DashboardPage() {
     if (logData) {
       setTimeLogs((prev) => [logData as TimeLog, ...prev]);
     }
-  }, [userId, profile, supabase, session, activeTask, stopCurrentTask]);
+    } finally {
+      setSessionActionPending(false);
+    }
+  }, [userId, profile, supabase, session, activeTask, stopCurrentTask, orgTimezone, sessionActionPendingRef, setSessionActionPending]);
 
   // ─── Update progress status on a time_log (clickable badge) ───
   const updateLogProgress = useCallback(async (logId: number, progress: string) => {
