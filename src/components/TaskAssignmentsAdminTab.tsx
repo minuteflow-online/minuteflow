@@ -14,6 +14,22 @@ import type {
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import ProjectsManager from "@/components/ProjectsManager";
+import ColumnHeader from "@/components/table/ColumnHeader";
+import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
+import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
+
+const TABLE_COLUMNS: ColumnDef[] = [
+  { key: "task_name", label: "Task Name", defaultWidth: 180 },
+  { key: "account", label: "Account", defaultWidth: 130 },
+  { key: "objective", label: "Objective", defaultWidth: 130 },
+  { key: "detail", label: "Detail", defaultWidth: 180 },
+  { key: "assigned_to", label: "Assigned To", defaultWidth: 160 },
+  { key: "status", label: "Status", defaultWidth: 150 },
+  { key: "accuracy", label: "Accuracy", defaultWidth: 100 },
+  { key: "due_date", label: "Due Date", defaultWidth: 130 },
+  { key: "project", label: "Project", defaultWidth: 120 },
+  { key: "created", label: "Created", defaultWidth: 110 },
+];
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -450,6 +466,17 @@ export default function TaskAssignmentsAdminTab({
     (p) => p.role === "admin" || p.position === "Full-time VA" || p.position === "Part-time VA"
   );
 
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setCurrentUserId(data.user?.id ?? null));
+  }, [supabase]);
+
+  const { widths: columnWidths, hidden: hiddenColumns, setColumnWidth, toggleColumnVisible } = useColumnPrefs(
+    "task-assignments-admin",
+    currentUserId,
+    TABLE_COLUMNS
+  );
+
   // ── Data state ───────────────────────────────────────────────────────────────
   const [tasks, setTasks] = useState<AssignedTaskWithAssignees[]>([]);
   const [loading, setLoading] = useState(true);
@@ -504,8 +531,6 @@ export default function TaskAssignmentsAdminTab({
   const [filterDueStart, setFilterDueStart] = useState<string>("");
   const [filterDueEnd, setFilterDueEnd] = useState<string>("");
   const [taskNameSearch, setTaskNameSearch] = useState<string>("");
-  const [openFilter, setOpenFilter] = useState<"va" | "status" | "account" | "taskname" | "objective" | "duedate" | null>(null);
-  const filterRef = useRef<HTMLDivElement>(null);
   const [taskView, setTaskView] = useState<"active" | "submitted" | "archived" | "trash" | "recurring" | "projects">("active");
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
 
@@ -879,18 +904,6 @@ export default function TaskAssignmentsAdminTab({
     document.addEventListener("mousedown", handleMouseDown);
     return () => document.removeEventListener("mousedown", handleMouseDown);
   }, [assignedToEdit]);
-
-  // Close filter dropdowns on outside click
-  useEffect(() => {
-    if (!openFilter) return;
-    const handleClick = (event: MouseEvent) => {
-      if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
-        setOpenFilter(null);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [openFilter]);
 
   // ─── Detail panel save ────────────────────────────────────────────────────────
 
@@ -1436,168 +1449,39 @@ export default function TaskAssignmentsAdminTab({
     );
   }
 
-  // ─── Filter Dropdown sub-component ───────────────────────────────────────────
+  // ─── Due Date range filter popover (used inside ColumnHeader's customFilter) ──
 
-  function FilterDropdown<T extends string>({
-    label,
-    options,
-    selected,
-    onChange,
-    isOpen,
-    onToggle,
-    searchable,
-    searchValue,
-    onSearchChange,
-    searchPlaceholder,
-  }: {
-    label: string;
-    options: { value: T; label: string }[];
-    selected: T[];
-    onChange: (v: T[]) => void;
-    isOpen: boolean;
-    onToggle: () => void;
-    searchable?: boolean;
-    searchValue?: string;
-    onSearchChange?: (v: string) => void;
-    searchPlaceholder?: string;
-  }) {
-    const visibleOptions = searchable && searchValue
-      ? options.filter((opt) => opt.label.toLowerCase().includes(searchValue.toLowerCase()))
-      : options;
-
+  function DueDateRangeFilter({ close }: { close: () => void }) {
     return (
-      <div className="relative">
-        <button
-          onClick={onToggle}
-          className={`flex items-center gap-1.5 py-2 px-3 border rounded-lg text-[13px] bg-white outline-none cursor-pointer transition-all ${
-            selected.length > 0
-              ? "border-terracotta text-terracotta"
-              : "border-sand text-ink hover:border-walnut"
-          }`}
-        >
-          {label}
-          {selected.length > 0 && (
-            <span className="bg-terracotta text-white text-[10px] font-bold rounded-full px-1.5 py-px leading-none">
-              {selected.length}
-            </span>
-          )}
-          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-        {isOpen && (
-          <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-sand rounded-xl shadow-lg min-w-[180px] py-1">
-            {searchable && onSearchChange && (
-              <div className="px-3 py-2 border-b border-sand">
-                <input
-                  value={searchValue || ""}
-                  onChange={(e) => onSearchChange(e.target.value)}
-                  placeholder={searchPlaceholder || `Search ${label.toLowerCase()}...`}
-                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
-                />
-              </div>
-            )}
-            <div className="flex items-center justify-between px-3 py-1.5 border-b border-sand">
-              <button
-                onClick={() => onChange(visibleOptions.map((o) => o.value))}
-                className="text-[11px] text-terracotta hover:underline cursor-pointer"
-              >Select All</button>
-              <button
-                onClick={() => onChange([])}
-                className="text-[11px] text-stone hover:underline cursor-pointer"
-              >Clear</button>
-            </div>
-            {visibleOptions.length > 0 ? visibleOptions.map((opt) => (
-              <label key={opt.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-parchment cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(opt.value)}
-                  onChange={e => {
-                    if (e.target.checked) onChange([...selected, opt.value]);
-                    else onChange(selected.filter(v => v !== opt.value));
-                  }}
-                  className="accent-terracotta"
-                />
-                <span className="text-[13px] text-ink">{opt.label}</span>
-              </label>
-            )) : (
-              <div className="px-3 py-2 text-[12px] text-stone">No options found</div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function DateRangeDropdown({
-    label,
-    start,
-    end,
-    isOpen,
-    onToggle,
-    onStartChange,
-    onEndChange,
-  }: {
-    label: string;
-    start: string;
-    end: string;
-    isOpen: boolean;
-    onToggle: () => void;
-    onStartChange: (v: string) => void;
-    onEndChange: (v: string) => void;
-  }) {
-    const activeCount = Number(Boolean(start)) + Number(Boolean(end));
-
-    return (
-      <div className="relative">
-        <button
-          onClick={onToggle}
-          className={`flex items-center gap-1.5 py-2 px-3 border rounded-lg text-[13px] bg-white outline-none cursor-pointer transition-all ${
-            activeCount > 0
-              ? "border-terracotta text-terracotta"
-              : "border-sand text-ink hover:border-walnut"
-          }`}
-        >
-          {label}
-          {activeCount > 0 && (
-            <span className="bg-terracotta text-white text-[10px] font-bold rounded-full px-1.5 py-px leading-none">
-              {activeCount}
-            </span>
-          )}
-          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-        {isOpen && (
-          <div className="absolute top-full left-0 mt-1 z-50 bg-white border border-sand rounded-xl shadow-lg min-w-[240px] p-3">
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
-                <input
-                  type="date"
-                  value={start}
-                  onChange={(e) => onStartChange(e.target.value)}
-                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">To</label>
-                <input
-                  type="date"
-                  value={end}
-                  onChange={(e) => onEndChange(e.target.value)}
-                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
-                />
-              </div>
-              <div className="flex items-center justify-between border-t border-sand pt-2">
-                <button
-                  onClick={() => { onStartChange(""); onEndChange(""); }}
-                  className="text-[11px] text-stone hover:underline cursor-pointer"
-                >Clear</button>
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
+          <input
+            type="date"
+            value={filterDueStart}
+            onChange={(e) => setFilterDueStart(e.target.value)}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">To</label>
+          <input
+            type="date"
+            value={filterDueEnd}
+            onChange={(e) => setFilterDueEnd(e.target.value)}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+          />
+        </div>
+        <div className="flex items-center justify-between border-t border-sand pt-2">
+          <button
+            onClick={() => { setFilterDueStart(""); setFilterDueEnd(""); }}
+            className="text-[11px] text-stone hover:underline cursor-pointer"
+          >Clear</button>
+          <button
+            onClick={close}
+            className="text-[11px] font-semibold text-terracotta hover:underline cursor-pointer"
+          >Done</button>
+        </div>
       </div>
     );
   }
@@ -1626,68 +1510,17 @@ export default function TaskAssignmentsAdminTab({
       {/* ── Header row ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         {taskView !== "submitted" && !isRecurringView && !isProjectsView && (
-          <div ref={filterRef} className="flex items-center gap-2 flex-wrap">
-            <FilterDropdown
-              label="Task Name"
-              options={taskNameFilterOptions.map(taskName => ({ value: taskName, label: taskName }))}
-              selected={filterTaskNames}
-              onChange={setFilterTaskNames}
-              isOpen={openFilter === "taskname"}
-              onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
-              searchable
-              searchValue={taskNameSearch}
-              onSearchChange={setTaskNameSearch}
-              searchPlaceholder="Search task names..."
-            />
-            <FilterDropdown
-              label="Objective"
-              options={objectiveFilterOptions.map(objective => ({ value: objective, label: objective }))}
-              selected={filterObjectives}
-              onChange={setFilterObjectives}
-              isOpen={openFilter === "objective"}
-              onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
-            />
-            <DateRangeDropdown
-              label="Due Date"
-              start={filterDueStart}
-              end={filterDueEnd}
-              isOpen={openFilter === "duedate"}
-              onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
-              onStartChange={setFilterDueStart}
-              onEndChange={setFilterDueEnd}
-            />
-            <FilterDropdown
-              label="Member"
-              options={activeProfiles.map(p => ({ value: p.id, label: p.full_name || p.username || p.id }))}
-              selected={filterVaIds}
-              onChange={setFilterVaIds}
-              isOpen={openFilter === "va"}
-              onToggle={() => setOpenFilter(openFilter === "va" ? null : "va")}
-            />
-            <FilterDropdown
-              label="Status"
-              options={STATUS_OPTIONS.filter(o => o.value !== "").map(o => ({ value: o.value as string, label: o.label }))}
-              selected={filterStatuses}
-              onChange={setFilterStatuses}
-              isOpen={openFilter === "status"}
-              onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
-            />
-            <FilterDropdown
-              label="Account"
-              options={KNOWN_ACCOUNTS.map(a => ({ value: a, label: a }))}
-              selected={filterAccounts}
-              onChange={setFilterAccounts}
-              isOpen={openFilter === "account"}
-              onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
-            />
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
             {(filterVaIds.length > 0 || filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd) && (
               <button
                 onClick={() => { setFilterVaIds([]); setFilterStatuses([]); setFilterAccounts([]); setFilterTaskNames([]); setFilterObjectives([]); setFilterDueStart(""); setFilterDueEnd(""); setTaskNameSearch(""); }}
                 className="text-[12px] text-stone hover:text-terracotta hover:underline cursor-pointer"
               >
-                Clear all
+                Clear all filters
               </button>
             )}
+            <ColumnVisibilityPicker columns={TABLE_COLUMNS} hidden={hiddenColumns} onToggle={toggleColumnVisible} />
           </div>
         )}
 
@@ -1862,7 +1695,7 @@ export default function TaskAssignmentsAdminTab({
       {/* ── Task table ──────────────────────────────────────────────────────────── */}
       {!loading && !fetchError && filteredTasks.length > 0 && !isRecurringView && !isProjectsView && (
         <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
-          <table className="w-full">
+          <table className="w-full table-fixed">
             <thead>
               <tr className="bg-parchment border-b border-sand">
                 <th className="px-3 py-2.5 w-8">
@@ -1875,16 +1708,81 @@ export default function TaskAssignmentsAdminTab({
                     />
                   )}
                 </th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Objective</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Detail</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Status</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Accuracy</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Due Date</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Created</th>
+                {!hiddenColumns.has("task_name") && (
+                  <ColumnHeader
+                    label="Task Name"
+                    width={columnWidths.task_name}
+                    onResize={(w) => setColumnWidth("task_name", w)}
+                    filterOptions={taskNameFilterOptions.map((v) => ({ value: v, label: v }))}
+                    selected={filterTaskNames}
+                    onFilterChange={setFilterTaskNames}
+                    searchable
+                    searchValue={taskNameSearch}
+                    onSearchChange={setTaskNameSearch}
+                    searchPlaceholder="Search task names..."
+                  />
+                )}
+                {!hiddenColumns.has("account") && (
+                  <ColumnHeader
+                    label="Account"
+                    width={columnWidths.account}
+                    onResize={(w) => setColumnWidth("account", w)}
+                    filterOptions={KNOWN_ACCOUNTS.map((a) => ({ value: a, label: a }))}
+                    selected={filterAccounts}
+                    onFilterChange={setFilterAccounts}
+                  />
+                )}
+                {!hiddenColumns.has("objective") && (
+                  <ColumnHeader
+                    label="Objective"
+                    width={columnWidths.objective}
+                    onResize={(w) => setColumnWidth("objective", w)}
+                    filterOptions={objectiveFilterOptions.map((v) => ({ value: v, label: v }))}
+                    selected={filterObjectives}
+                    onFilterChange={setFilterObjectives}
+                  />
+                )}
+                {!hiddenColumns.has("detail") && (
+                  <ColumnHeader label="Detail" width={columnWidths.detail} onResize={(w) => setColumnWidth("detail", w)} />
+                )}
+                {!hiddenColumns.has("assigned_to") && (
+                  <ColumnHeader
+                    label="Assigned To"
+                    width={columnWidths.assigned_to}
+                    onResize={(w) => setColumnWidth("assigned_to", w)}
+                    filterOptions={activeProfiles.map((p) => ({ value: p.id, label: p.full_name || p.username || p.id }))}
+                    selected={filterVaIds}
+                    onFilterChange={setFilterVaIds}
+                  />
+                )}
+                {!hiddenColumns.has("status") && (
+                  <ColumnHeader
+                    label="Status"
+                    width={columnWidths.status}
+                    onResize={(w) => setColumnWidth("status", w)}
+                    filterOptions={STATUS_OPTIONS.filter((o) => o.value !== "").map((o) => ({ value: o.value as string, label: o.label }))}
+                    selected={filterStatuses}
+                    onFilterChange={setFilterStatuses}
+                  />
+                )}
+                {!hiddenColumns.has("accuracy") && (
+                  <ColumnHeader label="Accuracy" width={columnWidths.accuracy} onResize={(w) => setColumnWidth("accuracy", w)} />
+                )}
+                {!hiddenColumns.has("due_date") && (
+                  <ColumnHeader
+                    label="Due Date"
+                    width={columnWidths.due_date}
+                    onResize={(w) => setColumnWidth("due_date", w)}
+                    isFiltered={Boolean(filterDueStart || filterDueEnd)}
+                    customFilter={(close) => <DueDateRangeFilter close={close} />}
+                  />
+                )}
+                {!hiddenColumns.has("project") && (
+                  <ColumnHeader label="Project" width={columnWidths.project} onResize={(w) => setColumnWidth("project", w)} />
+                )}
+                {!hiddenColumns.has("created") && (
+                  <ColumnHeader label="Created" width={columnWidths.created} onResize={(w) => setColumnWidth("created", w)} />
+                )}
                 <th className="w-8"></th>
               </tr>
             </thead>
@@ -1930,82 +1828,93 @@ export default function TaskAssignmentsAdminTab({
                     </td>
 
                     {/* Task Name */}
-                    <InlineCell
-                      task={task}
-                      field="task_name"
-                      display={task.task_name}
-                    />
+                    {!hiddenColumns.has("task_name") && (
+                      <InlineCell
+                        task={task}
+                        field="task_name"
+                        display={task.task_name}
+                      />
+                    )}
 
                     {/* Account */}
-                    <InlineCell
-                      task={task}
-                      field="account"
-                      display={task.account || ""}
-                    />
+                    {!hiddenColumns.has("account") && (
+                      <InlineCell
+                        task={task}
+                        field="account"
+                        display={task.account || ""}
+                      />
+                    )}
 
                     {/* Objective */}
-                    <InlineCell
-                      task={task}
-                      field="project"
-                      display={task.project || ""}
-                    />
+                    {!hiddenColumns.has("objective") && (
+                      <InlineCell
+                        task={task}
+                        field="project"
+                        display={task.project || ""}
+                      />
+                    )}
 
                     {/* Detail preview */}
-                    <td
-                      className="px-3 py-3 text-[13px] max-w-[180px] cursor-pointer"
-                      onClick={() => openEdit(task)}
-                    >
-                      {task.task_detail ? (
-                        <span className="text-stone/70 block truncate" title={task.task_detail}>
-                          {task.task_detail.length > 45
-                            ? task.task_detail.slice(0, 45) + "…"
-                            : task.task_detail}
-                        </span>
-                      ) : (
-                        <span className="text-stone/30">—</span>
-                      )}
-                    </td>
+                    {!hiddenColumns.has("detail") && (
+                      <td
+                        className="px-3 py-3 text-[13px] truncate cursor-pointer"
+                        onClick={() => openEdit(task)}
+                      >
+                        {task.task_detail ? (
+                          <span className="text-stone/70 block truncate" title={task.task_detail}>
+                            {task.task_detail.length > 45
+                              ? task.task_detail.slice(0, 45) + "…"
+                              : task.task_detail}
+                          </span>
+                        ) : (
+                          <span className="text-stone/30">—</span>
+                        )}
+                      </td>
+                    )}
 
                     {/* Assigned To — inline multi-select */}
-                    <td
-                      ref={assignedToEdit?.taskId === task.id ? assignedToEditRef : null}
-                      className="px-3 py-3 text-[13px] cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setAssignedToEdit({ taskId: task.id });
-                      }}
-                    >
-                      {assignedToEdit?.taskId === task.id ? (
-                        <VAMultiSelect
-                          activeProfiles={activeProfiles}
-                          selectedIds={assignees.map((a) => a.va_id)}
-                          onChange={(ids) => void handleAssignedToChange(task.id, ids)}
-                          selectedTask={task}
-                        />
-                      ) : (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {visibleAssignees.map((a) => {
-                            const name = a.profiles?.full_name || a.profiles?.username || a.va_id;
-                            return (
-                              <span
-                                key={a.id}
-                                className="inline-flex items-center gap-1 text-[12px] text-walnut"
-                              >
-                                {name}
-                              </span>
-                            );
-                          })}
-                          {extraCount > 0 && (
-                            <span className="text-[11px] text-stone">+{extraCount} more</span>
-                          )}
-                          {assignees.length === 0 && (
-                            <span className="text-[11px] text-stone/40">—</span>
-                          )}
-                        </div>
-                      )}
-                    </td>
+                    {!hiddenColumns.has("assigned_to") && (
+                      <td
+                        ref={assignedToEdit?.taskId === task.id ? assignedToEditRef : null}
+                        className="px-3 py-3 text-[13px] cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAssignedToEdit({ taskId: task.id });
+                        }}
+                      >
+                        {assignedToEdit?.taskId === task.id ? (
+                          <VAMultiSelect
+                            activeProfiles={activeProfiles}
+                            selectedIds={assignees.map((a) => a.va_id)}
+                            onChange={(ids) => void handleAssignedToChange(task.id, ids)}
+                            selectedTask={task}
+                          />
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {visibleAssignees.map((a) => {
+                              const name = a.profiles?.full_name || a.profiles?.username || a.va_id;
+                              return (
+                                <span
+                                  key={a.id}
+                                  className="inline-flex items-center gap-1 text-[12px] text-walnut"
+                                >
+                                  {name}
+                                </span>
+                              );
+                            })}
+                            {extraCount > 0 && (
+                              <span className="text-[11px] text-stone">+{extraCount} more</span>
+                            )}
+                            {assignees.length === 0 && (
+                              <span className="text-[11px] text-stone/40">—</span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    )}
 
                     {/* Status — clickable per-assignee badge */}
+                    {!hiddenColumns.has("status") && (
                     <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
                       <div className="flex flex-wrap gap-1">
                         {(task.revision_count ?? 0) > 0 && (
@@ -2088,8 +1997,10 @@ export default function TaskAssignmentsAdminTab({
                         })}
                       </div>
                     </td>
+                    )}
 
                     {/* Accuracy */}
+                    {!hiddenColumns.has("accuracy") && (
                     <td className="px-3 py-3 text-[13px]">
                       <div className="flex flex-wrap gap-1">
                         {assignees.length === 0 ? (
@@ -2110,30 +2021,37 @@ export default function TaskAssignmentsAdminTab({
                         )}
                       </div>
                     </td>
+                    )}
 
                     {/* Due Date */}
-                    <InlineCell
-                      task={task}
-                      field="due_date"
-                      display={
-                        task.due_date
-                          ? `${dueDateDisplay}${pastDue ? " · Past Due" : dueSoon ? " · Soon" : ""}`
-                          : ""
-                      }
-                      inputType="date"
-                    />
+                    {!hiddenColumns.has("due_date") && (
+                      <InlineCell
+                        task={task}
+                        field="due_date"
+                        display={
+                          task.due_date
+                            ? `${dueDateDisplay}${pastDue ? " · Past Due" : dueSoon ? " · Soon" : ""}`
+                            : ""
+                        }
+                        inputType="date"
+                      />
+                    )}
 
                     {/* Project (linked Projects entity) */}
-                    <td className="px-3 py-3 text-[12px] text-stone whitespace-nowrap" onClick={() => openEdit(task)}>
-                      {task.project_id
-                        ? (projectsList.find((p) => p.id === task.project_id)?.name ?? <span className="text-stone/30">—</span>)
-                        : <span className="text-stone/30">—</span>}
-                    </td>
+                    {!hiddenColumns.has("project") && (
+                      <td className="px-3 py-3 text-[12px] text-stone whitespace-nowrap truncate" onClick={() => openEdit(task)}>
+                        {task.project_id
+                          ? (projectsList.find((p) => p.id === task.project_id)?.name ?? <span className="text-stone/30">—</span>)
+                          : <span className="text-stone/30">—</span>}
+                      </td>
+                    )}
 
                     {/* Created */}
-                    <td className="px-3 py-3 text-[12px] text-stone/70 whitespace-nowrap" onClick={() => openEdit(task)}>
-                      {task.created_at ? fmtDueDate(task.created_at, orgTimezone) : <span className="text-stone/30">—</span>}
-                    </td>
+                    {!hiddenColumns.has("created") && (
+                      <td className="px-3 py-3 text-[12px] text-stone/70 whitespace-nowrap truncate" onClick={() => openEdit(task)}>
+                        {task.created_at ? fmtDueDate(task.created_at, orgTimezone) : <span className="text-stone/30">—</span>}
+                      </td>
+                    )}
 
                     {/* Archive / Trash / Restore / Permanent Delete */}
                     <td className="px-2 py-3 w-16 text-right" onClick={(e) => e.stopPropagation()}>

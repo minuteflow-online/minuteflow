@@ -14,9 +14,9 @@ const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progres
 // VA_EDITABLE_STATUSES state — once admin has moved it into review/payroll
 // (revision_needed/completed/cancelled/paid), the rate and details are
 // locked so a VA can't retroactively change what they're being paid for.
-const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "rate", "task_detail", "task_notes", "link", "instructions"]);
+const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date"]);
 const TASK_SELECT =
-  "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
+  "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -78,8 +78,19 @@ function normalizeTimestamp(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+// Fixed-pay tasks store start_date/due_date as plain dates (no time-of-day),
+// so this normalizes to YYYY-MM-DD rather than a full ISO timestamp.
+function normalizeDate(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
 async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: FixedPayTaskWithClaimer[]) {
-  const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to, row.assigned_by]).filter((id): id is string => Boolean(id)))];
+  const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to, row.assigned_by, row.created_by]).filter((id): id is string => Boolean(id)))];
   let profileMap: Record<string, ProfileSummary> = {};
 
   if (profileIds.length > 0) {
@@ -96,6 +107,7 @@ async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: F
     assigned_by_profile: row.assigned_by ? profileMap[row.assigned_by] ?? null : null,
     claimed_by_profile: row.claimed_by ? profileMap[row.claimed_by] ?? null : null,
     assigned_to_profile: row.assigned_to ? profileMap[row.assigned_to] ?? null : null,
+    created_by_profile: row.created_by ? profileMap[row.created_by] ?? null : null,
   }));
 }
 
@@ -168,6 +180,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if ("task_notes" in body) updates.task_notes = normalizeText(body.task_notes);
       if ("link" in body) updates.link = normalizeText(body.link);
       if ("instructions" in body) updates.instructions = normalizeText(body.instructions);
+      if ("start_date" in body) updates.start_date = normalizeDate(body.start_date);
+      if ("due_date" in body) updates.due_date = normalizeDate(body.due_date);
     }
 
     const { data, error } = await admin
@@ -215,6 +229,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if ("link" in body) updates.link = normalizeText(body.link);
   if ("instructions" in body) updates.instructions = normalizeText(body.instructions);
   if ("instructions_locked" in body) updates.instructions_locked = Boolean(body.instructions_locked);
+  if ("start_date" in body) updates.start_date = normalizeDate(body.start_date);
+  if ("due_date" in body) updates.due_date = normalizeDate(body.due_date);
   if (hasArchivedAt) updates.archived_at = nextArchivedAt;
   if (hasDeletedAt) updates.deleted_at = nextDeletedAt;
   if ("status" in body) {

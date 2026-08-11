@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
 import { countWords } from "@/lib/utils";
+import ColumnHeader from "@/components/table/ColumnHeader";
+import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
+import TableRowDetailPanel from "@/components/table/TableRowDetailPanel";
+import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -75,6 +79,8 @@ const EMPTY_FORM = {
   rate: "",
   duration_value: "",
   duration_unit: "hours" as "hours" | "minutes",
+  start_date: "",
+  due_date: "",
   task_detail: "",
   task_notes: "",
   link: "",
@@ -105,74 +111,32 @@ function formatTimestamp(value: string | null) {
   });
 }
 
+// start_date/due_date are plain dates (YYYY-MM-DD) — parse as UTC-noon so the
+// displayed day never shifts backward in timezones behind UTC.
+function formatDateOnly(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 function mergeTextOptions(options: string[], currentValue: string | null | undefined) {
   const set = new Set(options.filter(Boolean));
   if (currentValue) set.add(currentValue);
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
 
-type FilterOptionValue = string | number;
-
-type FilterDropdownProps<T extends FilterOptionValue> = {
-  label: string;
-  options: { value: T; label: string }[];
-  selected: T[];
-  onChange: (v: T[]) => void;
-  isOpen: boolean;
-  onToggle: () => void;
-};
-
-function FilterDropdown<T extends FilterOptionValue>({ label, options, selected, onChange, isOpen, onToggle }: FilterDropdownProps<T>) {
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={onToggle}
-        className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] outline-none transition-all ${
-          selected.length > 0 ? "border-terracotta text-terracotta" : "border-sand bg-white text-espresso hover:border-walnut"
-        }`}
-      >
-        {label}
-        {selected.length > 0 && (
-          <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">{selected.length}</span>
-        )}
-        <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-      {isOpen && (
-        <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-xl border border-sand bg-white py-1 shadow-lg">
-          <div className="flex items-center justify-between border-b border-sand px-3 py-1.5">
-            <button type="button" onClick={() => onChange(options.map((o) => o.value))} className="cursor-pointer text-[11px] text-terracotta hover:underline">
-              Select All
-            </button>
-            <button type="button" onClick={() => onChange([])} className="cursor-pointer text-[11px] text-stone hover:underline">
-              Clear
-            </button>
-          </div>
-          {options.length > 0 ? (
-            options.map((opt) => (
-              <label key={String(opt.value)} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-parchment">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(opt.value)}
-                  onChange={(e) => {
-                    if (e.target.checked) onChange([...selected, opt.value]);
-                    else onChange(selected.filter((value) => value !== opt.value));
-                  }}
-                  className="accent-terracotta"
-                />
-                <span className="text-[13px] text-espresso">{opt.label}</span>
-              </label>
-            ))
-          ) : (
-            <div className="px-3 py-2 text-[12px] text-stone">No options found</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+const TABLE_COLUMNS: ColumnDef[] = [
+  { key: "task_name", label: "Task Name", defaultWidth: 200 },
+  { key: "account", label: "Account", defaultWidth: 140 },
+  { key: "category", label: "Category", defaultWidth: 140 },
+  { key: "status", label: "Status", defaultWidth: 140 },
+  { key: "rate", label: "Rate", defaultWidth: 90 },
+  { key: "start_date", label: "Start Date", defaultWidth: 110 },
+  { key: "due_date", label: "Due Date", defaultWidth: 110 },
+  { key: "claimed", label: "Claimed", defaultWidth: 130 },
+  { key: "active", label: "Active", defaultWidth: 90 },
+];
 
 type FixedPayTasksPanelProps = {
   // Bumped by the parent (e.g. after a claim in AvailableTasksWidget) to refetch.
@@ -201,7 +165,8 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterStatuses, setFilterStatuses] = useState<FixedPayTaskWithClaimer["status"][]>([]);
   const [filterRates, setFilterRates] = useState<number[]>([]);
-  const [openFilter, setOpenFilter] = useState<"taskname" | "account" | "category" | "status" | "rate" | null>(null);
+  const [filterStartDates, setFilterStartDates] = useState<string[]>([]);
+  const [filterDueDates, setFilterDueDates] = useState<string[]>([]);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
@@ -214,6 +179,12 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   const [accounts, setAccounts] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const headerSelectAllRef = useRef<HTMLInputElement | null>(null);
+
+  const { widths: columnWidths, hidden: hiddenColumns, setColumnWidth, toggleColumnVisible } = useColumnPrefs(
+    "fixed-pay-tasks-va",
+    currentUserId,
+    TABLE_COLUMNS
+  );
 
   // Same eligibility as the fixed-pay-tasks POST route: per-task VAs, or hourly VAs
   // with the hybrid "Avail. Tasks" toggle on. Hybrid VAs additionally get the
@@ -344,12 +315,23 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
     [filterBaseTasks]
   );
 
+  const startDateFilterOptions = useMemo(
+    () => Array.from(new Set(filterBaseTasks.map((task) => task.start_date).filter((v): v is string => Boolean(v)))).sort(),
+    [filterBaseTasks]
+  );
+  const dueDateFilterOptions = useMemo(
+    () => Array.from(new Set(filterBaseTasks.map((task) => task.due_date).filter((v): v is string => Boolean(v)))).sort(),
+    [filterBaseTasks]
+  );
+
   const filteredTasks = useMemo(() => {
     return filterBaseTasks.filter((task) => {
       if (filterRates.length > 0 && !filterRates.includes(Number(task.rate))) return false;
+      if (filterStartDates.length > 0 && !filterStartDates.includes(task.start_date ?? "")) return false;
+      if (filterDueDates.length > 0 && !filterDueDates.includes(task.due_date ?? "")) return false;
       return true;
     });
-  }, [filterBaseTasks, filterRates]);
+  }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const allVisibleSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
@@ -388,6 +370,8 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
       account: task.account ?? "",
       category: task.category ?? "",
       rate: task.rate != null ? String(task.rate) : "",
+      start_date: task.start_date ?? "",
+      due_date: task.due_date ?? "",
       task_detail: task.task_detail ?? "",
       task_notes: task.task_notes ?? "",
       link: task.link ?? "",
@@ -512,6 +496,8 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
             account: form.account.trim() || null,
             category: form.category.trim() || null,
             rate,
+            start_date: form.start_date || null,
+            due_date: form.due_date || null,
             task_detail: form.task_detail.trim() || null,
             task_notes: form.task_notes.trim() || null,
             link: form.link.trim() || null,
@@ -607,63 +593,29 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
             ))}
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <FilterDropdown
-              label="Task Name"
-              options={taskNameFilterOptions.map((taskName) => ({ value: taskName, label: taskName }))}
-              selected={filterTaskNames}
-              onChange={setFilterTaskNames}
-              isOpen={openFilter === "taskname"}
-              onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
-            />
-            <FilterDropdown
-              label="Account"
-              options={accountFilterOptions.map((account) => ({ value: account, label: account }))}
-              selected={filterAccounts}
-              onChange={setFilterAccounts}
-              isOpen={openFilter === "account"}
-              onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
-            />
-            <FilterDropdown
-              label="Category"
-              options={categoryFilterOptions.map((category) => ({ value: category, label: category }))}
-              selected={filterCategories}
-              onChange={setFilterCategories}
-              isOpen={openFilter === "category"}
-              onToggle={() => setOpenFilter(openFilter === "category" ? null : "category")}
-            />
-            <FilterDropdown
-              label="Status"
-              options={STATUS_OPTIONS.map((status) => ({ value: status, label: STATUS_LABELS[status] }))}
-              selected={filterStatuses}
-              onChange={setFilterStatuses}
-              isOpen={openFilter === "status"}
-              onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
-            />
-            <FilterDropdown
-              label="Rate"
-              options={rateFilterOptions.map((rate) => ({ value: rate, label: formatRate(rate) }))}
-              selected={filterRates}
-              onChange={setFilterRates}
-              isOpen={openFilter === "rate"}
-              onToggle={() => setOpenFilter(openFilter === "rate" ? null : "rate")}
-            />
-            {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || activeFilter !== "all") && (
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveFilter("all");
-                  setFilterTaskNames([]);
-                  setFilterAccounts([]);
-                  setFilterCategories([]);
-                  setFilterStatuses([]);
-                  setFilterRates([]);
-                }}
-                className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
-              >
-                Clear all
-              </button>
-            )}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
+            <div className="flex items-center gap-2">
+              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || activeFilter !== "all") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveFilter("all");
+                    setFilterTaskNames([]);
+                    setFilterAccounts([]);
+                    setFilterCategories([]);
+                    setFilterStatuses([]);
+                    setFilterRates([]);
+                    setFilterStartDates([]);
+                    setFilterDueDates([]);
+                  }}
+                  className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
+                >
+                  Clear all filters
+                </button>
+              )}
+              <ColumnVisibilityPicker columns={TABLE_COLUMNS} hidden={hiddenColumns} onToggle={toggleColumnVisible} />
+            </div>
           </div>
         </div>
         <div className="px-5 py-4">
@@ -710,7 +662,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-              <table className="w-full">
+              <table className="w-full table-fixed">
                 <thead>
                   <tr className="border-b border-sand bg-parchment">
                     <th className="w-10 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">
@@ -723,13 +675,82 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                         aria-label="Select all visible tasks"
                       />
                     </th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Task Name</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Category</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Rate</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Claimed</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Active</th>
+                    {!hiddenColumns.has("task_name") && (
+                      <ColumnHeader
+                        label="Task Name"
+                        width={columnWidths.task_name}
+                        onResize={(w) => setColumnWidth("task_name", w)}
+                        filterOptions={taskNameFilterOptions.map((v) => ({ value: v, label: v }))}
+                        selected={filterTaskNames}
+                        onFilterChange={setFilterTaskNames}
+                      />
+                    )}
+                    {!hiddenColumns.has("account") && (
+                      <ColumnHeader
+                        label="Account"
+                        width={columnWidths.account}
+                        onResize={(w) => setColumnWidth("account", w)}
+                        filterOptions={accountFilterOptions.map((v) => ({ value: v, label: v }))}
+                        selected={filterAccounts}
+                        onFilterChange={setFilterAccounts}
+                      />
+                    )}
+                    {!hiddenColumns.has("category") && (
+                      <ColumnHeader
+                        label="Category"
+                        width={columnWidths.category}
+                        onResize={(w) => setColumnWidth("category", w)}
+                        filterOptions={categoryFilterOptions.map((v) => ({ value: v, label: v }))}
+                        selected={filterCategories}
+                        onFilterChange={setFilterCategories}
+                      />
+                    )}
+                    {!hiddenColumns.has("status") && (
+                      <ColumnHeader
+                        label="Status"
+                        width={columnWidths.status}
+                        onResize={(w) => setColumnWidth("status", w)}
+                        filterOptions={STATUS_OPTIONS.map((s) => ({ value: s, label: STATUS_LABELS[s] }))}
+                        selected={filterStatuses}
+                        onFilterChange={setFilterStatuses}
+                      />
+                    )}
+                    {!hiddenColumns.has("rate") && (
+                      <ColumnHeader
+                        label="Rate"
+                        width={columnWidths.rate}
+                        onResize={(w) => setColumnWidth("rate", w)}
+                        filterOptions={rateFilterOptions.map((v) => ({ value: v, label: formatRate(v) }))}
+                        selected={filterRates}
+                        onFilterChange={setFilterRates}
+                      />
+                    )}
+                    {!hiddenColumns.has("start_date") && (
+                      <ColumnHeader
+                        label="Start Date"
+                        width={columnWidths.start_date}
+                        onResize={(w) => setColumnWidth("start_date", w)}
+                        filterOptions={startDateFilterOptions.map((v) => ({ value: v, label: formatDateOnly(v) }))}
+                        selected={filterStartDates}
+                        onFilterChange={setFilterStartDates}
+                      />
+                    )}
+                    {!hiddenColumns.has("due_date") && (
+                      <ColumnHeader
+                        label="Due Date"
+                        width={columnWidths.due_date}
+                        onResize={(w) => setColumnWidth("due_date", w)}
+                        filterOptions={dueDateFilterOptions.map((v) => ({ value: v, label: formatDateOnly(v) }))}
+                        selected={filterDueDates}
+                        onFilterChange={setFilterDueDates}
+                      />
+                    )}
+                    {!hiddenColumns.has("claimed") && (
+                      <ColumnHeader label="Claimed" width={columnWidths.claimed} onResize={(w) => setColumnWidth("claimed", w)} />
+                    )}
+                    {!hiddenColumns.has("active") && (
+                      <ColumnHeader label="Active" width={columnWidths.active} onResize={(w) => setColumnWidth("active", w)} />
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -775,26 +796,46 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                           </div>
                         </td>
 
-                        <td className="px-3 py-3 text-[13px] font-medium text-walnut">{task.task_name}</td>
-                        <td className="px-3 py-3 text-[13px] text-walnut">{task.account || <span className="text-stone/60">—</span>}</td>
-                        <td className="px-3 py-3 text-[13px] text-walnut">{task.category || <span className="text-stone/60">—</span>}</td>
-                        <td className="px-3 py-3 text-[13px] text-walnut">
-                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
-                            {STATUS_LABELS[task.status]}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-[13px] font-medium text-walnut">{formatRate(task.rate)}</td>
-                        <td className="px-3 py-3 text-[13px] text-walnut">
-                          <div className="space-y-0.5">
-                            <div>{claimedByMe ? "You" : task.claimed_by ? "Claimed" : "—"}</div>
-                            <div className="text-[10px] text-stone/70">{formatTimestamp(task.claimed_at)}</div>
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-[13px] text-walnut">
-                          <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold ${rowStateClass}`}>
-                            {rowStateLabel}
-                          </span>
-                        </td>
+                        {!hiddenColumns.has("task_name") && (
+                          <td className="truncate px-3 py-3 text-[13px] font-medium text-walnut">{task.task_name}</td>
+                        )}
+                        {!hiddenColumns.has("account") && (
+                          <td className="truncate px-3 py-3 text-[13px] text-walnut">{task.account || <span className="text-stone/60">—</span>}</td>
+                        )}
+                        {!hiddenColumns.has("category") && (
+                          <td className="truncate px-3 py-3 text-[13px] text-walnut">{task.category || <span className="text-stone/60">—</span>}</td>
+                        )}
+                        {!hiddenColumns.has("status") && (
+                          <td className="px-3 py-3 text-[13px] text-walnut">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                              {STATUS_LABELS[task.status]}
+                            </span>
+                          </td>
+                        )}
+                        {!hiddenColumns.has("rate") && (
+                          <td className="px-3 py-3 text-[13px] font-medium text-walnut">{formatRate(task.rate)}</td>
+                        )}
+                        {!hiddenColumns.has("start_date") && (
+                          <td className="px-3 py-3 text-[13px] text-walnut">{formatDateOnly(task.start_date)}</td>
+                        )}
+                        {!hiddenColumns.has("due_date") && (
+                          <td className="px-3 py-3 text-[13px] text-walnut">{formatDateOnly(task.due_date)}</td>
+                        )}
+                        {!hiddenColumns.has("claimed") && (
+                          <td className="px-3 py-3 text-[13px] text-walnut">
+                            <div className="space-y-0.5 truncate">
+                              <div>{claimedByMe ? "You" : task.claimed_by ? "Claimed" : "—"}</div>
+                              <div className="text-[10px] text-stone/70">{formatTimestamp(task.claimed_at)}</div>
+                            </div>
+                          </td>
+                        )}
+                        {!hiddenColumns.has("active") && (
+                          <td className="px-3 py-3 text-[13px] text-walnut">
+                            <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold ${rowStateClass}`}>
+                              {rowStateLabel}
+                            </span>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -806,38 +847,63 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
       </div>
 
       {panelMode && (
-        <div className="fixed inset-0 z-40 flex items-stretch">
-          <div className="flex-1 bg-black/20" onClick={closePanel} />
+        <TableRowDetailPanel
+          title={panelMode === "view" ? "Task Details" : panelMode === "edit" ? "Edit Task" : "New Task"}
+          subtitle={
+            panelMode === "view" && selectedTask
+              ? `Task #${selectedTask.id}`
+              : panelMode === "edit"
+                ? "Update this task before it's reviewed."
+                : "Create a task for the fixed-pay pool."
+          }
+          onClose={closePanel}
+          footer={
+            <>
+              <div className={`mb-3 rounded-lg px-4 py-3 text-sm ${message?.type === "ok" ? "bg-sage-soft text-sage" : message?.type === "err" ? "bg-red-50 text-red-700" : "hidden"}`}>
+                {message?.text}
+              </div>
 
-          <div className="flex w-[520px] max-w-full flex-col overflow-hidden border-l border-sand bg-white shadow-2xl">
-            <div className="shrink-0 flex items-center justify-between border-b border-sand px-5 py-4">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={closePanel}
-                  className="flex h-7 w-7 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-espresso"
-                  aria-label="Close task panel"
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="15 18 9 12 15 6" />
-                  </svg>
-                </button>
+              <div className="flex items-center justify-between gap-3">
                 <div>
-                  <span className="block text-[13px] font-semibold text-walnut">
-                    {panelMode === "view" ? "Task Details" : panelMode === "edit" ? "Edit Task" : "New Task"}
-                  </span>
-                  <span className="block text-[11px] text-stone">
-                    {panelMode === "view" && selectedTask
-                      ? `Task #${selectedTask.id}`
-                      : panelMode === "edit"
-                        ? "Update this task before it's reviewed."
-                        : "Create a task for the fixed-pay pool."}
-                  </span>
+                  {panelMode === "view" && selectedTask && canEditSelectedTask && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(selectedTask.id)}
+                      disabled={deleting}
+                      className="text-xs font-semibold text-terracotta hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deleting ? "Deleting..." : "Delete"}
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
+                    {panelMode === "view" ? "Close" : "Cancel"}
+                  </button>
+                  {panelMode === "view" && selectedTask && canEditSelectedTask && (
+                    <button
+                      type="button"
+                      onClick={() => openEditPanel(selectedTask)}
+                      className="rounded-lg border border-sand bg-white px-5 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment"
+                    >
+                      Edit
+                    </button>
+                  )}
+                  {(panelMode === "create" || panelMode === "edit") && !(panelMode === "create" && isHybrid && createMode === "hourly") && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSubmit()}
+                      disabled={saving}
+                      className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {saving ? "Saving..." : panelMode === "edit" ? "Save Changes" : "Create Task"}
+                    </button>
+                  )}
                 </div>
               </div>
-            </div>
-
-            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+            </>
+          }
+        >
               {(panelMode === "create" || panelMode === "edit") && (
                 <>
                   {panelMode === "create" && isHybrid && (
@@ -1056,6 +1122,27 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                         />
                       </div>
 
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
+                          <input
+                            type="date"
+                            value={form.start_date}
+                            onChange={(event) => setForm((current) => ({ ...current, start_date: event.target.value }))}
+                            className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
+                          <input
+                            type="date"
+                            value={form.due_date}
+                            onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))}
+                            className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                          />
+                        </div>
+                      </div>
+
                       <div>
                         <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Detail</label>
                         <textarea
@@ -1134,6 +1221,14 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                       <div className="text-[13px] font-medium text-espresso">{formatRate(selectedTask.rate)}</div>
                     </div>
                     <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
+                      <div className="text-[13px] text-espresso">{formatDateOnly(selectedTask.start_date)}</div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
+                      <div className="text-[13px] text-espresso">{formatDateOnly(selectedTask.due_date)}</div>
+                    </div>
+                    <div>
                       <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
                       {(selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
                       VA_STATUS_OPTIONS.includes(selectedTask.status) ? (
@@ -1203,56 +1298,14 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                     </div>
                     <div className="text-[11px] text-stone">{formatTimestamp(selectedTask.claimed_at)}</div>
                   </div>
+
+                  <div className="text-[11px] text-stone">
+                    Created {formatTimestamp(selectedTask.created_at)}
+                    {selectedTask.created_by_profile ? ` by ${selectedTask.created_by_profile.full_name || selectedTask.created_by_profile.username}` : ""}
+                  </div>
                 </>
               )}
-            </div>
-
-            <div className="shrink-0 border-t border-sand px-5 py-4">
-              <div className={`mb-3 rounded-lg px-4 py-3 text-sm ${message?.type === "ok" ? "bg-sage-soft text-sage" : message?.type === "err" ? "bg-red-50 text-red-700" : "hidden"}`}>
-                {message?.text}
-              </div>
-
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  {panelMode === "view" && selectedTask && canEditSelectedTask && (
-                    <button
-                      type="button"
-                      onClick={() => void handleDelete(selectedTask.id)}
-                      disabled={deleting}
-                      className="text-xs font-semibold text-terracotta hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {deleting ? "Deleting..." : "Delete"}
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
-                    {panelMode === "view" ? "Close" : "Cancel"}
-                  </button>
-                  {panelMode === "view" && selectedTask && canEditSelectedTask && (
-                    <button
-                      type="button"
-                      onClick={() => openEditPanel(selectedTask)}
-                      className="rounded-lg border border-sand bg-white px-5 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment"
-                    >
-                      Edit
-                    </button>
-                  )}
-                  {(panelMode === "create" || panelMode === "edit") && !(panelMode === "create" && isHybrid && createMode === "hourly") && (
-                    <button
-                      type="button"
-                      onClick={() => void handleSubmit()}
-                      disabled={saving}
-                      className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {saving ? "Saving..." : panelMode === "edit" ? "Save Changes" : "Create Task"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        </TableRowDetailPanel>
       )}
     </div>
   );

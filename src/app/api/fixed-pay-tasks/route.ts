@@ -11,7 +11,7 @@ const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "su
 // Cancelled, and Paid are review/payroll actions — admin only.
 const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted"]);
 const TASK_SELECT =
-  "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
+  "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -66,6 +66,17 @@ function parseRate(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// Fixed-pay tasks store start_date/due_date as plain dates (no time-of-day),
+// so this normalizes to YYYY-MM-DD rather than a full ISO timestamp.
+function normalizeDate(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
 function matchesTaskView(
   task: { is_active?: boolean | null; archived_at?: string | null; deleted_at?: string | null },
   view: string | null
@@ -77,7 +88,7 @@ function matchesTaskView(
   return true;
 }
 async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: FixedPayTaskWithClaimer[]) {
-  const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to, row.assigned_by]).filter((id): id is string => Boolean(id)))];
+  const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to, row.assigned_by, row.created_by]).filter((id): id is string => Boolean(id)))];
   let profileMap: Record<string, ProfileSummary> = {};
 
   if (profileIds.length > 0) {
@@ -94,6 +105,7 @@ async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: F
     assigned_by_profile: row.assigned_by ? profileMap[row.assigned_by] ?? null : null,
     claimed_by_profile: row.claimed_by ? profileMap[row.claimed_by] ?? null : null,
     assigned_to_profile: row.assigned_to ? profileMap[row.assigned_to] ?? null : null,
+    created_by_profile: row.created_by ? profileMap[row.created_by] ?? null : null,
   }));
 }
 
@@ -200,6 +212,8 @@ export async function POST(request: Request) {
       instructions: normalizeText(body.instructions),
       instructions_locked: body.instructions_locked === true,
       status,
+      start_date: normalizeDate(body.start_date),
+      due_date: normalizeDate(body.due_date),
       assigned_to: isAdminOrManager ? normalizeText(body.assigned_to) : null,
       assigned_by: isAdminOrManager ? normalizeText(body.assigned_by) : null,
       is_active: isAdminOrManager ? body.is_active !== false : true,

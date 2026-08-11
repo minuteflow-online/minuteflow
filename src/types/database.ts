@@ -584,6 +584,8 @@ export interface FixedPayTaskWithClaimer {
   instructions: string | null;
   instructions_locked: boolean;
   status: "open" | "pending" | "on_queue" | "in_progress" | "submitted" | "revision_needed" | "completed" | "cancelled" | "paid";
+  start_date: string | null;
+  due_date: string | null;
   assigned_to: string | null;
   assigned_by: string | null;
   claimed_by: string | null;
@@ -597,6 +599,8 @@ export interface FixedPayTaskWithClaimer {
   assigned_by_profile?: { id: string; full_name: string; username: string } | null;
   /** Joined profile for the claimer — present on admin responses, absent on VA responses */
   claimed_by_profile?: { id: string; full_name: string; username: string } | null;
+  /** Joined profile for whoever created the task row — present on admin and VA responses */
+  created_by_profile?: { id: string; full_name: string; username: string } | null;
   /** True when this task was claimed by the current VA (VA responses only) */
   claimed_by_me?: boolean;
   /** The assigned_tasks.id linked to this fixed-pay task for the current VA (VA responses only) */

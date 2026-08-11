@@ -12,6 +12,20 @@ import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import type { RecurringTaskTemplate } from "@/types/database";
 import VAProjectsTab from "@/components/VAProjectsTab";
 import { countWords } from "@/lib/utils";
+import ColumnHeader from "@/components/table/ColumnHeader";
+import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
+import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
+
+const TABLE_COLUMNS: ColumnDef[] = [
+  { key: "task_name", label: "Task Name", defaultWidth: 200 },
+  { key: "account", label: "Account", defaultWidth: 140 },
+  { key: "objective", label: "Objective", defaultWidth: 140 },
+  { key: "detail", label: "Client Detail", defaultWidth: 180 },
+  { key: "status", label: "Status", defaultWidth: 150 },
+  { key: "accuracy", label: "Accuracy", defaultWidth: 100 },
+  { key: "submitted_by", label: "Submitted By", defaultWidth: 150 },
+  { key: "due_date", label: "Due Date", defaultWidth: 130 },
+];
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -306,7 +320,6 @@ export default function TaskListPage() {
   const [filterDueStart, setFilterDueStart] = useState("");
   const [filterDueEnd, setFilterDueEnd] = useState("");
   const [taskNameSearch, setTaskNameSearch] = useState("");
-  const [openFilter, setOpenFilter] = useState<"taskname" | "objective" | "duedate" | "status" | "account" | "submittedby" | null>(null);
 
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
@@ -315,6 +328,11 @@ export default function TaskListPage() {
   const [currentPosition, setCurrentPosition] = useState<string | null>(null);
   const [currentPayRateType, setCurrentPayRateType] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const { widths: columnWidths, hidden: hiddenColumns, setColumnWidth, toggleColumnVisible } = useColumnPrefs(
+    "task-list-va",
+    currentUserId,
+    TABLE_COLUMNS
+  );
   const [currentUserProfile, setCurrentUserProfile] = useState<ProfileOption | null>(null);
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [assignedByProfilesLoaded, setAssignedByProfilesLoaded] = useState(false);
@@ -717,7 +735,6 @@ export default function TaskListPage() {
     setFilterDueStart("");
     setFilterDueEnd("");
     setTaskNameSearch("");
-    setOpenFilter(null);
   }, [taskView]);
 
   useEffect(() => {
@@ -1126,167 +1143,35 @@ export default function TaskListPage() {
     setInlineEdit(null);
   }, []);
 
-  function FilterDropdown<T extends string>({
-    label,
-    options,
-    selected,
-    onChange,
-    isOpen,
-    onToggle,
-    searchable,
-    searchValue,
-    onSearchChange,
-    searchPlaceholder,
-  }: {
-    label: string;
-    options: { value: T; label: string }[];
-    selected: T[];
-    onChange: (v: T[]) => void;
-    isOpen: boolean;
-    onToggle: () => void;
-    searchable?: boolean;
-    searchValue?: string;
-    onSearchChange?: (v: string) => void;
-    searchPlaceholder?: string;
-  }) {
-    const visibleOptions = searchable && searchValue
-      ? options.filter((opt) => opt.label.toLowerCase().includes(searchValue.toLowerCase()))
-      : options;
-
+  function DueDateRangeFilter({ close }: { close: () => void }) {
     return (
-      <div className="relative">
-        <button
-          type="button"
-          onClick={onToggle}
-          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] outline-none transition-all ${
-            selected.length > 0
-              ? "border-terracotta text-terracotta"
-              : "border-sand bg-white text-espresso hover:border-walnut"
-          }`}
-        >
-          {label}
-          {selected.length > 0 && (
-            <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">
-              {selected.length}
-            </span>
-          )}
-          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-        {isOpen && (
-          <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-xl border border-sand bg-white py-1 shadow-lg">
-            {searchable && onSearchChange && (
-              <div className="border-b border-sand px-3 py-2">
-                <input
-                  value={searchValue || ""}
-                  onChange={(e) => onSearchChange(e.target.value)}
-                  placeholder={searchPlaceholder || `Search ${label.toLowerCase()}...`}
-                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
-                />
-              </div>
-            )}
-            <div className="flex items-center justify-between border-b border-sand px-3 py-1.5">
-              <button type="button" onClick={() => onChange(visibleOptions.map((o) => o.value))} className="cursor-pointer text-[11px] text-terracotta hover:underline">
-                Select All
-              </button>
-              <button type="button" onClick={() => onChange([])} className="cursor-pointer text-[11px] text-stone hover:underline">
-                Clear
-              </button>
-            </div>
-            {visibleOptions.length > 0 ? (
-              visibleOptions.map((opt) => (
-                <label key={opt.value} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-parchment">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(opt.value)}
-                    onChange={(e) => {
-                      if (e.target.checked) onChange([...selected, opt.value]);
-                      else onChange(selected.filter((value) => value !== opt.value));
-                    }}
-                    className="accent-terracotta"
-                  />
-                  <span className="text-[13px] text-espresso">{opt.label}</span>
-                </label>
-              ))
-            ) : (
-              <div className="px-3 py-2 text-[12px] text-stone">No options found</div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function DateRangeDropdown({
-    label,
-    start,
-    end,
-    isOpen,
-    onToggle,
-    onStartChange,
-    onEndChange,
-  }: {
-    label: string;
-    start: string;
-    end: string;
-    isOpen: boolean;
-    onToggle: () => void;
-    onStartChange: (v: string) => void;
-    onEndChange: (v: string) => void;
-  }) {
-    const activeCount = Number(Boolean(start)) + Number(Boolean(end));
-
-    return (
-      <div className="relative">
-        <button
-          type="button"
-          onClick={onToggle}
-          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] outline-none transition-all ${
-            activeCount > 0
-              ? "border-terracotta text-terracotta"
-              : "border-sand bg-white text-espresso hover:border-walnut"
-          }`}
-        >
-          {label}
-          {activeCount > 0 && (
-            <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">
-              {activeCount}
-            </span>
-          )}
-          <svg className="h-3.5 w-3.5 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-        {isOpen && (
-          <div className="absolute left-0 top-full z-50 mt-1 min-w-[240px] rounded-xl border border-sand bg-white p-3 shadow-lg">
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
-                <input
-                  type="date"
-                  value={start}
-                  onChange={(e) => onStartChange(e.target.value)}
-                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">To</label>
-                <input
-                  type="date"
-                  value={end}
-                  onChange={(e) => onEndChange(e.target.value)}
-                  className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
-                />
-              </div>
-              <div className="flex items-center justify-between border-t border-sand pt-2">
-                <button type="button" onClick={() => { onStartChange(""); onEndChange(""); }} className="cursor-pointer text-[11px] text-stone hover:underline">
-                  Clear
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
+          <input
+            type="date"
+            value={filterDueStart}
+            onChange={(e) => setFilterDueStart(e.target.value)}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">To</label>
+          <input
+            type="date"
+            value={filterDueEnd}
+            onChange={(e) => setFilterDueEnd(e.target.value)}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+          />
+        </div>
+        <div className="flex items-center justify-between border-t border-sand pt-2">
+          <button type="button" onClick={() => { setFilterDueStart(""); setFilterDueEnd(""); }} className="cursor-pointer text-[11px] text-stone hover:underline">
+            Clear
+          </button>
+          <button type="button" onClick={close} className="cursor-pointer text-[11px] font-semibold text-terracotta hover:underline">
+            Done
+          </button>
+        </div>
       </div>
     );
   }
@@ -2229,81 +2114,29 @@ export default function TaskListPage() {
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <FilterDropdown
-                  label="Task Name"
-                  options={taskNameFilterOptions.map((taskName) => ({ value: taskName, label: taskName }))}
-                  selected={filterTaskNames}
-                  onChange={setFilterTaskNames}
-                  isOpen={openFilter === "taskname"}
-                  onToggle={() => setOpenFilter(openFilter === "taskname" ? null : "taskname")}
-                  searchable
-                  searchValue={taskNameSearch}
-                  onSearchChange={setTaskNameSearch}
-                  searchPlaceholder="Search task names..."
-                />
-                <FilterDropdown
-                  label="Objective"
-                  options={objectiveFilterOptions.map((objective) => ({ value: objective, label: objective }))}
-                  selected={filterObjectives}
-                  onChange={setFilterObjectives}
-                  isOpen={openFilter === "objective"}
-                  onToggle={() => setOpenFilter(openFilter === "objective" ? null : "objective")}
-                />
-                <DateRangeDropdown
-                  label="Due Date"
-                  start={filterDueStart}
-                  end={filterDueEnd}
-                  isOpen={openFilter === "duedate"}
-                  onToggle={() => setOpenFilter(openFilter === "duedate" ? null : "duedate")}
-                  onStartChange={setFilterDueStart}
-                  onEndChange={setFilterDueEnd}
-                />
-                <FilterDropdown
-                  label="Status"
-                  options={STATUS_FILTERS.filter((option) => option.value !== "all")}
-                  selected={filterStatuses.map((status) => status)}
-                  onChange={(values) => setFilterStatuses(values as AssignedTaskStatus[])}
-                  isOpen={openFilter === "status"}
-                  onToggle={() => setOpenFilter(openFilter === "status" ? null : "status")}
-                />
-                <FilterDropdown
-                  label="Account"
-                  options={accountFilterOptions.map((account) => ({ value: account, label: account }))}
-                  selected={filterAccounts}
-                  onChange={setFilterAccounts}
-                  isOpen={openFilter === "account"}
-                  onToggle={() => setOpenFilter(openFilter === "account" ? null : "account")}
-                />
-                {isSubmittedView && submittedByFilterOptions.length > 0 && (
-                  <FilterDropdown
-                    label="Submitted By"
-                    options={submittedByFilterOptions.map((name) => ({ value: name, label: name }))}
-                    selected={filterSubmittedBy}
-                    onChange={setFilterSubmittedBy}
-                    isOpen={openFilter === "submittedby"}
-                    onToggle={() => setOpenFilter(openFilter === "submittedby" ? null : "submittedby")}
-                  />
-                )}
-
-                {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFilterStatuses([]);
-                      setFilterAccounts([]);
-                      setFilterTaskNames([]);
-                      setFilterObjectives([]);
-                      setFilterSubmittedBy([]);
-                      setFilterDueStart("");
-                      setFilterDueEnd("");
-                      setTaskNameSearch("");
-                    }}
-                    className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
-                  >
-                    Clear all
-                  </button>
-                )}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
+                <div className="flex items-center gap-2">
+                  {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFilterStatuses([]);
+                        setFilterAccounts([]);
+                        setFilterTaskNames([]);
+                        setFilterObjectives([]);
+                        setFilterSubmittedBy([]);
+                        setFilterDueStart("");
+                        setFilterDueEnd("");
+                        setTaskNameSearch("");
+                      }}
+                      className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
+                    >
+                      Clear all filters
+                    </button>
+                  )}
+                  <ColumnVisibilityPicker columns={TABLE_COLUMNS} hidden={hiddenColumns} onToggle={toggleColumnVisible} />
+                </div>
               </div>
             </div>
           </div>
@@ -2429,7 +2262,7 @@ export default function TaskListPage() {
                 </div>
               ) : (
                 <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-                  <table className="w-full">
+                  <table className="w-full table-fixed">
                     <thead>
                       <tr className="border-b border-sand bg-parchment">
                         <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">
@@ -2442,16 +2275,75 @@ export default function TaskListPage() {
                           />
                         </th>
                         <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut" />
-                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Task Name</th>
-                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</th>
-                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Objective</th>
-                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Client Detail</th>
-                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</th>
-                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Accuracy</th>
-                        {activeView === "submitted" && (
-                          <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Submitted By</th>
+                        {!hiddenColumns.has("task_name") && (
+                          <ColumnHeader
+                            label="Task Name"
+                            width={columnWidths.task_name}
+                            onResize={(w) => setColumnWidth("task_name", w)}
+                            filterOptions={taskNameFilterOptions.map((v) => ({ value: v, label: v }))}
+                            selected={filterTaskNames}
+                            onFilterChange={setFilterTaskNames}
+                            searchable
+                            searchValue={taskNameSearch}
+                            onSearchChange={setTaskNameSearch}
+                            searchPlaceholder="Search task names..."
+                          />
                         )}
-                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Due Date</th>
+                        {!hiddenColumns.has("account") && (
+                          <ColumnHeader
+                            label="Account"
+                            width={columnWidths.account}
+                            onResize={(w) => setColumnWidth("account", w)}
+                            filterOptions={accountFilterOptions.map((v) => ({ value: v, label: v }))}
+                            selected={filterAccounts}
+                            onFilterChange={setFilterAccounts}
+                          />
+                        )}
+                        {!hiddenColumns.has("objective") && (
+                          <ColumnHeader
+                            label="Objective"
+                            width={columnWidths.objective}
+                            onResize={(w) => setColumnWidth("objective", w)}
+                            filterOptions={objectiveFilterOptions.map((v) => ({ value: v, label: v }))}
+                            selected={filterObjectives}
+                            onFilterChange={setFilterObjectives}
+                          />
+                        )}
+                        {!hiddenColumns.has("detail") && (
+                          <ColumnHeader label="Client Detail" width={columnWidths.detail} onResize={(w) => setColumnWidth("detail", w)} />
+                        )}
+                        {!hiddenColumns.has("status") && (
+                          <ColumnHeader
+                            label="Status"
+                            width={columnWidths.status}
+                            onResize={(w) => setColumnWidth("status", w)}
+                            filterOptions={STATUS_FILTERS.filter((option) => option.value !== "all")}
+                            selected={filterStatuses.map((status) => status)}
+                            onFilterChange={(values) => setFilterStatuses(values as AssignedTaskStatus[])}
+                          />
+                        )}
+                        {!hiddenColumns.has("accuracy") && (
+                          <ColumnHeader label="Accuracy" width={columnWidths.accuracy} onResize={(w) => setColumnWidth("accuracy", w)} />
+                        )}
+                        {isSubmittedView && !hiddenColumns.has("submitted_by") && (
+                          <ColumnHeader
+                            label="Submitted By"
+                            width={columnWidths.submitted_by}
+                            onResize={(w) => setColumnWidth("submitted_by", w)}
+                            filterOptions={submittedByFilterOptions.map((name) => ({ value: name, label: name }))}
+                            selected={filterSubmittedBy}
+                            onFilterChange={setFilterSubmittedBy}
+                          />
+                        )}
+                        {!hiddenColumns.has("due_date") && (
+                          <ColumnHeader
+                            label="Due Date"
+                            width={columnWidths.due_date}
+                            onResize={(w) => setColumnWidth("due_date", w)}
+                            isFiltered={Boolean(filterDueStart || filterDueEnd)}
+                            customFilter={(close) => <DueDateRangeFilter close={close} />}
+                          />
+                        )}
                         {(taskView === "archived" || taskView === "trash") && (
                           <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Actions</th>
                         )}
@@ -2495,106 +2387,120 @@ export default function TaskListPage() {
                               </button>
                             </td>
 
-                            <InlineCell
-                              task={task}
-                              field="task_name"
-                              className="px-3 py-3 text-[13px]"
-                              disabled={taskView !== "active"}
-                              display={
-                                <div className="flex flex-col gap-0.5">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="font-medium text-walnut">{detail.task_name}</span>
-                                    {task.is_collaborative && (
-                                      <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
-                                        Collaborative
-                                      </span>
-                                    )}
-                                    {detail.project_id && (
-                                      <button
-                                        type="button"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          if (detail.project_id) setProjectModalId(detail.project_id);
-                                        }}
-                                        className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-plum-soft text-plum border border-plum/20 cursor-pointer"
-                                      >
-                                        Project: {detail.projects?.name || detail.project || "Linked project"}
-                                      </button>
-                                    )}
+                            {!hiddenColumns.has("task_name") && (
+                              <InlineCell
+                                task={task}
+                                field="task_name"
+                                className="px-3 py-3 text-[13px]"
+                                disabled={taskView !== "active"}
+                                display={
+                                  <div className="flex flex-col gap-0.5">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-medium text-walnut">{detail.task_name}</span>
+                                      {task.is_collaborative && (
+                                        <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 text-[10px] font-semibold text-slate-blue">
+                                          Collaborative
+                                        </span>
+                                      )}
+                                      {detail.project_id && (
+                                        <button
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            if (detail.project_id) setProjectModalId(detail.project_id);
+                                          }}
+                                          className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-plum-soft text-plum border border-plum/20 cursor-pointer"
+                                        >
+                                          Project: {detail.projects?.name || detail.project || "Linked project"}
+                                        </button>
+                                      )}
+                                    </div>
+                                    <div className="mt-0.5 text-[11px] text-stone">
+                                      Assigned by {detail.assigned_by_profile?.full_name ?? detail.assigned_by_profile?.username ?? "—"}
+                                    </div>
                                   </div>
-                                  <div className="mt-0.5 text-[11px] text-stone">
-                                    Assigned by {detail.assigned_by_profile?.full_name ?? detail.assigned_by_profile?.username ?? "—"}
-                                  </div>
-                                </div>
-                              }
-                            />
-                            <InlineCell
-                              task={task}
-                              field="account"
-                              className="px-3 py-3 text-[13px] text-walnut"
-                              disabled={taskView !== "active"}
-                              display={detail.account || <span className="text-stone/60">—</span>}
-                            />
+                                }
+                              />
+                            )}
+                            {!hiddenColumns.has("account") && (
+                              <InlineCell
+                                task={task}
+                                field="account"
+                                className="px-3 py-3 text-[13px] text-walnut"
+                                disabled={taskView !== "active"}
+                                display={detail.account || <span className="text-stone/60">—</span>}
+                              />
+                            )}
 
-                            <InlineCell
-                              task={task}
-                              field="project"
-                              className="px-3 py-3 text-[13px] text-walnut"
-                              disabled={taskView !== "active"}
-                              display={detail.project || <span className="text-stone/60">—</span>}
-                            />
+                            {!hiddenColumns.has("objective") && (
+                              <InlineCell
+                                task={task}
+                                field="project"
+                                className="px-3 py-3 text-[13px] text-walnut"
+                                disabled={taskView !== "active"}
+                                display={detail.project || <span className="text-stone/60">—</span>}
+                              />
+                            )}
 
-                            <td className="max-w-[220px] px-3 py-3 text-[13px] text-walnut" onClick={(e) => e.stopPropagation()}>
-                              {detail.task_detail ? (
-                                <span className="block truncate text-stone/70" title={detail.task_detail}>
-                                  {detail.task_detail.length > 45 ? `${detail.task_detail.slice(0, 45)}…` : detail.task_detail}
+                            {!hiddenColumns.has("detail") && (
+                              <td className="truncate px-3 py-3 text-[13px] text-walnut" onClick={(e) => e.stopPropagation()}>
+                                {detail.task_detail ? (
+                                  <span className="block truncate text-stone/70" title={detail.task_detail}>
+                                    {detail.task_detail.length > 45 ? `${detail.task_detail.slice(0, 45)}…` : detail.task_detail}
+                                  </span>
+                                ) : (
+                                  <span className="text-stone/30">—</span>
+                                )}
+                              </td>
+                            )}
+
+                            {!hiddenColumns.has("status") && (
+                              <InlineCell
+                                task={task}
+                                field="status"
+                                className="px-3 py-3 text-[13px]"
+                                disabled={taskView !== "active"}
+                                display={
+                                  <span className="flex items-center gap-1.5">
+                                    <RevisionBadge count={task.assigned_tasks.revision_count ?? 0} />
+                                    <StatusBadge status={task.status} />
+                                  </span>
+                                }
+                              />
+                            )}
+
+                            {!hiddenColumns.has("accuracy") && (
+                              <td className="px-3 py-3 text-[13px]">
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${task.accuracy_score >= 90 ? "bg-sage-soft text-sage" : task.accuracy_score >= 70 ? "bg-amber-50 text-amber-600" : "bg-terracotta-soft text-terracotta"}`}>
+                                  {task.accuracy_score ?? 100}%
                                 </span>
-                              ) : (
-                                <span className="text-stone/30">—</span>
-                              )}
-                            </td>
+                              </td>
+                            )}
 
-                            <InlineCell
-                              task={task}
-                              field="status"
-                              className="px-3 py-3 text-[13px]"
-                              disabled={taskView !== "active"}
-                              display={
-                                <span className="flex items-center gap-1.5">
-                                  <RevisionBadge count={task.assigned_tasks.revision_count ?? 0} />
-                                  <StatusBadge status={task.status} />
-                                </span>
-                              }
-                            />
-
-                            <td className="px-3 py-3 text-[13px]">
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${task.accuracy_score >= 90 ? "bg-sage-soft text-sage" : task.accuracy_score >= 70 ? "bg-amber-50 text-amber-600" : "bg-terracotta-soft text-terracotta"}`}>
-                                {task.accuracy_score ?? 100}%
-                              </span>
-                            </td>
-
-                            {activeView === "submitted" && (
-                              <td className="px-3 py-3 text-[13px] text-walnut">
+                            {activeView === "submitted" && !hiddenColumns.has("submitted_by") && (
+                              <td className="px-3 py-3 text-[13px] text-walnut truncate">
                                 {task.profiles?.full_name ?? <span className="text-stone/30">—</span>}
                               </td>
                             )}
 
-                            <InlineCell
-                              task={task}
-                              field="due_date"
-                              className={`px-3 py-3 text-[13px] font-medium ${dueTextClass}`}
-                              disabled={taskView !== "active"}
-                              display={
-                                detail.due_date ? (
-                                  <>
-                                    {due.isOverdue ? "Overdue · " : ""}
-                                    {due.label}
-                                  </>
-                                ) : (
-                                  <span className="text-stone/30">—</span>
-                                )
-                              }
-                            />
+                            {!hiddenColumns.has("due_date") && (
+                              <InlineCell
+                                task={task}
+                                field="due_date"
+                                className={`px-3 py-3 text-[13px] font-medium ${dueTextClass}`}
+                                disabled={taskView !== "active"}
+                                display={
+                                  detail.due_date ? (
+                                    <>
+                                      {due.isOverdue ? "Overdue · " : ""}
+                                      {due.label}
+                                    </>
+                                  ) : (
+                                    <span className="text-stone/30">—</span>
+                                  )
+                                }
+                              />
+                            )}
                             {(taskView === "archived" || taskView === "trash") && (
                               <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
                                 <div className="flex items-center gap-2">
