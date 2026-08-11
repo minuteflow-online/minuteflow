@@ -13,7 +13,6 @@ import type {
 } from "@/types/database";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
-import ProjectsManager from "@/components/ProjectsManager";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
@@ -534,7 +533,7 @@ export default function TaskAssignmentsAdminTab({
   const [filterDueStart, setFilterDueStart] = useState<string>("");
   const [filterDueEnd, setFilterDueEnd] = useState<string>("");
   const [taskNameSearch, setTaskNameSearch] = useState<string>("");
-  const [taskView, setTaskView] = useState<"active" | "submitted" | "archived" | "trash" | "recurring" | "projects">("active");
+  const [taskView, setTaskView] = useState<"active" | "submitted" | "archived" | "trash" | "recurring">("active");
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
 
   // ── CSV Upload state ─────────────────────────────────────────────────────────
@@ -621,17 +620,19 @@ export default function TaskAssignmentsAdminTab({
     }
   }, []);
 
+  // Project list is needed to resolve project_id → name in the task table
+  // regardless of which view is active, so it's fetched once on mount.
+  useEffect(() => {
+    void fetchProjects();
+  }, [fetchProjects]);
+
   useEffect(() => {
     if (taskView === "recurring") {
       void fetchRecurringTemplates();
       return;
     }
-    if (taskView === "projects") {
-      void fetchProjects();
-      return;
-    }
     fetchTasks();
-  }, [taskView, fetchTasks, fetchRecurringTemplates, fetchProjects]);
+  }, [taskView, fetchTasks, fetchRecurringTemplates]);
 
   useEffect(() => {
     fetch("/api/project-tags")
@@ -895,7 +896,6 @@ export default function TaskAssignmentsAdminTab({
 
   const isPanelOpen = isCreating || selectedTask !== null;
   const isRecurringView = taskView === "recurring";
-  const isProjectsView = taskView === "projects";
 
   useEffect(() => {
     if (!assignedToEdit) return;
@@ -1500,7 +1500,7 @@ export default function TaskAssignmentsAdminTab({
     <div className="w-full space-y-6">
       {/* ── Tab bar ─────────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-1 border-b border-sand">
-        {(["active", "submitted", "archived", "trash", "recurring", "projects"] as const).map((view) => (
+        {(["active", "submitted", "archived", "trash", "recurring"] as const).map((view) => (
           <button
             key={view}
             onClick={() => { setTaskView(view); setSelectedTaskIds([]); }}
@@ -1510,14 +1510,14 @@ export default function TaskAssignmentsAdminTab({
                 : "border-transparent text-stone hover:text-espresso"
             }`}
           >
-            {view === "active" ? "Active" : view === "submitted" ? "Submitted" : view === "archived" ? "Archived" : view === "trash" ? "Trash" : view === "projects" ? "Projects" : "Recurring"}
+            {view === "active" ? "Active" : view === "submitted" ? "Submitted" : view === "archived" ? "Archived" : view === "trash" ? "Trash" : "Recurring"}
           </button>
         ))}
       </div>
 
       {/* ── Header row ─────────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        {taskView !== "submitted" && !isRecurringView && !isProjectsView && (
+        {taskView !== "submitted" && !isRecurringView && (
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
             {(filterVaIds.length > 0 || filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterDueStart || filterDueEnd) && (
@@ -1569,7 +1569,7 @@ export default function TaskAssignmentsAdminTab({
       </div>
 
       {/* ── Bulk action bar ─────────────────────────────────────────────────────── */}
-      {selectedTaskIds.length > 0 && taskView === "active" && !isRecurringView && !isProjectsView && (
+      {selectedTaskIds.length > 0 && taskView === "active" && !isRecurringView && (
         <div className="flex items-center gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
           <span className="text-[13px] font-semibold text-amber-700">{selectedTaskIds.length} selected</span>
           <button
@@ -1594,7 +1594,7 @@ export default function TaskAssignmentsAdminTab({
       )}
 
       {/* ── Trash warning banner ─────────────────────────────────────────────────── */}
-      {taskView === "trash" && !loading && !isRecurringView && !isProjectsView && (
+      {taskView === "trash" && !loading && !isRecurringView && (
         <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
           <div className="flex items-center gap-2">
             <svg className="h-4 w-4 text-red-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1628,17 +1628,8 @@ export default function TaskAssignmentsAdminTab({
         />
       )}
 
-      {taskView === "projects" && (
-        <ProjectsManager
-          projects={projectsList}
-          loading={projectsLoading}
-          activeProfiles={activeProfiles}
-          onRefresh={() => { void fetchProjects(); void fetchTasks(); }}
-        />
-      )}
-
       {/* ── Loading skeleton ────────────────────────────────────────────────────── */}
-      {loading && !isRecurringView && !isProjectsView && (
+      {loading && !isRecurringView && (
         <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
           <table className="w-full">
             <thead>
@@ -1674,7 +1665,7 @@ export default function TaskAssignmentsAdminTab({
       )}
 
       {/* ── Fetch error ─────────────────────────────────────────────────────────── */}
-      {!loading && fetchError && !isRecurringView && !isProjectsView && (
+      {!loading && fetchError && !isRecurringView && (
         <div className="rounded-xl border border-sand bg-white p-5 shadow-sm text-center">
           <p className="text-sm text-red-500">{fetchError}</p>
           <button
@@ -1687,7 +1678,7 @@ export default function TaskAssignmentsAdminTab({
       )}
 
       {/* ── Empty state ─────────────────────────────────────────────────────────── */}
-      {!loading && !fetchError && filteredTasks.length === 0 && !isRecurringView && !isProjectsView && (
+      {!loading && !fetchError && filteredTasks.length === 0 && !isRecurringView && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <p className="text-sm font-medium text-espresso">
             {tasks.length === 0 ? "No tasks assigned yet" : "No tasks match your filters"}
@@ -1701,7 +1692,7 @@ export default function TaskAssignmentsAdminTab({
       )}
 
       {/* ── Task table ──────────────────────────────────────────────────────────── */}
-      {!loading && !fetchError && filteredTasks.length > 0 && !isRecurringView && !isProjectsView && (
+      {!loading && !fetchError && filteredTasks.length > 0 && !isRecurringView && (
         <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm">
           <table className="w-full table-fixed">
             <thead>

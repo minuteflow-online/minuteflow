@@ -316,6 +316,8 @@ export interface PlannedTask {
   completed: boolean;
   log_id: number | null;
   priority: "urgent" | "important" | "needed" | null;
+  start_time: string | null;
+  end_time: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -531,6 +533,7 @@ export interface AssignedTask {
   fixed_pay_task_id: number | null;
   recurring_template_id: string | null;
   project_id?: string | null;
+  parent_task_id: number | null;
   pay_type?: string | null;
   review_required: boolean;
   revision_count: number;
@@ -611,6 +614,8 @@ export interface FixedPayTaskWithClaimer {
   assigned_task_id?: number | null;
 }
 
+export type ProjectKind = "objective" | "operation";
+
 export interface Project {
   id: string;
   name: string;
@@ -621,6 +626,10 @@ export interface Project {
   created_by: string | null;
   is_active: boolean;
   created_at: string;
+  parent_project_id: string | null;
+  kind: ProjectKind;
+  target_date: string | null;
+  linked_objective_id: string | null;
 }
 
 export interface FixedPayTaskAttachment {

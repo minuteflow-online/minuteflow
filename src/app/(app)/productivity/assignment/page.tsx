@@ -10,7 +10,6 @@ import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import type { RecurringTaskTemplate } from "@/types/database";
-import VAProjectsTab from "@/components/VAProjectsTab";
 import { countWords } from "@/lib/utils";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
@@ -350,7 +349,7 @@ export default function TaskListPage() {
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [assignedByProfilesLoaded, setAssignedByProfilesLoaded] = useState(false);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "projects">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring">("my_tasks");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
@@ -581,7 +580,6 @@ export default function TaskListPage() {
   const isPerTaskVa = currentPosition === "Per Task VA";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
-  const canShowProjects = isAdmin || (currentRole === "va" && currentPayRateType === "hourly");
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -1936,15 +1934,6 @@ export default function TaskListPage() {
                     Recurring
                   </button>
                 )}
-                {canShowProjects && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveView("projects")}
-                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "projects" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                  >
-                    Projects
-                  </button>
-                )}
               </div>
               )}
 
@@ -2171,14 +2160,6 @@ export default function TaskListPage() {
               <FixedPayTasksPanel
                 refreshKey={availableRefreshKey}
                 onSwitchToHourly={isPerTaskVa ? undefined : () => setActiveView("my_tasks")}
-              />
-            </div>
-          ) : canShowProjects && activeView === "projects" ? (
-            <div className="p-4">
-              <VAProjectsTab
-                activeProfiles={assignedByProfiles}
-                currentUserId={currentUserId ?? ""}
-                isAdmin={isAdmin}
               />
             </div>
           ) : activeView === "recurring" ? (

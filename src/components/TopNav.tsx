@@ -23,7 +23,7 @@ type NavItem = {
 const allNavItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Time Log", href: "/timelog" },
-  { label: "Tasks", href: "/task-list" },
+  { label: "Productivity", href: "/productivity" },
   { label: "Team", href: "/team" },
   { label: "Reports", href: "/reports" },
   { label: "Portal", href: "/portal" },
@@ -114,8 +114,8 @@ export default function TopNav({ user }: TopNavProps) {
   const [logoutMood, setLogoutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
 
   // Filter nav items based on role
-  // VAs see: Dashboard, Time Log, Task List, Reports, Portal (no Team)
-  // Admins/managers/IT staff see: Dashboard, Time Log, Team, Task List, Reports, Portal
+  // VAs see: Dashboard, Time Log, Productivity, Reports, Portal (no Team)
+  // Admins/managers/IT staff see: Dashboard, Time Log, Team, Productivity, Reports, Portal
   const isITStaff = user.department?.trim().toUpperCase() === "IT";
   const navItems = allNavItems.filter((item) => {
     if (user.role === "va" && !isITStaff) {

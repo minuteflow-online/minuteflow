@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { countWords } from "@/lib/utils";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -10,12 +10,13 @@ function limitToWords(text: string, limit: number): string {
   if (words.length <= limit) return text;
   return words.slice(0, limit).join(" ");
 }
-import type { Profile, Project } from "@/types/database";
+import type { Profile, Project, ProjectKind } from "@/types/database";
 
 interface VAProjectsTabProps {
   activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
   currentUserId: string;
   isAdmin?: boolean;
+  kind: ProjectKind;
 }
 
 interface SubtaskRow {
@@ -128,9 +129,14 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin = false }: VAProjectsTabProps) {
+const KIND_LABEL: Record<ProjectKind, string> = { objective: "Objective", operation: "Operation" };
+
+export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin = false, kind }: VAProjectsTabProps) {
+  const kindLabel = KIND_LABEL[kind];
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [objectiveOptions, setObjectiveOptions] = useState<Project[]>([]);
 
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [editName, setEditName] = useState("");
@@ -139,6 +145,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [editDetails, setEditDetails] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [editVaIds, setEditVaIds] = useState<string[]>([]);
+  const [editTargetDate, setEditTargetDate] = useState("");
+  const [editLinkedObjectiveId, setEditLinkedObjectiveId] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [editNotice, setEditNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -149,6 +157,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [createDetails, setCreateDetails] = useState("");
   const [createNotes, setCreateNotes] = useState("");
   const [createVaIds, setCreateVaIds] = useState<string[]>([]);
+  const [createParentId, setCreateParentId] = useState("");
+  const [createTargetDate, setCreateTargetDate] = useState("");
+  const [createLinkedObjectiveId, setCreateLinkedObjectiveId] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -170,7 +181,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const fetchProjects = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/projects?mine=true", { cache: "no-store" });
+      const res = await fetch(`/api/projects?mine=true&kind=${kind}`, { cache: "no-store" });
       if (!res.ok) return;
       const d = await res.json();
       setProjects(d.projects ?? []);
@@ -179,11 +190,50 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [kind]);
 
   useEffect(() => {
     void fetchProjects();
   }, [fetchProjects]);
+
+  // Operations can optionally link to the Objective they serve
+  useEffect(() => {
+    if (kind !== "operation") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/projects?mine=true&kind=objective", { cache: "no-store" });
+        if (res.ok && !cancelled) {
+          const d = await res.json();
+          setObjectiveOptions(d.projects ?? []);
+        }
+      } catch {
+        // leave empty
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [kind]);
+
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string, Project[]>();
+    for (const p of projects) {
+      const key = p.parent_project_id ?? "__root__";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(p);
+    }
+    return map;
+  }, [projects]);
+
+  const rootProjects = childrenByParent.get("__root__") ?? [];
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!selectedProject) return;
@@ -192,6 +242,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setEditDescription(selectedProject.description ?? "");
     setEditDetails(selectedProject.details ?? "");
     setEditNotes(selectedProject.notes ?? "");
+    setEditTargetDate(selectedProject.target_date ?? "");
+    setEditLinkedObjectiveId(selectedProject.linked_objective_id ?? "");
     setEditVaIds([]);
     setEditNotice(null);
     setSubtasks([]);
@@ -288,7 +340,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const handleSaveEdit = async () => {
     if (!selectedProject) return;
     if (!editName.trim()) {
-      setEditNotice({ type: "error", text: "Project name is required." });
+      setEditNotice({ type: "error", text: `${kindLabel} name is required.` });
       return;
     }
     setSavingEdit(true);
@@ -303,11 +355,13 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           details: editDetails.trim() || null,
           notes: editNotes.trim() || null,
           va_ids: editVaIds,
+          ...(kind === "objective" ? { target_date: editTargetDate || null } : {}),
+          ...(kind === "operation" ? { linked_objective_id: editLinkedObjectiveId || null } : {}),
         }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
-      setEditNotice({ type: "success", text: "Project saved." });
+      setEditNotice({ type: "success", text: `${kindLabel} saved.` });
       setSelectedProject((prev) =>
         prev
           ? {
@@ -316,6 +370,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               account: editAccount.trim() || null,
               details: editDetails.trim() || null,
               notes: editNotes.trim() || null,
+              target_date: kind === "objective" ? (editTargetDate || null) : prev.target_date,
+              linked_objective_id: kind === "operation" ? (editLinkedObjectiveId || null) : prev.linked_objective_id,
             }
           : prev
       );
@@ -348,7 +404,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   };
 
   const handleDeleteProject = async (project: Project) => {
-    if (!confirm(`Delete project "${project.name}"? Subtasks will remain but will no longer be linked to this project.`)) return;
+    if (!confirm(`Delete "${project.name}"? Subtasks will remain but will no longer be linked to it. It must have no sub-items nested under it.`)) return;
     try {
       const res = await fetch(`/api/projects?id=${project.id}`, { method: "DELETE" });
       if (!res.ok) {
@@ -364,7 +420,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
   const handleCreateProject = async () => {
     if (!createName.trim()) {
-      setCreateError("Project name is required.");
+      setCreateError(`${kindLabel} name is required.`);
       return;
     }
     setCreating(true);
@@ -380,6 +436,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           details: createDetails.trim() || null,
           notes: createNotes.trim() || null,
           va_ids: createVaIds,
+          kind,
+          parent_project_id: createParentId || null,
+          ...(kind === "objective" ? { target_date: createTargetDate || null } : {}),
+          ...(kind === "operation" ? { linked_objective_id: createLinkedObjectiveId || null } : {}),
         }),
       });
       const d = await res.json().catch(() => ({}));
@@ -390,11 +450,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       setCreateDetails("");
       setCreateNotes("");
       setCreateVaIds([]);
+      setCreateParentId("");
+      setCreateTargetDate("");
+      setCreateLinkedObjectiveId("");
       setShowCreate(false);
+      if (createParentId) setExpandedIds((prev) => new Set(prev).add(createParentId));
       void fetchProjects();
       if (d.project) setSelectedProject(d.project as Project);
     } catch (e) {
-      setCreateError(e instanceof Error ? e.message : "Failed to create project.");
+      setCreateError(e instanceof Error ? e.message : `Failed to create ${kindLabel.toLowerCase()}.`);
     } finally {
       setCreating(false);
     }
@@ -493,77 +557,126 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     }
   };
 
+  const objectiveNameById = new Map(objectiveOptions.map((o) => [o.id, o.name]));
+
+  const openCreateForm = (parentId: string) => {
+    setShowCreate(true);
+    setSelectedProject(null);
+    setCreateName("");
+    setCreateAccount("");
+    setCreateDescription("");
+    setCreateDetails("");
+    setCreateNotes("");
+    setCreateVaIds([]);
+    setCreateParentId(parentId);
+    setCreateTargetDate("");
+    setCreateLinkedObjectiveId("");
+    setCreateError(null);
+  };
+
+  const renderNode = (project: Project, depth: number) => {
+    const children = childrenByParent.get(project.id) ?? [];
+    const isExpanded = expandedIds.has(project.id);
+    return (
+      <React.Fragment key={project.id}>
+        <div
+          onClick={() => handleSelectProject(project)}
+          className={`flex flex-col gap-1 px-3 py-2.5 cursor-pointer transition-colors ${
+            selectedProject?.id === project.id ? "bg-parchment" : "hover:bg-cream"
+          }`}
+          style={{ paddingLeft: 12 + depth * 16 }}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1 flex-1 min-w-0">
+              {children.length > 0 ? (
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleExpand(project.id); }}
+                  className="shrink-0 text-bark hover:text-espresso cursor-pointer text-[10px] w-3"
+                >
+                  {isExpanded ? "▼" : "▶"}
+                </button>
+              ) : (
+                <span className="w-3 shrink-0" />
+              )}
+              <span className="text-[13px] font-semibold text-espresso leading-tight truncate">
+                {project.name}
+              </span>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                title={`Add sub-${kindLabel.toLowerCase()}`}
+                onClick={(e) => { e.stopPropagation(); openCreateForm(project.id); }}
+                className="text-bark hover:text-espresso cursor-pointer text-[13px] leading-none px-1"
+              >
+                +
+              </button>
+              <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
+                project.is_active
+                  ? "bg-sage-soft text-sage border-sage/20"
+                  : "bg-stone/10 text-stone border-stone/20"
+              }`}>
+                {project.is_active ? "Active" : "Inactive"}
+              </span>
+            </div>
+          </div>
+          {kind === "objective" && project.target_date && (
+            <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-terracotta-soft text-terracotta border-terracotta/20 w-fit">
+              Target: {formatDate(project.target_date)}
+            </span>
+          )}
+          {kind === "operation" && project.linked_objective_id && (
+            <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-plum-soft text-plum border-plum/20 w-fit">
+              Supports: {objectiveNameById.get(project.linked_objective_id) ?? "Objective"}
+            </span>
+          )}
+          {project.description && (
+            <p className="text-[11px] text-stone/80 truncate">{project.description}</p>
+          )}
+          <p className="text-[10px] text-stone/60">{formatDate(project.created_at)}</p>
+        </div>
+        {isExpanded && children.map((child) => renderNode(child, depth + 1))}
+      </React.Fragment>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold text-walnut">My Projects</h3>
-          <p className="text-xs text-stone">Create projects and add subtasks assigned to VAs.</p>
+          <h3 className="text-sm font-semibold text-walnut">My {kindLabel}s</h3>
+          <p className="text-xs text-stone">
+            {kind === "objective"
+              ? "Nest goals and projects, then add subtasks assigned to VAs."
+              : "Recurring, day-to-day work — optionally linked to the Objective it supports."}
+          </p>
         </div>
         <button
-          onClick={() => {
-            setShowCreate(true);
-            setSelectedProject(null);
-            setCreateName("");
-            setCreateAccount("");
-            setCreateDescription("");
-            setCreateDetails("");
-            setCreateNotes("");
-            setCreateVaIds([]);
-            setCreateError(null);
-          }}
+          onClick={() => openCreateForm("")}
           className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
         >
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
-          New Project
+          New {kindLabel}
         </button>
       </div>
 
       <div className="flex gap-4 items-start">
-        {/* ── Left panel: project list ─────────────────────────────────────────── */}
-        <div className="w-64 shrink-0 space-y-2">
+        {/* ── Left panel: project tree ─────────────────────────────────────────── */}
+        <div className="w-72 shrink-0 space-y-2">
           {loading ? (
             <div className="rounded-xl border border-sand bg-white p-4 text-center text-xs text-stone">
-              Loading projects...
+              Loading {kindLabel.toLowerCase()}s...
             </div>
-          ) : projects.length === 0 && !showCreate ? (
+          ) : rootProjects.length === 0 && !showCreate ? (
             <div className="rounded-xl border border-sand bg-white p-6 text-center">
-              <p className="text-sm font-medium text-espresso">No projects yet</p>
-              <p className="mt-1 text-xs text-stone">Click &ldquo;New Project&rdquo; to get started.</p>
+              <p className="text-sm font-medium text-espresso">No {kindLabel.toLowerCase()}s yet</p>
+              <p className="mt-1 text-xs text-stone">Click &ldquo;New {kindLabel}&rdquo; to get started.</p>
             </div>
           ) : (
             <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm divide-y divide-sand">
-              {projects.map((project) => (
-                <div
-                  key={project.id}
-                  onClick={() => handleSelectProject(project)}
-                  className={`flex flex-col gap-1 px-3 py-2.5 cursor-pointer transition-colors ${
-                    selectedProject?.id === project.id
-                      ? "bg-parchment"
-                      : "hover:bg-cream"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[13px] font-semibold text-espresso leading-tight truncate flex-1">
-                      {project.name}
-                    </span>
-                    <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border shrink-0 ${
-                      project.is_active
-                        ? "bg-sage-soft text-sage border-sage/20"
-                        : "bg-stone/10 text-stone border-stone/20"
-                    }`}>
-                      {project.is_active ? "Active" : "Inactive"}
-                    </span>
-                  </div>
-                  {project.description && (
-                    <p className="text-[11px] text-stone/80 truncate">{project.description}</p>
-                  )}
-                  <p className="text-[10px] text-stone/60">{formatDate(project.created_at)}</p>
-                </div>
-              ))}
+              {rootProjects.map((project) => renderNode(project, 0))}
             </div>
           )}
         </div>
@@ -573,19 +686,59 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           {/* Create project form */}
           {showCreate && (
             <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-4">
-              <h4 className="text-[13px] font-bold text-espresso">New Project</h4>
+              <h4 className="text-[13px] font-bold text-espresso">New {kindLabel}</h4>
+              {createParentId && (
+                <p className="text-[11px] text-stone">
+                  Nested under: <span className="font-semibold text-espresso">{projects.find((p) => p.id === createParentId)?.name}</span>{" "}
+                  <button onClick={() => setCreateParentId("")} className="text-terracotta hover:underline cursor-pointer">
+                    (make top-level)
+                  </button>
+                </p>
+              )}
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                  Project Name
+                  {kindLabel} Name
                 </label>
                 <input
                   value={createName}
                   onChange={(e) => setCreateName(e.target.value)}
-                  placeholder="Project name"
+                  placeholder={`${kindLabel} name`}
                   className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
                 />
               </div>
+
+              {kind === "objective" && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                    Target Date
+                  </label>
+                  <input
+                    type="date"
+                    value={createTargetDate}
+                    onChange={(e) => setCreateTargetDate(e.target.value)}
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                  />
+                </div>
+              )}
+
+              {kind === "operation" && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                    Supports Objective
+                  </label>
+                  <select
+                    value={createLinkedObjectiveId}
+                    onChange={(e) => setCreateLinkedObjectiveId(e.target.value)}
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                  >
+                    <option value="">— None —</option>
+                    {objectiveOptions.map((o) => (
+                      <option key={o.id} value={o.id}>{o.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
@@ -676,10 +829,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   disabled={creating}
                   className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
                 >
-                  {creating ? "Creating..." : "Create Project"}
+                  {creating ? "Creating..." : `Create ${kindLabel}`}
                 </button>
                 <button
-                  onClick={() => { setShowCreate(false); setCreateError(null); }}
+                  onClick={() => { setShowCreate(false); setCreateError(null); setCreateParentId(""); }}
                   className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
                 >
                   Cancel
@@ -694,7 +847,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               {/* Project edit card */}
               <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-4">
                 <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-[13px] font-bold text-espresso">Project Details</h4>
+                  <h4 className="text-[13px] font-bold text-espresso">{kindLabel} Details</h4>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => void handleToggleActive(selectedProject)}
@@ -715,7 +868,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                    Project Name
+                    {kindLabel} Name
                   </label>
                   <input
                     value={editName}
@@ -723,6 +876,38 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
                   />
                 </div>
+
+                {kind === "objective" && (
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Target Date
+                    </label>
+                    <input
+                      type="date"
+                      value={editTargetDate}
+                      onChange={(e) => setEditTargetDate(e.target.value)}
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                    />
+                  </div>
+                )}
+
+                {kind === "operation" && (
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Supports Objective
+                    </label>
+                    <select
+                      value={editLinkedObjectiveId}
+                      onChange={(e) => setEditLinkedObjectiveId(e.target.value)}
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                    >
+                      <option value="">— None —</option>
+                      {objectiveOptions.map((o) => (
+                        <option key={o.id} value={o.id}>{o.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">

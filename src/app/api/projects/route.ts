@@ -39,6 +39,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   const mine = searchParams.get("mine") === "true";
+  const kind = searchParams.get("kind"); // "objective" | "operation" — omit for all kinds
 
   const supabase = serviceClient();
 
@@ -70,10 +71,9 @@ export async function GET(request: Request) {
     const { user, isAdmin } = authResult;
 
     if (isAdmin) {
-      const { data, error } = await supabase
-        .from("projects")
-        .select("*")
-        .order("created_at", { ascending: false });
+      let query = supabase.from("projects").select("*").order("created_at", { ascending: false });
+      if (kind) query = query.eq("kind", kind);
+      const { data, error } = await query;
       if (error) return Response.json({ error: error.message }, { status: 500 });
       return Response.json({ projects: data ?? [] });
     }
@@ -85,7 +85,7 @@ export async function GET(request: Request) {
     if (accessError) return Response.json({ error: accessError.message }, { status: 500 });
     const accessIds = (accessRows ?? []).map((row) => row.project_id);
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("projects")
       .select("*")
       .or(
@@ -94,6 +94,8 @@ export async function GET(request: Request) {
           : `created_by.eq.${user.id}`
       )
       .order("created_at", { ascending: false });
+    if (kind) query = query.eq("kind", kind);
+    const { data, error } = await query;
     if (error) return Response.json({ error: error.message }, { status: 500 });
     return Response.json({ projects: data ?? [] });
   }
@@ -101,7 +103,9 @@ export async function GET(request: Request) {
   const auth = await requireAdmin();
   if ("error" in auth) return auth.error;
 
-  const { data, error } = await supabase.from("projects").select("*").order("created_at", { ascending: false });
+  let query = supabase.from("projects").select("*").order("created_at", { ascending: false });
+  if (kind) query = query.eq("kind", kind);
+  const { data, error } = await query;
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ projects: data ?? [] });
 }
@@ -117,8 +121,13 @@ export async function POST(request: Request) {
     details?: string;
     notes?: string;
     va_ids?: string[];
+    kind?: string;
+    parent_project_id?: string | null;
+    target_date?: string | null;
+    linked_objective_id?: string | null;
   };
   if (!body.name?.trim()) return Response.json({ error: "name is required" }, { status: 400 });
+  const kind = body.kind === "operation" ? "operation" : "objective";
   const supabase = serviceClient();
   const { data, error } = await supabase.from("projects").insert({
     name: body.name.trim(),
@@ -128,6 +137,10 @@ export async function POST(request: Request) {
     notes: body.notes?.trim() || null,
     created_by: user.id,
     is_active: true,
+    kind,
+    parent_project_id: body.parent_project_id || null,
+    target_date: body.target_date || null,
+    linked_objective_id: body.linked_objective_id || null,
   }).select("*").single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
 
@@ -165,6 +178,9 @@ export async function PATCH(request: Request) {
     notes?: string;
     is_active?: boolean;
     va_ids?: string[];
+    parent_project_id?: string | null;
+    target_date?: string | null;
+    linked_objective_id?: string | null;
   };
   const updates: Record<string, unknown> = {};
   if (body.name !== undefined) updates.name = body.name.trim();
@@ -173,6 +189,14 @@ export async function PATCH(request: Request) {
   if (body.details !== undefined) updates.details = body.details?.trim() || null;
   if (body.notes !== undefined) updates.notes = body.notes?.trim() || null;
   if (body.is_active !== undefined) updates.is_active = Boolean(body.is_active);
+  if (body.parent_project_id !== undefined) {
+    if (body.parent_project_id === id) {
+      return Response.json({ error: "A project cannot be its own parent" }, { status: 400 });
+    }
+    updates.parent_project_id = body.parent_project_id || null;
+  }
+  if (body.target_date !== undefined) updates.target_date = body.target_date || null;
+  if (body.linked_objective_id !== undefined) updates.linked_objective_id = body.linked_objective_id || null;
   const { data, error } = await supabase.from("projects").update(updates).eq("id", id).select("*").single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
 
@@ -203,6 +227,17 @@ export async function DELETE(request: Request) {
     const { data: project } = await supabase.from("projects").select("created_by").eq("id", id).maybeSingle();
     if (!project) return Response.json({ error: "Project not found" }, { status: 404 });
     if (project.created_by !== user.id) return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { count: childCount } = await supabase
+    .from("projects")
+    .select("id", { count: "exact", head: true })
+    .eq("parent_project_id", id);
+  if (childCount && childCount > 0) {
+    return Response.json(
+      { error: `Cannot delete — ${childCount} sub-project(s) still nest under this one. Delete or move them first.` },
+      { status: 400 }
+    );
   }
 
   await supabase.from("assigned_tasks").update({ project_id: null }).eq("project_id", id);
