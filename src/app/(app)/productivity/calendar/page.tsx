@@ -558,7 +558,16 @@ export default function ProductivityCalendarPage() {
     (dateStr: string) => scheduledTasks.filter((t) => localDateOf(t.start_time as string) === dateStr),
     [scheduledTasks]
   );
-  const dueTodayItems = dueItemsByDate[selectedDate] ?? [];
+  // Exclude items already rendered as an hour block for this date — once a task
+  // has scheduled hours, it shouldn't also sit up top as an unscheduled-looking badge.
+  const dueTodayItems = useMemo(() => {
+    const scheduledIdsToday = new Set(scheduledForDate(selectedDate).map((t) => t.id));
+    return (dueItemsByDate[selectedDate] ?? []).filter((item) => {
+      if (item.source !== "assigned") return true;
+      const rawId = Number(item.id.replace("assigned-", ""));
+      return !scheduledIdsToday.has(rawId);
+    });
+  }, [dueItemsByDate, selectedDate, scheduledForDate]);
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i);
 
   function blockPosition(task: RawTask) {
