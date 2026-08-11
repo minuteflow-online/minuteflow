@@ -11,6 +11,7 @@ import {
   localDateOf,
   formatTimeRange,
   normalizeAssignedRows,
+  categoryDotClass,
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 
@@ -29,7 +30,7 @@ type DueItem = {
   isRecurring: boolean;
 };
 
-const CATEGORY_OPTIONS = ["Task", "Message", "Meeting", "Sorting Tasks", "Collaboration", "Personal", "Break"];
+const CATEGORY_OPTIONS = ["Task", "Communication", "Planning", "Collaboration", "Personal", "Break"];
 
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 21;
@@ -603,8 +604,9 @@ export default function ProductivityCalendarPage() {
                   <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide mb-1">Category</p>
                   <div className="flex flex-wrap gap-2">
                     {CATEGORY_OPTIONS.map((c) => (
-                      <label key={c} className="flex items-center gap-1 text-[11px] text-espresso">
+                      <label key={c} className="flex items-center gap-1.5 text-[11px] text-espresso">
                         <input type="checkbox" checked={categoryFilter.has(c)} onChange={() => toggleInSet(categoryFilter, setCategoryFilter, c)} />
+                        <span className={`h-2 w-2 rounded-full ${categoryDotClass(c)}`} />
                         {c}
                       </label>
                     ))}
@@ -808,7 +810,12 @@ export default function ProductivityCalendarPage() {
                               className="pointer-events-auto absolute left-0.5 right-0.5 overflow-hidden rounded-md border border-sage/30 bg-sage-soft px-1 py-0.5 text-left shadow-sm hover:border-sage cursor-pointer"
                               style={{ top, height }}
                             >
-                              <p className="truncate text-[9px] font-semibold text-sage leading-tight">{task.task_name}</p>
+                              <p className="truncate text-[9px] font-semibold text-sage leading-tight">
+                                {task.category && (
+                                  <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1 align-middle ${categoryDotClass(task.category)}`} />
+                                )}
+                                {task.task_name}
+                              </p>
                             </button>
                           );
                         })}
@@ -919,7 +926,12 @@ export default function ProductivityCalendarPage() {
                         className="pointer-events-auto absolute left-0 right-2 overflow-hidden rounded-md border border-sage/30 bg-sage-soft px-2 py-1 text-left shadow-sm hover:border-sage cursor-pointer"
                         style={{ top, height }}
                       >
-                        <p className="truncate text-[11px] font-semibold text-sage">{task.task_name}</p>
+                        <p className="truncate text-[11px] font-semibold text-sage">
+                          {task.category && (
+                            <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1 align-middle ${categoryDotClass(task.category)}`} />
+                          )}
+                          {task.task_name}
+                        </p>
                         <p className="truncate text-[10px] text-sage/80">{formatTimeRange(task)}</p>
                       </button>
                     );

@@ -9,6 +9,7 @@ import {
   localDateOf,
   formatTimeRange,
   normalizeAssignedRows,
+  categoryDotClass,
 } from "@/lib/taskSchedule";
 
 type TeamMemberOption = { id: string; full_name: string; username: string };
@@ -166,7 +167,12 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
                         onClick={() => openEditBlock(t)}
                         className="w-full overflow-hidden rounded-md border border-sage/30 bg-sage-soft px-2 py-1.5 text-left hover:border-sage cursor-pointer"
                       >
-                        <p className="truncate text-[11px] font-semibold text-sage">{t.task_name}</p>
+                        <p className="truncate text-[11px] font-semibold text-sage">
+                          {t.category && (
+                            <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1 align-middle ${categoryDotClass(t.category)}`} />
+                          )}
+                          {t.task_name}
+                        </p>
                         <p className="truncate text-[10px] text-sage/80">{formatTimeRange(t)}</p>
                       </button>
                     ))}

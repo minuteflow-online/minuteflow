@@ -41,6 +41,21 @@ export function localDateOf(iso: string): string {
   return `${y}-${m}-${day}`;
 }
 
+// Category color coding — distinct from status colors so the two systems don't
+// collide visually. Kept in sync with TaskEntryForm's CATEGORIES list.
+const CATEGORY_DOT_CLASSES: Record<string, string> = {
+  Task: "bg-green-500",
+  Communication: "bg-amber-500",
+  Planning: "bg-purple-500",
+  Collaboration: "bg-orange-500",
+  Personal: "bg-teal-300",
+  Break: "bg-blue-300",
+};
+
+export function categoryDotClass(category: string): string {
+  return CATEGORY_DOT_CLASSES[category] ?? "bg-stone-300";
+}
+
 export function formatTimeRange(task: Pick<RawTask, "start_time" | "end_time">): string {
   const start = new Date(task.start_time!);
   const end = new Date(task.end_time!);

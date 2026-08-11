@@ -350,7 +350,8 @@ export default function TaskListPage() {
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [assignedByProfilesLoaded, setAssignedByProfilesLoaded] = useState(false);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "team">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "team" | "objective">("my_tasks");
+  const [objectiveProjectIds, setObjectiveProjectIds] = useState<Set<string>>(new Set());
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
@@ -685,6 +686,13 @@ export default function TaskListPage() {
     void fetchCurrentUser();
     void fetchFormOptions();
   }, [fetchCurrentUser, fetchFormOptions]);
+
+  useEffect(() => {
+    fetch("/api/projects?mine=true&kind=objective", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setObjectiveProjectIds(new Set((d.projects ?? []).map((p: { id: string }) => p.id))))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch("/api/projects?mine=true", { cache: "no-store" })
@@ -1060,6 +1068,7 @@ export default function TaskListPage() {
       const dueDate = detail.due_date ? parseDueDateSafe(detail.due_date) : null;
       const dueTime = dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate.getTime() : null;
 
+      if (activeView === "objective" && !objectiveProjectIds.has(detail.project_id ?? "")) return false;
       if (filterStatuses.length > 0 && !filterStatuses.includes(task.status)) return false;
       if (filterAccounts.length > 0 && !filterAccounts.includes(detail.account ?? "")) return false;
       if (filterTaskNames.length > 0 && !filterTaskNames.includes(detail.task_name)) return false;
@@ -1073,7 +1082,7 @@ export default function TaskListPage() {
       if (end && (!dueTime || dueTime > end.getTime())) return false;
       return true;
     });
-  }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks]);
+  }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks, activeView, objectiveProjectIds]);
 
   const avgAccuracy = useMemo(() => {
     const rows = filteredTasks.filter((t) => typeof t.accuracy_score === "number");
@@ -1963,6 +1972,13 @@ export default function TaskListPage() {
                     Recurring
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => { setActiveView("objective"); void fetchTasks(); }}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "objective" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                >
+                  Objective
+                </button>
                 {isAdmin && (
                   <button
                     type="button"
@@ -1975,7 +1991,7 @@ export default function TaskListPage() {
               </div>
               )}
 
-              {isAdmin && assignedByProfilesLoaded && activeView === "my_tasks" && (
+              {isAdmin && assignedByProfilesLoaded && (activeView === "my_tasks" || activeView === "objective") && (
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-semibold text-stone whitespace-nowrap">View as VA:</span>
                   <select
