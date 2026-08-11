@@ -58,7 +58,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, due_date, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, due_date, start_date, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -66,6 +66,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     task_detail?: string;
     task_notes?: string;
     due_date?: string;
+    start_date?: string;
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
@@ -85,6 +86,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (task_detail !== undefined) updatePayload.task_detail = task_detail;
   if (task_notes !== undefined) updatePayload.task_notes = task_notes;
   if (due_date !== undefined) updatePayload.due_date = due_date;
+  if (start_date !== undefined) updatePayload.start_date = start_date;
   if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
   if (instructions !== undefined) updatePayload.instructions = instructions;
   if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
@@ -269,6 +271,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_detail,
     task_notes,
     due_date,
+    start_date,
     assigned_by,
     instructions,
     instructions_locked,
@@ -286,6 +289,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_detail?: string | null;
     task_notes?: string | null;
     due_date?: string | null;
+    start_date?: string | null;
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
@@ -321,6 +325,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_detail !== undefined ||
     task_notes !== undefined ||
     due_date !== undefined ||
+    start_date !== undefined ||
     assigned_by !== undefined ||
     instructions !== undefined ||
     instructions_locked !== undefined;
@@ -628,6 +633,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (task_detail !== undefined) updatePayload.task_detail = task_detail;
     if (task_notes !== undefined) updatePayload.task_notes = task_notes;
     if (due_date !== undefined) updatePayload.due_date = due_date;
+    if (start_date !== undefined) updatePayload.start_date = start_date;
     if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
     if (instructions !== undefined) updatePayload.instructions = instructions;
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);

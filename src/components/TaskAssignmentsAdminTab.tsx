@@ -26,6 +26,7 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "assigned_to", label: "Assigned To", defaultWidth: 160 },
   { key: "status", label: "Status", defaultWidth: 150 },
   { key: "accuracy", label: "Accuracy", defaultWidth: 100 },
+  { key: "start_date", label: "Start Date", defaultWidth: 130 },
   { key: "due_date", label: "Due Date", defaultWidth: 130 },
   { key: "project", label: "Project", defaultWidth: 120 },
   { key: "created", label: "Created", defaultWidth: 110 },
@@ -101,6 +102,7 @@ interface DetailFormState {
   instructions_locked: boolean;
   review_required: boolean;
   due_date: string;
+  start_date: string;
   assigned_by_id: string;
   recurring_template_id: string | null;
   initial_status: AssignedTaskStatus;
@@ -499,6 +501,7 @@ export default function TaskAssignmentsAdminTab({
     instructions_locked: false,
     review_required: false,
     due_date: "",
+    start_date: "",
     assigned_by_id: "",
     recurring_template_id: null,
     initial_status: "pending",
@@ -829,6 +832,7 @@ export default function TaskAssignmentsAdminTab({
     instructions_locked: false,
     review_required: false,
     due_date: "",
+    start_date: "",
     assigned_by_id: "",
     recurring_template_id: null,
     initial_status: "pending",
@@ -868,6 +872,7 @@ export default function TaskAssignmentsAdminTab({
       instructions_locked: Boolean((task as any).instructions_locked),
       review_required: Boolean(task.review_required),
       due_date: task.due_date ? task.due_date.slice(0, 10) : "",
+      start_date: task.start_date ? task.start_date.slice(0, 10) : "",
       assigned_by_id: task.assigned_by || "",
       recurring_template_id: (task.recurring_template_id as string | null | undefined) ?? null,
       initial_status: task.assigned_task_assignees[0]?.status ?? "on_queue",
@@ -922,6 +927,7 @@ export default function TaskAssignmentsAdminTab({
       instructions_locked: detailForm.instructions_locked,
       review_required: detailForm.review_required,
       due_date: detailForm.due_date || null,
+      start_date: detailForm.start_date || null,
       assigned_by: detailForm.assigned_by_id || null,
       recurring_template_id: detailForm.recurring_template_id,
       va_ids: detailForm.assignee_ids,
@@ -1209,6 +1215,7 @@ export default function TaskAssignmentsAdminTab({
         case "account":   return task.account || "";
         case "project":   return task.project || "";
         case "due_date":  return task.due_date ? task.due_date.slice(0, 10) : "";
+        case "start_date": return task.start_date ? task.start_date.slice(0, 10) : "";
         default:          return "";
       }
     })();
@@ -1435,6 +1442,7 @@ export default function TaskAssignmentsAdminTab({
         case "account":   return task.account || "";
         case "project":   return task.project || "";
         case "due_date":  return task.due_date ? task.due_date.slice(0, 10) : "";
+        case "start_date": return task.start_date ? task.start_date.slice(0, 10) : "";
         default:          return "";
       }
     })();
@@ -1768,6 +1776,9 @@ export default function TaskAssignmentsAdminTab({
                 {!hiddenColumns.has("accuracy") && (
                   <ColumnHeader label="Accuracy" width={columnWidths.accuracy} onResize={(w) => setColumnWidth("accuracy", w)} />
                 )}
+                {!hiddenColumns.has("start_date") && (
+                  <ColumnHeader label="Start Date" width={columnWidths.start_date} onResize={(w) => setColumnWidth("start_date", w)} />
+                )}
                 {!hiddenColumns.has("due_date") && (
                   <ColumnHeader
                     label="Due Date"
@@ -1791,6 +1802,7 @@ export default function TaskAssignmentsAdminTab({
                 const dueSoon = isDueSoon(task.due_date);
                 const pastDue = isPastDue(task.due_date);
                 const dueDateDisplay = fmtDueDate(task.due_date, orgTimezone);
+                const startDateDisplay = fmtDueDate(task.start_date, orgTimezone);
                 const assignees = task.assigned_task_assignees;
                 const visibleAssignees = assignees.slice(0, 2);
                 const extraCount = assignees.length - 2;
@@ -2024,6 +2036,14 @@ export default function TaskAssignmentsAdminTab({
                     )}
 
                     {/* Due Date */}
+                    {!hiddenColumns.has("start_date") && (
+                      <InlineCell
+                        task={task}
+                        field="start_date"
+                        display={task.start_date ? startDateDisplay : ""}
+                        inputType="date"
+                      />
+                    )}
                     {!hiddenColumns.has("due_date") && (
                       <InlineCell
                         task={task}
@@ -2251,6 +2271,19 @@ export default function TaskAssignmentsAdminTab({
                     <option key={t.id} value={t.task_name}>{t.task_name}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* Start Date */}
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  value={detailForm.start_date}
+                  onChange={(e) => setDetailForm((f) => ({ ...f, start_date: e.target.value }))}
+                  className="py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
+                />
               </div>
 
               {/* Due Date */}

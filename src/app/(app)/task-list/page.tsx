@@ -24,7 +24,9 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "status", label: "Status", defaultWidth: 150 },
   { key: "accuracy", label: "Accuracy", defaultWidth: 100 },
   { key: "submitted_by", label: "Submitted By", defaultWidth: 150 },
+  { key: "start_date", label: "Start Date", defaultWidth: 130 },
   { key: "due_date", label: "Due Date", defaultWidth: 130 },
+  { key: "created", label: "Created", defaultWidth: 130 },
 ];
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -56,6 +58,7 @@ type VATaskRow = {
     task_detail: string | null;
     task_notes: string | null;
     due_date: string | null;
+    start_date: string | null;
     assigned_by: string | null;
     assigned_by_profile?: { id: string; full_name: string; username: string } | null;
     instructions: string | null;
@@ -102,7 +105,7 @@ type ProfileOption = {
   position?: string;
 };
 
-type InlineEditField = "task_name" | "account" | "project" | "status" | "due_date";
+type InlineEditField = "task_name" | "account" | "project" | "status" | "due_date" | "start_date";
 
 type InlineEditState = {
   taskId: number;
@@ -135,6 +138,7 @@ type AdminTaskFlat = {
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
+  start_date: string | null;
   review_required: boolean;
   revision_count?: number;
   created_by: string | null;
@@ -253,6 +257,13 @@ function formatDateInputValue(dueDate: string | null) {
   return dueDate.slice(0, 10);
 }
 
+function formatCreatedAt(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 function formatFileSize(bytes: number | null): string {
   if (!bytes) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -361,6 +372,7 @@ export default function TaskListPage() {
     task_name: "",
     task_detail: "",
     due_date: "",
+    start_date: "",
     task_notes: "",
     assigned_by: "",
     instructions: "",
@@ -451,6 +463,7 @@ export default function TaskListPage() {
                 task_detail: task.task_detail,
                 task_notes: task.task_notes,
                 due_date: task.due_date,
+                start_date: task.start_date,
                 assigned_by: task.assigned_by ?? null,
                 assigned_by_profile: task.assigned_by_profile ?? null,
                 instructions: task.instructions ?? null,
@@ -1096,6 +1109,8 @@ export default function TaskListPage() {
             return task.status;
           case "due_date":
             return formatDateInputValue(task.assigned_tasks.due_date);
+          case "start_date":
+            return formatDateInputValue(task.assigned_tasks.start_date);
           default:
             return "";
         }
@@ -1325,6 +1340,8 @@ export default function TaskListPage() {
               return task.status;
             case "due_date":
               return formatDateInputValue(task.assigned_tasks.due_date);
+            case "start_date":
+              return formatDateInputValue(task.assigned_tasks.start_date);
           }
         })())}
       >
@@ -1362,6 +1379,7 @@ export default function TaskListPage() {
       task_name: "",
       task_detail: "",
       due_date: "",
+      start_date: "",
       task_notes: "",
       assigned_by: currentUserId ?? "",
       instructions: "",
@@ -1382,6 +1400,7 @@ export default function TaskListPage() {
       task_name: "",
       task_detail: "",
       due_date: "",
+      start_date: "",
       task_notes: "",
       assigned_by: currentUserId ?? "",
       instructions: "",
@@ -1463,6 +1482,7 @@ export default function TaskListPage() {
           task_name: addForm.task_name.trim(),
           task_detail: addForm.task_detail.trim() || null,
           due_date: addForm.due_date || null,
+          start_date: addForm.start_date || null,
           task_notes: addForm.task_notes.trim() || null,
           assigned_by: addForm.assigned_by || currentUserId || null,
           instructions: addForm.instructions.trim() || null,
@@ -1519,7 +1539,7 @@ export default function TaskListPage() {
     } finally {
       setAddSaving(false);
     }
-  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
+  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.start_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
 
   const handleClaimedTaskRefresh = useCallback(async () => {
     await Promise.all([fetchTasks(), canShowHourlyPool ? fetchHourlyPool() : Promise.resolve()]);
@@ -2335,6 +2355,9 @@ export default function TaskListPage() {
                             onFilterChange={setFilterSubmittedBy}
                           />
                         )}
+                        {!hiddenColumns.has("start_date") && (
+                          <ColumnHeader label="Start Date" width={columnWidths.start_date} onResize={(w) => setColumnWidth("start_date", w)} />
+                        )}
                         {!hiddenColumns.has("due_date") && (
                           <ColumnHeader
                             label="Due Date"
@@ -2343,6 +2366,9 @@ export default function TaskListPage() {
                             isFiltered={Boolean(filterDueStart || filterDueEnd)}
                             customFilter={(close) => <DueDateRangeFilter close={close} />}
                           />
+                        )}
+                        {!hiddenColumns.has("created") && (
+                          <ColumnHeader label="Created" width={columnWidths.created} onResize={(w) => setColumnWidth("created", w)} />
                         )}
                         {(taskView === "archived" || taskView === "trash") && (
                           <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Actions</th>
@@ -2353,6 +2379,7 @@ export default function TaskListPage() {
                       {filteredTasks.map((task) => {
                         const detail = task.assigned_tasks;
                         const due = formatDueDate(detail.due_date);
+                        const start = formatDueDate(detail.start_date);
                         const isSelected = selectedTask?.id === task.id;
                         const dueTextClass = due.isOverdue ? "text-terracotta" : "text-walnut";
 
@@ -2483,6 +2510,17 @@ export default function TaskListPage() {
                               </td>
                             )}
 
+                            {!hiddenColumns.has("start_date") && (
+                              <InlineCell
+                                task={task}
+                                field="start_date"
+                                className="px-3 py-3 text-[13px] font-medium text-walnut"
+                                disabled={taskView !== "active"}
+                                display={
+                                  detail.start_date ? start.label : <span className="text-stone/30">—</span>
+                                }
+                              />
+                            )}
                             {!hiddenColumns.has("due_date") && (
                               <InlineCell
                                 task={task}
@@ -2500,6 +2538,11 @@ export default function TaskListPage() {
                                   )
                                 }
                               />
+                            )}
+                            {!hiddenColumns.has("created") && (
+                              <td className="px-3 py-3 text-[13px] text-walnut truncate">
+                                {formatCreatedAt(detail.created_at)}
+                              </td>
                             )}
                             {(taskView === "archived" || taskView === "trash") && (
                               <td className="px-3 py-3 text-[13px]" onClick={(e) => e.stopPropagation()}>
@@ -2632,14 +2675,25 @@ export default function TaskListPage() {
                 </select>
               </div>
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                <input
-                  type="date"
-                  value={addForm.due_date}
-                  onChange={(e) => setAddForm((form) => ({ ...form, due_date: e.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
+                  <input
+                    type="date"
+                    value={addForm.start_date}
+                    onChange={(e) => setAddForm((form) => ({ ...form, start_date: e.target.value }))}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
+                  <input
+                    type="date"
+                    value={addForm.due_date}
+                    onChange={(e) => setAddForm((form) => ({ ...form, due_date: e.target.value }))}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                </div>
               </div>
 
               <div>

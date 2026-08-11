@@ -520,6 +520,7 @@ export interface AssignedTask {
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
+  start_date: string | null;
   archived_at: string | null;
   deleted_at: string | null;
   assigned_by: string | null;

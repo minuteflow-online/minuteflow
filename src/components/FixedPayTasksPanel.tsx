@@ -135,6 +135,7 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "start_date", label: "Start Date", defaultWidth: 110 },
   { key: "due_date", label: "Due Date", defaultWidth: 110 },
   { key: "claimed", label: "Claimed", defaultWidth: 130 },
+  { key: "created", label: "Created", defaultWidth: 150 },
   { key: "active", label: "Active", defaultWidth: 90 },
 ];
 
@@ -748,6 +749,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                     {!hiddenColumns.has("claimed") && (
                       <ColumnHeader label="Claimed" width={columnWidths.claimed} onResize={(w) => setColumnWidth("claimed", w)} />
                     )}
+                    {!hiddenColumns.has("created") && (
+                      <ColumnHeader label="Created" width={columnWidths.created} onResize={(w) => setColumnWidth("created", w)} />
+                    )}
                     {!hiddenColumns.has("active") && (
                       <ColumnHeader label="Active" width={columnWidths.active} onResize={(w) => setColumnWidth("active", w)} />
                     )}
@@ -826,6 +830,14 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                             <div className="space-y-0.5 truncate">
                               <div>{claimedByMe ? "You" : task.claimed_by ? "Claimed" : "—"}</div>
                               <div className="text-[10px] text-stone/70">{formatTimestamp(task.claimed_at)}</div>
+                            </div>
+                          </td>
+                        )}
+                        {!hiddenColumns.has("created") && (
+                          <td className="px-3 py-3 text-[13px] text-walnut">
+                            <div className="space-y-0.5 truncate">
+                              <div className="truncate">{task.created_by_profile?.full_name || task.created_by_profile?.username || "—"}</div>
+                              <div className="text-[10px] text-stone/70">{formatTimestamp(task.created_at)}</div>
                             </div>
                           </td>
                         )}
