@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import TaskForm from "@/components/TaskForm";
 import type { Project, UserRole } from "@/types/database";
 
 type TeamMember = { id: string; full_name: string; username: string; role: string };
@@ -35,20 +36,6 @@ type DueItem = {
 };
 
 const CATEGORY_OPTIONS = ["Task", "Message", "Meeting", "Sorting Tasks", "Collaboration", "Personal", "Break"];
-
-const FALLBACK_ACCOUNTS = [
-  "TAT Foundation",
-  "WSB Awesome Team",
-  "Virtual Concierge",
-  "Colina Portrait",
-  "SNAPS Sublimation",
-  "Thess Personal",
-  "Thess Base",
-  "Right Path Agency",
-  "Personal",
-  "Quad Life",
-  "TONIWSB",
-];
 
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 21;
@@ -213,7 +200,6 @@ export default function ProductivityCalendarPage() {
   const [role, setRole] = useState<UserRole>("va");
   const [orgTimezone, setOrgTimezone] = useState("UTC");
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
-  const [accounts, setAccounts] = useState<string[]>(FALLBACK_ACCOUNTS);
   const [ready, setReady] = useState(false);
 
   const todayStr = getDateInTimezone(orgTimezone);
@@ -288,18 +274,6 @@ export default function ProductivityCalendarPage() {
       .then((d) => setTeamMembers(d.members ?? []))
       .catch(() => {});
   }, [isAdminOrManager]);
-
-  useEffect(() => {
-    fetch("/api/accounts")
-      .then((r) => r.json())
-      .then((d) => {
-        const active = (d.accounts ?? [])
-          .filter((a: { active: boolean }) => a.active)
-          .map((a: { name: string }) => a.name);
-        if (active.length > 0) setAccounts(active);
-      })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     fetch("/api/projects?mine=true", { cache: "no-store" })
@@ -543,33 +517,20 @@ export default function ProductivityCalendarPage() {
     await Promise.all([fetchDaySchedule(), fetchAssignedTasksAll()]);
   }, [fetchDaySchedule, fetchAssignedTasksAll]);
 
+  // Reschedules an EXISTING task (time-only). Creating a brand-new task goes
+  // through TaskForm instead, which POSTs the full field set itself.
   const saveBlock = async () => {
-    if (!formTaskName.trim() || !dayUserId || formEnd <= formStart) return;
+    if (!editingBlockId || formEnd <= formStart) return;
     setSavingBlock(true);
     const startIso = new Date(`${formDate}T${formStart}:00`).toISOString();
     const endIso = new Date(`${formDate}T${formEnd}:00`).toISOString();
 
     try {
-      if (editingBlockId) {
-        await fetch(`/api/assigned-tasks/${editingBlockId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ start_time: startIso, end_time: endIso }),
-        });
-      } else {
-        await fetch("/api/assigned-tasks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            task_name: formTaskName.trim(),
-            account: formAccount || null,
-            start_time: startIso,
-            end_time: endIso,
-            va_ids: [dayUserId],
-            initial_status: "on_queue",
-          }),
-        });
-      }
+      await fetch(`/api/assigned-tasks/${editingBlockId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_time: startIso, end_time: endIso }),
+      });
       await refreshAfterScheduleChange();
     } finally {
       setSavingBlock(false);
@@ -1045,12 +1006,12 @@ export default function ProductivityCalendarPage() {
         </div>
       )}
 
-      {/* Add/Edit block modal */}
-      {showForm && (
+      {/* Reschedule-existing-task modal (time only — full task fields live in Assignment) */}
+      {showForm && editingBlockId && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60]">
           <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-sm mx-4">
             <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
-              <h3 className="text-sm font-bold text-espresso">{editingBlockId ? "Edit Hour Block" : "Add Hour Block"}</h3>
+              <h3 className="text-sm font-bold text-espresso">Reschedule</h3>
               <button
                 onClick={() => setShowForm(false)}
                 className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
@@ -1066,28 +1027,17 @@ export default function ProductivityCalendarPage() {
                 <p className="text-[11px] font-semibold text-walnut mb-1 tracking-wide">Task Name</p>
                 <input
                   value={formTaskName}
-                  onChange={(e) => setFormTaskName(e.target.value)}
-                  placeholder="What are you working on?"
-                  autoFocus
-                  disabled={Boolean(editingBlockId)}
-                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white disabled:bg-parchment/40 disabled:text-stone"
+                  disabled
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-parchment/40 text-stone"
                 />
               </div>
               <div>
                 <p className="text-[11px] font-semibold text-walnut mb-1 tracking-wide">Account</p>
-                <select
-                  value={formAccount}
-                  onChange={(e) => setFormAccount(e.target.value)}
-                  disabled={Boolean(editingBlockId)}
-                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white disabled:bg-parchment/40 disabled:text-stone"
-                >
-                  <option value="">—</option>
-                  {accounts.map((a) => (
-                    <option key={a} value={a}>
-                      {a}
-                    </option>
-                  ))}
-                </select>
+                <input
+                  value={formAccount || "—"}
+                  disabled
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-parchment/40 text-stone"
+                />
               </div>
               <div className="flex gap-3">
                 <div className="flex-1">
@@ -1114,15 +1064,13 @@ export default function ProductivityCalendarPage() {
               )}
 
               <div className="flex gap-3 pt-2">
-                {editingBlockId && (
-                  <button
-                    onClick={removeFromCalendar}
-                    title="Clears the time, but keeps the task itself — manage it from Assignment."
-                    className="px-3 py-2 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[12px] font-semibold cursor-pointer hover:bg-red-100 transition-colors"
-                  >
-                    Remove from Calendar
-                  </button>
-                )}
+                <button
+                  onClick={removeFromCalendar}
+                  title="Clears the time, but keeps the task itself — manage it from Assignment."
+                  className="px-3 py-2 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[12px] font-semibold cursor-pointer hover:bg-red-100 transition-colors"
+                >
+                  Remove from Calendar
+                </button>
                 <button
                   onClick={() => setShowForm(false)}
                   className="flex-1 py-2 rounded-lg bg-parchment text-walnut border border-sand text-[12px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"
@@ -1131,12 +1079,46 @@ export default function ProductivityCalendarPage() {
                 </button>
                 <button
                   onClick={saveBlock}
-                  disabled={!formTaskName.trim() || formEnd <= formStart || savingBlock}
+                  disabled={formEnd <= formStart || savingBlock}
                   className="flex-1 py-2 rounded-lg bg-sage text-white text-[12px] font-semibold cursor-pointer transition-all hover:bg-sage/90 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {savingBlock ? "Saving…" : "Save"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New-task modal — full shared task form, same fields as Assignment's Create Task */}
+      {showForm && !editingBlockId && dayUserId && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl border border-sand shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="py-4 px-5 border-b border-parchment flex items-center justify-between sticky top-0 bg-white">
+              <h3 className="text-sm font-bold text-espresso">Add Task {viewMode === "week" ? `— ${formatDayLabel(formDate)}` : ""}</h3>
+              <button
+                onClick={() => setShowForm(false)}
+                className="text-bark hover:text-terracotta text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-5">
+              <TaskForm
+                currentUserId={userId!}
+                isAdminOrManager={isAdminOrManager}
+                teamMembers={teamMembers}
+                defaultVaId={dayUserId}
+                defaultDate={formDate}
+                defaultStartTime={formStart}
+                defaultEndTime={formEnd}
+                showSchedule
+                onCancel={() => setShowForm(false)}
+                onCreated={() => {
+                  setShowForm(false);
+                  void refreshAfterScheduleChange();
+                }}
+              />
             </div>
           </div>
         </div>

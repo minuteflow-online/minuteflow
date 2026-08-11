@@ -65,6 +65,7 @@ interface AddSubtaskForm {
   instructions: string;
   status: string;
   review_required: boolean;
+  parent_task_id: string;
 }
 
 function defaultSubtaskForm(assignedById = ""): AddSubtaskForm {
@@ -80,6 +81,7 @@ function defaultSubtaskForm(assignedById = ""): AddSubtaskForm {
     instructions: "",
     status: "pending",
     review_required: false,
+    parent_task_id: "",
   };
 }
 
@@ -487,6 +489,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
         initial_status: addForm.status || "pending",
         assigned_by: addForm.assigned_by_id || null,
         review_required: addForm.review_required,
+        parent_task_id: addForm.parent_task_id ? Number(addForm.parent_task_id) : null,
       };
       if (addForm.va_id) {
         body.va_ids = [addForm.va_id];
@@ -1349,6 +1352,24 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       ))}
                     </select>
                   </div>
+
+                  {subtasks.length > 0 && (
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                        Parent Task
+                      </label>
+                      <select
+                        value={addForm.parent_task_id}
+                        onChange={(e) => setAddForm((prev) => ({ ...prev, parent_task_id: e.target.value }))}
+                        className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                      >
+                        <option value="">Top-level task in this project</option>
+                        {subtasks.map((t) => (
+                          <option key={t.id} value={t.id}>Subtask of: {t.task_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div>
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">

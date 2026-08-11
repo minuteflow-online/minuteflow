@@ -58,7 +58,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, due_date, start_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, due_date, start_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -74,6 +74,8 @@ export async function PUT(request: Request, { params }: RouteContext) {
     instructions_locked?: boolean;
     review_required?: boolean;
     recurring_template_id?: string | null;
+    project_id?: string | null;
+    parent_task_id?: number | null;
     va_ids?: string[];
   };
 
@@ -89,11 +91,15 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (task_notes !== undefined) updatePayload.task_notes = task_notes;
   if (due_date !== undefined) updatePayload.due_date = due_date;
   if (start_date !== undefined) updatePayload.start_date = start_date;
+  if (start_time !== undefined) updatePayload.start_time = start_time;
+  if (end_time !== undefined) updatePayload.end_time = end_time;
   if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
   if (instructions !== undefined) updatePayload.instructions = instructions;
   if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
   if (putReviewRequired !== undefined) updatePayload.review_required = Boolean(putReviewRequired);
   if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
+  if (project_id !== undefined) updatePayload.project_id = project_id;
+  if (parent_task_id !== undefined) updatePayload.parent_task_id = parent_task_id;
 
   const { data: updatedTask, error: updateError } = await supabase
     .from("assigned_tasks")

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { AssignedTask, AssignedTaskStatus, TaskScreenshot } from "@/types/database";
+import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import FixedPayTasksPanel from "@/components/FixedPayTasksPanel";
 import ProjectInfoModal from "@/components/ProjectInfoModal";
@@ -379,7 +379,11 @@ export default function TaskListPage() {
     instructions: "",
     instructions_locked: false,
     review_required: false,
+    linked_project_id: "",
+    parent_task_id: "",
   });
+  const [linkedProjects, setLinkedProjects] = useState<Project[]>([]);
+  const [linkedParentTaskOptions, setLinkedParentTaskOptions] = useState<Array<{ id: number; task_name: string }>>([]);
 
   const [selectedTask, setSelectedTask] = useState<VATaskRow | null>(null);
   const [panelStatus, setPanelStatus] = useState<AssignedTaskStatus>("pending");
@@ -680,6 +684,24 @@ export default function TaskListPage() {
     void fetchCurrentUser();
     void fetchFormOptions();
   }, [fetchCurrentUser, fetchFormOptions]);
+
+  useEffect(() => {
+    fetch("/api/projects?mine=true", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setLinkedProjects(d.projects ?? []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!addForm.linked_project_id) {
+      setLinkedParentTaskOptions([]);
+      return;
+    }
+    fetch(`/api/assigned-tasks?projectId=${addForm.linked_project_id}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setLinkedParentTaskOptions((d.tasks ?? []).map((t: { id: number; task_name: string }) => ({ id: t.id, task_name: t.task_name }))))
+      .catch(() => setLinkedParentTaskOptions([]));
+  }, [addForm.linked_project_id]);
 
   useEffect(() => {
     void fetchTasks();
@@ -1386,6 +1408,8 @@ export default function TaskListPage() {
       instructions: "",
       instructions_locked: false,
       review_required: false,
+      linked_project_id: "",
+      parent_task_id: "",
     });
   }, [currentUserId]);
 
@@ -1407,6 +1431,8 @@ export default function TaskListPage() {
       instructions: "",
       instructions_locked: false,
       review_required: false,
+      linked_project_id: "",
+      parent_task_id: "",
     });
   }, [currentUserId]);
 
@@ -1489,6 +1515,8 @@ export default function TaskListPage() {
           instructions: addForm.instructions.trim() || null,
           instructions_locked: addForm.instructions_locked,
           review_required: addForm.review_required,
+          project_id: addForm.linked_project_id || null,
+          parent_task_id: addForm.parent_task_id ? Number(addForm.parent_task_id) : null,
           va_ids: currentUserId ? [currentUserId] : undefined,
         }),
       });
@@ -1540,7 +1568,7 @@ export default function TaskListPage() {
     } finally {
       setAddSaving(false);
     }
-  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.start_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
+  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.start_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, addForm.linked_project_id, addForm.parent_task_id, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
 
   const handleClaimedTaskRefresh = useCallback(async () => {
     await Promise.all([fetchTasks(), canShowHourlyPool ? fetchHourlyPool() : Promise.resolve()]);
@@ -2662,6 +2690,43 @@ export default function TaskListPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
+                <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Link to Project</label>
+                <select
+                  value={addForm.linked_project_id}
+                  onChange={(e) => setAddForm((form) => ({ ...form, linked_project_id: e.target.value, parent_task_id: "" }))}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                >
+                  <option value="">— None —</option>
+                  {linkedProjects.filter((p) => p.kind === "objective").length > 0 && (
+                    <optgroup label="Objectives">
+                      {linkedProjects.filter((p) => p.kind === "objective").map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {linkedProjects.filter((p) => p.kind === "operation").length > 0 && (
+                    <optgroup label="Operations">
+                      {linkedProjects.filter((p) => p.kind === "operation").map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                {addForm.linked_project_id && linkedParentTaskOptions.length > 0 && (
+                  <select
+                    value={addForm.parent_task_id}
+                    onChange={(e) => setAddForm((form) => ({ ...form, parent_task_id: e.target.value }))}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  >
+                    <option value="">Top-level task in this project</option>
+                    {linkedParentTaskOptions.map((t) => (
+                      <option key={t.id} value={t.id}>Subtask of: {t.task_name}</option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
