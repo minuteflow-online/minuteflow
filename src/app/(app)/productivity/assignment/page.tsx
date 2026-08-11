@@ -10,6 +10,7 @@ import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import TeamWorkloadView from "@/components/TeamWorkloadView";
+import ObjectiveProgressView from "@/components/ObjectiveProgressView";
 import type { RecurringTaskTemplate } from "@/types/database";
 import { countWords } from "@/lib/utils";
 import ColumnHeader from "@/components/table/ColumnHeader";
@@ -352,6 +353,7 @@ export default function TaskListPage() {
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
   const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "team" | "objective">("my_tasks");
   const [objectiveProjectIds, setObjectiveProjectIds] = useState<Set<string>>(new Set());
+  const [objectiveSubView, setObjectiveSubView] = useState<"list" | "progress">("list");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
@@ -1991,7 +1993,26 @@ export default function TaskListPage() {
               </div>
               )}
 
-              {isAdmin && assignedByProfilesLoaded && (activeView === "my_tasks" || activeView === "objective") && (
+              {isAdmin && activeView === "objective" && (
+                <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setObjectiveSubView("list")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${objectiveSubView === "list" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    List
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setObjectiveSubView("progress")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${objectiveSubView === "progress" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    Progress
+                  </button>
+                </div>
+              )}
+
+              {isAdmin && assignedByProfilesLoaded && (activeView === "my_tasks" || (activeView === "objective" && objectiveSubView === "list")) && (
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-semibold text-stone whitespace-nowrap">View as VA:</span>
                   <select
@@ -2241,6 +2262,10 @@ export default function TaskListPage() {
           ) : activeView === "team" ? (
             <div className="p-4">
               <TeamWorkloadView currentUserId={currentUserId ?? ""} teamMembers={assignedByProfiles} />
+            </div>
+          ) : activeView === "objective" && objectiveSubView === "progress" ? (
+            <div className="p-4">
+              <ObjectiveProgressView currentUserId={currentUserId ?? ""} teamMembers={assignedByProfiles} />
             </div>
           ) : (
             <>

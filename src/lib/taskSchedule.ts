@@ -16,6 +16,55 @@ export type RawTask = {
   isRecurring: boolean;
 };
 
+export function statusDotClass(status: string): string {
+  switch (status) {
+    case "in_progress":
+    case "revision_needed":
+      return "bg-amber";
+    case "submitted":
+      return "bg-sky-500";
+    case "reviewing":
+      return "bg-violet-500";
+    case "approved":
+      return "bg-emerald-500";
+    case "completed":
+      return "bg-sage";
+    case "paid":
+      return "bg-purple-500";
+    case "cancelled":
+      return "bg-terracotta";
+    default:
+      return "bg-stone"; // on_queue, pending, open, unassigned
+  }
+}
+
+export function statusBadgeClasses(status: string): string {
+  switch (status) {
+    case "in_progress":
+      return "bg-amber-50 text-amber-500 border-amber-200";
+    case "submitted":
+      return "bg-sky-50 text-sky-600 border-sky-200";
+    case "reviewing":
+      return "bg-violet-50 text-violet-600 border-violet-200";
+    case "revision_needed":
+      return "bg-amber-50 text-amber-600 border-amber-200";
+    case "approved":
+      return "bg-emerald-50 text-emerald-600 border-emerald-200";
+    case "completed":
+      return "bg-sage-soft text-sage border-sage/20";
+    case "paid":
+      return "bg-purple-50 text-purple-600 border-purple-200";
+    case "cancelled":
+      return "bg-red-50 text-red-500 border-red-200";
+    default:
+      return "bg-stone/10 text-stone border-stone/20";
+  }
+}
+
+export function statusLabel(status: string): string {
+  return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export function getDateInTimezone(tz: string): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: tz });
 }
