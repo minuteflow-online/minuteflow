@@ -26,11 +26,13 @@ type TemplateRow = {
   recurrence_days: string[] | null;
   recurrence_day_of_month: number | null;
   is_active: boolean;
+  created_by?: string | null;
   created_at: string;
   updated_at: string;
   assigned_to_profile?: { id: string; full_name: string; username: string } | null;
   assigned_to_profiles?: { id: string; full_name: string; username: string }[] | null;
   assigned_by_profile?: { id: string; full_name: string; username: string } | null;
+  created_by_profile?: { id: string; full_name: string; username: string } | null;
 };
 
 function serviceClient() {
@@ -101,7 +103,7 @@ async function requireUser(): Promise<
 async function decorateTemplates(rows: TemplateRow[], supabase = serviceClient()) {
   const profileIds = [
     ...new Set(
-      rows.flatMap((row) => [row.assigned_by, ...(row.assigned_to_ids ?? []), row.assigned_to]).filter(
+      rows.flatMap((row) => [row.assigned_by, row.created_by, ...(row.assigned_to_ids ?? []), row.assigned_to]).filter(
         (id): id is string => Boolean(id)
       )
     ),
@@ -132,6 +134,7 @@ async function decorateTemplates(rows: TemplateRow[], supabase = serviceClient()
       assigned_to_profile: assigned_to_profiles[0] ?? null,
       assigned_to_profiles,
       assigned_by_profile: row.assigned_by ? profilesMap[row.assigned_by] ?? null : null,
+      created_by_profile: row.created_by ? profilesMap[row.created_by] ?? null : null,
     };
   });
 }
@@ -249,6 +252,7 @@ export async function POST(request: Request) {
     recurrence_days: null,
     recurrence_day_of_month: resolvedDayOfMonth,
     is_active: booleanOrDefault(body.is_active, true),
+    created_by: user.id,
   };
 
   const { data, error } = await supabase

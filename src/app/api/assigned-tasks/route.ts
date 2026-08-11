@@ -39,6 +39,7 @@ type TaskRow = {
   archived_at: string | null;
   deleted_at: string | null;
   created_by: string | null;
+  created_by_profile?: { id: string; full_name: string; username: string } | null;
   created_at: string | null;
   updated_at: string | null;
   assigned_task_assignees: AssigneeRow[];
@@ -97,12 +98,14 @@ export async function GET(request: Request) {
   const formatAdminTaskRows = async (data: Array<Record<string, unknown>>) => {
     const allVaIds = [
       ...new Set(
-        data.flatMap((t) =>
+        data.flatMap((t) => [
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ((t as any).assigned_task_assignees ?? []).map((a: AssigneeRow) => a.va_id)
-        )
+          ...((t as any).assigned_task_assignees ?? []).map((a: AssigneeRow) => a.va_id),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (t as any).created_by,
+        ])
       ),
-    ];
+    ].filter((id): id is string => Boolean(id));
     let profilesMap: Record<string, { id: string; full_name: string; username: string }> = {};
     if (allVaIds.length > 0) {
       const { data: profiles } = await supabase
@@ -114,6 +117,8 @@ export async function GET(request: Request) {
 
     return data.map((task) => ({
       ...task,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      created_by_profile: (task as any).created_by ? profilesMap[(task as any).created_by] ?? null : null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       assigned_task_assignees: ((task as any).assigned_task_assignees ?? []).map((a: AssigneeRow) => ({
         ...a,
@@ -220,8 +225,12 @@ export async function GET(request: Request) {
     const vaAssignedByIds = [
       ...new Set(
         (vaAssigneeData ?? [])
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .map((row) => ((row as any).assigned_tasks?.assigned_by as string | null | undefined))
+          .flatMap((row) => [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (row as any).assigned_tasks?.assigned_by as string | null | undefined,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (row as any).assigned_tasks?.created_by as string | null | undefined,
+          ])
           .filter((id): id is string => Boolean(id))
       ),
     ];
@@ -238,7 +247,10 @@ export async function GET(request: Request) {
     const vaRows = (vaAssigneeData ?? []).map((row) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const task = (row as any).assigned_tasks;
-      if (task) task.assigned_by_profile = vaAssignorMap[task.assigned_by] ?? null;
+      if (task) {
+        task.assigned_by_profile = vaAssignorMap[task.assigned_by] ?? null;
+        task.created_by_profile = task.created_by ? vaAssignorMap[task.created_by] ?? null : null;
+      }
       return { ...row, is_collaborative: false, collaborator_name: null };
     });
 
@@ -354,8 +366,12 @@ export async function GET(request: Request) {
   const assignedByIds = [
     ...new Set(
       allVaRows
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .map((row) => ((row as any).assigned_tasks?.assigned_by as string | null | undefined))
+        .flatMap((row) => [
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (row as any).assigned_tasks?.assigned_by as string | null | undefined,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (row as any).assigned_tasks?.created_by as string | null | undefined,
+        ])
         .filter((id): id is string => Boolean(id))
     ),
   ];
@@ -373,13 +389,19 @@ export async function GET(request: Request) {
     ...((assigneeData ?? []).map((row) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const task = (row as any).assigned_tasks;
-      if (task) task.assigned_by_profile = assignorMap[task.assigned_by] ?? null;
+      if (task) {
+        task.assigned_by_profile = assignorMap[task.assigned_by] ?? null;
+        task.created_by_profile = task.created_by ? assignorMap[task.created_by] ?? null : null;
+      }
       return { ...row, is_collaborative: false, collaborator_name: null };
     }) as Array<AssigneeRow & { is_collaborative: false; collaborator_name: null }>),
     ...(collabData.map((row) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const task = (row as any).assigned_tasks;
-      if (task) task.assigned_by_profile = assignorMap[task.assigned_by] ?? null;
+      if (task) {
+        task.assigned_by_profile = assignorMap[task.assigned_by] ?? null;
+        task.created_by_profile = task.created_by ? assignorMap[task.created_by] ?? null : null;
+      }
       return { ...row, is_collaborative: true, collaborator_name: profileNameMap[row.va_id] ?? null };
     }) as Array<AssigneeRow & { is_collaborative: true; collaborator_name: string | null }>),
   ];

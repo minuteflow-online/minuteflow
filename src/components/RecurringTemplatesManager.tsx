@@ -694,6 +694,7 @@ export default function RecurringTemplatesManager({
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Status</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Start Date</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Repeat</th>
+                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Created</th>
                 <th className="px-3 py-2.5 w-40"></th>
               </tr>
             </thead>
@@ -727,6 +728,14 @@ export default function RecurringTemplatesManager({
                     </td>
                     <td className="px-3 py-3 text-[13px] text-walnut">{formatDate(template.start_date, orgTimezone)}</td>
                     <td className="px-3 py-3 text-[13px] text-walnut">{recurrenceLabel(template)}</td>
+                    <td className="px-3 py-3 text-[13px] text-walnut">
+                      <div className="space-y-0.5">
+                        <div className="truncate max-w-[140px]">
+                          {template.created_by_profile?.full_name || template.created_by_profile?.username || "—"}
+                        </div>
+                        <div className="text-[11px] text-stone/70">{formatDate(template.created_at, orgTimezone)}</div>
+                      </div>
+                    </td>
                     <td className="px-3 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button

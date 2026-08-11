@@ -32,6 +32,8 @@ interface SubtaskRow {
   instructions?: string | null;
   account?: string | null;
   assigned_by: string | null;
+  created_by?: string | null;
+  created_by_profile?: { id: string; full_name: string; username: string } | null;
   review_required?: boolean;
   assigned_task_assignees: Array<{
     va_id: string;
@@ -871,6 +873,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                             )}
                             {sub.created_at && (
                               <span className="text-[11px] text-stone/60 shrink-0 hidden lg:block">
+                                {sub.created_by_profile?.full_name || sub.created_by_profile?.username
+                                  ? `${sub.created_by_profile.full_name || sub.created_by_profile.username} · `
+                                  : ""}
                                 {formatDate(sub.created_at)}
                               </span>
                             )}

@@ -2068,8 +2068,15 @@ export default function TaskAssignmentsAdminTab({
 
                     {/* Created */}
                     {!hiddenColumns.has("created") && (
-                      <td className="px-3 py-3 text-[12px] text-stone/70 whitespace-nowrap truncate" onClick={() => openEdit(task)}>
-                        {task.created_at ? fmtDueDate(task.created_at, orgTimezone) : <span className="text-stone/30">—</span>}
+                      <td className="px-3 py-3 text-[12px] text-walnut whitespace-nowrap truncate" onClick={() => openEdit(task)}>
+                        {task.created_at ? (
+                          <div className="space-y-0.5 truncate">
+                            <div className="truncate">{task.created_by_profile?.full_name || task.created_by_profile?.username || "—"}</div>
+                            <div className="text-[10px] text-stone/70">{fmtDueDate(task.created_at, orgTimezone)}</div>
+                          </div>
+                        ) : (
+                          <span className="text-stone/30">—</span>
+                        )}
                       </td>
                     )}
 

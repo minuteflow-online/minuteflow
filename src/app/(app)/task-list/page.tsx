@@ -69,6 +69,7 @@ type VATaskRow = {
     fixed_pay_tasks?: { rate: number } | null;
     projects?: { id: string; name: string } | null;
     created_by: string | null;
+    created_by_profile?: { id: string; full_name: string; username: string } | null;
     created_at: string;
     updated_at: string;
   };
@@ -142,6 +143,7 @@ type AdminTaskFlat = {
   review_required: boolean;
   revision_count?: number;
   created_by: string | null;
+  created_by_profile?: { id: string; full_name: string; username: string } | null;
   created_at: string;
   updated_at: string;
   assigned_by?: string | null;
@@ -474,6 +476,7 @@ export default function TaskListPage() {
                 fixed_pay_tasks: task.fixed_pay_tasks ?? null,
                 projects: task.projects ?? null,
                 created_by: task.created_by,
+                created_by_profile: task.created_by_profile ?? null,
                 created_at: task.created_at,
                 updated_at: task.updated_at,
               },
@@ -2541,7 +2544,12 @@ export default function TaskListPage() {
                             )}
                             {!hiddenColumns.has("created") && (
                               <td className="px-3 py-3 text-[13px] text-walnut truncate">
-                                {formatCreatedAt(detail.created_at)}
+                                <div className="space-y-0.5 truncate">
+                                  <div className="truncate">
+                                    {detail.created_by_profile?.full_name || detail.created_by_profile?.username || "—"}
+                                  </div>
+                                  <div className="text-[11px] text-stone/70">{formatCreatedAt(detail.created_at)}</div>
+                                </div>
                               </td>
                             )}
                             {(taskView === "archived" || taskView === "trash") && (

@@ -505,11 +505,13 @@ export interface RecurringTaskTemplate {
   recurrence_day_of_month: number | null;
   is_active: boolean;
   is_paused?: boolean;
+  created_by?: string | null;
   created_at: string;
   updated_at: string;
   assigned_to_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
   assigned_to_profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>[] | null;
   assigned_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
+  created_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
 }
 
 export interface AssignedTask {
@@ -533,6 +535,7 @@ export interface AssignedTask {
   review_required: boolean;
   revision_count: number;
   created_by: string | null;
+  created_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;
   created_at: string;
   updated_at: string;
   status: AssignedTaskStatus;
