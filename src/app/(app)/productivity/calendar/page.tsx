@@ -130,6 +130,7 @@ export default function ProductivityCalendarPage() {
   const [loadingDay, setLoadingDay] = useState(false);
 
   const [showFilters, setShowFilters] = useState(false);
+  const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   const [sourceFilter, setSourceFilter] = useState<Set<"assigned" | "fixed">>(new Set());
   const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
@@ -555,6 +556,15 @@ export default function ProductivityCalendarPage() {
     const top = Math.max(0, (startMinutes / 60) * HOUR_HEIGHT);
     const height = Math.max(20, ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT);
     return { top, height };
+  }
+
+  // Due Time is a plain "HH:MM" clock time (not a timestamp, no timezone
+  // conversion needed) — position it on the same grid the hour blocks use,
+  // clamped to the visible 6am-9pm range.
+  function dueTimePosition(dueTime: string): number {
+    const [h, m] = dueTime.split(":").map(Number);
+    const minutes = Math.max(0, Math.min((DAY_END_HOUR - DAY_START_HOUR) * 60, (h - DAY_START_HOUR) * 60 + (m || 0)));
+    return (minutes / 60) * HOUR_HEIGHT;
   }
 
   // Lays out same-day scheduled blocks side-by-side when their times overlap,
@@ -1114,6 +1124,37 @@ export default function ProductivityCalendarPage() {
                       );
                     });
                   })()}
+
+                  {/* Due Time markers — a due date+time isn't a work span, so it
+                      doesn't get an hour block; it gets a thin line at its clock
+                      time instead, positioned on the same grid the blocks use. */}
+                  {dueTodayItems
+                    .filter((item) => item.dateType === "due" && item.dueTime)
+                    .map((item) => {
+                      const scheduleTarget = item.source === "assigned"
+                        ? daySchedule.find((t) => t.id === item.taskId) ?? assignedTasksAll.find((t) => t.id === item.taskId)
+                        : undefined;
+                      const pillClasses = categoryBlockClasses(item.category, true);
+                      const top = dueTimePosition(item.dueTime!);
+                      return (
+                        <div
+                          key={`due-marker-${item.id}`}
+                          className="pointer-events-none absolute left-16 right-2 flex items-center gap-1.5"
+                          style={{ top: top - 7 }}
+                        >
+                          <span className="h-[2px] w-3 shrink-0 rounded bg-stone/60" />
+                          <button
+                            type="button"
+                            disabled={!scheduleTarget}
+                            onClick={() => scheduleTarget && openScheduleExisting(scheduleTarget, selectedDate)}
+                            title={`Due ${formatDueTime(item.dueTime!)} — ${item.title}`}
+                            className={`pointer-events-auto truncate max-w-[70%] text-[9px] font-bold px-1.5 py-[1px] rounded-full border shadow-sm ${scheduleTarget ? "cursor-pointer hover:opacity-80" : "cursor-default"} ${pillClasses}`}
+                          >
+                            Due {formatDueTime(item.dueTime!)} · {item.title}
+                          </button>
+                        </div>
+                      );
+                    })}
                 </div>
               </div>
             )}
@@ -1121,38 +1162,63 @@ export default function ProductivityCalendarPage() {
 
           {/* Unscheduled sidebar */}
           <div className="rounded-xl border border-sand bg-white p-4 space-y-3 h-fit">
-            <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Unscheduled</h3>
-            {unscheduledTasks.length === 0 ? (
-              <p className="text-[11px] text-stone">Nothing unscheduled.</p>
-            ) : (
-              <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
-                {unscheduledTasks.map((task) => (
-                  <div
-                    key={task.id}
-                    className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-white px-2.5 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-[12px] font-semibold text-espresso">{task.task_name}</p>
-                      {task.account && <p className="truncate text-[10px] text-stone">{task.account}</p>}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => openScheduleExisting(task)}
-                      className="shrink-0 px-2 py-1 rounded-lg bg-sage text-white text-[10px] font-semibold hover:bg-sage/90 transition-colors cursor-pointer"
-                    >
-                      Schedule
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
             <button
               type="button"
-              onClick={() => openAddBlock(9)}
-              className="w-full px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer"
+              onClick={() => setUnscheduledCollapsed((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 cursor-pointer"
             >
-              + Add Hour Block
+              <span className="flex items-center gap-2">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  className={`text-bark transition-transform ${unscheduledCollapsed ? "" : "rotate-90"}`}
+                >
+                  <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="text-xs font-bold text-espresso uppercase tracking-wide">Unscheduled</span>
+              </span>
+              {unscheduledTasks.length > 0 && (
+                <span className="text-[10px] font-semibold py-[2px] px-2 rounded-full bg-terracotta-soft text-terracotta">
+                  {unscheduledTasks.length}
+                </span>
+              )}
             </button>
+            {!unscheduledCollapsed && (
+              <>
+                {unscheduledTasks.length === 0 ? (
+                  <p className="text-[11px] text-stone">Nothing unscheduled.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
+                    {unscheduledTasks.map((task) => (
+                      <div
+                        key={task.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-white px-2.5 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-[12px] font-semibold text-espresso">{task.task_name}</p>
+                          {task.account && <p className="truncate text-[10px] text-stone">{task.account}</p>}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openScheduleExisting(task)}
+                          className="shrink-0 px-2 py-1 rounded-lg bg-sage text-white text-[10px] font-semibold hover:bg-sage/90 transition-colors cursor-pointer"
+                        >
+                          Schedule
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => openAddBlock(9)}
+                  className="w-full px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer"
+                >
+                  + Add Hour Block
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

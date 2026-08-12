@@ -73,7 +73,7 @@ export interface TaskEditorHandle {
 }
 
 const inputClass = "w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white disabled:bg-parchment/40 disabled:text-stone";
-const labelClass = "mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut";
+const labelClass = "mb-1 block text-[11px] font-bold uppercase tracking-wider text-amber";
 
 function ClientMemoFormatTooltip() {
   return (
@@ -597,7 +597,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       <Section title="Details">
         <div>
           <div className="mb-1 flex items-center gap-1.5">
-            <label className="block text-[11px] font-semibold uppercase tracking-wide text-walnut">Client Detail</label>
+            <label className="block text-[11px] font-bold uppercase tracking-wide text-amber">Client Detail</label>
             <ClientMemoFormatTooltip />
           </div>
           <textarea
@@ -614,7 +614,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         {supportsTodos && (
           <div>
-            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">To-Do List</label>
+            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber">To-Do List</label>
             <p className="mb-1.5 text-[10px] text-stone">Internal only — tracks sub-steps and time per item, shows in internal reports. Doesn&apos;t affect the client memo above.</p>
             {!isEditing && (
               <p className="mb-1.5 text-[10px] text-stone">These save with the task once you click Create Task.</p>
@@ -870,7 +870,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         <Section title={supportsTodos ? "Attachments & Screenshots" : "Attachments"}>
           {supportsTodos && (
             <>
-              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
+              <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber">Screenshots</label>
               {!editingTaskId ? (
                 <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
               ) : screenshotsLoading ? (

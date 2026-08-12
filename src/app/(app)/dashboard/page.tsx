@@ -3388,6 +3388,7 @@ export default function DashboardPage() {
                 key={`avail-${claimRefreshKey}`}
                 onClaimed={() => setClaimRefreshKey((k) => k + 1)}
                 canSeeFixedPay={isPerTask || canSeeAvailable}
+                startCollapsed={isVa}
               />
             )}
             {/* Quick Pick — hidden for VAs before clock-in */}
