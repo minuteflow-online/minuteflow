@@ -94,20 +94,17 @@ export function localDateOf(iso: string): string {
 // single source of truth for every task-creation form on the site.
 export const CATEGORY_OPTIONS = ["Task", "Communication", "Planning", "Collaboration", "Personal", "Break"];
 
-// Category color coding — uses MinuteFlow's own muted accent palette (see
-// globals.css) instead of raw Tailwind colors, which read as too saturated
-// ("neon") at full solid fill. These are the same tones used for primary
-// buttons/status badges elsewhere, so they're solid but never garish.
-// Note: Personal borrows `terracotta`, normally reserved for
-// errors/warnings — there's no 6th hue left in the fixed palette once the
-// other 5 categories claim sage/amber/plum/clay-rose/slate-blue.
+// Category color coding — hand-tuned medium hues (not raw Tailwind-500,
+// which read as neon; not the brand `amber` token either, which is a dark
+// goldenrod that reads as brown). Each is a clear, recognizable mid-tone
+// version of its hue at moderate saturation.
 const CATEGORY_DOT_CLASSES: Record<string, string> = {
-  Task: "bg-sage",
-  Communication: "bg-amber",
-  Planning: "bg-plum",
-  Collaboration: "bg-clay-rose",
-  Personal: "bg-terracotta",
-  Break: "bg-slate-blue",
+  Task: "bg-[#4fb37a]",
+  Communication: "bg-[#f0ad3f]",
+  Planning: "bg-[#a878d6]",
+  Collaboration: "bg-[#f2954a]",
+  Personal: "bg-[#3fc0b0]",
+  Break: "bg-[#4f9fea]",
 };
 
 export function categoryDotClass(category: string): string {
@@ -115,15 +112,14 @@ export function categoryDotClass(category: string): string {
 }
 
 // Full block styling (border + solid background + text) for Calendar hour
-// blocks — same tokens as the dot, so the whole block reads as the
-// category color rather than just a thin border.
+// blocks — same hues as the dot, with a slightly darker border for definition.
 const CATEGORY_BLOCK_CLASSES: Record<string, string> = {
-  Task: "border-sage bg-sage text-white",
-  Communication: "border-amber bg-amber text-white",
-  Planning: "border-plum bg-plum text-white",
-  Collaboration: "border-clay-rose bg-clay-rose text-white",
-  Personal: "border-terracotta bg-terracotta text-white",
-  Break: "border-slate-blue bg-slate-blue text-white",
+  Task: "border-[#3a8f5f] bg-[#4fb37a] text-white",
+  Communication: "border-[#cc8a1f] bg-[#f0ad3f] text-white",
+  Planning: "border-[#8a5cc0] bg-[#a878d6] text-white",
+  Collaboration: "border-[#d97830] bg-[#f2954a] text-white",
+  Personal: "border-[#2fa595] bg-[#3fc0b0] text-white",
+  Break: "border-[#3a80cc] bg-[#4f9fea] text-white",
 };
 
 export function categoryBlockClasses(category: string | null | undefined): string {
