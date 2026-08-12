@@ -21,6 +21,50 @@ type AssignedTaskStatus =
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const TASK_SELECT =
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, due_date, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, assigned_task_assignees(id, va_id, status)";
+
+/**
+ * GET /api/assigned-tasks/[id]
+ * Full row for a single task — used to prefill edit forms (e.g. TaskEditor)
+ * with fields the list views don't carry. Admin/manager can view any task;
+ * VAs must be an assignee.
+ */
+export async function GET(_request: Request, { params }: RouteContext) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  const { id } = await params;
+
+  const { data: task, error } = await supabase
+    .from("assigned_tasks")
+    .select(TASK_SELECT)
+    .eq("id", id)
+    .single();
+
+  if (error || !task) return Response.json({ error: "Task not found" }, { status: 404 });
+
+  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
+  if (!isAdminOrManager) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const assignees = ((task as any).assigned_task_assignees ?? []) as Array<{ va_id: string }>;
+    if (!assignees.some((a) => a.va_id === user.id)) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
+  return Response.json({ task });
+}
+
 /**
  * PUT /api/assigned-tasks/[id]
  * Admin/manager only.
