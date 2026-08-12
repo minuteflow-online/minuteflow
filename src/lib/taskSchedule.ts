@@ -112,16 +112,16 @@ export function categoryDotClass(category: string): string {
 }
 
 // Full block styling (border + solid background + text) for Calendar hour
-// blocks — same hues as the dot, with a slightly darker solid border for
-// definition. Fill is at 70% opacity (30% transparent) so it blends softly
-// with the page instead of reading as a flat, fully opaque color chip.
+// blocks — same hues as the dot, with a slightly darker border for
+// definition. Fully opaque: any transparency blends toward the white page
+// background, which is the "white overlay" look this deliberately avoids.
 const CATEGORY_BLOCK_CLASSES: Record<string, string> = {
-  Task: "border-[#3a8f5f] bg-[#4fb37a]/70 text-white",
-  Communication: "border-[#cc8a1f] bg-[#f0ad3f]/70 text-white",
-  Planning: "border-[#8a5cc0] bg-[#a878d6]/70 text-white",
-  Collaboration: "border-[#d97830] bg-[#f2954a]/70 text-white",
-  Personal: "border-[#2fa595] bg-[#3fc0b0]/70 text-white",
-  Break: "border-[#3a80cc] bg-[#4f9fea]/70 text-white",
+  Task: "border-[#3a8f5f] bg-[#4fb37a] text-white",
+  Communication: "border-[#cc8a1f] bg-[#f0ad3f] text-white",
+  Planning: "border-[#8a5cc0] bg-[#a878d6] text-white",
+  Collaboration: "border-[#d97830] bg-[#f2954a] text-white",
+  Personal: "border-[#2fa595] bg-[#3fc0b0] text-white",
+  Break: "border-[#3a80cc] bg-[#4f9fea] text-white",
 };
 
 export function categoryBlockClasses(category: string | null | undefined): string {
