@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
-import TaskEditor from "@/components/TaskEditor";
+import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
+import Section from "@/components/ui/Section";
 import FixedPayTasksPanel from "@/components/FixedPayTasksPanel";
 import ProjectInfoModal from "@/components/ProjectInfoModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -293,9 +294,6 @@ function sortTasks(tasks: VATaskRow[]) {
   });
 }
 
-function sameText(a: string | null | undefined, b: string | null | undefined) {
-  return (a ?? "") === (b ?? "");
-}
 
 function renderTextWithLinks(text: string) {
   const parts: ReactElement[] = [];
@@ -381,7 +379,6 @@ export default function TaskListPage() {
   const [selectedTask, setSelectedTask] = useState<VATaskRow | null>(null);
   const [panelStatus, setPanelStatus] = useState<AssignedTaskStatus>("pending");
   const [panelReviewRequired, setPanelReviewRequired] = useState(false);
-  const [panelNotes, setPanelNotes] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
   const [panelUploadSaving, setPanelUploadSaving] = useState(false);
   const [panelMsg, setPanelMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -398,6 +395,7 @@ export default function TaskListPage() {
   const activeLogIdRef = useRef<number | null>(null);
   const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
   const createAttachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const taskEditorRef = useRef<TaskEditorHandle | null>(null);
   const captureWorkerRef = useRef<Worker | null>(null);
   const silentCaptureRef = useRef<((logId: number, screenshotType: "start" | "progress") => Promise<boolean>) | null>(
     null
@@ -1321,7 +1319,6 @@ export default function TaskListPage() {
   const openCreate = useCallback(() => {
     setSelectedTask(null);
     setPanelStatus("pending");
-    setPanelNotes("");
     setPanelSaving(false);
     setPanelUploadSaving(false);
     setPanelMsg(null);
@@ -1344,7 +1341,6 @@ export default function TaskListPage() {
       setSelectedTask(task);
       setPanelStatus(task.status);
       setPanelReviewRequired(Boolean(task.assigned_tasks.review_required));
-      setPanelNotes(task.notes ?? "");
       setPanelUploadSaving(false);
       setPanelMsg(null);
       setAttachments([]);
@@ -1359,8 +1355,7 @@ export default function TaskListPage() {
   );
 
   // Refreshes the task list and re-syncs the open panel after TaskEditor
-  // saves metadata changes — status/notes stay in their own save (below),
-  // so this only needs to swap in the fresh assigned_tasks fields.
+  // saves metadata changes.
   const handleMetadataSaved = useCallback(async () => {
     const freshTasks = await fetchTasks();
     setSelectedTask((current) => {
@@ -1373,7 +1368,6 @@ export default function TaskListPage() {
   const closePanel = useCallback(() => {
     setSelectedTask(null);
     setPanelStatus("pending");
-    setPanelNotes("");
     setPanelSaving(false);
     setPanelUploadSaving(false);
     setPanelMsg(null);
@@ -1467,115 +1461,93 @@ export default function TaskListPage() {
     const taskId = selectedTask.assigned_tasks.id;
     const taskLogId = selectedTask.log_id;
     const previousStatus = selectedTask.status;
-    const previousNotes = selectedTask.notes ?? "";
     const nextStatus = panelStatus;
     const statusChanged = nextStatus !== previousStatus;
     const nextReviewRequired = panelReviewRequired;
-    const nextNotes = panelNotes;
-    const notesChanged = !sameText(nextNotes, previousNotes);
     const reviewRequiredChanged = !isAdmin && nextReviewRequired !== Boolean(selectedTask.assigned_tasks.review_required);
 
-    if (!statusChanged && !notesChanged && !reviewRequiredChanged) {
-      closePanel();
-      return;
+    if (!statusChanged && !reviewRequiredChanged) return;
+
+    const body: Record<string, unknown> = {};
+    if (statusChanged) {
+      body.status = nextStatus;
+      if (isSubmittedView && selectedTask?.va_id) {
+        // Admin reviewing submitted work: target the specific VA's assignee row
+        body.va_id = selectedTask.va_id;
+      } else if (currentUserId) {
+        // VA updating their own submission
+        body.va_id = currentUserId;
+      }
     }
 
-    setPanelSaving(true);
-    setPanelMsg(null);
+    if (Object.keys(body).length > 0) {
+      const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!saveRes.ok) throw new Error(`HTTP ${saveRes.status}`);
+    }
 
-    try {
-      const body: Record<string, unknown> = {};
-      if (statusChanged) body.status = nextStatus;
-      if (notesChanged) body.notes = nextNotes;
-      if (statusChanged || notesChanged) {
-        if (isSubmittedView && selectedTask?.va_id) {
-          // Admin reviewing submitted work: target the specific VA's assignee row
-          body.va_id = selectedTask.va_id;
-        } else if (currentUserId) {
-          // VA updating their own submission
-          body.va_id = currentUserId;
-        }
-      }
+    // VAs can check (not uncheck) review_required — send as standalone PATCH
+    if (reviewRequiredChanged && nextReviewRequired) {
+      const rrRes = await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ review_required: true }),
+      });
+      if (!rrRes.ok) throw new Error(`HTTP ${rrRes.status}`);
+    }
 
-      if (Object.keys(body).length > 0) {
-        const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!saveRes.ok) throw new Error(`HTTP ${saveRes.status}`);
-      }
+    const updatedAt = new Date().toISOString();
+    setTasks((prev) =>
+      sortTasks(
+        prev.map((row) => {
+          if (row.id !== selectedTask.id) return row;
 
-      // VAs can check (not uncheck) review_required — send as standalone PATCH
-      if (reviewRequiredChanged && nextReviewRequired) {
-        const rrRes = await fetch(`/api/assigned-tasks/${taskId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ review_required: true }),
-        });
-        if (!rrRes.ok) throw new Error(`HTTP ${rrRes.status}`);
-      }
-
-      const updatedAt = new Date().toISOString();
-      setTasks((prev) =>
-        sortTasks(
-          prev.map((row) => {
-            if (row.id !== selectedTask.id) return row;
-
-            return {
-              ...row,
-              status: statusChanged ? nextStatus : row.status,
-              notes: notesChanged ? nextNotes : row.notes,
-              updated_at: statusChanged || notesChanged ? updatedAt : row.updated_at,
-              assigned_tasks: {
-                ...row.assigned_tasks,
-                review_required: reviewRequiredChanged ? nextReviewRequired : row.assigned_tasks.review_required,
-                updated_at: reviewRequiredChanged ? updatedAt : row.assigned_tasks.updated_at,
-              },
-            };
-          })
-        )
-      );
-      setSelectedTask((current) =>
-        current
-          ? {
-              ...current,
-              status: statusChanged ? nextStatus : current.status,
-              notes: notesChanged ? nextNotes : current.notes,
-              updated_at: statusChanged || notesChanged ? updatedAt : current.updated_at,
-              assigned_tasks: {
-                ...current.assigned_tasks,
-                review_required: reviewRequiredChanged ? nextReviewRequired : current.assigned_tasks.review_required,
-                updated_at: reviewRequiredChanged ? updatedAt : current.assigned_tasks.updated_at,
-              },
-            }
-          : current
-      );
-      void fetchTasks();
-      if (statusChanged && nextStatus === "in_progress" && taskLogId) {
-        activeLogIdRef.current = taskLogId;
-        void (async () => {
-          const result = await requestStream();
-          if (result !== "granted") return;
-          const captured = await captureTaskScreenshot(taskLogId, "start");
-          if (captured) {
-            captureWorkerRef.current?.postMessage({ type: "start", logId: taskLogId });
+          return {
+            ...row,
+            status: statusChanged ? nextStatus : row.status,
+            updated_at: statusChanged ? updatedAt : row.updated_at,
+            assigned_tasks: {
+              ...row.assigned_tasks,
+              review_required: reviewRequiredChanged ? nextReviewRequired : row.assigned_tasks.review_required,
+              updated_at: reviewRequiredChanged ? updatedAt : row.assigned_tasks.updated_at,
+            },
+          };
+        })
+      )
+    );
+    setSelectedTask((current) =>
+      current
+        ? {
+            ...current,
+            status: statusChanged ? nextStatus : current.status,
+            updated_at: statusChanged ? updatedAt : current.updated_at,
+            assigned_tasks: {
+              ...current.assigned_tasks,
+              review_required: reviewRequiredChanged ? nextReviewRequired : current.assigned_tasks.review_required,
+              updated_at: reviewRequiredChanged ? updatedAt : current.assigned_tasks.updated_at,
+            },
           }
-        })();
-      } else if (statusChanged && nextStatus !== "in_progress" && taskLogId) {
-        captureWorkerRef.current?.postMessage({ type: "stop" });
-      }
-      setPanelMsg({ type: "ok", text: "Changes saved." });
-      window.setTimeout(() => closePanel(), 800);
-    } catch {
-      setPanelMsg({ type: "err", text: "Unable to save changes right now." });
-    } finally {
-      setPanelSaving(false);
+        : current
+    );
+    void fetchTasks();
+    if (statusChanged && nextStatus === "in_progress" && taskLogId) {
+      activeLogIdRef.current = taskLogId;
+      void (async () => {
+        const result = await requestStream();
+        if (result !== "granted") return;
+        const captured = await captureTaskScreenshot(taskLogId, "start");
+        if (captured) {
+          captureWorkerRef.current?.postMessage({ type: "start", logId: taskLogId });
+        }
+      })();
+    } else if (statusChanged && nextStatus !== "in_progress" && taskLogId) {
+      captureWorkerRef.current?.postMessage({ type: "stop" });
     }
   }, [
-    closePanel,
     fetchTasks,
-    panelNotes,
     panelReviewRequired,
     panelStatus,
     selectedTask,
@@ -1585,6 +1557,27 @@ export default function TaskListPage() {
     requestStream,
     captureTaskScreenshot,
   ]);
+
+  // Single combined Save Changes action for the detail panel — submits
+  // TaskEditor's metadata form (when the viewer can edit it) and the
+  // status/review-required save together, so the panel reads as one form
+  // with one save button instead of two separate ones.
+  const handleSaveAll = useCallback(async () => {
+    setPanelMsg(null);
+    setPanelSaving(true);
+    try {
+      if (panelCanEditFields && taskEditorRef.current) {
+        await taskEditorRef.current.submit();
+      }
+      await handleSavePanel();
+      setPanelMsg({ type: "ok", text: "Changes saved." });
+      window.setTimeout(() => closePanel(), 800);
+    } catch {
+      setPanelMsg({ type: "err", text: "Unable to save changes right now." });
+    } finally {
+      setPanelSaving(false);
+    }
+  }, [panelCanEditFields, handleSavePanel, closePanel]);
 
   const handleAttachmentUpload = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -2546,12 +2539,19 @@ export default function TaskListPage() {
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
               {panelCanEditFields ? (
                 <TaskEditor
+                  ref={taskEditorRef}
                   mode="time_based"
                   editingTaskId={selectedTask.assigned_tasks.id}
                   initialTask={selectedTask.assigned_tasks}
                   currentUserId={currentUserId ?? ""}
                   isAdminOrManager={isAdmin}
                   teamMembers={panelAssignedByOptions}
+                  // selectedTask.assigned_tasks (VATaskRow's embedded shape)
+                  // has no assigned_task_assignees array, unlike Calendar's
+                  // dedicated GET — without this, TaskEditor's va_id fallback
+                  // defaults to "" and its PUT wipes the task's assignee.
+                  defaultVaId={selectedTask.va_id}
+                  hideFooter
                   onCancel={closePanel}
                   onSaved={() => void handleMetadataSaved()}
                 />
@@ -2665,17 +2665,6 @@ export default function TaskListPage() {
                 </div>
               )}
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">My Notes</label>
-                <textarea
-                  value={panelNotes}
-                  onChange={(e) => setPanelNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Add your private notes for this task..."
-                  className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                />
-              </div>
-
               {!panelCanEditFields && (
                 <div>
                   <label className="flex items-center gap-2 cursor-pointer w-fit">
@@ -2691,6 +2680,7 @@ export default function TaskListPage() {
                 </div>
               )}
 
+              <Section title="Status & Files" defaultOpen>
               <div>
                 <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
                 {selectedTask.is_collaborative ? (
@@ -2861,6 +2851,7 @@ export default function TaskListPage() {
                   </div>
                 )}
               </div>
+              </Section>
 
               {panelMsg?.type === "err" && <p className="text-xs font-medium text-red-500">{panelMsg.text}</p>}
               {panelMsg?.type === "ok" && <p className="text-xs font-medium text-sage">{panelMsg.text}</p>}
@@ -2885,7 +2876,7 @@ export default function TaskListPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleSavePanel()}
+                  onClick={() => void handleSaveAll()}
                   disabled={panelSaving}
                   className="cursor-pointer rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
                 >

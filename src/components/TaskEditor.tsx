@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { countWords } from "@/lib/utils";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
@@ -55,14 +55,20 @@ export interface TaskEditorProps {
   defaultLinkedProjectId?: string;
   /** VA's own hourly rate — feeds the Rate section's Duration × Rate helper. */
   currentPayRate?: number;
+  /** Hides the built-in Save/Cancel footer — use with a ref to trigger submit() from a parent-owned footer instead. */
+  hideFooter?: boolean;
   onCancel: () => void;
   onSaved: (task: { id: number; [key: string]: unknown }) => void;
+}
+
+export interface TaskEditorHandle {
+  submit: () => Promise<void>;
 }
 
 const inputClass = "w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white disabled:bg-parchment/40 disabled:text-stone";
 const labelClass = "mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut";
 
-export default function TaskEditor({
+const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEditor({
   mode,
   editingTaskId = null,
   initialTask = null,
@@ -75,9 +81,10 @@ export default function TaskEditor({
   defaultEndTime,
   defaultLinkedProjectId,
   currentPayRate,
+  hideFooter = false,
   onCancel,
   onSaved,
-}: TaskEditorProps) {
+}: TaskEditorProps, ref) {
   const isEditing = Boolean(editingTaskId);
 
   // Basics
@@ -286,8 +293,12 @@ export default function TaskEditor({
         const effectiveVaId = isAdminOrManager ? vaId : currentUserId;
 
         if (isEditing && editingTaskId) {
+          // va_ids intentionally omitted here — assigned_tasks supports
+          // multiple assignees (collaborative tasks) but this form's Assign
+          // To is a single-select, so reconciling va_ids on every metadata
+          // save would silently drop collaborators (or unassign entirely).
+          // Reassignment stays disabled during edit; see the Assign To field.
           if (isAdminOrManager) {
-            body.va_ids = effectiveVaId ? [effectiveVaId] : [];
             const res = await fetch(`/api/assigned-tasks/${editingTaskId}`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
@@ -362,6 +373,8 @@ export default function TaskEditor({
     assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
   ]);
+
+  useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
   const assignToOptions = teamMembers;
   const assignByOptions = teamMembers;
@@ -558,7 +571,7 @@ export default function TaskEditor({
           <select
             value={isAdminOrManager ? vaId : currentUserId}
             onChange={(e) => setVaId(e.target.value)}
-            disabled={!isAdminOrManager}
+            disabled={!isAdminOrManager || isEditing}
             className={inputClass}
           >
             <option value="">Unassigned</option>
@@ -566,6 +579,9 @@ export default function TaskEditor({
               <option key={m.id} value={m.id}>{m.full_name || m.username}</option>
             ))}
           </select>
+          {isEditing && isAdminOrManager && (
+            <p className="mt-1 text-[10px] text-stone">Reassign this task from Assignment's task list — a task can have more than one assignee.</p>
+          )}
         </div>
 
         <div>
@@ -714,18 +730,22 @@ export default function TaskEditor({
 
       {error && <p className="text-[12px] text-red-600">{error}</p>}
 
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          onClick={() => void handleSubmit()}
-          disabled={saving || !taskName.trim()}
-          className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
-        >
-          {saving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
-        </button>
-        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
-          Cancel
-        </button>
-      </div>
+      {!hideFooter && (
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            onClick={() => void handleSubmit()}
+            disabled={saving || !taskName.trim()}
+            className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+          >
+            {saving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
+          </button>
+          <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   );
-}
+});
+
+export default TaskEditor;
