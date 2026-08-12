@@ -551,16 +551,14 @@ export default function TaskEditor({
           </select>
         </div>
 
-        {isAdminOrManager && (
-          <div>
-            <label className={labelClass}>Assigned By</label>
-            <select value={assignedBy} onChange={(e) => setAssignedBy(e.target.value)} className={inputClass}>
-              {assignByOptions.map((m) => (
-                <option key={m.id} value={m.id}>{m.full_name || m.username}</option>
-              ))}
-            </select>
-          </div>
-        )}
+        <div>
+          <label className={labelClass}>Assigned By</label>
+          <select value={assignedBy} onChange={(e) => setAssignedBy(e.target.value)} className={inputClass}>
+            {assignByOptions.map((m) => (
+              <option key={m.id} value={m.id}>{m.full_name || m.username}</option>
+            ))}
+          </select>
+        </div>
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <label className={labelClass}>Link to Project</label>
