@@ -392,6 +392,7 @@ export default function TaskListPage() {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [pendingCreateFiles, setPendingCreateFiles] = useState<File[]>([]);
   const [createUploadSaving, setCreateUploadSaving] = useState(false);
+  const [createTaskMode, setCreateTaskMode] = useState<"time_based" | "output_based">("time_based");
   const activeLogIdRef = useRef<number | null>(null);
   const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
   const createAttachmentInputRef = useRef<HTMLInputElement | null>(null);
@@ -1327,6 +1328,7 @@ export default function TaskListPage() {
     setIsCreating(true);
     setPendingCreateFiles([]);
     setCreateUploadSaving(false);
+    setCreateTaskMode("time_based");
   }, []);
 
   const closeCreate = useCallback(() => {
@@ -1385,6 +1387,7 @@ export default function TaskListPage() {
   const handleTaskCreated = useCallback(
     async (task: { id: number; [key: string]: unknown }) => {
       const newTaskId = task.id;
+      const attachmentsBase = createTaskMode === "output_based" ? "/api/fixed-pay-tasks" : "/api/assigned-tasks";
 
       if (pendingCreateFiles.length > 0) {
         setCreateUploadSaving(true);
@@ -1392,7 +1395,7 @@ export default function TaskListPage() {
           const formData = new FormData();
           formData.append("file", file);
           try {
-            await fetch(`/api/assigned-tasks/${newTaskId}/attachments`, {
+            await fetch(`${attachmentsBase}/${newTaskId}/attachments`, {
               method: "POST",
               body: formData,
             });
@@ -1404,6 +1407,14 @@ export default function TaskListPage() {
         setPendingCreateFiles([]);
       }
 
+      // Output Based tasks live in fixed_pay_tasks, not this page's
+      // assigned_tasks-scoped list — nothing to look up or open here, the
+      // toggle exists purely so creating one doesn't require leaving the panel.
+      if (createTaskMode === "output_based") {
+        closeCreate();
+        return;
+      }
+
       const freshTasks = await fetchTasks();
       const newTask = freshTasks.find((t) => t.assigned_tasks?.id === newTaskId);
       if (newTask) {
@@ -1412,7 +1423,7 @@ export default function TaskListPage() {
         closeCreate();
       }
     },
-    [closeCreate, fetchTasks, openPanel, pendingCreateFiles]
+    [closeCreate, fetchTasks, openPanel, pendingCreateFiles, createTaskMode]
   );
 
   const handleClaimedTaskRefresh = useCallback(async () => {
@@ -2454,8 +2465,26 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+              <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setCreateTaskMode("time_based")}
+                  className={`flex-1 px-3 py-1.5 transition-colors ${createTaskMode === "time_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
+                >
+                  Time-based Task
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateTaskMode("output_based")}
+                  className={`flex-1 px-3 py-1.5 transition-colors ${createTaskMode === "output_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
+                >
+                  Output Based Task
+                </button>
+              </div>
+
               <TaskEditor
-                mode="time_based"
+                key={createTaskMode}
+                mode={createTaskMode}
                 currentUserId={currentUserId ?? ""}
                 isAdminOrManager={isAdmin}
                 teamMembers={panelAssignedByOptions}

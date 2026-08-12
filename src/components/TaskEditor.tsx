@@ -866,42 +866,46 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
-      {supportsTodos && (
-        <Section title="Attachments & Screenshots">
-          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
-          {!editingTaskId ? (
-            <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
-          ) : screenshotsLoading ? (
-            <p className="text-[12px] text-stone">Loading screenshots...</p>
-          ) : screenshots.length === 0 ? (
-            <p className="text-[12px] text-stone/50">No screenshots.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {screenshots.map((ss, i) => (
-                <button
-                  key={ss.id}
-                  type="button"
-                  onClick={() => ss.url && setLightboxIndex(i)}
-                  disabled={!ss.url}
-                  className="relative h-[36px] w-[48px] shrink-0 cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed"
-                  title={`Screenshot ${ss.screenshot_type || "manual"}`}
-                >
-                  {ss.url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={ss.url} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-          {lightboxIndex !== null && (
-            <ScreenshotLightbox
-              urls={screenshots.map((s) => s.url).filter((u): u is string => Boolean(u))}
-              initialIndex={lightboxIndex}
-              onClose={() => setLightboxIndex(null)}
-            />
+      {(supportsTodos || attachmentsExtra) && (
+        <Section title={supportsTodos ? "Attachments & Screenshots" : "Attachments"}>
+          {supportsTodos && (
+            <>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
+              {!editingTaskId ? (
+                <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
+              ) : screenshotsLoading ? (
+                <p className="text-[12px] text-stone">Loading screenshots...</p>
+              ) : screenshots.length === 0 ? (
+                <p className="text-[12px] text-stone/50">No screenshots.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {screenshots.map((ss, i) => (
+                    <button
+                      key={ss.id}
+                      type="button"
+                      onClick={() => ss.url && setLightboxIndex(i)}
+                      disabled={!ss.url}
+                      className="relative h-[36px] w-[48px] shrink-0 cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed"
+                      title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                    >
+                      {ss.url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={ss.url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {lightboxIndex !== null && (
+                <ScreenshotLightbox
+                  urls={screenshots.map((s) => s.url).filter((u): u is string => Boolean(u))}
+                  initialIndex={lightboxIndex}
+                  onClose={() => setLightboxIndex(null)}
+                />
+              )}
+            </>
           )}
           {attachmentsExtra}
         </Section>
