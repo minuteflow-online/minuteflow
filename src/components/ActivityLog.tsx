@@ -848,6 +848,11 @@ export default function ActivityLog({
                         <span className={`font-semibold ${isExpanded ? "whitespace-pre-wrap break-words" : "overflow-hidden text-ellipsis whitespace-nowrap"}`}>
                           {log.task_name}
                         </span>
+                        {log.todo_label && (
+                          <span className="shrink-0 inline-block py-[1px] px-1 rounded text-[8px] font-semibold bg-sage-soft text-sage" title="Logged against this to-do item">
+                            {log.todo_label}
+                          </span>
+                        )}
                         {isManual && (
                           <span className="shrink-0 inline-block py-[1px] px-1 rounded text-[8px] font-semibold bg-slate-blue-soft text-slate-blue">M</span>
                         )}

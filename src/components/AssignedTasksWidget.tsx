@@ -3,6 +3,7 @@
 import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import type { VAAssignedTask, AssignedTaskStatus } from "@/types/database";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
+import { fetchTodos, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 
 interface AssignedTasksWidgetProps {
   userId: string;
@@ -10,6 +11,7 @@ interface AssignedTasksWidgetProps {
   sessionState: string; // "idle" | "clocked-in" | "on-break" | "clocked-out"
   hasActiveTask: boolean;
   onPlayAssignedTask: (task: VAAssignedTask) => void;
+  onPlayTodo: (task: VAAssignedTask, todo: TaskTodo) => void;
   orgTimezone?: string;
   /** Increment to force a re-fetch from the server (e.g. after wizard cancel or task start). */
   refetchCount?: number;
@@ -92,6 +94,7 @@ export default function AssignedTasksWidget({
   userId,
   isAdmin = false,
   onPlayAssignedTask,
+  onPlayTodo,
   orgTimezone = "UTC",
   refetchCount = 0,
 }: AssignedTasksWidgetProps) {
@@ -102,6 +105,8 @@ export default function AssignedTasksWidget({
   const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [optimisticStatuses, setOptimisticStatuses] = useState<Record<number, AssignedTaskStatus>>({});
+  const [todosByTaskId, setTodosByTaskId] = useState<Record<number, TaskTodo[]>>({});
+  const [todosLoadingId, setTodosLoadingId] = useState<number | null>(null);
   const prevRefetchCountRef = useRef(refetchCount);
 
 
@@ -214,7 +219,8 @@ export default function AssignedTasksWidget({
     [userId]
   );
 
-  const toggleExpand = useCallback((id: number) => {
+  const toggleExpand = useCallback((task: VAAssignedTask) => {
+    const id = task.id;
     setExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -223,6 +229,15 @@ export default function AssignedTasksWidget({
         next.add(id);
       }
       return next;
+    });
+    const assignedTaskId = task.assigned_tasks.id;
+    setTodosByTaskId((prev) => {
+      if (assignedTaskId in prev) return prev;
+      setTodosLoadingId(assignedTaskId);
+      fetchTodos(assignedTaskId)
+        .then((todos) => setTodosByTaskId((cur) => ({ ...cur, [assignedTaskId]: todos })))
+        .finally(() => setTodosLoadingId((cur) => (cur === assignedTaskId ? null : cur)));
+      return prev;
     });
   }, []);
 
@@ -392,7 +407,7 @@ export default function AssignedTasksWidget({
                       {/* Top row: task name + expand toggle + status badge */}
                       <div className="flex items-start justify-between gap-2">
                         <button
-                          onClick={() => toggleExpand(task.id)}
+                          onClick={() => toggleExpand(task)}
                           className="flex items-start gap-1.5 flex-1 min-w-0 text-left cursor-pointer group"
                         >
                           <svg
@@ -460,6 +475,36 @@ export default function AssignedTasksWidget({
                               <p className="text-[11px] text-stone/50 italic">No additional details.</p>
                             )}
                           </div>
+
+                          {(effectiveStatus === "on_queue" || effectiveStatus === "in_progress") && (
+                            <div className="pl-[18px]">
+                              {todosLoadingId === detail.id ? (
+                                <p className="text-[11px] text-stone/50">Loading to-dos...</p>
+                              ) : (todosByTaskId[detail.id]?.length ?? 0) > 0 ? (
+                                <div className="space-y-1">
+                                  <p className="text-[10px] font-semibold text-walnut mb-0.5 tracking-wide uppercase">To-Do List</p>
+                                  {todosByTaskId[detail.id]!.map((todo, i) => (
+                                    <div key={todo.id} className="flex items-center gap-1.5 rounded-md border border-sand bg-parchment/40 px-2 py-1">
+                                      <span className="shrink-0 rounded bg-stone/10 px-1 py-0.5 text-[9px] font-bold text-stone">{todoLabel(i)}</span>
+                                      <span className="min-w-0 flex-1 truncate text-[11px] text-espresso">{todo.text}</span>
+                                      <button
+                                        onClick={() => {
+                                          setOptimisticStatuses((prev) => ({ ...prev, [task.id]: "in_progress" }));
+                                          onPlayTodo(task, todo);
+                                        }}
+                                        title={`Play ${todoLabel(i)}`}
+                                        className="shrink-0 flex items-center justify-center h-5 w-5 rounded bg-sage text-white hover:bg-sage/90 cursor-pointer transition-colors"
+                                      >
+                                        <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+                                          <polygon points="5,3 19,12 5,21" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
 
                           {due && (
                             <div className={`text-[11px] font-medium pl-[18px] ${due.isOverdue ? "text-terracotta" : "text-stone"}`}>

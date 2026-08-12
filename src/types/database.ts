@@ -127,6 +127,8 @@ export interface TimeLog {
   session_date: string | null;
   created_at: string;
   deleted_at: string | null;
+  /** e.g. "TD1" — set when this log was started by playing a specific to-do item, not the parent task itself. Internal-only, doesn't affect client_memo/invoicing. */
+  todo_label?: string | null;
 }
 
 export interface TaskScreenshot {
