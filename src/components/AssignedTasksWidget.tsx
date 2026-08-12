@@ -15,6 +15,10 @@ interface AssignedTasksWidgetProps {
   orgTimezone?: string;
   /** Increment to force a re-fetch from the server (e.g. after wizard cancel or task start). */
   refetchCount?: number;
+  /** assigned_tasks.id of the currently-playing to-do's parent task, if any. */
+  activeAssignedTaskId?: number | null;
+  /** "TD1"/"TD2"/etc. of the currently-playing to-do, if any. */
+  activeTodoLabel?: string | null;
 }
 
 function formatDueDate(dueDateStr: string, orgTimezone: string): { label: string; isOverdue: boolean } {
@@ -97,6 +101,8 @@ export default function AssignedTasksWidget({
   onPlayTodo,
   orgTimezone = "UTC",
   refetchCount = 0,
+  activeAssignedTaskId = null,
+  activeTodoLabel = null,
 }: AssignedTasksWidgetProps) {
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,6 +113,9 @@ export default function AssignedTasksWidget({
   const [optimisticStatuses, setOptimisticStatuses] = useState<Record<number, AssignedTaskStatus>>({});
   const [todosByTaskId, setTodosByTaskId] = useState<Record<number, TaskTodo[]>>({});
   const [todosLoadingId, setTodosLoadingId] = useState<number | null>(null);
+  // Optimistic "has been played" set (todo.id), so a to-do turns yellow the
+  // instant it's played even before a re-fetch confirms it server-side.
+  const [playedTodoIds, setPlayedTodoIds] = useState<Set<number>>(new Set());
   const prevRefetchCountRef = useRef(refetchCount);
 
 
@@ -483,24 +492,38 @@ export default function AssignedTasksWidget({
                               ) : (todosByTaskId[detail.id]?.length ?? 0) > 0 ? (
                                 <div className="space-y-1">
                                   <p className="text-[10px] font-semibold text-walnut mb-0.5 tracking-wide uppercase">To-Do List</p>
-                                  {todosByTaskId[detail.id]!.map((todo, i) => (
+                                  {todosByTaskId[detail.id]!.map((todo, i) => {
+                                    const label = todoLabel(i);
+                                    const isPlaying = activeAssignedTaskId === detail.id && activeTodoLabel === label;
+                                    const isPlayed = playedTodoIds.has(todo.id) || Boolean(todo.played);
+                                    const buttonClasses = isPlaying
+                                      ? "bg-terracotta text-white hover:bg-terracotta/90"
+                                      : isPlayed
+                                      ? "bg-amber text-white hover:bg-amber/90"
+                                      : "bg-sage text-white hover:bg-sage/90";
+                                    return (
                                     <div key={todo.id} className="flex items-center gap-1.5 rounded-md border border-sand bg-parchment/40 px-2 py-1">
-                                      <span className="shrink-0 rounded bg-stone/10 px-1 py-0.5 text-[9px] font-bold text-stone">{todoLabel(i)}</span>
+                                      <span className="shrink-0 rounded bg-stone/10 px-1 py-0.5 text-[9px] font-bold text-stone">{label}</span>
                                       <span className="min-w-0 flex-1 truncate text-[11px] text-espresso">{todo.text}</span>
+                                      {isPlaying && (
+                                        <span className="shrink-0 text-[9px] font-semibold text-terracotta">Playing</span>
+                                      )}
                                       <button
                                         onClick={() => {
                                           setOptimisticStatuses((prev) => ({ ...prev, [task.id]: "in_progress" }));
+                                          setPlayedTodoIds((prev) => new Set(prev).add(todo.id));
                                           onPlayTodo(task, todo);
                                         }}
-                                        title={`Play ${todoLabel(i)}`}
-                                        className="shrink-0 flex items-center justify-center h-5 w-5 rounded bg-sage text-white hover:bg-sage/90 cursor-pointer transition-colors"
+                                        title={isPlaying ? `${label} is currently playing` : isPlayed ? `Play ${label} again` : `Play ${label}`}
+                                        className={`shrink-0 flex items-center justify-center h-5 w-5 rounded cursor-pointer transition-colors ${buttonClasses}`}
                                       >
                                         <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
                                           <polygon points="5,3 19,12 5,21" />
                                         </svg>
                                       </button>
                                     </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               ) : null}
                             </div>

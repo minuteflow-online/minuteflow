@@ -98,6 +98,10 @@ export interface ActiveTask {
   isBreak?: boolean;
   billing_type?: BillingType;
   task_rate?: number | null;
+  /** assigned_tasks.id this active log is tied to, if started from an Assigned Task or one of its to-dos. */
+  assignedTaskId?: number | null;
+  /** "TD1"/"TD2"/etc. if this active log is playing a specific to-do, else null. */
+  todoLabel?: string | null;
 }
 
 export interface TimeLog {

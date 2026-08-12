@@ -9,6 +9,8 @@ export type TaskTodo = {
   sort_order: number;
   created_at: string;
   created_by: string | null;
+  /** True if this VA has ever logged time against this to-do (any time_logs row with a matching todo_label). */
+  played?: boolean;
 };
 
 export function todoLabel(sortOrder: number): string {

@@ -61,7 +61,33 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  return Response.json({ todos: data ?? [] });
+  const todos = data ?? [];
+
+  // Annotate each to-do with whether this VA has ever logged time against it
+  // (any time_logs row with a matching todo_label), so the play button can
+  // show a "played before" state.
+  let playedLabels = new Set<string>();
+  if (todos.length > 0) {
+    const { data: taskRow } = await supabase
+      .from("assigned_tasks")
+      .select("task_name")
+      .eq("id", id)
+      .single();
+
+    if (taskRow?.task_name) {
+      const { data: logs } = await supabase
+        .from("time_logs")
+        .select("todo_label")
+        .eq("user_id", user.id)
+        .eq("task_name", taskRow.task_name)
+        .not("todo_label", "is", null);
+      playedLabels = new Set((logs ?? []).map((l) => l.todo_label as string));
+    }
+  }
+
+  const annotated = todos.map((t, i) => ({ ...t, played: playedLabels.has(`TD${i + 1}`) }));
+
+  return Response.json({ todos: annotated });
 }
 
 /**

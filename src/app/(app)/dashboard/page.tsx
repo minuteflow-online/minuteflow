@@ -2298,6 +2298,8 @@ export default function DashboardPage() {
           _startMs: Date.now(),
           billing_type: formData.billing_type || "hourly",
           task_rate: formData.task_rate ?? null,
+          assignedTaskId: assignedTaskIdToMark ?? null,
+          todoLabel: todoLabelForNewLog ?? null,
         };
 
         if (!skipClockIn) {
@@ -3338,6 +3340,8 @@ export default function DashboardPage() {
                 orgTimezone={orgTimezone}
                 isAdmin={role === "admin" || role === "manager"}
                 refetchCount={widgetRefetchCount}
+                activeAssignedTaskId={activeTask?.assignedTaskId ?? null}
+                activeTodoLabel={activeTask?.todoLabel ?? null}
               />
             )}
             {isVa && sessionState === "idle" && (
