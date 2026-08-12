@@ -1,16 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { countWords } from "@/lib/utils";
-import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
-
-const CLIENT_MEMO_WORD_LIMIT = 15;
-
-function limitToWords(text: string, limit: number): string {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  if (words.length <= limit) return text;
-  return words.slice(0, limit).join(" ");
-}
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import type { Profile, Project, ProjectKind } from "@/types/database";
 
 interface VAProjectsTabProps {
@@ -48,45 +39,6 @@ interface AccountOption {
   name: string;
 }
 
-interface ObjectiveOption {
-  id: number;
-  account: string;
-  project_name: string;
-}
-
-interface AddSubtaskForm {
-  task_name: string;
-  va_id: string;
-  assigned_by_id: string;
-  due_date: string;
-  pay_type: string;
-  category: string; // legacy Objective (project_tags) cascading value — NOT the color-coded task category
-  task_category: string; // the real assigned_tasks.category (Task/Communication/Planning/...)
-  task_detail: string;
-  task_notes: string;
-  instructions: string;
-  status: string;
-  review_required: boolean;
-  parent_task_id: string;
-}
-
-function defaultSubtaskForm(assignedById = ""): AddSubtaskForm {
-  return {
-    task_name: "",
-    va_id: "",
-    assigned_by_id: assignedById,
-    due_date: "",
-    pay_type: "hourly",
-    category: "",
-    task_category: "Task",
-    task_detail: "",
-    task_notes: "",
-    instructions: "",
-    status: "pending",
-    review_required: false,
-    parent_task_id: "",
-  };
-}
 
 const STATUS_OPTIONS = [
   "unassigned", "pending", "on_queue", "in_progress", "submitted",
@@ -169,19 +121,16 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [createError, setCreateError] = useState<string | null>(null);
 
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
-  const [formProjects, setFormProjects] = useState<ObjectiveOption[]>([]);
-  const [formTasksByObjective, setFormTasksByObjective] = useState<Record<number, Array<{ id: number; task_name: string }>>>({});
 
   const [subtasks, setSubtasks] = useState<SubtaskRow[]>([]);
   const [subtasksLoading, setSubtasksLoading] = useState(false);
-  const [addForm, setAddForm] = useState<AddSubtaskForm>(defaultSubtaskForm(currentUserId));
-  const [addingSub, setAddingSub] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
+  const [addFormKey, setAddFormKey] = useState(0);
 
   const [editingSubId, setEditingSubId] = useState<number | null>(null);
-  const [editSubForm, setEditSubForm] = useState<AddSubtaskForm>(defaultSubtaskForm(currentUserId));
+  const [editStatus, setEditStatus] = useState("pending");
   const [savingSub, setSavingSub] = useState(false);
   const [editSubError, setEditSubError] = useState<string | null>(null);
+  const editTaskEditorRef = useRef<TaskEditorHandle | null>(null);
 
   const fetchProjects = useCallback(async () => {
     setLoading(true);
@@ -252,8 +201,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setEditVaIds([]);
     setEditNotice(null);
     setSubtasks([]);
-    setAddForm(defaultSubtaskForm(currentUserId));
-    setAddError(null);
+    setAddFormKey((k) => k + 1);
     setEditingSubId(null);
     void fetchSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
@@ -305,37 +253,6 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     })();
     return () => { cancelled = true; };
   }, []);
-
-  useEffect(() => {
-    if (!selectedProject?.account) {
-      setFormProjects([]);
-      setFormTasksByObjective({});
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(
-          `/api/task-form-options?account=${encodeURIComponent(selectedProject.account ?? "")}`,
-          { cache: "no-store" }
-        );
-        if (res.ok && !cancelled) {
-          const data = await res.json();
-          setFormProjects(data.projects ?? []);
-          setFormTasksByObjective(data.tasksByProject ?? {});
-        }
-      } catch {
-        // leave dropdowns empty
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [selectedProject?.id]);
-
-  function getObjectiveTaskOptions(objectiveName: string): string[] {
-    const proj = formProjects.find((p) => p.project_name === objectiveName);
-    if (!proj) return [];
-    return (formTasksByObjective[proj.id] ?? []).map((t) => t.task_name);
-  }
 
   const handleSelectProject = (project: Project) => {
     setSelectedProject(project);
@@ -469,90 +386,33 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     }
   };
 
-  const handleAddSubtask = async () => {
+  const handleSubtaskCreated = () => {
     if (!selectedProject) return;
-    if (!addForm.task_name.trim()) {
-      setAddError("Task name is required.");
-      return;
-    }
-    setAddingSub(true);
-    setAddError(null);
-    try {
-      const body: Record<string, unknown> = {
-        task_name: addForm.task_name.trim(),
-        account: selectedProject.account ?? null,
-        project_id: selectedProject.id,
-        project: addForm.category.trim() || null,
-        due_date: addForm.due_date || null,
-        pay_type: addForm.pay_type || "hourly",
-        category: addForm.task_category,
-        task_detail: addForm.task_detail.trim() || null,
-        task_notes: addForm.task_notes.trim() || null,
-        instructions: addForm.instructions.trim() || null,
-        initial_status: addForm.status || "pending",
-        assigned_by: addForm.assigned_by_id || null,
-        review_required: addForm.review_required,
-        parent_task_id: addForm.parent_task_id ? Number(addForm.parent_task_id) : null,
-      };
-      if (addForm.va_id) {
-        body.va_ids = [addForm.va_id];
-      }
-      const res = await fetch("/api/assigned-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
-      setAddForm(defaultSubtaskForm(currentUserId));
-      void fetchSubtasks(selectedProject.id);
-    } catch (e) {
-      setAddError(e instanceof Error ? e.message : "Failed to add subtask.");
-    } finally {
-      setAddingSub(false);
-    }
+    setAddFormKey((k) => k + 1);
+    void fetchSubtasks(selectedProject.id);
+  };
+
+  const openSubtaskEdit = (sub: SubtaskRow) => {
+    setEditingSubId(sub.id);
+    setEditStatus(sub.status ?? "pending");
+    setEditSubError(null);
   };
 
   const handleSaveSubEdit = async () => {
     if (!editingSubId || !selectedProject) return;
-    if (!editSubForm.task_name.trim()) {
-      setEditSubError("Task name is required.");
-      return;
-    }
     setSavingSub(true);
     setEditSubError(null);
     try {
-      const metaRes = await fetch(`/api/assigned-tasks/${editingSubId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task_name: editSubForm.task_name.trim(),
-          project: editSubForm.category.trim() || null,
-          category: editSubForm.task_category,
-          task_detail: editSubForm.task_detail.trim() || null,
-          task_notes: editSubForm.task_notes.trim() || null,
-          instructions: editSubForm.instructions.trim() || null,
-          due_date: editSubForm.due_date || null,
-          assigned_by: editSubForm.assigned_by_id || null,
-          va_ids: editSubForm.va_id ? [editSubForm.va_id] : [],
-          review_required: editSubForm.review_required,
-        }),
-      });
-      if (!metaRes.ok) {
-        const d = await metaRes.json().catch(() => ({}));
-        throw new Error(d.error || `HTTP ${metaRes.status}`);
-      }
+      await editTaskEditorRef.current?.submit();
 
-      if (editSubForm.status) {
-        const statusRes = await fetch(`/api/assigned-tasks/${editingSubId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: editSubForm.status }),
-        });
-        if (!statusRes.ok) {
-          const d = await statusRes.json().catch(() => ({}));
-          throw new Error(d.error || `HTTP ${statusRes.status}`);
-        }
+      const statusRes = await fetch(`/api/assigned-tasks/${editingSubId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: editStatus }),
+      });
+      if (!statusRes.ok) {
+        const d = await statusRes.json().catch(() => ({}));
+        throw new Error(d.error || `HTTP ${statusRes.status}`);
       }
 
       setEditingSubId(null);
@@ -1077,29 +937,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                               </span>
                             )}
                             <button
-                              onClick={() => {
-                                if (isEditing) {
-                                  setEditingSubId(null);
-                                } else {
-                                  setEditingSubId(sub.id);
-                                  setEditSubForm({
-                                    task_name: sub.task_name,
-                                    va_id: assignees[0]?.va_id ?? "",
-                                    assigned_by_id: sub.assigned_by ?? "",
-                                    due_date: sub.due_date ?? "",
-                                    pay_type: sub.pay_type ?? "hourly",
-                                    category: sub.project ?? "",
-                                    task_category: sub.category && CATEGORY_OPTIONS.includes(sub.category) ? sub.category : "Task",
-                                    task_detail: sub.task_detail ?? "",
-                                    task_notes: sub.task_notes ?? "",
-                                    instructions: sub.instructions ?? "",
-                                    status: sub.status ?? "pending",
-                                    review_required: sub.review_required ?? false,
-                                    parent_task_id: "",
-                                  });
-                                  setEditSubError(null);
-                                }
-                              }}
+                              onClick={() => (isEditing ? setEditingSubId(null) : openSubtaskEdit(sub))}
                               className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
                             >
                               {isEditing ? "Cancel" : "Edit"}
@@ -1108,190 +946,35 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
                           {/* Inline edit form */}
                           {isEditing && (
-                            <div className="ml-3 rounded-lg border border-sand bg-parchment p-3 space-y-3">
-                              <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                    Objective
-                                  </label>
-                                  <select
-                                    value={editSubForm.category}
-                                    onChange={(e) => setEditSubForm((prev) => ({
-                                      ...prev,
-                                      category: e.target.value,
-                                      task_name: "",
-                                    }))}
-                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                  >
-                                    <option value="">Select objective...</option>
-                                    {formProjects.map((p) => (
-                                      <option key={p.id} value={p.project_name}>{p.project_name}</option>
-                                    ))}
-                                  </select>
-                                </div>
-
-                                <div>
-                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                    Task Name
-                                  </label>
-                                  <select
-                                    value={editSubForm.task_name}
-                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_name: e.target.value }))}
-                                    disabled={!editSubForm.category}
-                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white disabled:opacity-60 disabled:bg-parchment"
-                                  >
-                                    <option value="">
-                                      {!editSubForm.category ? "Select objective first..." : "Select task..."}
-                                    </option>
-                                    {getObjectiveTaskOptions(editSubForm.category).map((t) => (
-                                      <option key={t} value={t}>{t}</option>
-                                    ))}
-                                  </select>
-                                </div>
-                              </div>
+                            <div className="ml-3 space-y-3 rounded-lg border border-sand bg-parchment p-3">
+                              <TaskEditor
+                                ref={editTaskEditorRef}
+                                mode="time_based"
+                                editingTaskId={sub.id}
+                                initialTask={sub as unknown as Record<string, unknown>}
+                                currentUserId={currentUserId}
+                                isAdminOrManager={isAdmin}
+                                teamMembers={activeProfiles}
+                                defaultLinkedProjectId={selectedProject.id}
+                                hideFooter
+                                onCancel={() => setEditingSubId(null)}
+                                onSaved={() => {}}
+                              />
 
                               <div>
                                 <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                  Category
+                                  Status
                                 </label>
                                 <select
-                                  value={editSubForm.task_category}
-                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_category: e.target.value }))}
+                                  value={editStatus}
+                                  onChange={(e) => setEditStatus(e.target.value)}
                                   className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
                                 >
-                                  {CATEGORY_OPTIONS.map((c) => (
-                                    <option key={c} value={c}>{c}</option>
+                                  {STATUS_OPTIONS.map((s) => (
+                                    <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
                                   ))}
                                 </select>
                               </div>
-
-                              <div>
-                                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                  Detail
-                                </label>
-                                <textarea
-                                  value={editSubForm.task_detail}
-                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
-                                  rows={1}
-                                  placeholder="Task detail"
-                                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
-                                />
-                                <p className="text-[10px] text-stone mt-1">
-                                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(editSubForm.task_detail))} words remaining
-                                </p>
-                              </div>
-
-                              <div>
-                                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                  Notes
-                                </label>
-                                <textarea
-                                  value={editSubForm.task_notes}
-                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_notes: e.target.value }))}
-                                  rows={2}
-                                  placeholder="Task notes"
-                                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                  Instructions
-                                </label>
-                                <textarea
-                                  value={editSubForm.instructions}
-                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, instructions: e.target.value }))}
-                                  rows={2}
-                                  placeholder="Instructions for VA"
-                                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white resize-none"
-                                />
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                    Assign To
-                                  </label>
-                                  <select
-                                    value={editSubForm.va_id}
-                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, va_id: e.target.value }))}
-                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                  >
-                                    <option value="">Unassigned</option>
-                                    {activeProfiles.map((p) => (
-                                      <option key={p.id} value={p.id}>{profileLabel(p)}</option>
-                                    ))}
-                                  </select>
-                                </div>
-
-                                <div>
-                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                    Assigned By
-                                  </label>
-                                  <select
-                                    value={editSubForm.assigned_by_id}
-                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, assigned_by_id: e.target.value }))}
-                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                  >
-                                    <option value="">—</option>
-                                    {activeProfiles.map((p) => (
-                                      <option key={p.id} value={p.id}>{profileLabel(p)}</option>
-                                    ))}
-                                  </select>
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-3 gap-3">
-                                <div>
-                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                    Status
-                                  </label>
-                                  <select
-                                    value={editSubForm.status}
-                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, status: e.target.value }))}
-                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                  >
-                                    {STATUS_OPTIONS.map((s) => (
-                                      <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-                                    ))}
-                                  </select>
-                                </div>
-
-                                <div>
-                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                    Due Date
-                                  </label>
-                                  <input
-                                    type="date"
-                                    value={editSubForm.due_date}
-                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, due_date: e.target.value }))}
-                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                  />
-                                </div>
-
-                                <div>
-                                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                    Pay Type
-                                  </label>
-                                  <select
-                                    value={editSubForm.pay_type}
-                                    onChange={(e) => setEditSubForm((prev) => ({ ...prev, pay_type: e.target.value }))}
-                                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                  >
-                                    <option value="hourly">Time-based</option>
-                                    <option value="fixed_pay">Output Based</option>
-                                  </select>
-                                </div>
-                              </div>
-
-                              <label className="flex items-center gap-1.5 text-[11px] font-semibold text-walnut">
-                                <input
-                                  type="checkbox"
-                                  checked={editSubForm.review_required}
-                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, review_required: e.target.checked }))}
-                                />
-                                Review Required
-                              </label>
 
                               {editSubError && (
                                 <p className="text-[11px] text-red-600">{editSubError}</p>
@@ -1323,229 +1006,18 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 {/* Add subtask form */}
                 <div className="border-t border-sand pt-4 space-y-3">
                   <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Add Subtask</p>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                        Objective
-                      </label>
-                      <select
-                        value={addForm.category}
-                        onChange={(e) => setAddForm((prev) => ({
-                          ...prev,
-                          category: e.target.value,
-                          task_name: "",
-                        }))}
-                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
-                      >
-                        <option value="">Select objective...</option>
-                        {formProjects.map((p) => (
-                          <option key={p.id} value={p.project_name}>{p.project_name}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                        Account
-                      </label>
-                      <div className="rounded-lg border border-sand bg-parchment px-3 py-2 text-[13px] text-espresso">
-                        {selectedProject.account || "—"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                      Task Name
-                    </label>
-                    <select
-                      value={addForm.task_name}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_name: e.target.value }))}
-                      disabled={!addForm.category}
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white disabled:opacity-60 disabled:bg-parchment"
-                    >
-                      <option value="">
-                        {!addForm.category ? "Select objective first..." : "Select task..."}
-                      </option>
-                      {getObjectiveTaskOptions(addForm.category).map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                      Category
-                    </label>
-                    <select
-                      value={addForm.task_category}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_category: e.target.value }))}
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
-                    >
-                      {CATEGORY_OPTIONS.map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {subtasks.length > 0 && (
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                        Parent Task
-                      </label>
-                      <select
-                        value={addForm.parent_task_id}
-                        onChange={(e) => setAddForm((prev) => ({ ...prev, parent_task_id: e.target.value }))}
-                        className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
-                      >
-                        <option value="">Top-level task in this project</option>
-                        {subtasks.map((t) => (
-                          <option key={t.id} value={t.id}>Subtask of: {t.task_name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                      Detail
-                    </label>
-                    <textarea
-                      value={addForm.task_detail}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
-                      rows={1}
-                      placeholder="Task detail"
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
-                    />
-                    <p className="text-[10px] text-stone mt-1">
-                      {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(addForm.task_detail))} words remaining
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                      Notes
-                    </label>
-                    <textarea
-                      value={addForm.task_notes}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_notes: e.target.value }))}
-                      rows={3}
-                      placeholder="Task notes"
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                      Instructions
-                    </label>
-                    <textarea
-                      value={addForm.instructions}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, instructions: e.target.value }))}
-                      rows={3}
-                      placeholder="Instructions"
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white resize-none"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                        Assign To
-                      </label>
-                      <select
-                        value={addForm.va_id}
-                        onChange={(e) => setAddForm((prev) => ({ ...prev, va_id: e.target.value }))}
-                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
-                      >
-                        <option value="">Unassigned</option>
-                        {activeProfiles.map((p) => (
-                          <option key={p.id} value={p.id}>{profileLabel(p)}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                        Assigned By
-                      </label>
-                      <select
-                        value={addForm.assigned_by_id}
-                        onChange={(e) => setAddForm((prev) => ({ ...prev, assigned_by_id: e.target.value }))}
-                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
-                      >
-                        <option value="">—</option>
-                        {activeProfiles.map((p) => (
-                          <option key={p.id} value={p.id}>{profileLabel(p)}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                        Status
-                      </label>
-                      <select
-                        value={addForm.status}
-                        onChange={(e) => setAddForm((prev) => ({ ...prev, status: e.target.value }))}
-                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
-                      >
-                        {STATUS_OPTIONS.map((s) => (
-                          <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                        Due Date
-                      </label>
-                      <input
-                        type="date"
-                        value={addForm.due_date}
-                        onChange={(e) => setAddForm((prev) => ({ ...prev, due_date: e.target.value }))}
-                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                        Pay Type
-                      </label>
-                      <select
-                        value={addForm.pay_type}
-                        onChange={(e) => setAddForm((prev) => ({ ...prev, pay_type: e.target.value }))}
-                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
-                      >
-                        <option value="hourly">Time-based</option>
-                        <option value="fixed_pay">Output Based</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-walnut">
-                    <input
-                      type="checkbox"
-                      checked={addForm.review_required}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, review_required: e.target.checked }))}
-                    />
-                    Review Required
-                  </label>
-
-                  {addError && (
-                    <p className="text-[12px] text-red-600">{addError}</p>
-                  )}
-
-                  <button
-                    onClick={() => void handleAddSubtask()}
-                    disabled={addingSub}
-                    className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
-                  >
-                    {addingSub ? "Adding..." : "Add Subtask"}
-                  </button>
+                  <TaskEditor
+                    key={addFormKey}
+                    mode="time_based"
+                    editingTaskId={null}
+                    initialTask={{ account: selectedProject.account ?? null }}
+                    currentUserId={currentUserId}
+                    isAdminOrManager={isAdmin}
+                    teamMembers={activeProfiles}
+                    defaultLinkedProjectId={selectedProject.id}
+                    onCancel={() => setAddFormKey((k) => k + 1)}
+                    onSaved={handleSubtaskCreated}
+                  />
                 </div>
               </div>
             </div>
