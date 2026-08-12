@@ -144,6 +144,22 @@ export function spanLabel(task: RawTask, dateStr: string): "Start" | "In Progres
 // single source of truth for every task-creation form on the site.
 export const CATEGORY_OPTIONS = ["Task", "Communication", "Planning", "Collaboration", "Personal", "Break"];
 
+// Auto-category rules — originally hand-coded in TaskEntryForm.tsx's "Log a
+// Task" panel (Virtual Concierge only, keyed off the Objective/project name
+// and, for "Operations & Admin Work", the task name). Extracted here so
+// every task-creation surface (TaskEditor included) applies the same rule
+// instead of drifting. Returns null when no rule matches — callers should
+// leave the category as-is in that case, not clear it.
+export function autoCategoryForTask(account: string, projectName: string, taskName: string): string | null {
+  if (account !== "Virtual Concierge") return null;
+  if (projectName === "Organizing") return "Planning";
+  if (projectName === "Team Development" || projectName === "Personal Improvement") return "Collaboration";
+  if (projectName === "Operations & Admin Work") {
+    return taskName.toLowerCase().includes("meeting") ? "Collaboration" : "Task";
+  }
+  return null;
+}
+
 // Category color coding — hand-tuned medium hues (not raw Tailwind-500,
 // which read as neon; not the brand `amber` token either, which is a dark
 // goldenrod that reads as brown). Each is a clear, recognizable mid-tone

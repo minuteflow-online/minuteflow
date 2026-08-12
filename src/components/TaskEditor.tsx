@@ -2,9 +2,10 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { countWords } from "@/lib/utils";
-import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
+import { CATEGORY_OPTIONS, autoCategoryForTask } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
+import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import type { Project } from "@/types/database";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -135,6 +136,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [todosLoading, setTodosLoading] = useState(false);
   const [newTodoText, setNewTodoText] = useState("");
   const [todoBusyId, setTodoBusyId] = useState<number | null>(null);
+  const [screenshots, setScreenshots] = useState<Array<{ id: number; url: string | null; screenshot_type: string | null }>>([]);
+  const [screenshotsLoading, setScreenshotsLoading] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Assignment
   const [assignedBy, setAssignedBy] = useState((initialTask?.assigned_by as string) ?? currentUserId);
@@ -210,6 +214,19 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         if (loaded.length > 0) setChecklistMode(true);
       })
       .finally(() => setTodosLoading(false));
+  }, [supportsTodos, editingTaskId]);
+
+  // Screenshots are captured during clocking (time_logs), so they only ever
+  // exist for time-based tasks that have actually been worked on — same
+  // gating as the to-do checklist.
+  useEffect(() => {
+    if (!supportsTodos || !editingTaskId) return;
+    setScreenshotsLoading(true);
+    fetch(`/api/assigned-tasks/${editingTaskId}/screenshots`)
+      .then((res) => res.json())
+      .then((data) => setScreenshots(data.screenshots ?? []))
+      .catch(() => setScreenshots([]))
+      .finally(() => setScreenshotsLoading(false));
   }, [supportsTodos, editingTaskId]);
 
   const handleAddTodo = useCallback(async () => {
@@ -430,7 +447,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           <label className={labelClass}>Objective</label>
           <select
             value={project}
-            onChange={(e) => { setProject(e.target.value); if (!isEditing) setTaskName(""); }}
+            onChange={(e) => {
+              const value = e.target.value;
+              setProject(value);
+              if (!isEditing) setTaskName("");
+              const autoCategory = autoCategoryForTask(account, value, taskName);
+              if (autoCategory) setCategory(autoCategory);
+            }}
             disabled={!account}
             className={inputClass}
           >
@@ -444,7 +467,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         <div>
           <label className={labelClass}>Task Name</label>
           {!isEditing && taskOptionsForObjective.length > 0 ? (
-            <select value={taskName} onChange={(e) => setTaskName(e.target.value)} className={inputClass}>
+            <select
+              value={taskName}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTaskName(value);
+                const autoCategory = autoCategoryForTask(account, project, value);
+                if (autoCategory) setCategory(autoCategory);
+              }}
+              className={inputClass}
+            >
               <option value="">Select task...</option>
               {taskOptionsForObjective.map((t) => (
                 <option key={t.id} value={t.task_name}>{t.task_name}</option>
@@ -518,6 +550,44 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       <Section title="Details" defaultOpen={Boolean(taskDetail || taskNotes || instructions)}>
+        {supportsTodos && (
+          <div>
+            <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
+            {screenshotsLoading ? (
+              <p className="text-[12px] text-stone">Loading screenshots...</p>
+            ) : screenshots.length === 0 ? (
+              <p className="text-[12px] text-stone/50">No screenshots.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {screenshots.map((ss, i) => (
+                  <button
+                    key={ss.id}
+                    type="button"
+                    onClick={() => ss.url && setLightboxIndex(i)}
+                    disabled={!ss.url}
+                    className="relative h-[36px] w-[48px] shrink-0 cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed"
+                    title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                  >
+                    {ss.url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={ss.url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            {lightboxIndex !== null && (
+              <ScreenshotLightbox
+                urls={screenshots.map((s) => s.url).filter((u): u is string => Boolean(u))}
+                initialIndex={lightboxIndex}
+                onClose={() => setLightboxIndex(null)}
+              />
+            )}
+          </div>
+        )}
+
         {supportsTodos && checklistMode ? (
           <div>
             <div className="mb-1 flex items-center gap-1.5">

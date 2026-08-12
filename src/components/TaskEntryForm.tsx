@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { BillingType } from "@/types/database";
 import { countWords } from "@/lib/utils";
+import { autoCategoryForTask } from "@/lib/taskSchedule";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -445,20 +446,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     if (match) {
       setProject(match.project_name);
       setProjectTagId(match.id);
-      // Auto-switch category based on project name (Virtual Concierge only)
-      if (account === "Virtual Concierge") {
-        if (match.project_name === "Organizing") {
-          setCategory("Planning");
-        } else if (
-          match.project_name === "Team Development" ||
-          match.project_name === "Personal Improvement"
-        ) {
-          setCategory("Collaboration");
-        } else if (match.project_name === "Operations & Admin Work") {
-          // Tasks with "meeting" in the name → Collaboration; everything else → Task
-          setCategory(taskName.toLowerCase().includes("meeting") ? "Collaboration" : "Task");
-        }
-      }
+      const autoCategory = autoCategoryForTask(account, match.project_name, taskName);
+      if (autoCategory) setCategory(autoCategory);
     }
   };
 
@@ -472,10 +461,8 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
     }
     // value is the task_name directly
     setTaskName(value);
-    // Auto-update category for Operations & Admin Work based on task name (Virtual Concierge only)
-    if (account === "Virtual Concierge" && project === "Operations & Admin Work") {
-      setCategory(value.toLowerCase().includes("meeting") ? "Collaboration" : "Task");
-    }
+    const autoCategory = autoCategoryForTask(account, project, value);
+    if (autoCategory) setCategory(autoCategory);
     // Look up billing_type and task_rate from the selected task
     const selectedTask = filteredTasks.find((t) => t.task_name === value);
     if (selectedTask) {
