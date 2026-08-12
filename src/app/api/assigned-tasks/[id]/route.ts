@@ -22,7 +22,7 @@ type AssignedTaskStatus =
 type RouteContext = { params: Promise<{ id: string }> };
 
 const TASK_SELECT =
-  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, due_date, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, assigned_task_assignees(id, va_id, status)";
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, assigned_task_assignees(id, va_id, status)";
 
 /**
  * GET /api/assigned-tasks/[id]
@@ -102,7 +102,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, due_date, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -110,6 +110,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     task_detail?: string;
     task_notes?: string;
     due_date?: string;
+    due_time?: string | null;
     start_date?: string;
     end_date?: string;
     start_time?: string | null;
@@ -135,6 +136,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (task_detail !== undefined) updatePayload.task_detail = task_detail;
   if (task_notes !== undefined) updatePayload.task_notes = task_notes;
   if (due_date !== undefined) updatePayload.due_date = due_date;
+  if (due_time !== undefined) updatePayload.due_time = due_time;
   if (start_date !== undefined) updatePayload.start_date = start_date;
   if (end_date !== undefined) updatePayload.end_date = end_date;
   if (start_time !== undefined) updatePayload.start_time = start_time;
@@ -326,6 +328,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_detail,
     task_notes,
     due_date,
+    due_time,
     start_date,
     end_date,
     start_time,
@@ -348,6 +351,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_detail?: string | null;
     task_notes?: string | null;
     due_date?: string | null;
+    due_time?: string | null;
     start_date?: string | null;
     end_date?: string | null;
     start_time?: string | null;
@@ -388,6 +392,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_detail !== undefined ||
     task_notes !== undefined ||
     due_date !== undefined ||
+    due_time !== undefined ||
     start_date !== undefined ||
     end_date !== undefined ||
     assigned_by !== undefined ||
@@ -738,6 +743,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (task_detail !== undefined) updatePayload.task_detail = task_detail;
     if (task_notes !== undefined) updatePayload.task_notes = task_notes;
     if (due_date !== undefined) updatePayload.due_date = due_date;
+    if (due_time !== undefined) updatePayload.due_time = due_time;
     if (start_date !== undefined) updatePayload.start_date = start_date;
     if (end_date !== undefined) updatePayload.end_date = end_date;
     if (start_time !== undefined) updatePayload.start_time = start_time;

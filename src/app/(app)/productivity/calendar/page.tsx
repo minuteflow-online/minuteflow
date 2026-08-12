@@ -11,6 +11,7 @@ import {
   formatDayLabel,
   localDateOf,
   formatTimeRange,
+  formatDueTime,
   normalizeAssignedRows,
   categoryDotClass,
   categoryBlockClasses,
@@ -31,6 +32,7 @@ type DueItem = {
   account: string | null;
   date: string;
   dateType: "due" | "start";
+  dueTime: string | null;
   status: string;
   category: string | null;
   projectId: string | null;
@@ -239,13 +241,13 @@ export default function ProductivityCalendarPage() {
         if (t.start_date) {
           const endDate = t.end_date && t.end_date > t.start_date ? t.end_date : t.start_date;
           for (let cursor = t.start_date; cursor <= endDate; cursor = addDaysToDateStr(cursor, 1)) {
-            out.push({ ...base, id: `fixed-${t.id}-${cursor}`, date: cursor, dateType: cursor === t.due_date ? "due" : "start" });
+            out.push({ ...base, id: `fixed-${t.id}-${cursor}`, date: cursor, dateType: cursor === t.due_date ? "due" : "start", dueTime: null });
           }
         }
         if (t.due_date) {
           const dueCoveredByStart = Boolean(t.start_date) && isDateInSpan(t.due_date, t.start_date as string, t.end_date);
           if (!dueCoveredByStart) {
-            out.push({ ...base, id: `fixed-${t.id}-due`, date: t.due_date, dateType: "due" });
+            out.push({ ...base, id: `fixed-${t.id}-due`, date: t.due_date, dateType: "due", dueTime: null });
           }
         }
         return out;
@@ -314,13 +316,14 @@ export default function ProductivityCalendarPage() {
               id: `assigned-${t.id}-${cursor}`,
               date: cursor,
               dateType: cursor === t.due_date ? "due" : "start",
+              dueTime: cursor === t.due_date ? t.due_time : null,
             });
           }
         }
         if (t.due_date) {
           const dueCoveredByStart = Boolean(t.start_date) && isDateInSpan(t.due_date, t.start_date as string, t.end_date);
           if (!dueCoveredByStart) {
-            items.push({ ...base, id: `assigned-${t.id}-due`, date: t.due_date, dateType: "due" });
+            items.push({ ...base, id: `assigned-${t.id}-due`, date: t.due_date, dateType: "due", dueTime: t.due_time });
           }
         }
         return items;
@@ -801,7 +804,7 @@ export default function ProductivityCalendarPage() {
                     {items.slice(0, 5).map((item) => (
                       <span
                         key={item.id}
-                        title={`${item.title} — ${item.category ?? "No category"}, ${statusLabel(item.status)} (${item.dateType === "due" ? "due" : "starts"} this day)`}
+                        title={`${item.title} — ${item.category ?? "No category"}, ${statusLabel(item.status)} (${item.dateType === "due" ? `due${item.dueTime ? ` ${formatDueTime(item.dueTime)}` : ""}` : "starts"} this day)`}
                         className={`h-1.5 w-1.5 ${item.dateType === "due" ? "rounded-sm rotate-45" : "rounded-full"} ${categoryDotClass(item.category ?? "")}`}
                       />
                     ))}
@@ -973,7 +976,8 @@ export default function ProductivityCalendarPage() {
                 {dueTodayItems.map((item) => {
                   const rawId = item.source === "assigned" ? Number(item.id.replace("assigned-", "")) : null;
                   const scheduleTarget = rawId ? daySchedule.find((t) => t.id === rawId) : undefined;
-                  const label = `${item.dateType === "due" ? "Due" : "Starts"}: ${item.title}`;
+                  const dueTimeLabel = item.dateType === "due" && item.dueTime ? ` ${formatDueTime(item.dueTime)}` : "";
+                  const label = `${item.dateType === "due" ? "Due" : "Starts"}${dueTimeLabel}: ${item.title}`;
                   if (!scheduleTarget) {
                     return (
                       <span

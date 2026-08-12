@@ -524,6 +524,7 @@ export interface AssignedTask {
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
+  due_time: string | null;
   start_date: string | null;
   end_date: string | null;
   archived_at: string | null;

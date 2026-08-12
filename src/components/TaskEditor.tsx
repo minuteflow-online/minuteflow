@@ -116,6 +116,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // Schedule
   const [startDate, setStartDate] = useState((initialTask?.start_date as string) ?? defaultDate ?? "");
   const [dueDate, setDueDate] = useState((initialTask?.due_date as string) ?? "");
+  const [dueTime, setDueTime] = useState((initialTask?.due_time as string) ?? "");
   const [endDate, setEndDate] = useState((initialTask?.end_date as string) ?? "");
   const [hasSchedule, setHasSchedule] = useState(Boolean(initialTask?.start_time) || Boolean(defaultStartTime));
   const [startTime, setStartTime] = useState(defaultStartTime ?? "09:00");
@@ -291,6 +292,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           task_detail: taskDetail.trim() || null,
           task_notes: taskNotes.trim() || null,
           due_date: dueDate || null,
+          due_time: dueDate ? dueTime || null : null,
           start_date: startDate || null,
           end_date: endDate || null,
           assigned_by: assignedBy || currentUserId || null,
@@ -302,10 +304,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           parent_task_id: parentTaskId ? Number(parentTaskId) : null,
         };
 
-        const scheduleDate = startDate || dueDate;
-        if (hasSchedule && scheduleDate && startTime && endTime) {
-          body.start_time = new Date(`${scheduleDate}T${startTime}:00`).toISOString();
-          body.end_time = new Date(`${scheduleDate}T${endTime}:00`).toISOString();
+        // Work-span hours only ever anchor to startDate — due_date has its own
+        // independent due_time field (below), so it never borrows this pair.
+        if (hasSchedule && startDate && startTime && endTime) {
+          body.start_time = new Date(`${startDate}T${startTime}:00`).toISOString();
+          body.end_time = new Date(`${startDate}T${endTime}:00`).toISOString();
         } else if (hasSchedule === false) {
           body.start_time = null;
           body.end_time = null;
@@ -392,7 +395,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       setSaving(false);
     }
   }, [
-    mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, startDate, endDate,
+    mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
     assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
   ]);
@@ -459,8 +462,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       <Section title="Schedule" defaultOpen={Boolean(startDate || dueDate || endDate || hasSchedule)}>
-        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-1">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional)</p>
+        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional) — its own hours make the daily time block on the Calendar</p>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Start Date</label>
@@ -471,17 +474,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} />
             </div>
           </div>
-        </div>
 
-        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-1">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline — unrelated to the work span above</p>
-          <div>
-            <label className={labelClass}>Due Date</label>
-            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-walnut">
             <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} />
             Add to Calendar (specific hours)
@@ -499,7 +492,23 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 </div>
               </div>
               {scheduleHelperText && <p className="text-[11px] text-stone">{scheduleHelperText}</p>}
+              {!startDate && <p className="text-[11px] text-terracotta">Set a Start Date above so these hours have a day to block.</p>}
             </>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline — unrelated to the work span above, its own single time</p>
+          <div>
+            <label className={labelClass}>Due Date</label>
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
+          </div>
+          {dueDate && (
+            <div>
+              <label className="mb-1 block text-[10px] font-semibold text-walnut">Due Time (optional)</label>
+              <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} className={inputClass} />
+              <p className="mt-1 text-[10px] text-stone">Shows this deadline on the Calendar at this time — doesn&apos;t count toward blocked hours.</p>
+            </div>
           )}
         </div>
       </Section>

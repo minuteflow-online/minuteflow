@@ -7,6 +7,7 @@ export type RawTask = {
   task_name: string;
   account: string | null;
   due_date: string | null;
+  due_time: string | null;
   start_date: string | null;
   end_date: string | null;
   start_time: string | null;
@@ -202,6 +203,17 @@ export function formatTimeRange(task: Pick<RawTask, "start_time" | "end_time">):
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
+// due_time is stored as a plain "HH:MM" (24h) string, independent of
+// start_time/end_time — it marks a single deadline moment on due_date, not a
+// work-span block. Formats it for display without going through Date/timezone
+// conversion since it isn't a timestamp.
+export function formatDueTime(dueTime: string): string {
+  const [h, m] = dueTime.split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
 // /api/assigned-tasks returns two different shapes depending on the query:
 // - admin/flat (bare ?view=, or ?view=&vaId=): task fields on the row itself,
 //   with an assigned_task_assignees[] array.
@@ -217,6 +229,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
           task_name: nested.task_name as string,
           account: (nested.account as string | null) ?? null,
           due_date: (nested.due_date as string | null) ?? null,
+          due_time: (nested.due_time as string | null) ?? null,
           start_date: (nested.start_date as string | null) ?? null,
           end_date: (nested.end_date as string | null) ?? null,
           start_time: (nested.start_time as string | null) ?? null,
@@ -234,6 +247,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
         task_name: row.task_name as string,
         account: (row.account as string | null) ?? null,
         due_date: (row.due_date as string | null) ?? null,
+        due_time: (row.due_time as string | null) ?? null,
         start_date: (row.start_date as string | null) ?? null,
         end_date: (row.end_date as string | null) ?? null,
         start_time: (row.start_time as string | null) ?? null,
