@@ -1090,6 +1090,11 @@ export default function ProductivityCalendarPage() {
                             {task.task_name}
                           </p>
                           <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>
+                          {task.todos.length > 0 && (
+                            <p className="truncate text-[9px] opacity-70">
+                              {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}: {task.todos.map((t) => t.text).join(", ")}
+                            </p>
+                          )}
                         </button>
                       );
                     });

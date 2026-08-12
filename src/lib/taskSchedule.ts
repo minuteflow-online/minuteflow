@@ -16,6 +16,7 @@ export type RawTask = {
   category: string | null;
   projectId: string | null;
   isRecurring: boolean;
+  todos: { id: number; text: string; sort_order: number }[];
 };
 
 export function statusDotClass(status: string): string {
@@ -235,6 +236,13 @@ export function formatDueTime(dueTime: string): string {
 //   with an assigned_task_assignees[] array.
 // - VA/nested (?selfOnly=true, or ?viewAsVa=): the row is an assignee record
 //   with the task fields nested under assigned_tasks.
+function normalizeTodos(raw: unknown): { id: number; text: string; sort_order: number }[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Array<{ id: number; text: string; sort_order: number }>)
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order);
+}
+
 export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, currentUserId: string): RawTask[] {
   return rawRows
     .map((row) => {
@@ -254,6 +262,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
           category: (nested.category as string | null) ?? null,
           projectId: (nested.project_id as string | null) ?? null,
           isRecurring: Boolean(nested.recurring_template_id),
+          todos: normalizeTodos(nested.task_todos),
         };
       }
       const assignees = (row.assigned_task_assignees ?? []) as Array<{ va_id: string; status: string }>;
@@ -272,6 +281,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
         category: (row.category as string | null) ?? null,
         projectId: (row.project_id as string | null) ?? null,
         isRecurring: Boolean(row.recurring_template_id),
+        todos: normalizeTodos(row.task_todos),
       };
     })
     .filter((t): t is RawTask => Boolean(t.id && t.task_name));
