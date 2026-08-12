@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
 import { countWords } from "@/lib/utils";
 import { CATEGORY_OPTIONS, autoCategoryForTask } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
@@ -62,6 +62,8 @@ export interface TaskEditorProps {
   hideFooter?: boolean;
   /** Hides the built-in Screenshots block — for callers with their own Screenshots UI elsewhere (e.g. Assignment's "Status & Files" panel), so it isn't shown twice. */
   hideScreenshots?: boolean;
+  /** Extra content rendered at the end of the Details section — for callers with their own Attachments UI (e.g. Assignment's create panel) that belongs grouped with the rest of the task's content instead of floating outside every collapsible section. */
+  detailsExtra?: ReactNode;
   /** Set false to hide the Assign To field and never touch va_ids — for callers with their own multi-assignee UI (assigned_tasks supports several assignees; this form's Assign To is single-select). Default true. */
   manageAssignment?: boolean;
   onCancel: () => void;
@@ -108,6 +110,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   currentPayRate,
   hideFooter = false,
   hideScreenshots = false,
+  detailsExtra,
   manageAssignment = true,
   onCancel,
   onSaved,
@@ -119,6 +122,25 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [project, setProject] = useState((initialTask?.project as string) ?? "");
   const [taskName, setTaskName] = useState((initialTask?.task_name as string) ?? "");
   const [category, setCategory] = useState<string>((initialTask?.category as string) ?? "Task");
+  // Tracks whether the current category value came from autoCategoryForTask
+  // rather than a deliberate user pick — so switching Account/Objective away
+  // from a matching combo resets it instead of leaving a stale auto-set
+  // category (e.g. "Planning" from Virtual Concierge/Organizing) stuck after
+  // switching to an account the rule doesn't apply to. Manually picking a
+  // category clears the flag so it's never silently overwritten again.
+  const [categoryAutoSet, setCategoryAutoSet] = useState(false);
+  const applyAutoCategory = useCallback((nextAccount: string, nextProject: string, nextTaskName: string) => {
+    const auto = autoCategoryForTask(nextAccount, nextProject, nextTaskName);
+    if (auto) {
+      setCategory(auto);
+      setCategoryAutoSet(true);
+    } else {
+      setCategoryAutoSet((wasAuto) => {
+        if (wasAuto) setCategory("Task");
+        return false;
+      });
+    }
+  }, []);
 
   // Schedule
   const [startDate, setStartDate] = useState((initialTask?.start_date as string) ?? defaultDate ?? "");
@@ -455,7 +477,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           <label className={labelClass}>Account</label>
           <select
             value={account}
-            onChange={(e) => { setAccount(e.target.value); setProject(""); if (!isEditing) setTaskName(""); }}
+            onChange={(e) => {
+              const value = e.target.value;
+              setAccount(value);
+              setProject("");
+              if (!isEditing) setTaskName("");
+              applyAutoCategory(value, "", isEditing ? taskName : "");
+            }}
             className={inputClass}
           >
             <option value="">Select account...</option>
@@ -473,8 +501,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               const value = e.target.value;
               setProject(value);
               if (!isEditing) setTaskName("");
-              const autoCategory = autoCategoryForTask(account, value, taskName);
-              if (autoCategory) setCategory(autoCategory);
+              applyAutoCategory(account, value, isEditing ? taskName : "");
             }}
             disabled={!account}
             className={inputClass}
@@ -494,8 +521,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               onChange={(e) => {
                 const value = e.target.value;
                 setTaskName(value);
-                const autoCategory = autoCategoryForTask(account, project, value);
-                if (autoCategory) setCategory(autoCategory);
+                applyAutoCategory(account, project, value);
               }}
               className={inputClass}
             >
@@ -511,7 +537,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Category</label>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputClass}>
+          <select value={category} onChange={(e) => { setCategory(e.target.value); setCategoryAutoSet(false); }} className={inputClass}>
             {CATEGORY_OPTIONS.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
@@ -670,6 +696,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             Locked
           </label>
         </div>
+
+        {detailsExtra}
       </Section>
 
       <Section title="Assignment">

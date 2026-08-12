@@ -2454,57 +2454,6 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
-                  <button
-                    type="button"
-                    onClick={() => createAttachmentInputRef.current?.click()}
-                    className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment"
-                  >
-                    Attach File
-                  </button>
-                  <input
-                    ref={createAttachmentInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const picked = Array.from(e.target.files ?? []);
-                      e.target.value = "";
-                      if (picked.length > 0) setPendingCreateFiles((prev) => [...prev, ...picked]);
-                    }}
-                  />
-                </div>
-                {pendingCreateFiles.length === 0 ? (
-                  <p className="py-2 text-[12px] text-stone/50">No files selected — will upload after task is created.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {pendingCreateFiles.map((file, idx) => (
-                      <div key={idx} className="flex items-center gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
-                        <svg className="h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <polyline points="14 2 14 8 20 8" />
-                        </svg>
-                        <span className="min-w-0 flex-1 truncate text-[12px] text-walnut">{file.name}</span>
-                        <button
-                          type="button"
-                          onClick={() => setPendingCreateFiles((prev) => prev.filter((_, i) => i !== idx))}
-                          className="shrink-0 text-stone/50 hover:text-terracotta"
-                          aria-label="Remove file"
-                        >
-                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {createUploadSaving && <p className="mt-1 text-[11px] text-stone">Uploading files...</p>}
-              </div>
-
               <TaskEditor
                 mode="time_based"
                 currentUserId={currentUserId ?? ""}
@@ -2512,6 +2461,58 @@ export default function TaskListPage() {
                 teamMembers={panelAssignedByOptions}
                 onCancel={closeCreate}
                 onSaved={(task) => void handleTaskCreated(task)}
+                detailsExtra={
+                  <div>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
+                      <button
+                        type="button"
+                        onClick={() => createAttachmentInputRef.current?.click()}
+                        className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment"
+                      >
+                        Attach File
+                      </button>
+                      <input
+                        ref={createAttachmentInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          const picked = Array.from(e.target.files ?? []);
+                          e.target.value = "";
+                          if (picked.length > 0) setPendingCreateFiles((prev) => [...prev, ...picked]);
+                        }}
+                      />
+                    </div>
+                    {pendingCreateFiles.length === 0 ? (
+                      <p className="py-2 text-[12px] text-stone/50">No files selected — will upload after task is created.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {pendingCreateFiles.map((file, idx) => (
+                          <div key={idx} className="flex items-center gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
+                            <svg className="h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <polyline points="14 2 14 8 20 8" />
+                            </svg>
+                            <span className="min-w-0 flex-1 truncate text-[12px] text-walnut">{file.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setPendingCreateFiles((prev) => prev.filter((_, i) => i !== idx))}
+                              className="shrink-0 text-stone/50 hover:text-terracotta"
+                              aria-label="Remove file"
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {createUploadSaving && <p className="mt-1 text-[11px] text-stone">Uploading files...</p>}
+                  </div>
+                }
               />
             </div>
           </div>
