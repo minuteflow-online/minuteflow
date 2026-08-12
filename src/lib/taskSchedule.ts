@@ -91,6 +91,54 @@ export function localDateOf(iso: string): string {
   return `${y}-${m}-${day}`;
 }
 
+// "HH:MM:SS" — always Eastern time, regardless of the viewer's browser
+// timezone. Counterpart to localDateOf; used to re-anchor a multi-day span's
+// time-of-day onto a different calendar day (see reanchorToDate below).
+export function timeOfDay(iso: string): string {
+  const d = new Date(iso);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  return `${hour}:${get("minute")}:${get("second")}`;
+}
+
+// Inclusive date-range membership. A missing/earlier endDate collapses the
+// range to just startDate, so single-day tasks (no end_date) keep matching
+// only their one day.
+export function isDateInSpan(dateStr: string, startDate: string, endDate: string | null | undefined): boolean {
+  const end = endDate && endDate > startDate ? endDate : startDate;
+  return dateStr >= startDate && dateStr <= end;
+}
+
+// Re-anchors a task's start_time/end_time onto dateStr, keeping the original
+// Eastern time-of-day — this is what turns a single start_time/end_time pair
+// into a "daily window" applied across a multi-day span. Identity transform
+// when dateStr already matches the task's own anchor day.
+export function reanchorToDate(task: RawTask, dateStr: string): RawTask {
+  if (!task.start_time || !task.end_time) return task;
+  return {
+    ...task,
+    start_time: `${dateStr}T${timeOfDay(task.start_time)}`,
+    end_time: `${dateStr}T${timeOfDay(task.end_time)}`,
+  };
+}
+
+// Label for a Day/Week block within a multi-day span: which day of the span
+// is this? No label at all for a plain single-day task.
+export function spanLabel(task: RawTask, dateStr: string): "Start" | "In Progress" | "Due" | null {
+  if (!task.end_date || task.end_date === task.start_date) return null;
+  if (dateStr === task.start_date) return "Start";
+  if (dateStr === task.due_date) return "Due";
+  if (task.start_date && dateStr > task.start_date && dateStr < task.end_date) return "In Progress";
+  return null;
+}
+
 // The 6 real categories, sourced from TaskEntryForm.tsx's CATEGORIES list — the
 // single source of truth for every task-creation form on the site.
 export const CATEGORY_OPTIONS = ["Task", "Communication", "Planning", "Collaboration", "Personal", "Break"];

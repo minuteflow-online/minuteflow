@@ -16,6 +16,9 @@ import {
   categoryBlockClasses,
   statusBadgeClasses,
   statusLabel,
+  isDateInSpan,
+  reanchorToDate,
+  spanLabel,
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 
@@ -214,6 +217,7 @@ export default function ProductivityCalendarPage() {
         account: string | null;
         due_date: string | null;
         start_date: string | null;
+        end_date: string | null;
         category: string | null;
         status: string;
         claimed_by: string | null;
@@ -224,18 +228,33 @@ export default function ProductivityCalendarPage() {
       } else if (scope !== "__all__") {
         filtered = filtered.filter((t) => t.claimed_by === scope);
       }
-      const items: DueItem[] = filtered.map((t) => ({
-        id: `fixed-${t.id}`,
-        source: "fixed" as const,
-        title: t.task_name,
-        account: t.account,
-        date: (t.due_date ?? t.start_date) as string,
-        dateType: t.due_date ? ("due" as const) : ("start" as const),
-        status: t.status,
-        category: t.category,
-        projectId: null,
-        isRecurring: false,
-      }));
+      // Same span-expansion as assignedDueItems: one dot per day in
+      // [start_date, end_date], with the exact due_date day marked "due".
+      const items: DueItem[] = filtered.flatMap((t) => {
+        const base = {
+          source: "fixed" as const,
+          title: t.task_name,
+          account: t.account,
+          status: t.status,
+          category: t.category,
+          projectId: null,
+          isRecurring: false,
+        };
+        const out: DueItem[] = [];
+        if (t.start_date) {
+          const endDate = t.end_date && t.end_date > t.start_date ? t.end_date : t.start_date;
+          for (let cursor = t.start_date; cursor <= endDate; cursor = addDaysToDateStr(cursor, 1)) {
+            out.push({ ...base, id: `fixed-${t.id}-${cursor}`, date: cursor, dateType: cursor === t.due_date ? "due" : "start" });
+          }
+        }
+        if (t.due_date) {
+          const dueCoveredByStart = Boolean(t.start_date) && isDateInSpan(t.due_date, t.start_date as string, t.end_date);
+          if (!dueCoveredByStart) {
+            out.push({ ...base, id: `fixed-${t.id}-due`, date: t.due_date, dateType: "due" });
+          }
+        }
+        return out;
+      });
       setFixedItems(items);
     } catch {
       setFixedItems([]);
@@ -272,23 +291,45 @@ export default function ProductivityCalendarPage() {
     if (viewMode === "day" || viewMode === "week") fetchDaySchedule();
   }, [viewMode, fetchDaySchedule]);
 
-  // Month-view due/start dots, derived from the full assigned-task list
+  // Month-view due/start dots, derived from the full assigned-task list.
+  // A task with a start_date span (start_date..end_date) gets one item per
+  // day in that inclusive range; the exact due_date day (if it falls within
+  // the span) is marked "due" instead of "start" rather than duplicated.
+  // A due_date outside the span (or a task with no start_date at all) still
+  // gets its own separate item, same as before spans existed.
   const assignedDueItems = useMemo<DueItem[]>(
     () =>
-      assignedTasksAll
-        .filter((t) => t.due_date || t.start_date)
-        .map((t) => ({
-          id: `assigned-${t.id}`,
+      assignedTasksAll.flatMap((t) => {
+        if (!t.due_date && !t.start_date) return [];
+        const base = {
           source: "assigned" as const,
           title: t.task_name,
           account: t.account,
-          date: (t.due_date ?? t.start_date) as string,
-          dateType: t.due_date ? ("due" as const) : ("start" as const),
           status: t.status,
           category: t.category,
           projectId: t.projectId,
           isRecurring: t.isRecurring,
-        })),
+        };
+        const items: DueItem[] = [];
+        if (t.start_date) {
+          const endDate = t.end_date && t.end_date > t.start_date ? t.end_date : t.start_date;
+          for (let cursor = t.start_date; cursor <= endDate; cursor = addDaysToDateStr(cursor, 1)) {
+            items.push({
+              ...base,
+              id: `assigned-${t.id}-${cursor}`,
+              date: cursor,
+              dateType: cursor === t.due_date ? "due" : "start",
+            });
+          }
+        }
+        if (t.due_date) {
+          const dueCoveredByStart = Boolean(t.start_date) && isDateInSpan(t.due_date, t.start_date as string, t.end_date);
+          if (!dueCoveredByStart) {
+            items.push({ ...base, id: `assigned-${t.id}-due`, date: t.due_date, dateType: "due" });
+          }
+        }
+        return items;
+      }),
     [assignedTasksAll]
   );
 
@@ -476,7 +517,20 @@ export default function ProductivityCalendarPage() {
   const scheduledTasks = useMemo(() => daySchedule.filter((t) => t.start_time && t.end_time), [daySchedule]);
   const unscheduledTasks = useMemo(() => daySchedule.filter((t) => !t.start_time || !t.end_time), [daySchedule]);
   const scheduledForDate = useCallback(
-    (dateStr: string) => scheduledTasks.filter((t) => localDateOf(t.start_time as string) === dateStr),
+    (dateStr: string) =>
+      scheduledTasks
+        .filter((t) => {
+          const anchorDay = localDateOf(t.start_time as string);
+          // Only expand into a multi-day span when start_date lines up with the
+          // block's actual scheduled day — guards against a due-date-only task
+          // whose start_time was set independently (openScheduleExisting) ever
+          // silently spanning days it wasn't meant to.
+          if (t.start_date === anchorDay && t.end_date && t.end_date !== t.start_date) {
+            return isDateInSpan(dateStr, t.start_date, t.end_date);
+          }
+          return anchorDay === dateStr;
+        })
+        .map((t) => reanchorToDate(t, dateStr)),
     [scheduledTasks]
   );
   const dayTotalLabel = useMemo(() => {
@@ -885,6 +939,7 @@ export default function ProductivityCalendarPage() {
                             // blocks (the default) stay at 70% opacity.
                             const isDueBlock = dateStr === task.due_date && dateStr !== task.start_date;
                             const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
+                            const label = spanLabel(task, dateStr);
                             return (
                               <button
                                 key={task.id}
@@ -899,6 +954,7 @@ export default function ProductivityCalendarPage() {
                                 }}
                               >
                                 <p className="truncate text-[9px] font-semibold leading-tight">
+                                  {label && <span className="opacity-70">[{label}] </span>}
                                   {task.task_name}
                                 </p>
                               </button>
@@ -1011,6 +1067,7 @@ export default function ProductivityCalendarPage() {
                       // blocks (the default) stay at 70% opacity.
                       const isDueBlock = selectedDate === task.due_date && selectedDate !== task.start_date;
                       const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
+                      const label = spanLabel(task, selectedDate);
                       return (
                         <button
                           key={task.id}
@@ -1025,6 +1082,11 @@ export default function ProductivityCalendarPage() {
                           }}
                         >
                           <p className="truncate text-[11px] font-semibold">
+                            {label && (
+                              <span className="mr-1 rounded bg-black/10 px-1 text-[9px] font-bold uppercase tracking-wide">
+                                {label}
+                              </span>
+                            )}
                             {task.task_name}
                           </p>
                           <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>
