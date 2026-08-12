@@ -21,6 +21,50 @@ type AssignedTaskStatus =
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const TASK_SELECT =
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, assigned_task_assignees(id, va_id, status)";
+
+/**
+ * GET /api/assigned-tasks/[id]
+ * Full row for a single task — used to prefill edit forms (e.g. TaskEditor)
+ * with fields the list views don't carry. Admin/manager can view any task;
+ * VAs must be an assignee.
+ */
+export async function GET(_request: Request, { params }: RouteContext) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  const { id } = await params;
+
+  const { data: task, error } = await supabase
+    .from("assigned_tasks")
+    .select(TASK_SELECT)
+    .eq("id", id)
+    .single();
+
+  if (error || !task) return Response.json({ error: "Task not found" }, { status: 404 });
+
+  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
+  if (!isAdminOrManager) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const assignees = ((task as any).assigned_task_assignees ?? []) as Array<{ va_id: string }>;
+    if (!assignees.some((a) => a.va_id === user.id)) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
+  return Response.json({ task });
+}
+
 /**
  * PUT /api/assigned-tasks/[id]
  * Admin/manager only.
@@ -58,7 +102,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, due_date, start_date, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -66,12 +110,18 @@ export async function PUT(request: Request, { params }: RouteContext) {
     task_detail?: string;
     task_notes?: string;
     due_date?: string;
+    due_time?: string | null;
     start_date?: string;
+    end_date?: string;
+    start_time?: string | null;
+    end_time?: string | null;
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
     review_required?: boolean;
     recurring_template_id?: string | null;
+    project_id?: string | null;
+    parent_task_id?: number | null;
     va_ids?: string[];
   };
 
@@ -86,12 +136,18 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (task_detail !== undefined) updatePayload.task_detail = task_detail;
   if (task_notes !== undefined) updatePayload.task_notes = task_notes;
   if (due_date !== undefined) updatePayload.due_date = due_date;
+  if (due_time !== undefined) updatePayload.due_time = due_time;
   if (start_date !== undefined) updatePayload.start_date = start_date;
+  if (end_date !== undefined) updatePayload.end_date = end_date;
+  if (start_time !== undefined) updatePayload.start_time = start_time;
+  if (end_time !== undefined) updatePayload.end_time = end_time;
   if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
   if (instructions !== undefined) updatePayload.instructions = instructions;
   if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
   if (putReviewRequired !== undefined) updatePayload.review_required = Boolean(putReviewRequired);
   if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
+  if (project_id !== undefined) updatePayload.project_id = project_id;
+  if (parent_task_id !== undefined) updatePayload.parent_task_id = parent_task_id;
 
   const { data: updatedTask, error: updateError } = await supabase
     .from("assigned_tasks")
@@ -267,11 +323,16 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     notes,
     account,
     project,
+    category,
     task_name,
     task_detail,
     task_notes,
     due_date,
+    due_time,
     start_date,
+    end_date,
+    start_time,
+    end_time,
     assigned_by,
     instructions,
     instructions_locked,
@@ -285,11 +346,16 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     notes?: string;
     account?: string | null;
     project?: string | null;
+    category?: string | null;
     task_name?: string;
     task_detail?: string | null;
     task_notes?: string | null;
     due_date?: string | null;
+    due_time?: string | null;
     start_date?: string | null;
+    end_date?: string | null;
+    start_time?: string | null;
+    end_time?: string | null;
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
@@ -321,16 +387,28 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   const hasCoreMetadataUpdate =
     account !== undefined ||
     project !== undefined ||
+    category !== undefined ||
     task_name !== undefined ||
     task_detail !== undefined ||
     task_notes !== undefined ||
     due_date !== undefined ||
+    due_time !== undefined ||
     start_date !== undefined ||
+    end_date !== undefined ||
     assigned_by !== undefined ||
     instructions !== undefined ||
     instructions_locked !== undefined;
+  // Scheduling (start_time/end_time) is intentionally kept out of hasCoreMetadataUpdate:
+  // VAs get a narrow carve-out below to schedule their own tasks without full metadata
+  // permissions. Admins/managers reach the same fields via the general metadata path,
+  // which is why hasMetadataUpdate (not hasCoreMetadataUpdate) includes it.
+  const hasScheduleUpdate = start_time !== undefined || end_time !== undefined;
   const hasMetadataUpdate =
-    hasCoreMetadataUpdate || archived_at !== undefined || deleted_at !== undefined || review_required !== undefined;
+    hasCoreMetadataUpdate ||
+    archived_at !== undefined ||
+    deleted_at !== undefined ||
+    review_required !== undefined ||
+    hasScheduleUpdate;
   const hasArchiveUpdate = archived_at !== undefined;
   const hasDeleteUpdate = deleted_at !== undefined;
   const hasArchiveOnlyUpdate =
@@ -396,6 +474,37 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .eq("id", id);
     if (rrError) {
       return Response.json({ error: rrError.message }, { status: 500 });
+    }
+    return Response.json({ ok: true });
+  }
+
+  // VA-only: allow a VA to schedule (set/clear start_time and end_time) on a task
+  // they're an assignee of — personal hour-block scheduling from the Calendar day
+  // view. Scoped narrowly so it doesn't grant broader metadata-edit permission.
+  const hasScheduleOnlyUpdate =
+    hasScheduleUpdate &&
+    !hasCoreMetadataUpdate &&
+    !hasAssigneeUpdate &&
+    archived_at === undefined &&
+    deleted_at === undefined &&
+    review_required === undefined;
+  if (!isAdminOrManager && hasScheduleOnlyUpdate) {
+    const { data: assigneeRow } = await supabase
+      .from("assigned_task_assignees")
+      .select("id")
+      .eq("assigned_task_id", id)
+      .eq("va_id", user.id)
+      .limit(1)
+      .maybeSingle();
+    if (!assigneeRow) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const { error: scheduleError } = await adminSupabase
+      .from("assigned_tasks")
+      .update({ start_time: start_time ?? null, end_time: end_time ?? null, updated_at: now })
+      .eq("id", id);
+    if (scheduleError) {
+      return Response.json({ error: scheduleError.message }, { status: 500 });
     }
     return Response.json({ ok: true });
   }
@@ -629,11 +738,16 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     const updatePayload: Record<string, unknown> = { updated_at: now };
     if (account !== undefined) updatePayload.account = account;
     if (project !== undefined) updatePayload.project = project;
+    if (category !== undefined) updatePayload.category = category;
     if (task_name !== undefined) updatePayload.task_name = task_name.trim();
     if (task_detail !== undefined) updatePayload.task_detail = task_detail;
     if (task_notes !== undefined) updatePayload.task_notes = task_notes;
     if (due_date !== undefined) updatePayload.due_date = due_date;
+    if (due_time !== undefined) updatePayload.due_time = due_time;
     if (start_date !== undefined) updatePayload.start_date = start_date;
+    if (end_date !== undefined) updatePayload.end_date = end_date;
+    if (start_time !== undefined) updatePayload.start_time = start_time;
+    if (end_time !== undefined) updatePayload.end_time = end_time;
     if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
     if (instructions !== undefined) updatePayload.instructions = instructions;
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);

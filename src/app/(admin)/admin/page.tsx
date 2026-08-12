@@ -158,7 +158,7 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   },
   {
     id: "fixed_pay_tasks",
-    label: "Fixed Pay Tasks",
+    label: "Output Based Tasks",
     icon: (
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M12 2L3 7v10l9 5 9-5V7z" />
@@ -1444,7 +1444,7 @@ export default function AdminPage() {
                 {activeTab === "email_log" && "Track opens and clicks for all outgoing emails"}
                 {activeTab === "reset_va_password" && "Reset the password for any team member"}
                 {activeTab === "task_assignments" && "Assign tasks to VAs and track their progress"}
-                {activeTab === "fixed_pay_tasks" && "Manage the fixed-pay task pool for per-task VAs"}
+                {activeTab === "fixed_pay_tasks" && "Manage the Output Based task pool for per-task VAs"}
               </p>
             </div>
             {activeTab === "overview" && (

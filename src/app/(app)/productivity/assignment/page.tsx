@@ -2,16 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { AssignedTask, AssignedTaskStatus, TaskScreenshot } from "@/types/database";
+import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
+import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
+import Section from "@/components/ui/Section";
 import FixedPayTasksPanel from "@/components/FixedPayTasksPanel";
 import ProjectInfoModal from "@/components/ProjectInfoModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
+import TeamWorkloadView from "@/components/TeamWorkloadView";
+import ObjectiveProgressView from "@/components/ObjectiveProgressView";
 import type { RecurringTaskTemplate } from "@/types/database";
-import VAProjectsTab from "@/components/VAProjectsTab";
 import { countWords } from "@/lib/utils";
+import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
@@ -54,11 +58,14 @@ type VATaskRow = {
     account: string | null;
     project: string | null;
     project_id: string | null;
+    category: string | null;
     task_name: string;
     task_detail: string | null;
     task_notes: string | null;
     due_date: string | null;
     start_date: string | null;
+    start_time: string | null;
+    end_time: string | null;
     assigned_by: string | null;
     assigned_by_profile?: { id: string; full_name: string; username: string } | null;
     instructions: string | null;
@@ -135,11 +142,14 @@ type AdminTaskFlat = {
   account: string | null;
   project: string | null;
   project_id: string | null;
+  category: string | null;
   task_name: string;
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
   start_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
   review_required: boolean;
   revision_count?: number;
   created_by: string | null;
@@ -284,9 +294,6 @@ function sortTasks(tasks: VATaskRow[]) {
   });
 }
 
-function sameText(a: string | null | undefined, b: string | null | undefined) {
-  return (a ?? "") === (b ?? "");
-}
 
 function renderTextWithLinks(text: string) {
   const parts: ReactElement[] = [];
@@ -350,7 +357,9 @@ export default function TaskListPage() {
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [assignedByProfilesLoaded, setAssignedByProfilesLoaded] = useState(false);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "projects">("my_tasks");
+  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "team" | "objective">("my_tasks");
+  const [objectiveProjectIds, setObjectiveProjectIds] = useState<Set<string>>(new Set());
+  const [objectiveSubView, setObjectiveSubView] = useState<"list" | "progress">("list");
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);
@@ -366,35 +375,10 @@ export default function TaskListPage() {
   const [inlineSaving, setInlineSaving] = useState(false);
 
   const [isCreating, setIsCreating] = useState(false);
-  const [addSaving, setAddSaving] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
-  const [addForm, setAddForm] = useState({
-    account: "",
-    project: "",
-    task_name: "",
-    task_detail: "",
-    due_date: "",
-    start_date: "",
-    task_notes: "",
-    assigned_by: "",
-    instructions: "",
-    instructions_locked: false,
-    review_required: false,
-  });
 
   const [selectedTask, setSelectedTask] = useState<VATaskRow | null>(null);
   const [panelStatus, setPanelStatus] = useState<AssignedTaskStatus>("pending");
-  const [panelAccount, setPanelAccount] = useState("");
-  const [panelProject, setPanelProject] = useState("");
-  const [panelTaskName, setPanelTaskName] = useState("");
-  const [panelDueDate, setPanelDueDate] = useState("");
-  const [panelDetail, setPanelDetail] = useState("");
-  const [panelTaskNotes, setPanelTaskNotes] = useState("");
-  const [panelAssignedBy, setPanelAssignedBy] = useState("");
-  const [panelInstructions, setPanelInstructions] = useState("");
-  const [panelInstructionsLocked, setPanelInstructionsLocked] = useState(false);
   const [panelReviewRequired, setPanelReviewRequired] = useState(false);
-  const [panelNotes, setPanelNotes] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
   const [panelUploadSaving, setPanelUploadSaving] = useState(false);
   const [panelMsg, setPanelMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -408,9 +392,11 @@ export default function TaskListPage() {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [pendingCreateFiles, setPendingCreateFiles] = useState<File[]>([]);
   const [createUploadSaving, setCreateUploadSaving] = useState(false);
+  const [createTaskMode, setCreateTaskMode] = useState<"time_based" | "output_based">("time_based");
   const activeLogIdRef = useRef<number | null>(null);
   const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
   const createAttachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const taskEditorRef = useRef<TaskEditorHandle | null>(null);
   const captureWorkerRef = useRef<Worker | null>(null);
   const silentCaptureRef = useRef<((logId: number, screenshotType: "start" | "progress") => Promise<boolean>) | null>(
     null
@@ -461,11 +447,14 @@ export default function TaskListPage() {
                 account: task.account,
                 project: task.project,
                 project_id: task.project_id,
+                category: task.category,
                 task_name: task.task_name,
                 task_detail: task.task_detail,
                 task_notes: task.task_notes,
                 due_date: task.due_date,
                 start_date: task.start_date,
+                start_time: task.start_time,
+                end_time: task.end_time,
                 assigned_by: task.assigned_by ?? null,
                 assigned_by_profile: task.assigned_by_profile ?? null,
                 instructions: task.instructions ?? null,
@@ -581,7 +570,6 @@ export default function TaskListPage() {
   const isPerTaskVa = currentPosition === "Per Task VA";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
-  const canShowProjects = isAdmin || (currentRole === "va" && currentPayRateType === "hourly");
 
   const fetchAttachments = useCallback(async (taskId: number) => {
     setAttachmentsLoading(true);
@@ -682,6 +670,13 @@ export default function TaskListPage() {
     void fetchCurrentUser();
     void fetchFormOptions();
   }, [fetchCurrentUser, fetchFormOptions]);
+
+  useEffect(() => {
+    fetch("/api/projects?mine=true&kind=objective", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setObjectiveProjectIds(new Set((d.projects ?? []).map((p: { id: string }) => p.id))))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     void fetchTasks();
@@ -966,40 +961,8 @@ export default function TaskListPage() {
     return Array.from(options).sort();
   }, [formTasksByProject, tasks]);
 
-  const addProjectsForAccount = useMemo(
-    () => formProjects.filter((project) => project.account === addForm.account),
-    [formProjects, addForm.account]
-  );
-  const addProjectId = useMemo(
-    () =>
-      formProjects.find((project) => project.account === addForm.account && project.project_name === addForm.project)?.id ??
-      null,
-    [formProjects, addForm.account, addForm.project]
-  );
-  const addTasksForProject = useMemo(
-    () => (addProjectId ? formTasksByProject[addProjectId] ?? [] : []),
-    [addProjectId, formTasksByProject]
-  );
-
   const panelCanEditFields = Boolean(selectedTask) && isAdmin;
-  const panelCanEditAssignedBy = Boolean(selectedTask) && isAdmin;
-  const panelCanEditInstructions = Boolean(selectedTask) && isAdmin;
 
-  const panelProjectsForAccount = useMemo(
-    () => formProjects.filter((project) => project.account === panelAccount),
-    [formProjects, panelAccount]
-  );
-  const panelProjectId = useMemo(
-    () =>
-      formProjects.find(
-        (project) => project.account === panelAccount && project.project_name === panelProject
-      )?.id ?? null,
-    [formProjects, panelAccount, panelProject]
-  );
-  const panelTasksForProject = useMemo(
-    () => (panelProjectId ? formTasksByProject[panelProjectId] ?? [] : []),
-    [panelProjectId, formTasksByProject]
-  );
   const panelAssignedByOptions = useMemo(() => {
     if (assignedByProfiles.length > 0) return assignedByProfiles;
     return currentUserProfile ? [currentUserProfile] : [];
@@ -1039,6 +1002,7 @@ export default function TaskListPage() {
       const dueDate = detail.due_date ? parseDueDateSafe(detail.due_date) : null;
       const dueTime = dueDate && !Number.isNaN(dueDate.getTime()) ? dueDate.getTime() : null;
 
+      if (activeView === "objective" && !objectiveProjectIds.has(detail.project_id ?? "")) return false;
       if (filterStatuses.length > 0 && !filterStatuses.includes(task.status)) return false;
       if (filterAccounts.length > 0 && !filterAccounts.includes(detail.account ?? "")) return false;
       if (filterTaskNames.length > 0 && !filterTaskNames.includes(detail.task_name)) return false;
@@ -1052,7 +1016,7 @@ export default function TaskListPage() {
       if (end && (!dueTime || dueTime > end.getTime())) return false;
       return true;
     });
-  }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks]);
+  }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks, activeView, objectiveProjectIds]);
 
   const avgAccuracy = useMemo(() => {
     const rows = filteredTasks.filter((t) => typeof t.accuracy_score === "number");
@@ -1356,78 +1320,29 @@ export default function TaskListPage() {
   const openCreate = useCallback(() => {
     setSelectedTask(null);
     setPanelStatus("pending");
-    setPanelAccount("");
-    setPanelProject("");
-    setPanelTaskName("");
-    setPanelDueDate("");
-    setPanelDetail("");
-    setPanelTaskNotes("");
-    setPanelAssignedBy("");
-    setPanelInstructions("");
-    setPanelInstructionsLocked(false);
-    setPanelNotes("");
     setPanelSaving(false);
     setPanelUploadSaving(false);
     setPanelMsg(null);
     setAttachments([]);
     setAttachmentsLoading(false);
     setIsCreating(true);
-    setAddError(null);
-    setAddSaving(false);
     setPendingCreateFiles([]);
     setCreateUploadSaving(false);
-    setAddForm({
-      account: "",
-      project: "",
-      task_name: "",
-      task_detail: "",
-      due_date: "",
-      start_date: "",
-      task_notes: "",
-      assigned_by: currentUserId ?? "",
-      instructions: "",
-      instructions_locked: false,
-      review_required: false,
-    });
-  }, [currentUserId]);
+    setCreateTaskMode("time_based");
+  }, []);
 
   const closeCreate = useCallback(() => {
     setIsCreating(false);
-    setAddError(null);
-    setAddSaving(false);
     setPendingCreateFiles([]);
     setCreateUploadSaving(false);
-    setAddForm({
-      account: "",
-      project: "",
-      task_name: "",
-      task_detail: "",
-      due_date: "",
-      start_date: "",
-      task_notes: "",
-      assigned_by: currentUserId ?? "",
-      instructions: "",
-      instructions_locked: false,
-      review_required: false,
-    });
-  }, [currentUserId]);
+  }, []);
 
   const openPanel = useCallback(
     async (task: VATaskRow) => {
       closeCreate();
       setSelectedTask(task);
       setPanelStatus(task.status);
-      setPanelAccount(task.assigned_tasks.account ?? "");
-      setPanelProject(task.assigned_tasks.project ?? "");
-      setPanelTaskName(task.assigned_tasks.task_name ?? "");
-      setPanelDueDate(task.assigned_tasks.due_date ?? "");
-      setPanelDetail(task.assigned_tasks.task_detail ?? "");
-      setPanelTaskNotes(task.assigned_tasks.task_notes ?? "");
-      setPanelAssignedBy(task.assigned_tasks.assigned_by ?? "");
-      setPanelInstructions(task.assigned_tasks.instructions ?? "");
-      setPanelInstructionsLocked(Boolean(task.assigned_tasks.instructions_locked));
       setPanelReviewRequired(Boolean(task.assigned_tasks.review_required));
-      setPanelNotes(task.notes ?? "");
       setPanelUploadSaving(false);
       setPanelMsg(null);
       setAttachments([]);
@@ -1441,19 +1356,20 @@ export default function TaskListPage() {
     [closeCreate, fetchAttachments, fetchPanelScreenshots]
   );
 
+  // Refreshes the task list and re-syncs the open panel after TaskEditor
+  // saves metadata changes.
+  const handleMetadataSaved = useCallback(async () => {
+    const freshTasks = await fetchTasks();
+    setSelectedTask((current) => {
+      if (!current) return current;
+      const fresh = freshTasks.find((t) => t.id === current.id);
+      return fresh ?? current;
+    });
+  }, [fetchTasks]);
+
   const closePanel = useCallback(() => {
     setSelectedTask(null);
     setPanelStatus("pending");
-    setPanelAccount("");
-    setPanelProject("");
-    setPanelTaskName("");
-    setPanelDueDate("");
-    setPanelDetail("");
-    setPanelTaskNotes("");
-    setPanelAssignedBy("");
-    setPanelInstructions("");
-    setPanelInstructionsLocked(false);
-    setPanelNotes("");
     setPanelSaving(false);
     setPanelUploadSaving(false);
     setPanelMsg(null);
@@ -1466,57 +1382,20 @@ export default function TaskListPage() {
     setLightboxIndex(0);
   }, []);
 
-  const handleAddTask = useCallback(async () => {
-    if (!addForm.task_name.trim()) {
-      setAddError("Task name is required.");
-      return;
-    }
+  // TaskEditor's onSaved callback for the Create Task panel — uploads any
+  // files picked before the task existed, then transitions to the detail panel.
+  const handleTaskCreated = useCallback(
+    async (task: { id: number; [key: string]: unknown }) => {
+      const newTaskId = task.id;
+      const attachmentsBase = createTaskMode === "output_based" ? "/api/fixed-pay-tasks" : "/api/assigned-tasks";
 
-    setAddSaving(true);
-    setAddError(null);
-
-    try {
-      const res = await fetch("/api/assigned-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          account: addForm.account || null,
-          project: addForm.project || null,
-          task_name: addForm.task_name.trim(),
-          task_detail: addForm.task_detail.trim() || null,
-          due_date: addForm.due_date || null,
-          start_date: addForm.start_date || null,
-          task_notes: addForm.task_notes.trim() || null,
-          assigned_by: addForm.assigned_by || currentUserId || null,
-          instructions: addForm.instructions.trim() || null,
-          instructions_locked: addForm.instructions_locked,
-          review_required: addForm.review_required,
-          va_ids: currentUserId ? [currentUserId] : undefined,
-        }),
-      });
-
-      if (!res.ok) {
-        let message = `HTTP ${res.status}`;
-        try {
-          const data = await res.json();
-          if (data?.error) message = data.error;
-        } catch {
-          // ignore JSON parsing errors
-        }
-        throw new Error(message);
-      }
-
-      const responseData = await res.json();
-      const newTaskId: number | undefined = responseData?.task?.id;
-
-      // Upload any pending files before transitioning to the detail panel
-      if (newTaskId && pendingCreateFiles.length > 0) {
+      if (pendingCreateFiles.length > 0) {
         setCreateUploadSaving(true);
         for (const file of pendingCreateFiles) {
           const formData = new FormData();
           formData.append("file", file);
           try {
-            await fetch(`/api/assigned-tasks/${newTaskId}/attachments`, {
+            await fetch(`${attachmentsBase}/${newTaskId}/attachments`, {
               method: "POST",
               body: formData,
             });
@@ -1528,21 +1407,24 @@ export default function TaskListPage() {
         setPendingCreateFiles([]);
       }
 
-      const freshTasks = await fetchTasks();
-      if (newTaskId) {
-        const newTask = freshTasks.find((t) => t.assigned_tasks?.id === newTaskId);
-        if (newTask) {
-          openPanel(newTask);
-          return;
-        }
+      // Output Based tasks live in fixed_pay_tasks, not this page's
+      // assigned_tasks-scoped list — nothing to look up or open here, the
+      // toggle exists purely so creating one doesn't require leaving the panel.
+      if (createTaskMode === "output_based") {
+        closeCreate();
+        return;
       }
-      closeCreate();
-    } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Unable to add task right now.");
-    } finally {
-      setAddSaving(false);
-    }
-  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.start_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
+
+      const freshTasks = await fetchTasks();
+      const newTask = freshTasks.find((t) => t.assigned_tasks?.id === newTaskId);
+      if (newTask) {
+        openPanel(newTask);
+      } else {
+        closeCreate();
+      }
+    },
+    [closeCreate, fetchTasks, openPanel, pendingCreateFiles, createTaskMode]
+  );
 
   const handleClaimedTaskRefresh = useCallback(async () => {
     await Promise.all([fetchTasks(), canShowHourlyPool ? fetchHourlyPool() : Promise.resolve()]);
@@ -1579,184 +1461,106 @@ export default function TaskListPage() {
     [fetchHourlyPool, fetchTasks]
   );
 
+  // Saves status + private notes + (VA-only) review_required — metadata
+  // fields (account/project/task name/category/dates/schedule/detail/notes/
+  // assigned by/instructions) now save independently through TaskEditor,
+  // since status changes trigger live screen-capture start/stop that must
+  // stay isolated from a generic metadata form.
   const handleSavePanel = useCallback(async () => {
     if (!selectedTask) return;
 
     const taskId = selectedTask.assigned_tasks.id;
     const taskLogId = selectedTask.log_id;
     const previousStatus = selectedTask.status;
-    const previousNotes = selectedTask.notes ?? "";
     const nextStatus = panelStatus;
     const statusChanged = nextStatus !== previousStatus;
-    const nextAccount = panelAccount.trim();
-    const nextProject = panelProject.trim();
-    const nextTaskName = panelTaskName.trim();
-    const nextDueDate = panelDueDate.trim();
-    const nextDetail = panelDetail;
-    const nextTaskNotes = panelTaskNotes;
-    const nextAssignedBy = panelAssignedBy;
-    const nextInstructions = panelInstructions;
-    const nextInstructionsLocked = panelInstructionsLocked;
     const nextReviewRequired = panelReviewRequired;
-    const nextNotes = panelNotes;
-    const notesChanged = !sameText(nextNotes, previousNotes);
-    const reviewRequiredChanged = nextReviewRequired !== Boolean(selectedTask.assigned_tasks.review_required);
-    const metadataChanged =
-      !sameText(nextAccount, selectedTask.assigned_tasks.account) ||
-      !sameText(nextProject, selectedTask.assigned_tasks.project) ||
-      !sameText(nextTaskName, selectedTask.assigned_tasks.task_name) ||
-      !sameText(nextDueDate, selectedTask.assigned_tasks.due_date) ||
-      !sameText(nextDetail, selectedTask.assigned_tasks.task_detail) ||
-      !sameText(nextTaskNotes, selectedTask.assigned_tasks.task_notes) ||
-      !sameText(nextAssignedBy, selectedTask.assigned_tasks.assigned_by) ||
-      !sameText(nextInstructions, selectedTask.assigned_tasks.instructions) ||
-      nextInstructionsLocked !== Boolean(selectedTask.assigned_tasks.instructions_locked);
+    const reviewRequiredChanged = !isAdmin && nextReviewRequired !== Boolean(selectedTask.assigned_tasks.review_required);
 
-    if (!statusChanged && !metadataChanged && !notesChanged && !reviewRequiredChanged) {
-      closePanel();
-      return;
+    if (!statusChanged && !reviewRequiredChanged) return;
+
+    const body: Record<string, unknown> = {};
+    if (statusChanged) {
+      body.status = nextStatus;
+      if (isSubmittedView && selectedTask?.va_id) {
+        // Admin reviewing submitted work: target the specific VA's assignee row
+        body.va_id = selectedTask.va_id;
+      } else if (currentUserId) {
+        // VA updating their own submission
+        body.va_id = currentUserId;
+      }
     }
 
-    setPanelSaving(true);
-    setPanelMsg(null);
+    if (Object.keys(body).length > 0) {
+      const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!saveRes.ok) throw new Error(`HTTP ${saveRes.status}`);
+    }
 
-    try {
-      const body: Record<string, unknown> = {};
-      if (statusChanged) body.status = nextStatus;
-      if (notesChanged) body.notes = nextNotes;
-      if (statusChanged || notesChanged) {
-        if (isSubmittedView && selectedTask?.va_id) {
-          // Admin reviewing submitted work: target the specific VA's assignee row
-          body.va_id = selectedTask.va_id;
-        } else if (currentUserId) {
-          // VA updating their own submission
-          body.va_id = currentUserId;
-        }
-      }
-      if (metadataChanged) {
-        body.account = nextAccount || null;
-        body.project = nextProject || null;
-        body.task_name = nextTaskName;
-        body.due_date = nextDueDate || null;
-        body.task_detail = nextDetail || null;
-        body.task_notes = nextTaskNotes || null;
-        body.assigned_by = nextAssignedBy || null;
-        body.instructions = nextInstructions || null;
-        body.instructions_locked = nextInstructionsLocked;
-      }
-      // Admins include review_required in the metadata body; VAs send it standalone below
-      if (reviewRequiredChanged && isAdmin) {
-        body.review_required = nextReviewRequired;
-      }
+    // VAs can check (not uncheck) review_required — send as standalone PATCH
+    if (reviewRequiredChanged && nextReviewRequired) {
+      const rrRes = await fetch(`/api/assigned-tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ review_required: true }),
+      });
+      if (!rrRes.ok) throw new Error(`HTTP ${rrRes.status}`);
+    }
 
-      if (Object.keys(body).length > 0) {
-        const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!saveRes.ok) throw new Error(`HTTP ${saveRes.status}`);
-      }
+    const updatedAt = new Date().toISOString();
+    setTasks((prev) =>
+      sortTasks(
+        prev.map((row) => {
+          if (row.id !== selectedTask.id) return row;
 
-      // VAs can check (not uncheck) review_required — send as standalone PATCH
-      if (reviewRequiredChanged && !isAdmin && nextReviewRequired) {
-        const rrRes = await fetch(`/api/assigned-tasks/${taskId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ review_required: true }),
-        });
-        if (!rrRes.ok) throw new Error(`HTTP ${rrRes.status}`);
-      }
-
-      const updatedAt = new Date().toISOString();
-      setTasks((prev) =>
-        sortTasks(
-          prev.map((row) => {
-            if (row.id !== selectedTask.id) return row;
-
-            return {
-              ...row,
-              status: statusChanged ? nextStatus : row.status,
-              notes: notesChanged ? nextNotes : row.notes,
-              updated_at: statusChanged || notesChanged ? updatedAt : row.updated_at,
-              assigned_tasks: {
-                ...row.assigned_tasks,
-                account: metadataChanged ? (nextAccount || null) : row.assigned_tasks.account,
-                project: metadataChanged ? (nextProject || null) : row.assigned_tasks.project,
-                task_name: metadataChanged ? nextTaskName : row.assigned_tasks.task_name,
-                due_date: metadataChanged ? (nextDueDate || null) : row.assigned_tasks.due_date,
-                task_detail: metadataChanged ? (nextDetail || null) : row.assigned_tasks.task_detail,
-                task_notes: metadataChanged ? (nextTaskNotes || null) : row.assigned_tasks.task_notes,
-                assigned_by: metadataChanged ? (nextAssignedBy || null) : row.assigned_tasks.assigned_by,
-                instructions: metadataChanged ? (nextInstructions || null) : row.assigned_tasks.instructions,
-                instructions_locked: metadataChanged ? nextInstructionsLocked : row.assigned_tasks.instructions_locked,
-                review_required: reviewRequiredChanged ? nextReviewRequired : row.assigned_tasks.review_required,
-                updated_at: (metadataChanged || reviewRequiredChanged) ? updatedAt : row.assigned_tasks.updated_at,
-              },
-            };
-          })
-        )
-      );
-      setSelectedTask((current) =>
-        current
-          ? {
-              ...current,
-              status: statusChanged ? nextStatus : current.status,
-              notes: notesChanged ? nextNotes : current.notes,
-              updated_at: statusChanged || notesChanged ? updatedAt : current.updated_at,
-              assigned_tasks: {
-                ...current.assigned_tasks,
-                account: metadataChanged ? (nextAccount || null) : current.assigned_tasks.account,
-                project: metadataChanged ? (nextProject || null) : current.assigned_tasks.project,
-                task_name: metadataChanged ? nextTaskName : current.assigned_tasks.task_name,
-                due_date: metadataChanged ? (nextDueDate || null) : current.assigned_tasks.due_date,
-                task_detail: metadataChanged ? (nextDetail || null) : current.assigned_tasks.task_detail,
-                task_notes: metadataChanged ? (nextTaskNotes || null) : current.assigned_tasks.task_notes,
-                assigned_by: metadataChanged ? (nextAssignedBy || null) : current.assigned_tasks.assigned_by,
-                instructions: metadataChanged ? (nextInstructions || null) : current.assigned_tasks.instructions,
-                instructions_locked: metadataChanged ? nextInstructionsLocked : current.assigned_tasks.instructions_locked,
-                review_required: reviewRequiredChanged ? nextReviewRequired : current.assigned_tasks.review_required,
-                updated_at: (metadataChanged || reviewRequiredChanged) ? updatedAt : current.assigned_tasks.updated_at,
-              },
-            }
-          : current
-      );
-      void fetchTasks();
-      if (statusChanged && nextStatus === "in_progress" && taskLogId) {
-        activeLogIdRef.current = taskLogId;
-        void (async () => {
-          const result = await requestStream();
-          if (result !== "granted") return;
-          const captured = await captureTaskScreenshot(taskLogId, "start");
-          if (captured) {
-            captureWorkerRef.current?.postMessage({ type: "start", logId: taskLogId });
+          return {
+            ...row,
+            status: statusChanged ? nextStatus : row.status,
+            updated_at: statusChanged ? updatedAt : row.updated_at,
+            assigned_tasks: {
+              ...row.assigned_tasks,
+              review_required: reviewRequiredChanged ? nextReviewRequired : row.assigned_tasks.review_required,
+              updated_at: reviewRequiredChanged ? updatedAt : row.assigned_tasks.updated_at,
+            },
+          };
+        })
+      )
+    );
+    setSelectedTask((current) =>
+      current
+        ? {
+            ...current,
+            status: statusChanged ? nextStatus : current.status,
+            updated_at: statusChanged ? updatedAt : current.updated_at,
+            assigned_tasks: {
+              ...current.assigned_tasks,
+              review_required: reviewRequiredChanged ? nextReviewRequired : current.assigned_tasks.review_required,
+              updated_at: reviewRequiredChanged ? updatedAt : current.assigned_tasks.updated_at,
+            },
           }
-        })();
-      } else if (statusChanged && nextStatus !== "in_progress" && taskLogId) {
-        captureWorkerRef.current?.postMessage({ type: "stop" });
-      }
-      setPanelMsg({ type: "ok", text: "Changes saved." });
-      window.setTimeout(() => closePanel(), 800);
-    } catch {
-      setPanelMsg({ type: "err", text: "Unable to save changes right now." });
-    } finally {
-      setPanelSaving(false);
+        : current
+    );
+    void fetchTasks();
+    if (statusChanged && nextStatus === "in_progress" && taskLogId) {
+      activeLogIdRef.current = taskLogId;
+      void (async () => {
+        const result = await requestStream();
+        if (result !== "granted") return;
+        const captured = await captureTaskScreenshot(taskLogId, "start");
+        if (captured) {
+          captureWorkerRef.current?.postMessage({ type: "start", logId: taskLogId });
+        }
+      })();
+    } else if (statusChanged && nextStatus !== "in_progress" && taskLogId) {
+      captureWorkerRef.current?.postMessage({ type: "stop" });
     }
   }, [
-    closePanel,
     fetchTasks,
-    panelAccount,
-    panelAssignedBy,
-    panelDetail,
-    panelDueDate,
-    panelInstructions,
-    panelInstructionsLocked,
-    panelNotes,
-    panelProject,
     panelReviewRequired,
     panelStatus,
-    panelTaskName,
-    panelTaskNotes,
     selectedTask,
     currentUserId,
     isAdmin,
@@ -1764,6 +1568,27 @@ export default function TaskListPage() {
     requestStream,
     captureTaskScreenshot,
   ]);
+
+  // Single combined Save Changes action for the detail panel — submits
+  // TaskEditor's metadata form (when the viewer can edit it) and the
+  // status/review-required save together, so the panel reads as one form
+  // with one save button instead of two separate ones.
+  const handleSaveAll = useCallback(async () => {
+    setPanelMsg(null);
+    setPanelSaving(true);
+    try {
+      if (panelCanEditFields && taskEditorRef.current) {
+        await taskEditorRef.current.submit();
+      }
+      await handleSavePanel();
+      setPanelMsg({ type: "ok", text: "Changes saved." });
+      window.setTimeout(() => closePanel(), 800);
+    } catch {
+      setPanelMsg({ type: "err", text: "Unable to save changes right now." });
+    } finally {
+      setPanelSaving(false);
+    }
+  }, [panelCanEditFields, handleSavePanel, closePanel]);
 
   const handleAttachmentUpload = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1916,7 +1741,7 @@ export default function TaskListPage() {
                   onClick={() => { setActiveView("my_tasks"); if (canShowHourlyPool) void fetchHourlyPool(); }}
                   className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "my_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                 >
-                  Hourly Task
+                  Time-based Task
                 </button>
                 {canShowAvailableTasks && (
                   <button
@@ -1924,7 +1749,7 @@ export default function TaskListPage() {
                     onClick={() => setActiveView("available_tasks")}
                     className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                   >
-                    Fixed Pay Tasks
+                    Output Based Tasks
                   </button>
                 )}
                 {!isPerTaskVa && (
@@ -1936,19 +1761,45 @@ export default function TaskListPage() {
                     Recurring
                   </button>
                 )}
-                {canShowProjects && (
+                <button
+                  type="button"
+                  onClick={() => { setActiveView("objective"); void fetchTasks(); }}
+                  className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "objective" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                >
+                  Objective
+                </button>
+                {isAdmin && (
                   <button
                     type="button"
-                    onClick={() => setActiveView("projects")}
-                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "projects" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                    onClick={() => setActiveView("team")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "team" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                   >
-                    Projects
+                    Team
                   </button>
                 )}
               </div>
               )}
 
-              {isAdmin && assignedByProfilesLoaded && activeView === "my_tasks" && (
+              {isAdmin && activeView === "objective" && (
+                <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setObjectiveSubView("list")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${objectiveSubView === "list" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    List
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setObjectiveSubView("progress")}
+                    className={`rounded-md px-3 py-1.5 transition-colors ${objectiveSubView === "progress" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                  >
+                    Progress
+                  </button>
+                </div>
+              )}
+
+              {isAdmin && assignedByProfilesLoaded && (activeView === "my_tasks" || (activeView === "objective" && objectiveSubView === "list")) && (
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-semibold text-stone whitespace-nowrap">View as VA:</span>
                   <select
@@ -2168,18 +2019,7 @@ export default function TaskListPage() {
           {canShowAvailableTasks && activeView === "available_tasks" ? (
             <div className="space-y-4">
               <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} fixedPayOnly={true} currentUserId={currentUserId ?? undefined} refreshKey={availableRefreshKey} />
-              <FixedPayTasksPanel
-                refreshKey={availableRefreshKey}
-                onSwitchToHourly={isPerTaskVa ? undefined : () => setActiveView("my_tasks")}
-              />
-            </div>
-          ) : canShowProjects && activeView === "projects" ? (
-            <div className="p-4">
-              <VAProjectsTab
-                activeProfiles={assignedByProfiles}
-                currentUserId={currentUserId ?? ""}
-                isAdmin={isAdmin}
-              />
+              <FixedPayTasksPanel refreshKey={availableRefreshKey} />
             </div>
           ) : activeView === "recurring" ? (
             <div className="p-4">
@@ -2202,6 +2042,14 @@ export default function TaskListPage() {
                 vaMode={true}
                 currentUserId={currentUserId ?? ""}
               />
+            </div>
+          ) : activeView === "team" ? (
+            <div className="p-4">
+              <TeamWorkloadView currentUserId={currentUserId ?? ""} teamMembers={assignedByProfiles} />
+            </div>
+          ) : activeView === "objective" && objectiveSubView === "progress" ? (
+            <div className="p-4">
+              <ObjectiveProgressView currentUserId={currentUserId ?? ""} teamMembers={assignedByProfiles} />
             </div>
           ) : (
             <>
@@ -2614,256 +2462,84 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                <select
-                  value={addForm.account}
-                  onChange={(e) =>
-                    setAddForm((form) => ({
-                      ...form,
-                      account: e.target.value,
-                      project: "",
-                      task_name: "",
-                    }))
-                  }
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+              <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setCreateTaskMode("time_based")}
+                  className={`flex-1 px-3 py-1.5 transition-colors ${createTaskMode === "time_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
                 >
-                  <option value="">Select account...</option>
-                  {accountOptions.map((account) => (
-                    <option key={account} value={account}>
-                      {account}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Objective</label>
-                <select
-                  value={addForm.project}
-                  onChange={(e) =>
-                    setAddForm((form) => ({
-                      ...form,
-                      project: e.target.value,
-                      task_name: "",
-                    }))
-                  }
-                  disabled={!addForm.account}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
+                  Time-based Task
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCreateTaskMode("output_based")}
+                  className={`flex-1 px-3 py-1.5 transition-colors ${createTaskMode === "output_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
                 >
-                  <option value="">{addForm.account ? "Select objective..." : "Select account first..."}</option>
-                  {addProjectsForAccount.map((project) => (
-                    <option key={project.id} value={project.project_name}>
-                      {project.project_name}
-                    </option>
-                  ))}
-                </select>
+                  Output Based Task
+                </button>
               </div>
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                <select
-                  value={addForm.task_name}
-                  onChange={(e) => setAddForm((form) => ({ ...form, task_name: e.target.value }))}
-                  disabled={!addForm.project || addTasksForProject.length === 0}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                >
-                  <option value="">
-                    {addForm.project
-                      ? addTasksForProject.length > 0
-                        ? "Select task..."
-                        : "No tasks available"
-                      : "Select objective first..."}
-                  </option>
-                  {addTasksForProject.map((task) => (
-                    <option key={task.id} value={task.task_name}>
-                      {task.task_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
-                  <input
-                    type="date"
-                    value={addForm.start_date}
-                    onChange={(e) => setAddForm((form) => ({ ...form, start_date: e.target.value }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                  <input
-                    type="date"
-                    value={addForm.due_date}
-                    onChange={(e) => setAddForm((form) => ({ ...form, due_date: e.target.value }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center gap-1.5">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
-                  <div className="group relative">
-                    <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
-                    <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
-                      <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
-                      <div className="space-y-0.5 text-[10px]">
-                        <p><span className="font-semibold">1. Who:</span> Who</p>
-                        <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
-                        <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
-                        <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
-                      </div>
+              <TaskEditor
+                key={createTaskMode}
+                mode={createTaskMode}
+                currentUserId={currentUserId ?? ""}
+                isAdminOrManager={isAdmin}
+                teamMembers={panelAssignedByOptions}
+                onCancel={closeCreate}
+                onSaved={(task) => void handleTaskCreated(task)}
+                attachmentsExtra={
+                  <div>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
+                      <button
+                        type="button"
+                        onClick={() => createAttachmentInputRef.current?.click()}
+                        className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment"
+                      >
+                        Attach File
+                      </button>
+                      <input
+                        ref={createAttachmentInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          const picked = Array.from(e.target.files ?? []);
+                          e.target.value = "";
+                          if (picked.length > 0) setPendingCreateFiles((prev) => [...prev, ...picked]);
+                        }}
+                      />
                     </div>
-                  </div>
-                </div>
-                <input
-                  type="text"
-                  value={addForm.task_detail}
-                  onChange={(e) => setAddForm((form) => ({ ...form, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
-                  placeholder="Added to client memo — keep it short and sensible"
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                />
-                <p className="text-[10px] text-stone mt-1">
-                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(addForm.task_detail))} words remaining
-                </p>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Notes</label>
-                <textarea
-                  value={addForm.task_notes}
-                  onChange={(e) => setAddForm((form) => ({ ...form, task_notes: e.target.value }))}
-                  rows={2}
-                  placeholder="Add any helpful notes for this task..."
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta resize-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
-                {true ? (
-                  <select
-                    value={addForm.assigned_by}
-                    onChange={(e) => setAddForm((form) => ({ ...form, assigned_by: e.target.value }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  >
-                    <option value="">Select assignee...</option>
-                    {panelAssignedByOptions.map((profile) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.full_name || profile.username || profile.id}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {currentUserProfile?.full_name || currentUserProfile?.username || "—"}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
-                  <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-stone">
-                    <input
-                      type="checkbox"
-                      checked={addForm.instructions_locked}
-                      onChange={(e) => setAddForm((form) => ({ ...form, instructions_locked: e.target.checked }))}
-                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                    />
-                    Locked
-                  </label>
-                </div>
-                <textarea
-                  value={addForm.instructions}
-                  onChange={(e) => setAddForm((form) => ({ ...form, instructions: e.target.value }))}
-                  rows={2}
-                  placeholder="Add task instructions..."
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta resize-none"
-                />
-              </div>
-
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
-                  <button
-                    type="button"
-                    onClick={() => createAttachmentInputRef.current?.click()}
-                    className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment"
-                  >
-                    Attach File
-                  </button>
-                  <input
-                    ref={createAttachmentInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const picked = Array.from(e.target.files ?? []);
-                      e.target.value = "";
-                      if (picked.length > 0) setPendingCreateFiles((prev) => [...prev, ...picked]);
-                    }}
-                  />
-                </div>
-                {pendingCreateFiles.length === 0 ? (
-                  <p className="py-2 text-[12px] text-stone/50">No files selected — will upload after task is created.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {pendingCreateFiles.map((file, idx) => (
-                      <div key={idx} className="flex items-center gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
-                        <svg className="h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <polyline points="14 2 14 8 20 8" />
-                        </svg>
-                        <span className="min-w-0 flex-1 truncate text-[12px] text-walnut">{file.name}</span>
-                        <button
-                          type="button"
-                          onClick={() => setPendingCreateFiles((prev) => prev.filter((_, i) => i !== idx))}
-                          className="shrink-0 text-stone/50 hover:text-terracotta"
-                          aria-label="Remove file"
-                        >
-                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                          </svg>
-                        </button>
+                    {pendingCreateFiles.length === 0 ? (
+                      <p className="py-2 text-[12px] text-stone/50">No files selected — will upload after task is created.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {pendingCreateFiles.map((file, idx) => (
+                          <div key={idx} className="flex items-center gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
+                            <svg className="h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <polyline points="14 2 14 8 20 8" />
+                            </svg>
+                            <span className="min-w-0 flex-1 truncate text-[12px] text-walnut">{file.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setPendingCreateFiles((prev) => prev.filter((_, i) => i !== idx))}
+                              className="shrink-0 text-stone/50 hover:text-terracotta"
+                              aria-label="Remove file"
+                            >
+                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
+                    {createUploadSaving && <p className="mt-1 text-[11px] text-stone">Uploading files...</p>}
                   </div>
-                )}
-              </div>
-
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={addForm.review_required}
-                    onChange={(e) => setAddForm((form) => ({ ...form, review_required: e.target.checked }))}
-                    className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                  />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-stone">Review Required</span>
-                </label>
-              </div>
-
-              {addError && <p className="text-xs font-medium text-red-500">{addError}</p>}
-            </div>
-
-            <div className="shrink-0 flex items-center justify-end gap-3 border-t border-sand px-5 py-4">
-              <button type="button" onClick={closeCreate} className="text-xs text-stone hover:text-espresso">
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleAddTask()}
-                disabled={addSaving || createUploadSaving || !addForm.task_name.trim()}
-                className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {createUploadSaving ? "Uploading files..." : addSaving ? "Saving..." : "Create Task"}
-              </button>
+                }
+              />
             </div>
           </div>
       )}
@@ -2888,191 +2564,190 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                {panelCanEditFields ? (
-                  <select
-                    value={panelAccount}
-                    onChange={(e) => {
-                      const nextAccount = e.target.value;
-                      setPanelAccount(nextAccount);
-                      setPanelProject("");
-                      setPanelTaskName("");
-                    }}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  >
-                    <option value="">Select account...</option>
-                    {accountOptions.map((account) => (
-                      <option key={account} value={account}>
-                        {account}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.account || <span className="text-stone/60">—</span>}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Objective</label>
-                {panelCanEditFields ? (
-                  <select
-                    value={panelProject}
-                    onChange={(e) => {
-                      setPanelProject(e.target.value);
-                      setPanelTaskName("");
-                    }}
-                    disabled={!panelAccount}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                  >
-                    <option value="">{panelAccount ? "Select objective..." : "Select account first..."}</option>
-                    {panelProjectsForAccount.map((project) => (
-                      <option key={project.id} value={project.project_name}>
-                        {project.project_name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.project || <span className="text-stone/60">—</span>}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                {panelCanEditFields ? (
-                  <select
-                    value={panelTaskName}
-                    onChange={(e) => setPanelTaskName(e.target.value)}
-                    disabled={!panelProject || panelTasksForProject.length === 0}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                  >
-                    <option value="">
-                      {panelProject
-                        ? panelTasksForProject.length > 0
-                          ? "Select task..."
-                          : "No tasks available"
-                        : "Select objective first..."}
-                    </option>
-                    {panelTasksForProject.map((task) => (
-                      <option key={task.id} value={task.task_name}>
-                        {task.task_name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.task_name || <span className="text-stone/60">—</span>}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                {panelCanEditFields ? (
-                  <input
-                    type="date"
-                    value={formatDateInputValue(panelDueDate)}
-                    onChange={(e) => setPanelDueDate(e.target.value)}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                ) : (
-                  (() => {
-                    const due = formatDueDate(selectedTask.assigned_tasks.due_date);
-                    return (
-                      <div
-                        className={`rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] ${
-                          due.isOverdue ? "text-terracotta" : "text-espresso"
-                        }`}
-                      >
-                        {due.label}
-                        {due.isOverdue && selectedTask.assigned_tasks.due_date ? " · Overdue" : ""}
+              {panelCanEditFields ? (
+                <TaskEditor
+                  ref={taskEditorRef}
+                  mode="time_based"
+                  editingTaskId={selectedTask.assigned_tasks.id}
+                  initialTask={selectedTask.assigned_tasks}
+                  currentUserId={currentUserId ?? ""}
+                  isAdminOrManager={isAdmin}
+                  teamMembers={panelAssignedByOptions}
+                  // selectedTask.assigned_tasks (VATaskRow's embedded shape)
+                  // has no assigned_task_assignees array, unlike Calendar's
+                  // dedicated GET — without this, TaskEditor's va_id fallback
+                  // defaults to "" and its PUT wipes the task's assignee.
+                  defaultVaId={selectedTask.va_id}
+                  hideFooter
+                  onCancel={closePanel}
+                  onSaved={() => void handleMetadataSaved()}
+                  attachmentsExtra={
+                    <div>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => panelAttachmentInputRef.current?.click()}
+                            disabled={panelUploadSaving}
+                            className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {panelUploadSaving ? "Uploading..." : "Attach File"}
+                          </button>
+                          <input
+                            ref={panelAttachmentInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => void handleAttachmentUpload(e)}
+                          />
+                        </div>
                       </div>
-                    );
-                  })()
-                )}
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center gap-1.5">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
-                  <div className="group relative">
-                    <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
-                    <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
-                      <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
-                      <div className="space-y-0.5 text-[10px]">
-                        <p><span className="font-semibold">1. Who:</span> Who</p>
-                        <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
-                        <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
-                        <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
-                      </div>
+                      {attachmentsLoading ? (
+                        <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
+                          <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                          </svg>
+                          Loading attachments...
+                        </div>
+                      ) : attachments.length === 0 ? (
+                        <p className="py-2 text-[12px] text-stone/50">No attachments.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {attachments.map((att) => (
+                            <div key={att.id} className="flex items-start gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
+                              <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                              </svg>
+                              <div className="min-w-0 flex-1">
+                                {att.url ? (
+                                  <a
+                                    href={att.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block truncate text-[12px] text-terracotta hover:underline"
+                                    title={att.filename}
+                                  >
+                                    {att.filename}
+                                  </a>
+                                ) : (
+                                  <span className="block truncate text-[12px] text-walnut" title={att.filename}>
+                                    {att.filename}
+                                  </span>
+                                )}
+                                <div className="mt-0.5 text-[10px] text-stone">
+                                  {formatFileSize(att.file_size)}
+                                  {att.mime_type ? ` · ${att.mime_type}` : ""}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  }
+                />
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.account || <span className="text-stone/60">—</span>}
                     </div>
                   </div>
-                </div>
-                {panelCanEditFields ? (
-                  <>
-                    <textarea
-                      value={panelDetail}
-                      onChange={(e) => setPanelDetail(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
-                      rows={2}
-                      placeholder="Added to client memo — keep it short and sensible"
-                      className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                    />
-                    <p className="text-[10px] text-stone mt-1">
-                      {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(panelDetail))} words remaining
-                    </p>
-                  </>
-                ) : (
-                  <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.task_detail || <span className="text-stone/60">No detail provided.</span>}
-                  </div>
-                )}
-              </div>
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
-                {panelCanEditFields ? (
-                  <textarea
-                    value={panelTaskNotes}
-                    onChange={(e) => setPanelTaskNotes(e.target.value)}
-                    rows={2}
-                    placeholder="Add task notes..."
-                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                ) : (
-                  <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Objective</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.project || <span className="text-stone/60">—</span>}
+                    </div>
                   </div>
-                )}
-              </div>
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
-                {panelCanEditAssignedBy ? (
-                  <select
-                    value={panelAssignedBy}
-                    onChange={(e) => setPanelAssignedBy(e.target.value)}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  >
-                    <option value="">Select assignee...</option>
-                    {panelAssignedByOptions.map((profile) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.full_name || profile.username || profile.id}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.assigned_by_profile?.full_name
-                      || selectedTask.assigned_tasks.assigned_by_profile?.username
-                      || selectedTask.assigned_tasks.assigned_by
-                      || <span className="text-stone/60">—</span>}
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.task_name || <span className="text-stone/60">—</span>}
+                    </div>
                   </div>
-                )}
-              </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.category || <span className="text-stone/60">—</span>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.start_date ? formatDateInputValue(selectedTask.assigned_tasks.start_date) : <span className="text-stone/60">—</span>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
+                    {(() => {
+                      const due = formatDueDate(selectedTask.assigned_tasks.due_date);
+                      return (
+                        <div
+                          className={`rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] ${
+                            due.isOverdue ? "text-terracotta" : "text-espresso"
+                          }`}
+                        >
+                          {due.label}
+                          {due.isOverdue && selectedTask.assigned_tasks.due_date ? " · Overdue" : ""}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div>
+                    <div className="mb-1 flex items-center gap-1.5">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
+                      <div className="group relative">
+                        <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
+                        <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                          <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
+                          <div className="space-y-0.5 text-[10px]">
+                            <p><span className="font-semibold">1. Who:</span> Who</p>
+                            <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+                            <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+                            <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.task_detail || <span className="text-stone/60">No detail provided.</span>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
+                    <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.assigned_by_profile?.full_name
+                        || selectedTask.assigned_tasks.assigned_by_profile?.username
+                        || selectedTask.assigned_tasks.assigned_by
+                        || <span className="text-stone/60">—</span>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
+                    <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.instructions ? renderTextWithLinks(selectedTask.assigned_tasks.instructions) : <span className="text-stone/60">No instructions provided.</span>}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {isSubmittedView && (
                 <div>
@@ -3083,60 +2758,22 @@ export default function TaskListPage() {
                 </div>
               )}
 
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
-                  {panelCanEditInstructions ? (
-                    <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-stone">
-                      <input
-                        type="checkbox"
-                        checked={panelInstructionsLocked}
-                        onChange={(e) => setPanelInstructionsLocked(e.target.checked)}
-                        className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                      />
-                      Locked
-                    </label>
-                  ) : null}
+              {!panelCanEditFields && (
+                <div>
+                  <label className="flex items-center gap-2 cursor-pointer w-fit">
+                    <input
+                      type="checkbox"
+                      checked={panelReviewRequired}
+                      disabled={panelReviewRequired}
+                      onChange={(e) => setPanelReviewRequired(e.target.checked)}
+                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-stone">Review Required</span>
+                  </label>
                 </div>
-                {panelCanEditInstructions && !panelInstructionsLocked ? (
-                  <textarea
-                    value={panelInstructions}
-                    onChange={(e) => setPanelInstructions(e.target.value)}
-                    rows={2}
-                    placeholder="Add task instructions..."
-                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                ) : (
-                  <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.instructions ? renderTextWithLinks(selectedTask.assigned_tasks.instructions) : <span className="text-stone/60">No instructions provided.</span>}
-                  </div>
-                )}
-              </div>
+              )}
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">My Notes</label>
-                <textarea
-                  value={panelNotes}
-                  onChange={(e) => setPanelNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Add your private notes for this task..."
-                  className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                />
-              </div>
-
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer w-fit">
-                  <input
-                    type="checkbox"
-                    checked={panelReviewRequired}
-                    disabled={!isAdmin && panelReviewRequired}
-                    onChange={(e) => setPanelReviewRequired(e.target.checked)}
-                    className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-stone">Review Required</span>
-                </label>
-              </div>
-
+              <Section title="Status & Files" defaultOpen>
               <div>
                 <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
                 {selectedTask.is_collaborative ? (
@@ -3201,112 +2838,7 @@ export default function TaskListPage() {
                 )}
               </div>
 
-              <div>
-                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
-                {panelScreenshotsLoading ? (
-                  <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
-                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                    </svg>
-                    Loading screenshots...
-                  </div>
-                ) : panelScreenshots.length === 0 ? (
-                  <p className="py-2 text-[12px] text-stone/50">No screenshots.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {panelScreenshots.map((ss) => {
-                      const url = panelSignedUrls[ss.id];
-                      return (
-                        <button
-                          key={ss.id}
-                          type="button"
-                          onClick={() => {
-                            if (!url) return;
-                            const urls = panelScreenshots
-                              .map((s) => panelSignedUrls[s.id])
-                              .filter((candidate): candidate is string => Boolean(candidate));
-                            setLightboxUrls(urls);
-                            setLightboxIndex(Math.max(0, urls.indexOf(url)));
-                          }}
-                          className="relative group w-[48px] h-[36px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer hover:border-terracotta hover:scale-105 transition-all shrink-0"
-                          title={`Screenshot ${ss.screenshot_type || "manual"}`}
-                        >
-                          {url ? (
-                            <img src={url} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => panelAttachmentInputRef.current?.click()}
-                      disabled={panelUploadSaving}
-                      className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {panelUploadSaving ? "Uploading..." : "Attach File"}
-                    </button>
-                    <input
-                      ref={panelAttachmentInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => void handleAttachmentUpload(e)}
-                    />
-                  </div>
-                </div>
-                {attachmentsLoading ? (
-                  <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
-                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                    </svg>
-                    Loading attachments...
-                  </div>
-                ) : attachments.length === 0 ? (
-                  <p className="py-2 text-[12px] text-stone/50">No attachments.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {attachments.map((att) => (
-                      <div key={att.id} className="flex items-start gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
-                        <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <polyline points="14 2 14 8 20 8" />
-                        </svg>
-                        <div className="min-w-0 flex-1">
-                          {att.url ? (
-                            <a
-                              href={att.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block truncate text-[12px] text-terracotta hover:underline"
-                              title={att.filename}
-                            >
-                              {att.filename}
-                            </a>
-                          ) : (
-                            <span className="block truncate text-[12px] text-walnut" title={att.filename}>
-                              {att.filename}
-                            </span>
-                          )}
-                          <div className="mt-0.5 text-[10px] text-stone">
-                            {formatFileSize(att.file_size)}
-                            {att.mime_type ? ` · ${att.mime_type}` : ""}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              </Section>
 
               {panelMsg?.type === "err" && <p className="text-xs font-medium text-red-500">{panelMsg.text}</p>}
               {panelMsg?.type === "ok" && <p className="text-xs font-medium text-sage">{panelMsg.text}</p>}
@@ -3331,7 +2863,7 @@ export default function TaskListPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleSavePanel()}
+                  onClick={() => void handleSaveAll()}
                   disabled={panelSaving}
                   className="cursor-pointer rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
                 >

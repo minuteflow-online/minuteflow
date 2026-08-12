@@ -346,7 +346,7 @@ export default function AvailableTasksWidget({
                 viewMode === "fixed_pay" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
               }`}
             >
-              Fixed Pay
+              Output Based
             </button>
           )}
           <button
@@ -356,7 +356,7 @@ export default function AvailableTasksWidget({
               viewMode === "hourly" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
             }`}
           >
-            Hourly
+            Time-based
           </button>
         </div>
       )}
@@ -486,7 +486,7 @@ export default function AvailableTasksWidget({
             <>
               {/* Fixed-pay tasks available to grab */}
               {openTasks.length > 0 && (
-                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5 pt-1">Fixed Pay Tasks</p>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase px-0.5 pt-1">Output Based Tasks</p>
               )}
               {openTasks.map((task) => {
                 const isClaiming = claimingId === task.id;

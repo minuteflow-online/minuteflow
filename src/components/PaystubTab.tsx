@@ -776,10 +776,10 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 )}
               </div>
 
-              {/* Fixed Assignments */}
+              {/* Output Based Assignments */}
               {preview.fixedAssignments && preview.fixedAssignments.length > 0 && (
                 <div className="px-5 py-3 border-t border-linen">
-                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Fixed Assignments</div>
+                  <div className="text-xs font-semibold text-bark/50 uppercase tracking-wide mb-2">Output Based Assignments</div>
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-bark/40 border-b border-linen">
@@ -826,12 +826,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                   </div>
                 )}
                 <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
-                  <span>Hourly Pay</span>
+                  <span>Time-based Pay</span>
                   <span>{formatCurrency(preview.grossPay)}</span>
                 </div>
                 {preview.fixedTotal > 0 && (
                   <div className="flex justify-between items-center text-xs text-bark/60 mb-1">
-                    <span>Fixed Assignments</span>
+                    <span>Output Based Assignments</span>
                     <span>+ {formatCurrency(preview.fixedTotal)}</span>
                   </div>
                 )}

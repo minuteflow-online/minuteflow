@@ -19,6 +19,8 @@ import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone, countWords } from "@/lib/utils";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
+import { todoLabel, type TaskTodo } from "@/lib/taskTodos";
+import { useAccountsAndClients } from "@/hooks/useAccountsAndClients";
 import type {
   Profile,
   Session,
@@ -30,7 +32,7 @@ import type {
   VAAssignedTask,
 } from "@/types/database";
 
-type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number };
+type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string };
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -139,6 +141,7 @@ export default function DashboardPage() {
   // Auth & profile
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const { accountClientMap } = useAccountsAndClients();
 
   // Session state
   const [session, setSession] = useState<Session | null>(null);
@@ -173,6 +176,12 @@ export default function DashboardPage() {
   // Assigned task pending play (tracks which assignee row to mark in_progress)
   const [pendingAssignedTaskId, setPendingAssignedTaskId] = useState<number | null>(null);
   const pendingAssignedTaskIdRef = useRef<number | null>(null);
+  // Set right before playing a specific to-do (bypasses the close-old-task
+  // wizard's formData merge entirely, same reason pendingAssignedTaskIdRef
+  // is a ref and not a formData field — the wizard reuses client_memo/
+  // internal_memo for the OLD task's close-out, so anything that needs to
+  // survive to the NEW task's insert has to ride outside formData).
+  const pendingTodoLabelRef = useRef<string | null>(null);
   const prevActiveLogIdRef = useRef<string | null>(null);
   // Counter that tells AssignedTasksWidget to re-fetch from DB
   const [widgetRefetchCount, setWidgetRefetchCount] = useState(0);
@@ -1412,6 +1421,8 @@ export default function DashboardPage() {
         deleted_at: null,
       };
       setLiveSessionData(taskAsLog);
+      setCloseOldClientMemo(taskAsLog.client_memo || "");
+      setCloseOldInternalMemo(taskAsLog.internal_memo || "");
       setCloseOldStep("details");
       return;
     }
@@ -2246,6 +2257,11 @@ export default function DashboardPage() {
           : (formData.client_memo || null);
         const newTaskInternalMemo = formData.task_status ? null : formData.internal_memo || null;
 
+        // Playing a specific to-do sets this right before the call — read
+        // and clear it here so it never leaks onto a later, unrelated task.
+        const todoLabelForNewLog = pendingTodoLabelRef.current;
+        pendingTodoLabelRef.current = null;
+
         // Insert time log
         const { data: logData, error: newLogError } = await supabase
           .from("time_logs")
@@ -2268,6 +2284,7 @@ export default function DashboardPage() {
             billing_type: formData.billing_type || "hourly",
             task_rate: formData.task_rate ?? null,
             session_date: getCorrectSessionDate(session, orgTimezone),
+            todo_label: todoLabelForNewLog,
           })
           .select()
           .single();
@@ -2313,6 +2330,8 @@ export default function DashboardPage() {
           _startMs: Date.now(),
           billing_type: formData.billing_type || "hourly",
           task_rate: formData.task_rate ?? null,
+          assignedTaskId: assignedTaskIdToMark ?? null,
+          todoLabel: todoLabelForNewLog ?? null,
         };
 
         if (!skipClockIn) {
@@ -2733,6 +2752,8 @@ export default function DashboardPage() {
       if (liveLog) {
         // Orphaned task found — show the rejoin/close prompt
         setLiveSessionData(liveLog);
+        setCloseOldClientMemo(liveLog.client_memo || "");
+        setCloseOldInternalMemo(liveLog.internal_memo || "");
         setPendingFormData(formData);
         setShowLivePrompt(true);
         return;
@@ -2803,7 +2824,7 @@ export default function DashboardPage() {
       task_name: detail.task_name,
       category: "Task",
       account: detail.account || "",
-      client_name: "",
+      client_name: (detail.account && accountClientMap[detail.account]) || "",
       project: detail.project || "",
       client_memo: detail.task_detail || "",
       internal_memo: "",
@@ -2857,12 +2878,82 @@ export default function DashboardPage() {
         deleted_at: null,
       };
       setLiveSessionData(taskAsLog);
+      setCloseOldClientMemo(taskAsLog.client_memo || "");
+      setCloseOldInternalMemo(taskAsLog.internal_memo || "");
       setPendingFormData(formData);
       setCloseOldStep("details");
     } else {
       handleCheckAndStartTask(formData);
     }
-  }, [activeTask, userId, profile, handleCheckAndStartTask]);
+  }, [activeTask, userId, profile, handleCheckAndStartTask, accountClientMap]);
+
+  // ─── To-Do Play ─────────────────────────────────────────────
+  // Same close-old-task-wizard-then-start flow as handlePlayAssignedTask —
+  // playing a to-do is just switching tasks, same as any other task switch.
+  // task_name/account/project/client_memo all stay identical to the parent
+  // task (client_memo is the parent's own Client Detail, per Toni: to-dos
+  // are internal-only and never feed the client memo/invoice) so Reports'
+  // task-level rollup (grouped by task_name) sums a task's to-do time for
+  // free. Only todo_label distinguishes which to-do a log belongs to, and
+  // it rides in via pendingTodoLabelRef rather than formData, since the
+  // wizard reuses client_memo/internal_memo for the OLD task's close-out.
+  const handlePlayTodo = useCallback((task: VAAssignedTask, todo: TaskTodo) => {
+    const detail = task.assigned_tasks;
+    const formData: DashboardTaskFormData = {
+      task_name: detail.task_name,
+      category: "Task",
+      account: detail.account || "",
+      client_name: (detail.account && accountClientMap[detail.account]) || "",
+      project: detail.project || "",
+      client_memo: detail.task_detail || "",
+      internal_memo: "",
+      _assignedTaskId: task.assigned_tasks.id,
+    };
+
+    setPendingAssignedTaskId(task.assigned_tasks.id);
+    pendingAssignedTaskIdRef.current = task.assigned_tasks.id;
+    pendingTodoLabelRef.current = todoLabel(todo.sort_order);
+
+    if (activeTask) {
+      const taskAsLog: TimeLog = {
+        id: parseInt(activeTask.logId, 10),
+        user_id: userId!,
+        username: profile?.username || "",
+        full_name: profile?.full_name || "",
+        department: profile?.department || null,
+        position: profile?.position || null,
+        task_name: activeTask.task_name,
+        category: activeTask.category,
+        project: activeTask.project || null,
+        account: activeTask.account || null,
+        client_name: activeTask.client_name || null,
+        start_time: activeTask.start_time,
+        end_time: null,
+        duration_ms: activeTask.start_time
+          ? Date.now() - new Date(activeTask.start_time).getTime()
+          : 0,
+        billable: true,
+        client_memo: activeTask.client_memo || null,
+        internal_memo: activeTask.internal_memo || null,
+        is_manual: false,
+        form_fill_ms: 0,
+        progress: null,
+        billing_type: activeTask.billing_type || "hourly",
+        task_rate: activeTask.task_rate ?? null,
+        manual_status: null,
+        session_date: null,
+        created_at: activeTask.start_time,
+        deleted_at: null,
+      };
+      setLiveSessionData(taskAsLog);
+      setCloseOldClientMemo(taskAsLog.client_memo || "");
+      setCloseOldInternalMemo(taskAsLog.internal_memo || "");
+      setPendingFormData(formData);
+      setCloseOldStep("details");
+    } else {
+      handleCheckAndStartTask(formData);
+    }
+  }, [activeTask, userId, profile, handleCheckAndStartTask, accountClientMap]);
 
   // ─── Notes modal ──────────────────────────────────────────
 
@@ -3284,9 +3375,12 @@ export default function DashboardPage() {
                 sessionState={sessionState}
                 hasActiveTask={!!activeTask}
                 onPlayAssignedTask={handlePlayAssignedTask}
+                onPlayTodo={handlePlayTodo}
                 orgTimezone={orgTimezone}
                 isAdmin={role === "admin" || role === "manager"}
                 refetchCount={widgetRefetchCount}
+                activeAssignedTaskId={activeTask?.assignedTaskId ?? null}
+                activeTodoLabel={activeTask?.todoLabel ?? null}
               />
             )}
             {isVa && sessionState === "idle" && (

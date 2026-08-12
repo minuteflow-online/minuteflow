@@ -14,9 +14,9 @@ const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progres
 // VA_EDITABLE_STATUSES state — once admin has moved it into review/payroll
 // (revision_needed/completed/cancelled/paid), the rate and details are
 // locked so a VA can't retroactively change what they're being paid for.
-const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date"]);
+const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "project_id", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date", "end_date"]);
 const TASK_SELECT =
-  "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
+  "id, task_name, account, category, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -171,6 +171,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       }
       if ("account" in body) updates.account = normalizeText(body.account);
       if ("category" in body) updates.category = normalizeText(body.category);
+      if ("project_id" in body) updates.project_id = normalizeText(body.project_id);
       if ("rate" in body) {
         const rate = parseRate(body.rate);
         if (rate === null) return Response.json({ error: "rate is required" }, { status: 400 });
@@ -182,6 +183,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if ("instructions" in body) updates.instructions = normalizeText(body.instructions);
       if ("start_date" in body) updates.start_date = normalizeDate(body.start_date);
       if ("due_date" in body) updates.due_date = normalizeDate(body.due_date);
+      if ("end_date" in body) updates.end_date = normalizeDate(body.end_date);
     }
 
     const { data, error } = await admin
@@ -219,6 +221,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
   if ("account" in body) updates.account = normalizeText(body.account);
   if ("category" in body) updates.category = normalizeText(body.category);
+  if ("project_id" in body) updates.project_id = normalizeText(body.project_id);
   if ("rate" in body) {
     const rate = parseRate(body.rate);
     if (rate === null) return Response.json({ error: "rate is required" }, { status: 400 });
@@ -231,6 +234,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if ("instructions_locked" in body) updates.instructions_locked = Boolean(body.instructions_locked);
   if ("start_date" in body) updates.start_date = normalizeDate(body.start_date);
   if ("due_date" in body) updates.due_date = normalizeDate(body.due_date);
+  if ("end_date" in body) updates.end_date = normalizeDate(body.end_date);
   if (hasArchivedAt) updates.archived_at = nextArchivedAt;
   if (hasDeletedAt) updates.deleted_at = nextDeletedAt;
   if ("status" in body) {

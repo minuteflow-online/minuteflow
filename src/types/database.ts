@@ -98,6 +98,10 @@ export interface ActiveTask {
   isBreak?: boolean;
   billing_type?: BillingType;
   task_rate?: number | null;
+  /** assigned_tasks.id this active log is tied to, if started from an Assigned Task or one of its to-dos. */
+  assignedTaskId?: number | null;
+  /** "TD1"/"TD2"/etc. if this active log is playing a specific to-do, else null. */
+  todoLabel?: string | null;
 }
 
 export interface TimeLog {
@@ -127,6 +131,8 @@ export interface TimeLog {
   session_date: string | null;
   created_at: string;
   deleted_at: string | null;
+  /** e.g. "TD1" — set when this log was started by playing a specific to-do item, not the parent task itself. Internal-only, doesn't affect client_memo/invoicing. */
+  todo_label?: string | null;
 }
 
 export interface TaskScreenshot {
@@ -316,6 +322,8 @@ export interface PlannedTask {
   completed: boolean;
   log_id: number | null;
   priority: "urgent" | "important" | "needed" | null;
+  start_time: string | null;
+  end_time: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -522,7 +530,9 @@ export interface AssignedTask {
   task_detail: string | null;
   task_notes: string | null;
   due_date: string | null;
+  due_time: string | null;
   start_date: string | null;
+  end_date: string | null;
   archived_at: string | null;
   deleted_at: string | null;
   assigned_by: string | null;
@@ -531,6 +541,9 @@ export interface AssignedTask {
   fixed_pay_task_id: number | null;
   recurring_template_id: string | null;
   project_id?: string | null;
+  parent_task_id: number | null;
+  start_time: string | null;
+  end_time: string | null;
   pay_type?: string | null;
   review_required: boolean;
   revision_count: number;
@@ -590,6 +603,8 @@ export interface FixedPayTaskWithClaimer {
   status: "open" | "pending" | "on_queue" | "in_progress" | "submitted" | "revision_needed" | "completed" | "cancelled" | "paid";
   start_date: string | null;
   due_date: string | null;
+  end_date: string | null;
+  project_id: string | null;
   assigned_to: string | null;
   assigned_by: string | null;
   claimed_by: string | null;
@@ -611,6 +626,8 @@ export interface FixedPayTaskWithClaimer {
   assigned_task_id?: number | null;
 }
 
+export type ProjectKind = "objective" | "operation";
+
 export interface Project {
   id: string;
   name: string;
@@ -621,6 +638,10 @@ export interface Project {
   created_by: string | null;
   is_active: boolean;
   created_at: string;
+  parent_project_id: string | null;
+  kind: ProjectKind;
+  target_date: string | null;
+  linked_objective_id: string | null;
 }
 
 export interface FixedPayTaskAttachment {

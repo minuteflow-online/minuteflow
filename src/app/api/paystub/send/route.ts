@@ -205,10 +205,10 @@ export async function POST(request: Request) {
     status: a.status as string,
   }));
 
-  // Fetch Fixed Pay Tasks (the Team/VA "Fixed Pay Tasks" tab) this VA has
+  // Fetch Output Based Tasks (the Team/VA "Output Based Tasks" tab) this VA has
   // completed but not yet been paid for. Separate table from the legacy
   // va_task_assignments fixed-rate flow above — folded into the same
-  // "Fixed Assignments" section on the paystub so they show up together.
+  // "Output Based Assignments" section on the paystub so they show up together.
   const { data: fixedPayTasksRaw } = await adminClient
     .from("fixed_pay_tasks")
     .select("id, task_name, account, category, rate")
@@ -218,7 +218,7 @@ export async function POST(request: Request) {
 
   const fixedPayTaskItems = (fixedPayTasksRaw ?? []).map((t) => ({
     id: t.id as number,
-    task_name: (t.task_name as string) ?? "Fixed Pay Task",
+    task_name: (t.task_name as string) ?? "Output Based Task",
     account: (t.account as string) ?? "",
     project: (t.category as string) ?? "",
     rate: Number(t.rate) || 0,
@@ -293,7 +293,7 @@ export async function POST(request: Request) {
       .in("id", fixedIds);
   }
 
-  // Step 1c: Mark included Fixed Pay Tasks as paid (separate table, own status enum)
+  // Step 1c: Mark included Output Based Tasks as paid (separate table, own status enum)
   if (fixedPayTaskItems.length > 0) {
     const fixedPayTaskIds = fixedPayTaskItems.map((t) => t.id);
     await adminClient
@@ -618,9 +618,9 @@ function buildPaystubEmail(data: PaystubData): string {
       </div>
 
       ${fixedAssignments.length > 0 ? `
-      <!-- Fixed Assignments -->
+      <!-- Output Based Assignments -->
       <div style="padding: 24px 32px 0;">
-        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 12px;">Fixed Assignments</div>
+        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; margin-bottom: 12px;">Output Based Assignments</div>
         <table style="width: 100%; border-collapse: collapse; border: 1px solid #e8e0d4; border-radius: 8px; overflow: hidden;">
           <thead>
             <tr style="background: #faf6f0;">
@@ -666,15 +666,15 @@ function buildPaystubEmail(data: PaystubData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(s.amount)}</td>
           </tr>`).join("")
             : `<tr>
-            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Hourly Rate</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Time-based Rate</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}</td>
           </tr>`}
           <tr>
-            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Hourly Pay${rateSegments.length > 1 ? ` (${formatRateSegments(rateSegments)})` : ""}</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Time-based Pay${rateSegments.length > 1 ? ` (${formatRateSegments(rateSegments)})` : ""}</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(grossPay)}</td>
           </tr>
           ${fixedTotal > 0 ? `<tr>
-            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Fixed Assignments</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Output Based Assignments</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">+ ${formatCurrency(fixedTotal)}</td>
           </tr>` : ""}
           ${customLineItemsTotal > 0 ? `<tr>

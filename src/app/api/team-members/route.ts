@@ -12,7 +12,7 @@ export async function GET() {
 
   const { data: members, error } = await supabase
     .from("profiles")
-    .select("id, full_name, username, position, role")
+    .select("id, full_name, username, position, role, pay_rate_type, can_see_available_tasks")
     .eq("is_active", true)
     .order("full_name");
 

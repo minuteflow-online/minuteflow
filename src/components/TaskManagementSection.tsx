@@ -747,8 +747,8 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
             className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
           >
             <option value="all">All Types</option>
-            <option value="fixed">Fixed Rate</option>
-            <option value="hourly">Hourly</option>
+            <option value="fixed">Output Based</option>
+            <option value="hourly">Time-based</option>
           </select>
         </div>
       </div>
@@ -861,8 +861,8 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
                     onChange={(e) => setAddBillingType(e.target.value as BillingType)}
                     className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
                   >
-                    <option value="fixed">Fixed Rate</option>
-                    <option value="hourly">Hourly</option>
+                    <option value="fixed">Output Based</option>
+                    <option value="hourly">Time-based</option>
                   </select>
                 </div>
                 {/* Rate */}

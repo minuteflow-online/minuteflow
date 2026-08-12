@@ -393,7 +393,7 @@ export async function GET(request: Request) {
           <td>${formatCurrency(s.amount)}</td>
         </tr>`).join("")
           : `<tr>
-          <td>Hourly Rate</td>
+          <td>Time-based Rate</td>
           <td>${formatCurrency(payRate)}</td>
         </tr>`}
         <tr class="total-row">
