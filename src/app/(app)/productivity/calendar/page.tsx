@@ -47,6 +47,11 @@ function taskModesForMember(member: TeamMember | undefined): { canTimeBased: boo
 
 type DueItem = {
   id: string;
+  // The underlying assigned_tasks/fixed_pay_tasks row id — id itself carries a
+  // per-day suffix ("assigned-241-2026-08-12", "assigned-241-due") for the
+  // multi-day span expansion, so it can't be parsed back into a number; this
+  // is the actual numeric id to look the row up by.
+  taskId: number;
   source: "assigned" | "fixed";
   title: string;
   account: string | null;
@@ -250,6 +255,7 @@ export default function ProductivityCalendarPage() {
       // [start_date, end_date], with the exact due_date day marked "due".
       const items: DueItem[] = filtered.flatMap((t) => {
         const base = {
+          taskId: t.id,
           source: "fixed" as const,
           title: t.task_name,
           account: t.account,
@@ -320,6 +326,7 @@ export default function ProductivityCalendarPage() {
       assignedTasksAll.flatMap((t) => {
         if (!t.due_date && !t.start_date) return [];
         const base = {
+          taskId: t.id,
           source: "assigned" as const,
           title: t.task_name,
           account: t.account,
@@ -535,8 +542,7 @@ export default function ProductivityCalendarPage() {
     const scheduledIdsToday = new Set(scheduledForDate(selectedDate).map((t) => t.id));
     return (dueItemsByDate[selectedDate] ?? []).filter((item) => {
       if (item.source !== "assigned") return true;
-      const rawId = Number(item.id.replace("assigned-", ""));
-      return !scheduledIdsToday.has(rawId);
+      return !scheduledIdsToday.has(item.taskId);
     });
   }, [dueItemsByDate, selectedDate, scheduledForDate]);
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i);
@@ -997,8 +1003,13 @@ export default function ProductivityCalendarPage() {
             {dueTodayItems.length > 0 && (
               <div className="mb-3 flex flex-wrap gap-1.5">
                 {dueTodayItems.map((item) => {
-                  const rawId = item.source === "assigned" ? Number(item.id.replace("assigned-", "")) : null;
-                  const scheduleTarget = rawId ? daySchedule.find((t) => t.id === rawId) : undefined;
+                  // Look up against the admin-wide list (same source dueTodayItems is
+                  // built from), not just the current viewer's own daySchedule —
+                  // otherwise an unassigned/other-VA task shows this pill but it's
+                  // unclickable, since it never appears in dayUserId's own task list.
+                  const scheduleTarget = item.source === "assigned"
+                    ? daySchedule.find((t) => t.id === item.taskId) ?? assignedTasksAll.find((t) => t.id === item.taskId)
+                    : undefined;
                   const dueTimeLabel = item.dateType === "due" && item.dueTime ? ` ${formatDueTime(item.dueTime)}` : "";
                   const label = `${item.dateType === "due" ? "Due" : "Starts"}${dueTimeLabel}: ${item.title}`;
                   const pillClasses = categoryBlockClasses(item.category, true);
