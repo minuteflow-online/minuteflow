@@ -70,6 +70,23 @@ export interface TaskEditorHandle {
 const inputClass = "w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white disabled:bg-parchment/40 disabled:text-stone";
 const labelClass = "mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut";
 
+function ClientMemoFormatTooltip() {
+  return (
+    <div className="group relative">
+      <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
+      <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+        <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
+        <div className="space-y-0.5 text-[10px]">
+          <p><span className="font-semibold">1. Who:</span> Who</p>
+          <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+          <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+          <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEditor({
   mode,
   editingTaskId = null,
@@ -490,7 +507,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       <Section title="Details" defaultOpen={Boolean(taskDetail || taskNotes || instructions)}>
         {supportsTodos && checklistMode ? (
           <div>
-            <label className={labelClass}>To-Do List</label>
+            <div className="mb-1 flex items-center gap-1.5">
+              <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">To-Do List</label>
+              <ClientMemoFormatTooltip />
+            </div>
+            <p className="mb-1.5 text-[10px] text-stone">Each item still composes into the client memo — same Who/What/Where/Why/Status format applies per item.</p>
             {todosLoading ? (
               <p className="text-[12px] text-stone">Loading...</p>
             ) : (
@@ -539,7 +560,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           </div>
         ) : (
           <div>
-            <label className={labelClass}>Client Detail</label>
+            <div className="mb-1 flex items-center gap-1.5">
+              <label className="block text-[11px] font-semibold uppercase tracking-wide text-walnut">Client Detail</label>
+              <ClientMemoFormatTooltip />
+            </div>
             <textarea
               value={taskDetail}
               onChange={(e) => setTaskDetail(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
