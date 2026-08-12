@@ -572,46 +572,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       <Section title="Details">
-        {supportsTodos && !hideScreenshots && (
-          <div>
-            <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
-            {!editingTaskId ? (
-              <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
-            ) : screenshotsLoading ? (
-              <p className="text-[12px] text-stone">Loading screenshots...</p>
-            ) : screenshots.length === 0 ? (
-              <p className="text-[12px] text-stone/50">No screenshots.</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {screenshots.map((ss, i) => (
-                  <button
-                    key={ss.id}
-                    type="button"
-                    onClick={() => ss.url && setLightboxIndex(i)}
-                    disabled={!ss.url}
-                    className="relative h-[36px] w-[48px] shrink-0 cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed"
-                    title={`Screenshot ${ss.screenshot_type || "manual"}`}
-                  >
-                    {ss.url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={ss.url} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-            {lightboxIndex !== null && (
-              <ScreenshotLightbox
-                urls={screenshots.map((s) => s.url).filter((u): u is string => Boolean(u))}
-                initialIndex={lightboxIndex}
-                onClose={() => setLightboxIndex(null)}
-              />
-            )}
-          </div>
-        )}
-
         <div>
           <div className="mb-1 flex items-center gap-1.5">
             <label className="block text-[11px] font-semibold uppercase tracking-wide text-walnut">Client Detail</label>
@@ -880,6 +840,45 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             <label className={labelClass}>Final Rate</label>
             <input value={rate} onChange={(e) => setRate(e.target.value)} placeholder="0.00" className={inputClass} />
           </div>
+        </Section>
+      )}
+
+      {supportsTodos && !hideScreenshots && (
+        <Section title="Screenshots">
+          {!editingTaskId ? (
+            <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
+          ) : screenshotsLoading ? (
+            <p className="text-[12px] text-stone">Loading screenshots...</p>
+          ) : screenshots.length === 0 ? (
+            <p className="text-[12px] text-stone/50">No screenshots.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {screenshots.map((ss, i) => (
+                <button
+                  key={ss.id}
+                  type="button"
+                  onClick={() => ss.url && setLightboxIndex(i)}
+                  disabled={!ss.url}
+                  className="relative h-[36px] w-[48px] shrink-0 cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed"
+                  title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                >
+                  {ss.url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={ss.url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          {lightboxIndex !== null && (
+            <ScreenshotLightbox
+              urls={screenshots.map((s) => s.url).filter((u): u is string => Boolean(u))}
+              initialIndex={lightboxIndex}
+              onClose={() => setLightboxIndex(null)}
+            />
+          )}
         </Section>
       )}
 
