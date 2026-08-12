@@ -442,20 +442,26 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       <Section title="Schedule" defaultOpen={Boolean(startDate || dueDate || endDate || hasSchedule)}>
-        <div className="flex gap-3">
-          <div className="flex-1">
-            <label className={labelClass}>Start Date</label>
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputClass} />
-          </div>
-          <div className="flex-1">
-            <label className={labelClass}>End Date</label>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} />
+        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-1">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional)</p>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className={labelClass}>Start Date</label>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputClass} />
+            </div>
+            <div className="flex-1">
+              <label className={labelClass}>End Date</label>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} />
+            </div>
           </div>
         </div>
 
-        <div>
-          <label className={labelClass}>Due Date</label>
-          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
+        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-1">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline — unrelated to the work span above</p>
+          <div>
+            <label className={labelClass}>Due Date</label>
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
+          </div>
         </div>
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
