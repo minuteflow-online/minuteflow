@@ -428,7 +428,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   return (
     <div className="space-y-3">
-      <Section title="Basics" defaultOpen>
+      <Section title="Basics">
         <div>
           <label className={labelClass}>Account</label>
           <select
@@ -497,7 +497,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Schedule" defaultOpen={Boolean(startDate || dueDate || endDate || hasSchedule)}>
+      <Section title="Schedule">
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional) — its own hours make the daily time block on the Calendar</p>
           <div className="flex gap-3">
@@ -549,7 +549,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Details" defaultOpen={Boolean(taskDetail || taskNotes || instructions)}>
+      <Section title="Details">
         {supportsTodos && (
           <div>
             <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
@@ -692,7 +692,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Assignment" defaultOpen={Boolean(vaId || linkedProjectId)}>
+      <Section title="Assignment">
         {manageAssignment && (
           <div>
             <label className={labelClass}>Assign To</label>
@@ -775,7 +775,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       {mode === "output_based" && (
-        <Section title="Rate" defaultOpen>
+        <Section title="Rate">
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Unit Rate</label>
