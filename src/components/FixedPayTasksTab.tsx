@@ -1,21 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import type { FixedPayTaskAttachment, FixedPayTaskWithClaimer, Profile } from "@/types/database";
-import { countWords } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import TableRowDetailPanel from "@/components/table/TableRowDetailPanel";
+import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
-
-const CLIENT_MEMO_WORD_LIMIT = 15;
-
-function limitToWords(text: string, limit: number): string {
-  const words = text.split(/\s+/);
-  if (words.length <= limit) return text;
-  return words.slice(0, limit).join(" ");
-}
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "all", label: "All" },
@@ -49,25 +41,6 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   paid: "bg-plum-soft text-plum",
 };
 
-const EMPTY_FORM = {
-  task_name: "",
-  account: "",
-  category: "",
-  rate: "",
-  start_date: "",
-  due_date: "",
-  task_detail: "",
-  task_notes: "",
-  link: "",
-  instructions: "",
-  instructions_locked: false,
-  assigned_to: "",
-  assigned_by: "",
-  status: "open" as FixedPayTaskWithClaimer["status"],
-  is_active: true,
-};
-
-type TaskFormState = typeof EMPTY_FORM;
 type PanelMode = "create" | "edit" | null;
 type ActiveFilter = "all" | "active" | "inactive" | "archived" | "trash";
 
@@ -108,67 +81,6 @@ function formatAttachmentSize(bytes: number | null) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function taskToForm(task: FixedPayTaskWithClaimer): TaskFormState {
-  return {
-    task_name: task.task_name ?? "",
-    account: task.account ?? "",
-    category: task.category ?? "",
-    rate: String(task.rate ?? ""),
-    start_date: task.start_date ?? "",
-    due_date: task.due_date ?? "",
-    task_detail: task.task_detail ?? "",
-    task_notes: task.task_notes ?? "",
-    link: task.link ?? "",
-    instructions: task.instructions ?? "",
-    instructions_locked: task.instructions_locked,
-    assigned_to: task.assigned_to ?? "",
-    assigned_by: task.assigned_by ?? "",
-    status: task.status ?? "open",
-    is_active: task.is_active,
-  };
-}
-
-function mergeTextOptions(options: string[], currentValue: string | null | undefined) {
-  const set = new Set(options.filter(Boolean));
-  if (currentValue) set.add(currentValue);
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
-}
-
-function mergeProfiles(options: ProfileSummary[], current: ProfileSummary | null | undefined) {
-  const map = new Map<string, ProfileSummary>();
-  for (const option of options) map.set(option.id, option);
-  if (current) map.set(current.id, current);
-  return Array.from(map.values()).sort((a, b) => a.full_name.localeCompare(b.full_name));
-}
-
-function parseLinks(text: string) {
-  const parts: ReactElement[] = [];
-  const urlRegex = /(https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+|www\.[\w\-._~:/?#\[\]@!$&'()*+,;=%]+)/gi;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = urlRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(<span key={`text-${lastIndex}`}>{text.slice(lastIndex, match.index)}</span>);
-    }
-
-    const rawUrl = match[0];
-    const href = rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`;
-    parts.push(
-      <a key={`link-${match.index}`} href={href} target="_blank" rel="noreferrer" className="text-terracotta hover:underline">
-        {rawUrl}
-      </a>
-    );
-    lastIndex = match.index + rawUrl.length;
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(<span key={`text-${lastIndex}`}>{text.slice(lastIndex)}</span>);
-  }
-
-  return parts;
-}
-
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 200 },
   { key: "account", label: "Account", defaultWidth: 140 },
@@ -198,13 +110,13 @@ export default function FixedPayTasksTab() {
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
-  const [form, setForm] = useState<TaskFormState>(EMPTY_FORM);
-  const [saving, setSaving] = useState(false);
+  const [panelStatus, setPanelStatus] = useState<FixedPayTaskWithClaimer["status"]>("open");
+  const [panelIsActive, setPanelIsActive] = useState(true);
+  const [panelSaving, setPanelSaving] = useState(false);
   const [bulkAction, setBulkAction] = useState<"archive" | "trash" | "delete" | null>(null);
   const [revokingClaim, setRevokingClaim] = useState(false);
+  const taskEditorRef = useRef<TaskEditorHandle | null>(null);
 
-  const [accounts, setAccounts] = useState<string[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
   const [activeProfiles, setActiveProfiles] = useState<ProfileSummary[]>([]);
 
   const [attachments, setAttachments] = useState<FixedPayTaskAttachment[]>([]);
@@ -246,22 +158,7 @@ export default function FixedPayTasksTab() {
 
   const fetchLookups = useCallback(async () => {
     try {
-      const [accountsRes, categoriesRes, profilesRes] = await Promise.all([
-        fetch("/api/task-form-options", { cache: "no-store" }),
-        fetch("/api/task-categories", { cache: "no-store" }),
-        fetch("/api/team-members", { cache: "no-store" }),
-      ]);
-
-      if (accountsRes.ok) {
-        const data = (await accountsRes.json()) as { accounts?: string[] };
-        setAccounts(data.accounts ?? []);
-      }
-
-      if (categoriesRes.ok) {
-        const data = (await categoriesRes.json()) as { categories?: Array<{ category_name: string }> };
-        setCategories((data.categories ?? []).map((category) => category.category_name));
-      }
-
+      const profilesRes = await fetch("/api/team-members", { cache: "no-store" });
       if (profilesRes.ok) {
         const data = (await profilesRes.json()) as { members?: ProfileSummary[] };
         setActiveProfiles(data.members ?? []);
@@ -383,14 +280,7 @@ export default function FixedPayTasksTab() {
     }
   }, [someVisibleSelected]);
 
-  const accountOptions = useMemo(() => mergeTextOptions(accounts, form.account), [accounts, form.account]);
-  const categoryOptions = useMemo(() => mergeTextOptions(categories, form.category), [categories, form.category]);
-  const selectedAssignedProfile = selectedTask?.assigned_to_profile ?? null;
   const selectedClaimer = selectedTask?.claimed_by_profile ?? null;
-  const vaOptions = useMemo(
-    () => mergeProfiles(activeProfiles, selectedAssignedProfile),
-    [selectedAssignedProfile, activeProfiles]
-  );
 
   const syncTaskInState = useCallback((updatedTask: FixedPayTaskWithClaimer) => {
     setTasks((current) => current.map((item) => (item.id === updatedTask.id ? updatedTask : item)));
@@ -450,7 +340,8 @@ export default function FixedPayTasksTab() {
   const openCreatePanel = useCallback(() => {
     setPanelMode("create");
     setSelectedTask(null);
-    setForm(EMPTY_FORM);
+    setPanelStatus("open");
+    setPanelIsActive(true);
     setMessage(null);
   }, []);
 
@@ -517,15 +408,15 @@ export default function FixedPayTasksTab() {
   const openEditPanel = useCallback((task: FixedPayTaskWithClaimer) => {
     setPanelMode("edit");
     setSelectedTask(task);
-    setForm(taskToForm(task));
+    setPanelStatus(task.status);
+    setPanelIsActive(task.is_active);
     setMessage(null);
   }, []);
 
   const closePanel = useCallback(() => {
     setPanelMode(null);
     setSelectedTask(null);
-    setForm(EMPTY_FORM);
-    setSaving(false);
+    setPanelSaving(false);
     setPendingAttachment(null);
     setAttachmentMessage(null);
     setAttachments([]);
@@ -550,7 +441,7 @@ export default function FixedPayTasksTab() {
           setTasks((current) => current.map((item) => (item.id === task.id ? data.task! : item)));
           if (selectedTask?.id === task.id) {
             setSelectedTask(data.task);
-            setForm(taskToForm(data.task));
+            setPanelIsActive(data.task.is_active);
           }
         } else {
           await fetchTasks();
@@ -596,7 +487,6 @@ export default function FixedPayTasksTab() {
         );
       }
 
-      setForm((current) => ({ ...current, assigned_to: "" }));
       await fetchTasks(activeFilter);
       setMessage({ type: "ok", text: "Claim revoked." });
     } catch (error) {
@@ -622,7 +512,8 @@ export default function FixedPayTasksTab() {
           setTasks((current) => current.map((item) => (item.id === task.id ? data.task! : item)));
           if (selectedTask?.id === task.id) {
             setSelectedTask(data.task);
-            setForm(taskToForm(data.task));
+            setPanelStatus(data.task.status);
+            setPanelIsActive(data.task.is_active);
           }
         }
 
@@ -650,101 +541,47 @@ export default function FixedPayTasksTab() {
     [handleTaskVisibilityChange]
   );
 
-  const handleSubmit = useCallback(async () => {
-    if (!form.task_name.trim()) {
-      setMessage({ type: "err", text: "Task name is required." });
-      return;
-    }
+  // TaskEditor's onSaved callback — lands in edit mode with the fresh task,
+  // mirroring the old handleSubmit's post-save behavior.
+  const handleTaskSaved = useCallback(
+    (task: { id: number; [key: string]: unknown }) => {
+      const savedTask = task as unknown as FixedPayTaskWithClaimer;
+      void fetchTasks();
+      setSelectedTask(savedTask);
+      setPanelMode("edit");
+      setPanelStatus(savedTask.status);
+      setPanelIsActive(savedTask.is_active);
+    },
+    [fetchTasks]
+  );
 
-    const rate = Number(form.rate);
-    if (!Number.isFinite(rate)) {
-      setMessage({ type: "err", text: "Rate is required." });
-      return;
-    }
-
-    if (!STATUS_OPTIONS.includes(form.status)) {
-      setMessage({ type: "err", text: "Status is invalid." });
-      return;
-    }
-
-    const isEdit = panelMode === "edit" && Boolean(selectedTask);
-    const endpoint = isEdit && selectedTask ? `/api/fixed-pay-tasks/${selectedTask.id}` : "/api/fixed-pay-tasks";
-    const method = isEdit ? "PATCH" : "POST";
-
-    setSaving(true);
+  // Combined Save Changes — submits TaskEditor's metadata form, then (in
+  // edit mode) applies Status/Active as a separate PATCH, since those live
+  // outside TaskEditor's own fields. TaskEditor's submit() rejects on
+  // failure (validation or network), so a failed metadata save correctly
+  // stops here instead of reporting success.
+  const handleSaveAll = useCallback(async () => {
     setMessage(null);
-
+    setPanelSaving(true);
     try {
-      const res = await fetch(endpoint, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          task_name: form.task_name.trim(),
-          account: form.account.trim() || null,
-          category: form.category.trim() || null,
-          rate,
-          start_date: form.start_date || null,
-          due_date: form.due_date || null,
-          task_detail: form.task_detail.trim() || null,
-          task_notes: form.task_notes.trim() || null,
-          link: form.link.trim() || null,
-          instructions: form.instructions.trim() || null,
-          instructions_locked: form.instructions_locked,
-          assigned_to: form.assigned_to || null,
-          assigned_by: form.assigned_by || null,
-          status: form.status,
-          is_active: form.is_active,
-        }),
-      });
-
-      if (!res.ok) {
-        let errorText = `HTTP ${res.status}`;
-        try {
-          const data = (await res.json()) as { error?: string };
-          if (data.error) errorText = data.error;
-        } catch {
-          // ignore parse failures
+      await taskEditorRef.current?.submit();
+      if (panelMode === "edit" && selectedTask) {
+        const statusChanged = panelStatus !== selectedTask.status;
+        const isActiveChanged = panelIsActive !== selectedTask.is_active;
+        if (statusChanged || isActiveChanged) {
+          const payload: Record<string, unknown> = {};
+          if (statusChanged) payload.status = panelStatus;
+          if (isActiveChanged) payload.is_active = panelIsActive;
+          await updateTaskVisibility(selectedTask, payload);
         }
-        throw new Error(errorText);
-      }
-
-      const data = (await res.json()) as { task?: FixedPayTaskWithClaimer };
-      const savedTask = data.task ?? null;
-
-      await fetchTasks();
-      if (savedTask) {
-        setSelectedTask(savedTask);
-        setPanelMode("edit");
-        setForm(taskToForm(savedTask));
-        setMessage({ type: "ok", text: isEdit ? "Task updated." : "Task created." });
-      } else {
-        setMessage({ type: "ok", text: isEdit ? "Task updated." : "Task created." });
+        setMessage({ type: "ok", text: "Task updated." });
       }
     } catch (error) {
       setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to save task." });
     } finally {
-      setSaving(false);
+      setPanelSaving(false);
     }
-  }, [
-    fetchTasks,
-    form.account,
-    form.assigned_by,
-    form.assigned_to,
-    form.category,
-    form.due_date,
-    form.instructions,
-    form.instructions_locked,
-    form.is_active,
-    form.link,
-    form.rate,
-    form.start_date,
-    form.status,
-    form.task_detail,
-    form.task_name,
-    form.task_notes,
-    panelMode,
-    selectedTask,
-  ]);
+  }, [panelMode, selectedTask, panelStatus, panelIsActive, updateTaskVisibility]);
 
   const handleAttachmentPick = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setPendingAttachment(event.target.files?.[0] ?? null);
@@ -794,11 +631,6 @@ export default function FixedPayTasksTab() {
 
   const panelTitle = panelMode === "edit" ? "Edit Task" : "New Task";
   const panelSubtitle = panelMode === "edit" && selectedTask ? `Editing #${selectedTask.id}` : "Create a task for the Output Based pool.";
-
-  const currentAssignedProfile = selectedTask?.assigned_to_profile ?? null;
-  const currentAssignedByProfile = selectedTask?.assigned_by_profile ?? null;
-  const assignedToOptions = useMemo(() => mergeProfiles(vaOptions, currentAssignedProfile), [currentAssignedProfile, vaOptions]);
-  const assignedByOptions = useMemo(() => mergeProfiles(activeProfiles, currentAssignedByProfile), [activeProfiles, currentAssignedByProfile]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -1158,90 +990,28 @@ export default function FixedPayTasksTab() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleSubmit()}
-                  disabled={saving}
+                  onClick={() => void handleSaveAll()}
+                  disabled={panelSaving}
                   className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {saving ? "Saving..." : panelMode === "edit" ? "Update Task" : "Create Task"}
+                  {panelSaving ? "Saving..." : panelMode === "edit" ? "Update Task" : "Create Task"}
                 </button>
               </div>
             </>
           }
         >
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                <input
-                  value={form.task_name}
-                  onChange={(event) => setForm((current) => ({ ...current, task_name: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="Task name"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                <select
-                  value={form.account}
-                  onChange={(event) => setForm((current) => ({ ...current, account: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  <option value="">Select account...</option>
-                  {accountOptions.map((account) => (
-                    <option key={account} value={account}>
-                      {account}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
-                <select
-                  value={form.category}
-                  onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  <option value="">Select category...</option>
-                  {categoryOptions.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Rate</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={form.rate}
-                  onChange={(event) => setForm((current) => ({ ...current, rate: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="0.00"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
-                  <input
-                    type="date"
-                    value={form.start_date}
-                    onChange={(event) => setForm((current) => ({ ...current, start_date: event.target.value }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                  <input
-                    type="date"
-                    value={form.due_date}
-                    onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                </div>
-              </div>
+              <TaskEditor
+                ref={taskEditorRef}
+                mode="output_based"
+                editingTaskId={panelMode === "edit" ? selectedTask?.id ?? null : null}
+                initialTask={panelMode === "edit" ? (selectedTask as unknown as Record<string, unknown>) : null}
+                currentUserId={currentUserId ?? ""}
+                isAdminOrManager
+                teamMembers={activeProfiles}
+                hideFooter
+                onCancel={closePanel}
+                onSaved={handleTaskSaved}
+              />
 
               {panelMode === "edit" && selectedTask && (
                 <p className="text-[11px] text-stone">
@@ -1249,96 +1019,6 @@ export default function FixedPayTasksTab() {
                   {selectedTask.created_by_profile ? ` by ${selectedTask.created_by_profile.full_name || selectedTask.created_by_profile.username}` : ""}
                 </p>
               )}
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Detail</label>
-                <textarea
-                  value={form.task_detail}
-                  onChange={(event) => setForm((current) => ({ ...current, task_detail: limitToWords(event.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
-                  className="min-h-[96px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="Task detail"
-                />
-                <p className="mt-1 text-[10px] text-stone">{Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(form.task_detail))} words remaining</p>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
-                <textarea
-                  value={form.task_notes}
-                  onChange={(event) => setForm((current) => ({ ...current, task_notes: event.target.value }))}
-                  className="min-h-[96px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="Task notes"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Link</label>
-                <input
-                  type="text"
-                  value={form.link}
-                  onChange={(event) => setForm((current) => ({ ...current, link: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="https://..."
-                />
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
-                  <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-stone">
-                    <input
-                      type="checkbox"
-                      checked={form.instructions_locked}
-                      onChange={(event) => setForm((current) => ({ ...current, instructions_locked: event.target.checked }))}
-                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                    />
-                    Locked
-                  </label>
-                </div>
-                <textarea
-                  value={form.instructions}
-                  onChange={(event) => setForm((current) => ({ ...current, instructions: event.target.value }))}
-                  className="min-h-[120px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  placeholder="Instructions"
-                />
-                {form.instructions_locked && form.instructions.trim() && (
-                  <div className="mt-2 rounded-lg border border-sand bg-parchment/30 px-3 py-2 text-[13px] text-espresso">
-                    {parseLinks(form.instructions)}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
-                <select
-                  value={form.assigned_by}
-                  onChange={(event) => setForm((current) => ({ ...current, assigned_by: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  <option value="">Unassigned</option>
-                  {assignedByOptions.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.full_name || profile.username || profile.id}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assign To</label>
-                <select
-                  value={form.assigned_to}
-                  onChange={(event) => setForm((current) => ({ ...current, assigned_to: event.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  <option value="">Unassigned</option>
-                  {assignedToOptions.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.full_name || profile.username || profile.id}
-                    </option>
-                  ))}
-                </select>
-              </div>
 
               {panelMode === "edit" && selectedTask?.claimed_by && (
                 <div className="rounded-xl border border-sand bg-parchment/20 p-4">
@@ -1362,30 +1042,34 @@ export default function FixedPayTasksTab() {
                 </div>
               )}
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
-                <select
-                  value={form.status}
-                  onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as FixedPayTaskWithClaimer["status"] }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  {STATUS_OPTIONS.map((status) => (
-                    <option key={status} value={status}>
-                      {STATUS_LABELS[status]}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {panelMode === "edit" && selectedTask && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
+                    <select
+                      value={panelStatus}
+                      onChange={(event) => setPanelStatus(event.target.value as FixedPayTaskWithClaimer["status"])}
+                      className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                    >
+                      {STATUS_OPTIONS.map((status) => (
+                        <option key={status} value={status}>
+                          {STATUS_LABELS[status]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-              <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-stone">
-                <input
-                  type="checkbox"
-                  checked={form.is_active}
-                  onChange={(event) => setForm((current) => ({ ...current, is_active: event.target.checked }))}
-                  className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                />
-                Active
-              </label>
+                  <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-stone">
+                    <input
+                      type="checkbox"
+                      checked={panelIsActive}
+                      onChange={(event) => setPanelIsActive(event.target.checked)}
+                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
+                    />
+                    Active
+                  </label>
+                </>
+              )}
 
               {panelMode === "edit" && selectedTask && (
                 <div className="flex flex-wrap gap-2">

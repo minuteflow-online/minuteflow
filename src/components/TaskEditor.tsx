@@ -250,11 +250,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const handleSubmit = useCallback(async () => {
     if (!taskName.trim()) {
       setError("Task name is required.");
-      return;
+      throw new Error("Task name is required.");
     }
     if (mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
       setError("Final Rate is required.");
-      return;
+      throw new Error("Final Rate is required.");
     }
 
     setSaving(true);
@@ -367,6 +367,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       onSaved(task);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save task.");
+      throw e;
     } finally {
       setSaving(false);
     }
@@ -743,7 +744,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       {!hideFooter && (
         <div className="flex items-center gap-2 pt-1">
           <button
-            onClick={() => void handleSubmit()}
+            onClick={() => void handleSubmit().catch(() => {})}
             disabled={saving || !taskName.trim()}
             className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
           >
