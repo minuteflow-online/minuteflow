@@ -15,7 +15,6 @@ import {
   normalizeAssignedRows,
   categoryDotClass,
   categoryBlockClasses,
-  statusBadgeClasses,
   statusLabel,
   isDateInSpan,
   reanchorToDate,
@@ -978,11 +977,12 @@ export default function ProductivityCalendarPage() {
                   const scheduleTarget = rawId ? daySchedule.find((t) => t.id === rawId) : undefined;
                   const dueTimeLabel = item.dateType === "due" && item.dueTime ? ` ${formatDueTime(item.dueTime)}` : "";
                   const label = `${item.dateType === "due" ? "Due" : "Starts"}${dueTimeLabel}: ${item.title}`;
+                  const pillClasses = categoryBlockClasses(item.category, true);
                   if (!scheduleTarget) {
                     return (
                       <span
                         key={item.id}
-                        className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${statusBadgeClasses(item.status)}`}
+                        className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${pillClasses}`}
                         title={item.account || undefined}
                       >
                         {label}
@@ -995,7 +995,7 @@ export default function ProductivityCalendarPage() {
                       type="button"
                       onClick={() => openScheduleExisting(scheduleTarget, selectedDate)}
                       title={`${item.account ? item.account + " — " : ""}Click to set hours`}
-                      className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border cursor-pointer hover:opacity-75 transition-opacity ${statusBadgeClasses(item.status)}`}
+                      className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border cursor-pointer hover:opacity-75 transition-opacity ${pillClasses}`}
                     >
                       {label}
                     </button>

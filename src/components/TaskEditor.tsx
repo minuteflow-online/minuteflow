@@ -53,6 +53,8 @@ export interface TaskEditorProps {
   defaultStartTime?: string;
   defaultEndTime?: string;
   defaultLinkedProjectId?: string;
+  /** Fixes project_id to this value and hides the "Link to Project" field entirely — for callers where the task is inherently scoped to one project (e.g. adding a subtask from within that project's page) and letting it drift to another project, or to none, would be a bug, not a choice. */
+  lockedProjectId?: string;
   /** VA's own hourly rate — feeds the Rate section's Duration × Rate helper. */
   currentPayRate?: number;
   /** Hides the built-in Save/Cancel footer — use with a ref to trigger submit() from a parent-owned footer instead. */
@@ -99,6 +101,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   defaultStartTime,
   defaultEndTime,
   defaultLinkedProjectId,
+  lockedProjectId,
   currentPayRate,
   hideFooter = false,
   manageAssignment = true,
@@ -137,7 +140,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [assignedBy, setAssignedBy] = useState((initialTask?.assigned_by as string) ?? currentUserId);
   const initialVaId = initialTask?.assigned_task_assignees?.[0]?.va_id ?? (initialTask?.assigned_to as string) ?? defaultVaId ?? (isAdminOrManager ? "" : currentUserId);
   const [vaId, setVaId] = useState(initialVaId);
-  const [linkedProjectId, setLinkedProjectId] = useState((initialTask?.project_id as string) ?? defaultLinkedProjectId ?? "");
+  const [linkedProjectIdState, setLinkedProjectId] = useState((initialTask?.project_id as string) ?? defaultLinkedProjectId ?? "");
+  const linkedProjectId = lockedProjectId ?? linkedProjectIdState;
   const [parentTaskId, setParentTaskId] = useState(initialTask?.parent_task_id != null ? String(initialTask.parent_task_id) : "");
   const [reviewRequired, setReviewRequired] = useState(Boolean(initialTask?.review_required));
   const [payType, setPayType] = useState<"hourly" | "fixed">((initialTask?.pay_type as "hourly" | "fixed") ?? "hourly");
@@ -649,24 +653,30 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-          <label className={labelClass}>Link to Project</label>
-          <select value={linkedProjectId} onChange={(e) => setLinkedProjectId(e.target.value)} className={inputClass}>
-            <option value="">— None —</option>
-            {linkedObjectives.length > 0 && (
-              <optgroup label="Objectives">
-                {linkedObjectives.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </optgroup>
-            )}
-            {linkedOperations.length > 0 && (
-              <optgroup label="Operations">
-                {linkedOperations.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </optgroup>
-            )}
-          </select>
+          {lockedProjectId ? (
+            <p className="text-[11px] text-stone">Scoped to this project — added here, so it can&apos;t be linked elsewhere.</p>
+          ) : (
+            <>
+              <label className={labelClass}>Link to Project</label>
+              <select value={linkedProjectId} onChange={(e) => setLinkedProjectId(e.target.value)} className={inputClass}>
+                <option value="">— None —</option>
+                {linkedObjectives.length > 0 && (
+                  <optgroup label="Objectives">
+                    {linkedObjectives.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+                {linkedOperations.length > 0 && (
+                  <optgroup label="Operations">
+                    {linkedOperations.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </>
+          )}
           {mode === "time_based" && linkedProjectId && parentTaskOptions.length > 0 && (
             <select value={parentTaskId} onChange={(e) => setParentTaskId(e.target.value)} className={inputClass}>
               <option value="">Top-level task in this project</option>

@@ -955,7 +955,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                                 currentUserId={currentUserId}
                                 isAdminOrManager={isAdmin}
                                 teamMembers={activeProfiles}
-                                defaultLinkedProjectId={selectedProject.id}
+                                lockedProjectId={selectedProject.id}
                                 hideFooter
                                 onCancel={() => setEditingSubId(null)}
                                 onSaved={() => {}}
@@ -1014,7 +1014,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     currentUserId={currentUserId}
                     isAdminOrManager={isAdmin}
                     teamMembers={activeProfiles}
-                    defaultLinkedProjectId={selectedProject.id}
+                    lockedProjectId={selectedProject.id}
                     onCancel={() => setAddFormKey((k) => k + 1)}
                     onSaved={handleSubtaskCreated}
                   />
