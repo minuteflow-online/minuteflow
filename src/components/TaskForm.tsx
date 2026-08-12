@@ -153,9 +153,9 @@ export default function TaskForm({
         pay_type: payType,
         project_id: linkedProjectId || null,
         parent_task_id: parentTaskId ? Number(parentTaskId) : null,
-        // Scheduling a specific time block signals "ready to work now" — put it
-        // straight on the assignee's Dashboard queue instead of sitting Pending.
-        initial_status: hasSchedule ? "on_queue" : "pending",
+        // Always start Pending, even when scheduled — VAs decide when to move
+        // a task to On Queue themselves, scheduling it doesn't do that for them.
+        initial_status: "pending",
       };
       const effectiveVaId = isAdminOrManager ? vaId : currentUserId;
       if (effectiveVaId) body.va_ids = [effectiveVaId];

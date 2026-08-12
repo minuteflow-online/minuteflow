@@ -1550,9 +1550,9 @@ export default function TaskListPage() {
           review_required: addForm.review_required,
           project_id: addForm.linked_project_id || null,
           parent_task_id: addForm.parent_task_id ? Number(addForm.parent_task_id) : null,
-          // Scheduling a specific time block signals "ready to work now" — put it
-          // straight on the assignee's Dashboard queue instead of sitting Pending.
-          initial_status: addForm.has_schedule ? "on_queue" : "pending",
+          // Always start Pending, even when scheduled — VAs decide when to move
+          // a task to On Queue themselves, scheduling it doesn't do that for them.
+          initial_status: "pending",
           ...(addForm.has_schedule && addForm.start_date && addForm.schedule_start && addForm.schedule_end
             ? {
                 start_time: new Date(`${addForm.start_date}T${addForm.schedule_start}:00`).toISOString(),
