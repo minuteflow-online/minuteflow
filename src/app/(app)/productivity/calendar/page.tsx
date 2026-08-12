@@ -557,6 +557,15 @@ export default function ProductivityCalendarPage() {
     return { top, height };
   }
 
+  // Due Time is a plain "HH:MM" clock time (not a timestamp, no timezone
+  // conversion needed) — position it on the same grid the hour blocks use,
+  // clamped to the visible 6am-9pm range.
+  function dueTimePosition(dueTime: string): number {
+    const [h, m] = dueTime.split(":").map(Number);
+    const minutes = Math.max(0, Math.min((DAY_END_HOUR - DAY_START_HOUR) * 60, (h - DAY_START_HOUR) * 60 + (m || 0)));
+    return (minutes / 60) * HOUR_HEIGHT;
+  }
+
   // Lays out same-day scheduled blocks side-by-side when their times overlap,
   // instead of stacking them directly on top of each other. Groups tasks into
   // overlap "clusters", then greedily assigns each task the first free column
@@ -1114,6 +1123,37 @@ export default function ProductivityCalendarPage() {
                       );
                     });
                   })()}
+
+                  {/* Due Time markers — a due date+time isn't a work span, so it
+                      doesn't get an hour block; it gets a thin line at its clock
+                      time instead, positioned on the same grid the blocks use. */}
+                  {dueTodayItems
+                    .filter((item) => item.dateType === "due" && item.dueTime)
+                    .map((item) => {
+                      const scheduleTarget = item.source === "assigned"
+                        ? daySchedule.find((t) => t.id === item.taskId) ?? assignedTasksAll.find((t) => t.id === item.taskId)
+                        : undefined;
+                      const pillClasses = categoryBlockClasses(item.category, true);
+                      const top = dueTimePosition(item.dueTime!);
+                      return (
+                        <div
+                          key={`due-marker-${item.id}`}
+                          className="pointer-events-none absolute left-16 right-2 flex items-center gap-1.5"
+                          style={{ top: top - 7 }}
+                        >
+                          <span className="h-[2px] w-3 shrink-0 rounded bg-stone/60" />
+                          <button
+                            type="button"
+                            disabled={!scheduleTarget}
+                            onClick={() => scheduleTarget && openScheduleExisting(scheduleTarget, selectedDate)}
+                            title={`Due ${formatDueTime(item.dueTime!)} — ${item.title}`}
+                            className={`pointer-events-auto truncate max-w-[70%] text-[9px] font-bold px-1.5 py-[1px] rounded-full border shadow-sm ${scheduleTarget ? "cursor-pointer hover:opacity-80" : "cursor-default"} ${pillClasses}`}
+                          >
+                            Due {formatDueTime(item.dueTime!)} · {item.title}
+                          </button>
+                        </div>
+                      );
+                    })}
                 </div>
               </div>
             )}
