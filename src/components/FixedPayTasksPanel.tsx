@@ -3,37 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
-import { countWords } from "@/lib/utils";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import TableRowDetailPanel from "@/components/table/TableRowDetailPanel";
+import TaskEditor from "@/components/TaskEditor";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
-
-const CLIENT_MEMO_WORD_LIMIT = 15;
-
-function limitToWords(text: string, limit: number): string {
-  const words = text.split(/\s+/);
-  if (words.length <= limit) return text;
-  return words.slice(0, limit).join(" ");
-}
-
-function computeHourlyEquivalent(
-  durationValue: string,
-  unit: "hours" | "minutes",
-  hourlyRate: number | null
-): number | null {
-  const raw = Number(durationValue);
-  if (!Number.isFinite(raw) || raw <= 0 || hourlyRate == null) return null;
-  const hours = unit === "hours" ? raw : raw / 60;
-  return hours * hourlyRate;
-}
-
-function computeQuantityTotal(unitRate: string, quantity: string): number | null {
-  const rate = Number(unitRate);
-  const qty = Number(quantity);
-  if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(qty) || qty <= 0) return null;
-  return rate * qty;
-}
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "all", label: "All" },
@@ -70,25 +44,6 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   paid: "bg-plum-soft text-plum",
 };
 
-const EMPTY_FORM = {
-  task_name: "",
-  account: "",
-  category: "",
-  unit_rate: "",
-  quantity: "",
-  rate: "",
-  duration_value: "",
-  duration_unit: "hours" as "hours" | "minutes",
-  start_date: "",
-  due_date: "",
-  task_detail: "",
-  task_notes: "",
-  link: "",
-  instructions: "",
-  instructions_locked: false,
-};
-
-type TaskFormState = typeof EMPTY_FORM;
 type PanelMode = "create" | "edit" | "view" | null;
 type ActiveFilter = "all" | "active" | "inactive" | "archived" | "trash";
 type CreateMode = "hourly" | "fixed_pay";
@@ -118,12 +73,6 @@ function formatDateOnly(value: string | null) {
   const date = new Date(`${value}T12:00:00Z`);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-function mergeTextOptions(options: string[], currentValue: string | null | undefined) {
-  const set = new Set(options.filter(Boolean));
-  if (currentValue) set.add(currentValue);
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
 
 const TABLE_COLUMNS: ColumnDef[] = [
@@ -172,13 +121,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [createMode, setCreateMode] = useState<CreateMode>("fixed_pay");
-  const [form, setForm] = useState<TaskFormState>(EMPTY_FORM);
-  const [saving, setSaving] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const [accounts, setAccounts] = useState<string[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
   const headerSelectAllRef = useRef<HTMLInputElement | null>(null);
 
   const { widths: columnWidths, hidden: hiddenColumns, setColumnWidth, toggleColumnVisible } = useColumnPrefs(
@@ -199,13 +144,6 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   // not pay_rate_type, so it can't be thrown off by rate-field edge cases.
   const isHybrid = (currentPosition === "Part-time VA" || currentPosition === "Full-time VA") && canSeeAvailableTasks;
 
-  // Two independent ways to arrive at Final Rate, both display-only helpers
-  // that auto-fill form.rate (see each field's onChange handlers below) —
-  // whichever the VA touches most recently wins, and either can be
-  // overwritten by hand afterward. Quantity multiplies into ONE combined
-  // task total (e.g. 3 x $10 = one $30 task), not three separate $10 tasks.
-  const hourlyEquivalentTotal = computeHourlyEquivalent(form.duration_value, form.duration_unit, currentPayRate);
-  const quantityTotal = computeQuantityTotal(form.unit_rate, form.quantity);
 
   const fetchCurrentUser = useCallback(async () => {
     try {
@@ -250,27 +188,6 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
     }
   }, [currentUserId]);
 
-  const fetchLookups = useCallback(async () => {
-    try {
-      const [accountsRes, categoriesRes] = await Promise.all([
-        fetch("/api/task-form-options", { cache: "no-store" }),
-        fetch("/api/task-categories", { cache: "no-store" }),
-      ]);
-
-      if (accountsRes.ok) {
-        const data = (await accountsRes.json()) as { accounts?: string[] };
-        setAccounts(data.accounts ?? []);
-      }
-
-      if (categoriesRes.ok) {
-        const data = (await categoriesRes.json()) as { categories?: Array<{ category_name: string }> };
-        setCategories((data.categories ?? []).map((category) => category.category_name));
-      }
-    } catch {
-      // Keep the form usable with values already present on tasks.
-    }
-  }, []);
-
   useEffect(() => {
     void fetchCurrentUser();
   }, [fetchCurrentUser]);
@@ -278,10 +195,6 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   useEffect(() => {
     void fetchTasks();
   }, [fetchTasks, refreshKey]);
-
-  useEffect(() => {
-    void fetchLookups();
-  }, [fetchLookups]);
 
   const taskNameFilterOptions = useMemo(
     () => Array.from(new Set(tasks.map((task) => task.task_name).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
@@ -344,13 +257,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
     }
   }, [someVisibleSelected]);
 
-  const accountOptions = useMemo(() => mergeTextOptions(accounts, form.account), [accounts, form.account]);
-  const categoryOptions = useMemo(() => mergeTextOptions(categories, form.category), [categories, form.category]);
-
   const openCreatePanel = useCallback(() => {
     setPanelMode("create");
     setSelectedTask(null);
-    setForm(EMPTY_FORM);
     // Non-hybrid fixed-pay VAs skip the toggle and land straight on the fixed-pay form.
     setCreateMode("fixed_pay");
     setMessage(null);
@@ -365,28 +274,12 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   const openEditPanel = useCallback((task: FixedPayTaskWithClaimer) => {
     setPanelMode("edit");
     setSelectedTask(task);
-    setForm({
-      ...EMPTY_FORM,
-      task_name: task.task_name ?? "",
-      account: task.account ?? "",
-      category: task.category ?? "",
-      rate: task.rate != null ? String(task.rate) : "",
-      start_date: task.start_date ?? "",
-      due_date: task.due_date ?? "",
-      task_detail: task.task_detail ?? "",
-      task_notes: task.task_notes ?? "",
-      link: task.link ?? "",
-      instructions: task.instructions ?? "",
-      instructions_locked: task.instructions_locked ?? false,
-    });
     setMessage(null);
   }, []);
 
   const closePanel = useCallback(() => {
     setPanelMode(null);
     setSelectedTask(null);
-    setForm(EMPTY_FORM);
-    setSaving(false);
   }, []);
 
   const toggleTaskSelection = useCallback((taskId: number) => {
@@ -460,7 +353,6 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
         setTasks((current) => current.filter((t) => t.id !== taskId));
         setPanelMode(null);
         setSelectedTask(null);
-        setForm(EMPTY_FORM);
       } catch (error) {
         setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to delete task." });
       } finally {
@@ -470,69 +362,19 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
     []
   );
 
-  const handleSubmit = useCallback(async () => {
-    if (!form.task_name.trim()) {
-      setMessage({ type: "err", text: "Task name is required." });
-      return;
-    }
-
-    const rate = Number(form.rate);
-    if (!form.rate.trim() || !Number.isFinite(rate)) {
-      setMessage({ type: "err", text: "Final Rate is required." });
-      return;
-    }
-
-    const isEditing = panelMode === "edit" && selectedTask;
-    setSaving(true);
-    setMessage(null);
-
-    try {
-      const res = await fetch(
-        isEditing ? `/api/fixed-pay-tasks/${selectedTask.id}` : "/api/fixed-pay-tasks",
-        {
-          method: isEditing ? "PATCH" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            task_name: form.task_name.trim(),
-            account: form.account.trim() || null,
-            category: form.category.trim() || null,
-            rate,
-            start_date: form.start_date || null,
-            due_date: form.due_date || null,
-            task_detail: form.task_detail.trim() || null,
-            task_notes: form.task_notes.trim() || null,
-            link: form.link.trim() || null,
-            instructions: form.instructions.trim() || null,
-            ...(isEditing ? {} : { instructions_locked: form.instructions_locked }),
-          }),
-        }
-      );
-
-      if (!res.ok) {
-        let errorText = `HTTP ${res.status}`;
-        try {
-          const data = (await res.json()) as { error?: string };
-          if (data.error) errorText = data.error;
-        } catch {
-          // ignore parse failures
-        }
-        throw new Error(errorText);
-      }
-
-      const { task } = (await res.json()) as { task: FixedPayTaskWithClaimer };
-      // Land on the details view instead of closing, so the VA sees exactly
-      // what was saved instead of having to reopen it from the list.
-      setPanelMode("view");
-      setSelectedTask(task);
-      setForm(EMPTY_FORM);
-      await fetchTasks();
-      setMessage({ type: "ok", text: isEditing ? "Task updated." : "Task created." });
-    } catch (error) {
-      setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to save task." });
-    } finally {
-      setSaving(false);
-    }
-  }, [fetchTasks, form, panelMode, selectedTask]);
+  // TaskEditor's onSaved callback — lands on the details view instead of
+  // closing, so the VA sees exactly what was saved instead of reopening it.
+  const handleTaskSaved = useCallback(
+    (task: { id: number; [key: string]: unknown }) => {
+      setPanelMode((prevMode) => {
+        setMessage({ type: "ok", text: prevMode === "edit" ? "Task updated." : "Task created." });
+        return "view";
+      });
+      setSelectedTask(task as unknown as FixedPayTaskWithClaimer);
+      void fetchTasks();
+    },
+    [fetchTasks]
+  );
 
   // Mirrors the server-side check in the PATCH/DELETE routes: a VA may only
   // edit or delete a task they claimed, and only before it's been reviewed.
@@ -870,50 +712,42 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
           }
           onClose={closePanel}
           footer={
-            <>
-              <div className={`mb-3 rounded-lg px-4 py-3 text-sm ${message?.type === "ok" ? "bg-sage-soft text-sage" : message?.type === "err" ? "bg-red-50 text-red-700" : "hidden"}`}>
-                {message?.text}
-              </div>
+            panelMode === "view" ? (
+              <>
+                <div className={`mb-3 rounded-lg px-4 py-3 text-sm ${message?.type === "ok" ? "bg-sage-soft text-sage" : message?.type === "err" ? "bg-red-50 text-red-700" : "hidden"}`}>
+                  {message?.text}
+                </div>
 
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  {panelMode === "view" && selectedTask && canEditSelectedTask && (
-                    <button
-                      type="button"
-                      onClick={() => void handleDelete(selectedTask.id)}
-                      disabled={deleting}
-                      className="text-xs font-semibold text-terracotta hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {deleting ? "Deleting..." : "Delete"}
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    {selectedTask && canEditSelectedTask && (
+                      <button
+                        type="button"
+                        onClick={() => void handleDelete(selectedTask.id)}
+                        disabled={deleting}
+                        className="text-xs font-semibold text-terracotta hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {deleting ? "Deleting..." : "Delete"}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
+                      Close
                     </button>
-                  )}
+                    {selectedTask && canEditSelectedTask && (
+                      <button
+                        type="button"
+                        onClick={() => openEditPanel(selectedTask)}
+                        className="rounded-lg border border-sand bg-white px-5 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment"
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
-                    {panelMode === "view" ? "Close" : "Cancel"}
-                  </button>
-                  {panelMode === "view" && selectedTask && canEditSelectedTask && (
-                    <button
-                      type="button"
-                      onClick={() => openEditPanel(selectedTask)}
-                      className="rounded-lg border border-sand bg-white px-5 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment"
-                    >
-                      Edit
-                    </button>
-                  )}
-                  {(panelMode === "create" || panelMode === "edit") && !(panelMode === "create" && isHybrid && createMode === "hourly") && (
-                    <button
-                      type="button"
-                      onClick={() => void handleSubmit()}
-                      disabled={saving}
-                      className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {saving ? "Saving..." : panelMode === "edit" ? "Save Changes" : "Create Task"}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </>
+              </>
+            ) : null
           }
         >
               {(panelMode === "create" || panelMode === "edit") && (
@@ -960,254 +794,17 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                       </button>
                     </div>
                   ) : (
-                    <>
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                        <input
-                          value={form.task_name}
-                          onChange={(event) => setForm((current) => ({ ...current, task_name: event.target.value }))}
-                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          placeholder="Task name"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                        <select
-                          value={form.account}
-                          onChange={(event) => setForm((current) => ({ ...current, account: event.target.value }))}
-                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                        >
-                          <option value="">Select account...</option>
-                          {accountOptions.map((account) => (
-                            <option key={account} value={account}>
-                              {account}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
-                        <select
-                          value={form.category}
-                          onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}
-                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                        >
-                          <option value="">Select category...</option>
-                          {categoryOptions.map((category) => (
-                            <option key={category} value={category}>
-                              {category}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">
-                          Rate per Task <span className="font-normal normal-case text-stone/70">(optional)</span>
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={form.unit_rate}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              setForm((current) => {
-                                const total = computeQuantityTotal(value, current.quantity);
-                                return {
-                                  ...current,
-                                  unit_rate: value,
-                                  rate: total != null ? total.toFixed(2) : current.rate,
-                                };
-                              });
-                            }}
-                            className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                            placeholder="0.00"
-                          />
-                          <input
-                            type="number"
-                            step="1"
-                            min="0"
-                            value={form.quantity}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              setForm((current) => {
-                                const total = computeQuantityTotal(current.unit_rate, value);
-                                return {
-                                  ...current,
-                                  quantity: value,
-                                  rate: total != null ? total.toFixed(2) : current.rate,
-                                };
-                              });
-                            }}
-                            className="w-32 shrink-0 rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                            placeholder="Quantity"
-                          />
-                        </div>
-                        {(form.unit_rate.trim() !== "" || form.quantity.trim() !== "") && (
-                          <p className="mt-1.5 text-[11px] text-stone">
-                            {quantityTotal != null ? (
-                              <>
-                                {form.unit_rate} × {form.quantity} ={" "}
-                                <span className="font-semibold text-espresso">${quantityTotal.toFixed(2)}</span>
-                                {" "}— we filled in Final Rate below with this; edit it if you want a different amount.
-                              </>
-                            ) : (
-                              "Enter both a rate and a quantity to auto-fill Final Rate."
-                            )}
-                          </p>
-                        )}
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">
-                          Estimated Duration <span className="font-normal normal-case text-stone/70">(optional)</span>
-                        </label>
-                        <div className="flex gap-2">
-                          <input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            value={form.duration_value}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              setForm((current) => {
-                                const equivalent = computeHourlyEquivalent(value, current.duration_unit, currentPayRate);
-                                return {
-                                  ...current,
-                                  duration_value: value,
-                                  rate: equivalent != null ? equivalent.toFixed(2) : current.rate,
-                                };
-                              });
-                            }}
-                            className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                            placeholder="e.g. 2"
-                          />
-                          <select
-                            value={form.duration_unit}
-                            onChange={(event) => {
-                              const unit = event.target.value as "hours" | "minutes";
-                              setForm((current) => {
-                                const equivalent = computeHourlyEquivalent(current.duration_value, unit, currentPayRate);
-                                return {
-                                  ...current,
-                                  duration_unit: unit,
-                                  rate: equivalent != null ? equivalent.toFixed(2) : current.rate,
-                                };
-                              });
-                            }}
-                            className="w-32 shrink-0 rounded-lg border border-sand bg-white px-2 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          >
-                            <option value="hours">Hours</option>
-                            <option value="minutes">Minutes</option>
-                          </select>
-                        </div>
-                        {form.duration_value.trim() !== "" && (
-                          <p className="mt-1.5 text-[11px] text-stone">
-                            {hourlyEquivalentTotal != null ? (
-                              <>
-                                At your hourly rate, that&apos;s worth{" "}
-                                <span className="font-semibold text-espresso">${hourlyEquivalentTotal.toFixed(2)}</span>
-                                {" "}— we filled in Final Rate below with this; edit it if you want a different amount.
-                              </>
-                            ) : currentPayRate == null ? (
-                              "No hourly rate is set for your profile in Team Management, so we can't fill in a rate for you — enter one manually."
-                            ) : (
-                              "Enter a valid duration to auto-fill Final Rate."
-                            )}
-                          </p>
-                        )}
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Final Rate</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={form.rate}
-                          onChange={(event) => setForm((current) => ({ ...current, rate: event.target.value }))}
-                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          placeholder="0.00"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
-                          <input
-                            type="date"
-                            value={form.start_date}
-                            onChange={(event) => setForm((current) => ({ ...current, start_date: event.target.value }))}
-                            className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                          <input
-                            type="date"
-                            value={form.due_date}
-                            onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))}
-                            className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Detail</label>
-                        <textarea
-                          value={form.task_detail}
-                          onChange={(event) => setForm((current) => ({ ...current, task_detail: limitToWords(event.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
-                          className="min-h-[96px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          placeholder="Task detail"
-                        />
-                        <p className="mt-1 text-[10px] text-stone">{Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(form.task_detail))} words remaining</p>
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
-                        <textarea
-                          value={form.task_notes}
-                          onChange={(event) => setForm((current) => ({ ...current, task_notes: event.target.value }))}
-                          className="min-h-[96px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          placeholder="Task notes"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Link</label>
-                        <input
-                          type="text"
-                          value={form.link}
-                          onChange={(event) => setForm((current) => ({ ...current, link: event.target.value }))}
-                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          placeholder="https://..."
-                        />
-                      </div>
-
-                      <div>
-                        <div className="mb-1 flex items-center justify-between gap-3">
-                          <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
-                          <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-stone">
-                            <input
-                              type="checkbox"
-                              checked={form.instructions_locked}
-                              onChange={(event) => setForm((current) => ({ ...current, instructions_locked: event.target.checked }))}
-                              className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                            />
-                            Locked
-                          </label>
-                        </div>
-                        <textarea
-                          value={form.instructions}
-                          onChange={(event) => setForm((current) => ({ ...current, instructions: event.target.value }))}
-                          className="min-h-[120px] w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                          placeholder="Instructions"
-                        />
-                      </div>
-                    </>
+                    <TaskEditor
+                      mode="output_based"
+                      editingTaskId={panelMode === "edit" ? selectedTask?.id ?? null : null}
+                      initialTask={panelMode === "edit" ? (selectedTask as unknown as Record<string, unknown>) : null}
+                      currentUserId={currentUserId ?? ""}
+                      isAdminOrManager={isAdminOrManager}
+                      teamMembers={[]}
+                      currentPayRate={currentPayRate ?? undefined}
+                      onCancel={closePanel}
+                      onSaved={handleTaskSaved}
+                    />
                   )}
                 </>
               )}

@@ -104,6 +104,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // Details
   const [taskDetail, setTaskDetail] = useState((initialTask?.task_detail as string) ?? "");
   const [taskNotes, setTaskNotes] = useState((initialTask?.task_notes as string) ?? "");
+  const [link, setLink] = useState((initialTask?.link as string) ?? "");
   const [instructions, setInstructions] = useState((initialTask?.instructions as string) ?? "");
   const [instructionsLocked, setInstructionsLocked] = useState(Boolean(initialTask?.instructions_locked));
   const [todos, setTodos] = useState<TaskTodo[]>([]);
@@ -340,6 +341,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           end_date: endDate || null,
           task_detail: taskDetail.trim() || null,
           task_notes: taskNotes.trim() || null,
+          link: link.trim() || null,
           instructions: instructions.trim() || null,
           project_id: linkedProjectId || null,
         };
@@ -369,7 +371,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       setSaving(false);
     }
   }, [
-    mode, taskName, account, project, category, taskDetail, taskNotes, dueDate, startDate, endDate,
+    mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, startDate, endDate,
     assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
   ]);
@@ -442,13 +444,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputClass} />
           </div>
           <div className="flex-1">
-            <label className={labelClass}>Due Date</label>
-            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
-          </div>
-          <div className="flex-1">
             <label className={labelClass}>End Date</label>
             <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} />
           </div>
+        </div>
+
+        <div>
+          <label className={labelClass}>Due Date</label>
+          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
         </div>
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
@@ -554,6 +557,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           <label className={labelClass}>Notes</label>
           <textarea value={taskNotes} onChange={(e) => setTaskNotes(e.target.value)} rows={2} placeholder="Internal notes" className={`${inputClass} resize-none`} />
         </div>
+
+        {mode === "output_based" && (
+          <div>
+            <label className={labelClass}>Link</label>
+            <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://..." className={inputClass} />
+          </div>
+        )}
 
         <div>
           <label className={labelClass}>Instructions</label>
