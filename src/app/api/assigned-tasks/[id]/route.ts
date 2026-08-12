@@ -275,6 +275,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     notes,
     account,
     project,
+    category,
     task_name,
     task_detail,
     task_notes,
@@ -295,6 +296,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     notes?: string;
     account?: string | null;
     project?: string | null;
+    category?: string | null;
     task_name?: string;
     task_detail?: string | null;
     task_notes?: string | null;
@@ -333,6 +335,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   const hasCoreMetadataUpdate =
     account !== undefined ||
     project !== undefined ||
+    category !== undefined ||
     task_name !== undefined ||
     task_detail !== undefined ||
     task_notes !== undefined ||
@@ -681,6 +684,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     const updatePayload: Record<string, unknown> = { updated_at: now };
     if (account !== undefined) updatePayload.account = account;
     if (project !== undefined) updatePayload.project = project;
+    if (category !== undefined) updatePayload.category = category;
     if (task_name !== undefined) updatePayload.task_name = task_name.trim();
     if (task_detail !== undefined) updatePayload.task_detail = task_detail;
     if (task_notes !== undefined) updatePayload.task_notes = task_notes;

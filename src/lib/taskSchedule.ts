@@ -109,19 +109,22 @@ export function categoryDotClass(category: string): string {
   return CATEGORY_DOT_CLASSES[category] ?? "bg-stone-300";
 }
 
-// Full block styling (border + background + text) for Calendar hour blocks —
-// same hue family as the dot, at soft/light strength so text stays readable.
+// Full block styling (border + solid background + text) for Calendar hour
+// blocks — same hue/strength as the dot, so the whole block reads as the
+// category color rather than just a thin border.
 const CATEGORY_BLOCK_CLASSES: Record<string, string> = {
-  Task: "border-green-300 bg-green-50 text-green-700",
-  Communication: "border-amber-300 bg-amber-50 text-amber-700",
-  Planning: "border-purple-300 bg-purple-50 text-purple-700",
-  Collaboration: "border-orange-300 bg-orange-50 text-orange-700",
-  Personal: "border-teal-200 bg-teal-50 text-teal-700",
-  Break: "border-blue-200 bg-blue-50 text-blue-700",
+  Task: "border-green-600 bg-green-500 text-white",
+  Communication: "border-amber-600 bg-amber-500 text-white",
+  Planning: "border-purple-600 bg-purple-500 text-white",
+  Collaboration: "border-orange-600 bg-orange-500 text-white",
+  Personal: "border-teal-400 bg-teal-300 text-teal-950",
+  Break: "border-blue-400 bg-blue-300 text-blue-950",
 };
 
 export function categoryBlockClasses(category: string | null | undefined): string {
-  return (category && CATEGORY_BLOCK_CLASSES[category]) || "border-sage/30 bg-sage-soft text-sage";
+  // Neutral gray, not sage — sage sits in the same green hue as the "Task"
+  // category and was getting mistaken for it when category is unset.
+  return (category && CATEGORY_BLOCK_CLASSES[category]) || "border-stone-400 bg-stone-300 text-stone-800";
 }
 
 export function formatTimeRange(task: Pick<RawTask, "start_time" | "end_time">): string {

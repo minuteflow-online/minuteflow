@@ -767,9 +767,6 @@ export default function ProductivityCalendarPage() {
                               style={{ top, height }}
                             >
                               <p className="truncate text-[9px] font-semibold leading-tight">
-                                {task.category && (
-                                  <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1 align-middle ${categoryDotClass(task.category)}`} />
-                                )}
                                 {task.task_name}
                               </p>
                             </button>
@@ -883,9 +880,6 @@ export default function ProductivityCalendarPage() {
                         style={{ top, height }}
                       >
                         <p className="truncate text-[11px] font-semibold">
-                          {task.category && (
-                            <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1 align-middle ${categoryDotClass(task.category)}`} />
-                          )}
                           {task.task_name}
                         </p>
                         <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>

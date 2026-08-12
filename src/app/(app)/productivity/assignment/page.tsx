@@ -56,6 +56,7 @@ type VATaskRow = {
     account: string | null;
     project: string | null;
     project_id: string | null;
+    category: string | null;
     task_name: string;
     task_detail: string | null;
     task_notes: string | null;
@@ -137,6 +138,7 @@ type AdminTaskFlat = {
   account: string | null;
   project: string | null;
   project_id: string | null;
+  category: string | null;
   task_name: string;
   task_detail: string | null;
   task_notes: string | null;
@@ -399,6 +401,7 @@ export default function TaskListPage() {
   const [panelAccount, setPanelAccount] = useState("");
   const [panelProject, setPanelProject] = useState("");
   const [panelTaskName, setPanelTaskName] = useState("");
+  const [panelCategory, setPanelCategory] = useState("Task");
   const [panelDueDate, setPanelDueDate] = useState("");
   const [panelDetail, setPanelDetail] = useState("");
   const [panelTaskNotes, setPanelTaskNotes] = useState("");
@@ -473,6 +476,7 @@ export default function TaskListPage() {
                 account: task.account,
                 project: task.project,
                 project_id: task.project_id,
+                category: task.category,
                 task_name: task.task_name,
                 task_detail: task.task_detail,
                 task_notes: task.task_notes,
@@ -1396,6 +1400,7 @@ export default function TaskListPage() {
     setPanelAccount("");
     setPanelProject("");
     setPanelTaskName("");
+    setPanelCategory("Task");
     setPanelDueDate("");
     setPanelDetail("");
     setPanelTaskNotes("");
@@ -1469,6 +1474,7 @@ export default function TaskListPage() {
       setPanelAccount(task.assigned_tasks.account ?? "");
       setPanelProject(task.assigned_tasks.project ?? "");
       setPanelTaskName(task.assigned_tasks.task_name ?? "");
+      setPanelCategory(task.assigned_tasks.category ?? "Task");
       setPanelDueDate(task.assigned_tasks.due_date ?? "");
       setPanelDetail(task.assigned_tasks.task_detail ?? "");
       setPanelTaskNotes(task.assigned_tasks.task_notes ?? "");
@@ -1496,6 +1502,7 @@ export default function TaskListPage() {
     setPanelAccount("");
     setPanelProject("");
     setPanelTaskName("");
+    setPanelCategory("Task");
     setPanelDueDate("");
     setPanelDetail("");
     setPanelTaskNotes("");
@@ -1652,6 +1659,7 @@ export default function TaskListPage() {
     const nextAccount = panelAccount.trim();
     const nextProject = panelProject.trim();
     const nextTaskName = panelTaskName.trim();
+    const nextCategory = panelCategory;
     const nextDueDate = panelDueDate.trim();
     const nextDetail = panelDetail;
     const nextTaskNotes = panelTaskNotes;
@@ -1666,6 +1674,7 @@ export default function TaskListPage() {
       !sameText(nextAccount, selectedTask.assigned_tasks.account) ||
       !sameText(nextProject, selectedTask.assigned_tasks.project) ||
       !sameText(nextTaskName, selectedTask.assigned_tasks.task_name) ||
+      !sameText(nextCategory, selectedTask.assigned_tasks.category) ||
       !sameText(nextDueDate, selectedTask.assigned_tasks.due_date) ||
       !sameText(nextDetail, selectedTask.assigned_tasks.task_detail) ||
       !sameText(nextTaskNotes, selectedTask.assigned_tasks.task_notes) ||
@@ -1698,6 +1707,7 @@ export default function TaskListPage() {
         body.account = nextAccount || null;
         body.project = nextProject || null;
         body.task_name = nextTaskName;
+        body.category = nextCategory;
         body.due_date = nextDueDate || null;
         body.task_detail = nextDetail || null;
         body.task_notes = nextTaskNotes || null;
@@ -1745,6 +1755,7 @@ export default function TaskListPage() {
                 account: metadataChanged ? (nextAccount || null) : row.assigned_tasks.account,
                 project: metadataChanged ? (nextProject || null) : row.assigned_tasks.project,
                 task_name: metadataChanged ? nextTaskName : row.assigned_tasks.task_name,
+                category: metadataChanged ? nextCategory : row.assigned_tasks.category,
                 due_date: metadataChanged ? (nextDueDate || null) : row.assigned_tasks.due_date,
                 task_detail: metadataChanged ? (nextDetail || null) : row.assigned_tasks.task_detail,
                 task_notes: metadataChanged ? (nextTaskNotes || null) : row.assigned_tasks.task_notes,
@@ -1770,6 +1781,7 @@ export default function TaskListPage() {
                 account: metadataChanged ? (nextAccount || null) : current.assigned_tasks.account,
                 project: metadataChanged ? (nextProject || null) : current.assigned_tasks.project,
                 task_name: metadataChanged ? nextTaskName : current.assigned_tasks.task_name,
+                category: metadataChanged ? nextCategory : current.assigned_tasks.category,
                 due_date: metadataChanged ? (nextDueDate || null) : current.assigned_tasks.due_date,
                 task_detail: metadataChanged ? (nextDetail || null) : current.assigned_tasks.task_detail,
                 task_notes: metadataChanged ? (nextTaskNotes || null) : current.assigned_tasks.task_notes,
@@ -1808,6 +1820,7 @@ export default function TaskListPage() {
     fetchTasks,
     panelAccount,
     panelAssignedBy,
+    panelCategory,
     panelDetail,
     panelDueDate,
     panelInstructions,
@@ -3136,6 +3149,25 @@ export default function TaskListPage() {
                 ) : (
                   <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
                     {selectedTask.assigned_tasks.task_name || <span className="text-stone/60">—</span>}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
+                {panelCanEditFields ? (
+                  <select
+                    value={panelCategory}
+                    onChange={(e) => setPanelCategory(e.target.value)}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  >
+                    {CATEGORY_OPTIONS.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.category || <span className="text-stone/60">—</span>}
                   </div>
                 )}
               </div>

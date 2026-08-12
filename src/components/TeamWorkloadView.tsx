@@ -9,7 +9,6 @@ import {
   localDateOf,
   formatTimeRange,
   normalizeAssignedRows,
-  categoryDotClass,
   categoryBlockClasses,
 } from "@/lib/taskSchedule";
 
@@ -169,9 +168,6 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
                         className={`w-full overflow-hidden rounded-md border px-2 py-1.5 text-left hover:opacity-90 cursor-pointer ${categoryBlockClasses(t.category)}`}
                       >
                         <p className="truncate text-[11px] font-semibold">
-                          {t.category && (
-                            <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1 align-middle ${categoryDotClass(t.category)}`} />
-                          )}
                           {t.task_name}
                         </p>
                         <p className="truncate text-[10px] opacity-80">{formatTimeRange(t)}</p>
