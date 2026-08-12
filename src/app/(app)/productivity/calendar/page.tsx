@@ -13,6 +13,7 @@ import {
   formatTimeRange,
   normalizeAssignedRows,
   categoryDotClass,
+  categoryBlockClasses,
   statusDotClass,
   statusBadgeClasses,
   statusLabel,
@@ -762,10 +763,10 @@ export default function ProductivityCalendarPage() {
                               key={task.id}
                               type="button"
                               onClick={() => openEditBlock(task)}
-                              className="pointer-events-auto absolute left-0.5 right-0.5 overflow-hidden rounded-md border border-sage/30 bg-sage-soft px-1 py-0.5 text-left shadow-sm hover:border-sage cursor-pointer"
+                              className={`pointer-events-auto absolute left-0.5 right-0.5 overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)}`}
                               style={{ top, height }}
                             >
-                              <p className="truncate text-[9px] font-semibold text-sage leading-tight">
+                              <p className="truncate text-[9px] font-semibold leading-tight">
                                 {task.category && (
                                   <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1 align-middle ${categoryDotClass(task.category)}`} />
                                 )}
@@ -878,16 +879,16 @@ export default function ProductivityCalendarPage() {
                         key={task.id}
                         type="button"
                         onClick={() => openEditBlock(task)}
-                        className="pointer-events-auto absolute left-0 right-2 overflow-hidden rounded-md border border-sage/30 bg-sage-soft px-2 py-1 text-left shadow-sm hover:border-sage cursor-pointer"
+                        className={`pointer-events-auto absolute left-0 right-2 overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)}`}
                         style={{ top, height }}
                       >
-                        <p className="truncate text-[11px] font-semibold text-sage">
+                        <p className="truncate text-[11px] font-semibold">
                           {task.category && (
                             <span className={`inline-block h-1.5 w-1.5 rounded-full mr-1 align-middle ${categoryDotClass(task.category)}`} />
                           )}
                           {task.task_name}
                         </p>
-                        <p className="truncate text-[10px] text-sage/80">{formatTimeRange(task)}</p>
+                        <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>
                       </button>
                     );
                   })}

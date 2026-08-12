@@ -109,6 +109,21 @@ export function categoryDotClass(category: string): string {
   return CATEGORY_DOT_CLASSES[category] ?? "bg-stone-300";
 }
 
+// Full block styling (border + background + text) for Calendar hour blocks —
+// same hue family as the dot, at soft/light strength so text stays readable.
+const CATEGORY_BLOCK_CLASSES: Record<string, string> = {
+  Task: "border-green-300 bg-green-50 text-green-700",
+  Communication: "border-amber-300 bg-amber-50 text-amber-700",
+  Planning: "border-purple-300 bg-purple-50 text-purple-700",
+  Collaboration: "border-orange-300 bg-orange-50 text-orange-700",
+  Personal: "border-teal-200 bg-teal-50 text-teal-700",
+  Break: "border-blue-200 bg-blue-50 text-blue-700",
+};
+
+export function categoryBlockClasses(category: string | null | undefined): string {
+  return (category && CATEGORY_BLOCK_CLASSES[category]) || "border-sage/30 bg-sage-soft text-sage";
+}
+
 export function formatTimeRange(task: Pick<RawTask, "start_time" | "end_time">): string {
   const start = new Date(task.start_time!);
   const end = new Date(task.end_time!);
