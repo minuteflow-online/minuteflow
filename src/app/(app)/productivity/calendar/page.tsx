@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import TaskForm from "@/components/TaskForm";
 import {
@@ -14,7 +14,6 @@ import {
   normalizeAssignedRows,
   categoryDotClass,
   categoryBlockClasses,
-  statusDotClass,
   statusBadgeClasses,
   statusLabel,
 } from "@/lib/taskSchedule";
@@ -106,6 +105,8 @@ export default function ProductivityCalendarPage() {
   const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
   const [projectFilter, setProjectFilter] = useState<Set<string>>(new Set());
   const [recurringOnly, setRecurringOnly] = useState(false);
+  const [dateTypeFilter, setDateTypeFilter] = useState<"all" | "start" | "due">("all");
+  const filtersRef = useRef<HTMLDivElement | null>(null);
 
   const [showForm, setShowForm] = useState(false);
   const [editingBlockId, setEditingBlockId] = useState<number | null>(null);
@@ -120,6 +121,18 @@ export default function ProductivityCalendarPage() {
   useEffect(() => {
     setSelectedDate(getDateInTimezone(orgTimezone));
   }, [orgTimezone]);
+
+  // Close the Filters dropdown on any click outside it
+  useEffect(() => {
+    if (!showFilters) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (filtersRef.current && !filtersRef.current.contains(e.target as Node)) {
+        setShowFilters(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showFilters]);
 
   // Bootstrap: auth user, role, org timezone
   useEffect(() => {
@@ -279,7 +292,8 @@ export default function ProductivityCalendarPage() {
   const allDueItems = useMemo(() => [...assignedDueItems, ...fixedItems], [assignedDueItems, fixedItems]);
 
   const activeFilterCount =
-    statusFilter.size + sourceFilter.size + categoryFilter.size + projectFilter.size + (recurringOnly ? 1 : 0);
+    statusFilter.size + sourceFilter.size + categoryFilter.size + projectFilter.size + (recurringOnly ? 1 : 0) +
+    (dateTypeFilter !== "all" ? 1 : 0);
 
   const filteredDueItems = useMemo(() => {
     return allDueItems.filter((item) => {
@@ -291,9 +305,10 @@ export default function ProductivityCalendarPage() {
         if (!projectFilter.has(key)) return false;
       }
       if (recurringOnly && !item.isRecurring) return false;
+      if (dateTypeFilter !== "all" && item.dateType !== dateTypeFilter) return false;
       return true;
     });
-  }, [allDueItems, statusFilter, sourceFilter, categoryFilter, projectFilter, recurringOnly]);
+  }, [allDueItems, statusFilter, sourceFilter, categoryFilter, projectFilter, recurringOnly, dateTypeFilter]);
 
   const dueItemsByDate = useMemo(() => {
     const map: Record<string, DueItem[]> = {};
@@ -317,6 +332,7 @@ export default function ProductivityCalendarPage() {
     setCategoryFilter(new Set());
     setProjectFilter(new Set());
     setRecurringOnly(false);
+    setDateTypeFilter("all");
   };
 
   const allStatuses = useMemo(() => {
@@ -512,7 +528,7 @@ export default function ProductivityCalendarPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="relative">
+          <div className="relative" ref={filtersRef}>
             <button
               type="button"
               onClick={() => setShowFilters((v) => !v)}
@@ -567,6 +583,31 @@ export default function ProductivityCalendarPage() {
                       </label>
                     ))}
                   </div>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide mb-1">Date Type</p>
+                  <div className="flex flex-wrap gap-1">
+                    {([
+                      { value: "all", label: "All" },
+                      { value: "start", label: "Start Date" },
+                      { value: "due", label: "Due Date" },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setDateTypeFilter(opt.value)}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                          dateTypeFilter === opt.value ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1 text-[10px] text-stone">
+                    In Month view: <span className="inline-block h-1.5 w-1.5 rounded-full bg-stone align-middle" /> circle = start date, <span className="inline-block h-1.5 w-1.5 rotate-45 bg-stone align-middle" /> diamond = due date.
+                  </p>
                 </div>
 
                 <div>
@@ -664,10 +705,8 @@ export default function ProductivityCalendarPage() {
                     {items.slice(0, 5).map((item) => (
                       <span
                         key={item.id}
-                        title={`${item.title} — ${statusLabel(item.status)} (${item.dateType === "due" ? "due" : "starts"} this day)`}
-                        className={`h-1.5 w-1.5 rounded-full ${statusDotClass(item.status)} ${
-                          item.dateType === "start" ? "ring-1 ring-offset-1 ring-stone/50" : ""
-                        }`}
+                        title={`${item.title} — ${item.category ?? "No category"}, ${statusLabel(item.status)} (${item.dateType === "due" ? "due" : "starts"} this day)`}
+                        className={`h-1.5 w-1.5 ${item.dateType === "due" ? "rounded-sm rotate-45" : "rounded-full"} ${categoryDotClass(item.category ?? "")}`}
                       />
                     ))}
                     {items.length > 5 && <span className="text-[9px] text-stone">+{items.length - 5}</span>}
