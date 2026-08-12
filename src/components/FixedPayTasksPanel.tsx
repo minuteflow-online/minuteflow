@@ -91,11 +91,9 @@ const TABLE_COLUMNS: ColumnDef[] = [
 type FixedPayTasksPanelProps = {
   // Bumped by the parent (e.g. after a claim in AvailableTasksWidget) to refetch.
   refreshKey?: number;
-  // Hybrid VAs picking "Hourly Task" in the create panel jump back to My Tasks.
-  onSwitchToHourly?: () => void;
 };
 
-export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }: FixedPayTasksPanelProps) {
+export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPanelProps) {
   const supabase = useMemo(() => createClient(), []);
 
   const [profileLoading, setProfileLoading] = useState(true);
@@ -366,6 +364,14 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   // closing, so the VA sees exactly what was saved instead of reopening it.
   const handleTaskSaved = useCallback(
     (task: { id: number; [key: string]: unknown }) => {
+      // A time-based create (via the Task Type toggle) lands in
+      // assigned_tasks, not this panel's fixed_pay_tasks list — there's
+      // nothing here to select/view, just confirm and close.
+      if (panelMode === "create" && createMode === "hourly") {
+        setMessage({ type: "ok", text: "Task created — find it in My Tasks." });
+        closePanel();
+        return;
+      }
       setPanelMode((prevMode) => {
         setMessage({ type: "ok", text: prevMode === "edit" ? "Task updated." : "Task created." });
         return "view";
@@ -373,7 +379,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
       setSelectedTask(task as unknown as FixedPayTaskWithClaimer);
       void fetchTasks();
     },
-    [fetchTasks]
+    [fetchTasks, panelMode, createMode, closePanel]
   );
 
   // Mirrors the server-side check in the PATCH/DELETE routes: a VA may only
@@ -779,22 +785,18 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                   )}
 
                   {panelMode === "create" && isHybrid && createMode === "hourly" ? (
-                    <div className="rounded-xl border border-sand bg-parchment/20 p-4">
-                      <p className="text-[13px] text-espresso">Time-based tasks are created from the Task List.</p>
-                      <p className="mt-1 text-[11px] text-stone">Head over to My Tasks to log or submit a time-based task.</p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          closePanel();
-                          onSwitchToHourly?.();
-                        }}
-                        className="mt-3 inline-block rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840]"
-                      >
-                        Go to My Tasks
-                      </button>
-                    </div>
+                    <TaskEditor
+                      key="hourly"
+                      mode="time_based"
+                      currentUserId={currentUserId ?? ""}
+                      isAdminOrManager={false}
+                      teamMembers={[]}
+                      onCancel={closePanel}
+                      onSaved={handleTaskSaved}
+                    />
                   ) : (
                     <TaskEditor
+                      key="fixed_pay"
                       mode="output_based"
                       editingTaskId={panelMode === "edit" ? selectedTask?.id ?? null : null}
                       initialTask={panelMode === "edit" ? (selectedTask as unknown as Record<string, unknown>) : null}

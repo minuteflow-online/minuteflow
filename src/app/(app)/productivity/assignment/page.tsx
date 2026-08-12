@@ -2019,10 +2019,7 @@ export default function TaskListPage() {
           {canShowAvailableTasks && activeView === "available_tasks" ? (
             <div className="space-y-4">
               <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} fixedPayOnly={true} currentUserId={currentUserId ?? undefined} refreshKey={availableRefreshKey} />
-              <FixedPayTasksPanel
-                refreshKey={availableRefreshKey}
-                onSwitchToHourly={isPerTaskVa ? undefined : () => setActiveView("my_tasks")}
-              />
+              <FixedPayTasksPanel refreshKey={availableRefreshKey} />
             </div>
           ) : activeView === "recurring" ? (
             <div className="p-4">

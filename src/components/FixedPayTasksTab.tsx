@@ -115,6 +115,7 @@ export default function FixedPayTasksTab() {
   const [panelSaving, setPanelSaving] = useState(false);
   const [bulkAction, setBulkAction] = useState<"archive" | "trash" | "delete" | null>(null);
   const [revokingClaim, setRevokingClaim] = useState(false);
+  const [createTaskMode, setCreateTaskMode] = useState<"time_based" | "output_based">("output_based");
   const taskEditorRef = useRef<TaskEditorHandle | null>(null);
 
   const [activeProfiles, setActiveProfiles] = useState<ProfileSummary[]>([]);
@@ -343,6 +344,7 @@ export default function FixedPayTasksTab() {
     setPanelStatus("open");
     setPanelIsActive(true);
     setMessage(null);
+    setCreateTaskMode("output_based");
   }, []);
 
   const toggleTaskSelection = useCallback((taskId: number) => {
@@ -542,9 +544,15 @@ export default function FixedPayTasksTab() {
   );
 
   // TaskEditor's onSaved callback — lands in edit mode with the fresh task,
-  // mirroring the old handleSubmit's post-save behavior.
+  // mirroring the old handleSubmit's post-save behavior. A time_based create
+  // (via the toggle) lands in assigned_tasks, not this page's fixed_pay_tasks
+  // list, so there's nothing here to select/edit — just close the panel.
   const handleTaskSaved = useCallback(
     (task: { id: number; [key: string]: unknown }) => {
+      if (panelMode === "create" && createTaskMode === "time_based") {
+        closePanel();
+        return;
+      }
       const savedTask = task as unknown as FixedPayTaskWithClaimer;
       void fetchTasks();
       setSelectedTask(savedTask);
@@ -552,7 +560,7 @@ export default function FixedPayTasksTab() {
       setPanelStatus(savedTask.status);
       setPanelIsActive(savedTask.is_active);
     },
-    [fetchTasks]
+    [fetchTasks, panelMode, createTaskMode, closePanel]
   );
 
   // Combined Save Changes — submits TaskEditor's metadata form, then (in
@@ -1000,9 +1008,28 @@ export default function FixedPayTasksTab() {
             </>
           }
         >
+              {panelMode === "create" && (
+                <div className="mb-3 flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setCreateTaskMode("time_based")}
+                    className={`flex-1 px-3 py-1.5 transition-colors ${createTaskMode === "time_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
+                  >
+                    Time-based Task
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateTaskMode("output_based")}
+                    className={`flex-1 px-3 py-1.5 transition-colors ${createTaskMode === "output_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
+                  >
+                    Output Based Task
+                  </button>
+                </div>
+              )}
               <TaskEditor
+                key={panelMode === "create" ? createTaskMode : "edit"}
                 ref={taskEditorRef}
-                mode="output_based"
+                mode={panelMode === "create" ? createTaskMode : "output_based"}
                 editingTaskId={panelMode === "edit" ? selectedTask?.id ?? null : null}
                 initialTask={panelMode === "edit" ? (selectedTask as unknown as Record<string, unknown>) : null}
                 currentUserId={currentUserId ?? ""}
