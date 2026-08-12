@@ -218,6 +218,38 @@ export default function InvoiceViewClient({ token }: { token: string }) {
   // Separate time entries from expense line items
   const timeItems = lineItems.filter((li) => !li.expense_id);
 
+  // Detailed Time Allocation groups by task, not by individual session/to-do —
+  // a task worked across multiple sessions (or played via several to-dos)
+  // should read as one row with the total time and the task's client memo,
+  // not one row per underlying time_logs entry.
+  const timeGroupMap = new Map<string, LineItem & { quantity: number }>();
+  timeItems.forEach((li) => {
+    const key = `${li.description}||${li.project || ""}||${li.account_name || ""}`;
+    const existing = timeGroupMap.get(key);
+    if (existing) {
+      existing.quantity += Number(li.quantity);
+      if (!existing.client_memo && li.client_memo) existing.client_memo = li.client_memo;
+      if (li.service_date && (!existing.service_date || li.service_date < existing.service_date)) {
+        existing.service_date = li.service_date;
+      }
+    } else {
+      timeGroupMap.set(key, { ...li, quantity: Number(li.quantity) });
+    }
+  });
+  const groupedTimeItems = Array.from(timeGroupMap.values());
+
+  // custom_line_items can come back as a non-empty JSON string, an empty
+  // JSONB array ("[]"), or null depending on how the invoice was created —
+  // guard the parse so a non-string value doesn't crash the whole page.
+  let customLineItems: Array<{ description: string; amount: number }> = [];
+  if (typeof invoice.custom_line_items === "string" && invoice.custom_line_items.trim()) {
+    try {
+      customLineItems = JSON.parse(invoice.custom_line_items);
+    } catch {
+      customLineItems = [];
+    }
+  }
+
   const grossHours = timeItems.reduce((s, li) => s + Number(li.quantity), 0);
   const notBilledHours = Number(invoice.hours_not_billed || 0);
   const totalHours = grossHours - notBilledHours;
@@ -519,7 +551,7 @@ export default function InvoiceViewClient({ token }: { token: string }) {
             </div>
 
             {/* Manual/custom line items — shown on any invoice type that has them */}
-            {invoice.custom_line_items && (
+            {customLineItems.length > 0 && (
               <div className="bg-white border-x border-[#e8e0d4] px-6 py-4">
                 <h3 className="mb-3 font-semibold text-espresso">Invoice Items</h3>
                 <table className="w-full text-[13px]">
@@ -530,7 +562,7 @@ export default function InvoiceViewClient({ token }: { token: string }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {(JSON.parse(invoice.custom_line_items as string) as Array<{description: string; amount: number}>).map((item, i) => (
+                    {customLineItems.map((item, i) => (
                       <tr key={i} className="border-b border-parchment">
                         <td className="py-2 text-bark">{item.description}</td>
                         <td className="py-2 text-right font-medium text-espresso">${item.amount.toFixed(2)}</td>
@@ -646,7 +678,7 @@ export default function InvoiceViewClient({ token }: { token: string }) {
             <div className="bg-[#faf6f0] border-x border-[#e8e0d4] px-6 py-3">
               <div className="flex items-center justify-between">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52]">Detailed Time Allocation</div>
-                <div className="text-[10px] text-[#9e9080]">{timeItems.length} entries · {fmtHours(grossHours)} gross</div>
+                <div className="text-[10px] text-[#9e9080]">{groupedTimeItems.length} tasks · {fmtHours(grossHours)} gross</div>
               </div>
             </div>
             <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl overflow-hidden">
@@ -660,7 +692,7 @@ export default function InvoiceViewClient({ token }: { token: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {timeItems.map((li, i) => (
+                  {groupedTimeItems.map((li, i) => (
                     <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-[#fafaf8]"}>
                       <td className="px-3 py-1.5 text-right text-[11px] font-semibold text-[#3d2b1f] border-b border-[#e8e0d4]">{Math.round(Number(li.quantity) * 60)}</td>
                       <td className="px-3 py-1.5 text-[11px] text-[#3d2b1f] border-b border-[#e8e0d4]">{li.description}</td>

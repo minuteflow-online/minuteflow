@@ -20,6 +20,7 @@ import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone, countWords } from "@/lib/utils";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import { todoLabel, type TaskTodo } from "@/lib/taskTodos";
+import { useAccountsAndClients } from "@/hooks/useAccountsAndClients";
 import type {
   Profile,
   Session,
@@ -140,6 +141,7 @@ export default function DashboardPage() {
   // Auth & profile
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const { accountClientMap } = useAccountsAndClients();
 
   // Session state
   const [session, setSession] = useState<Session | null>(null);
@@ -1419,6 +1421,8 @@ export default function DashboardPage() {
         deleted_at: null,
       };
       setLiveSessionData(taskAsLog);
+      setCloseOldClientMemo(taskAsLog.client_memo || "");
+      setCloseOldInternalMemo(taskAsLog.internal_memo || "");
       setCloseOldStep("details");
       return;
     }
@@ -2719,6 +2723,8 @@ export default function DashboardPage() {
       if (liveLog) {
         // Orphaned task found — show the rejoin/close prompt
         setLiveSessionData(liveLog);
+        setCloseOldClientMemo(liveLog.client_memo || "");
+        setCloseOldInternalMemo(liveLog.internal_memo || "");
         setPendingFormData(formData);
         setShowLivePrompt(true);
         return;
@@ -2789,7 +2795,7 @@ export default function DashboardPage() {
       task_name: detail.task_name,
       category: "Task",
       account: detail.account || "",
-      client_name: "",
+      client_name: (detail.account && accountClientMap[detail.account]) || "",
       project: detail.project || "",
       client_memo: detail.task_detail || "",
       internal_memo: "",
@@ -2843,12 +2849,14 @@ export default function DashboardPage() {
         deleted_at: null,
       };
       setLiveSessionData(taskAsLog);
+      setCloseOldClientMemo(taskAsLog.client_memo || "");
+      setCloseOldInternalMemo(taskAsLog.internal_memo || "");
       setPendingFormData(formData);
       setCloseOldStep("details");
     } else {
       handleCheckAndStartTask(formData);
     }
-  }, [activeTask, userId, profile, handleCheckAndStartTask]);
+  }, [activeTask, userId, profile, handleCheckAndStartTask, accountClientMap]);
 
   // ─── To-Do Play ─────────────────────────────────────────────
   // Same close-old-task-wizard-then-start flow as handlePlayAssignedTask —
@@ -2866,7 +2874,7 @@ export default function DashboardPage() {
       task_name: detail.task_name,
       category: "Task",
       account: detail.account || "",
-      client_name: "",
+      client_name: (detail.account && accountClientMap[detail.account]) || "",
       project: detail.project || "",
       client_memo: detail.task_detail || "",
       internal_memo: "",
@@ -2909,12 +2917,14 @@ export default function DashboardPage() {
         deleted_at: null,
       };
       setLiveSessionData(taskAsLog);
+      setCloseOldClientMemo(taskAsLog.client_memo || "");
+      setCloseOldInternalMemo(taskAsLog.internal_memo || "");
       setPendingFormData(formData);
       setCloseOldStep("details");
     } else {
       handleCheckAndStartTask(formData);
     }
-  }, [activeTask, userId, profile, handleCheckAndStartTask]);
+  }, [activeTask, userId, profile, handleCheckAndStartTask, accountClientMap]);
 
   // ─── Notes modal ──────────────────────────────────────────
 
