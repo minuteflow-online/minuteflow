@@ -907,7 +907,7 @@ export default function ProductivityCalendarPage() {
                   </button>
                 ))}
 
-                <div className="pointer-events-none absolute inset-0 pl-16">
+                <div className="pointer-events-none absolute inset-0">
                   {scheduledForDate(selectedDate).map((task) => {
                     const { top, height } = blockPosition(task);
                     return (
@@ -915,7 +915,7 @@ export default function ProductivityCalendarPage() {
                         key={task.id}
                         type="button"
                         onClick={() => openEditBlock(task)}
-                        className={`pointer-events-auto absolute left-0 right-2 overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)}`}
+                        className={`pointer-events-auto absolute left-16 right-2 overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)}`}
                         style={{ top, height }}
                       >
                         <p className="truncate text-[11px] font-semibold">
