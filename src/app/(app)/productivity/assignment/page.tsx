@@ -2018,7 +2018,7 @@ export default function TaskListPage() {
         <div className="px-5 py-4">
           {canShowAvailableTasks && activeView === "available_tasks" ? (
             <div className="space-y-4">
-              <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} fixedPayOnly={true} currentUserId={currentUserId ?? undefined} refreshKey={availableRefreshKey} />
+              <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} fixedPayOnly={true} currentUserId={currentUserId ?? undefined} refreshKey={availableRefreshKey} startCollapsed={!isAdmin} />
               <FixedPayTasksPanel refreshKey={availableRefreshKey} />
             </div>
           ) : activeView === "recurring" ? (

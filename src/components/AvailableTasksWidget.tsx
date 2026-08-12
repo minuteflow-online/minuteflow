@@ -67,6 +67,7 @@ export default function AvailableTasksWidget({
   fixedPayOnly = false,
   currentUserId,
   refreshKey = 0,
+  startCollapsed = false,
 }: {
   onClaimed?: () => void;
   canSeeFixedPay?: boolean;
@@ -74,6 +75,9 @@ export default function AvailableTasksWidget({
   currentUserId?: string;
   /** Bump to force a refetch (e.g. after creating a fixed-pay task from the parent) */
   refreshKey?: number;
+  /** Initial collapsed state of the whole panel — VAs get it collapsed by
+   *  default, admins expanded. User can still toggle it after mount. */
+  startCollapsed?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [viewMode, setViewMode] = useState<"fixed_pay" | "hourly">(
@@ -88,7 +92,7 @@ export default function AvailableTasksWidget({
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(startCollapsed);
 
   useEffect(() => {
     if (fixedPayOnly) {
@@ -309,7 +313,12 @@ export default function AvailableTasksWidget({
     [currentUserId, onClaimed]
   );
 
-  const openTasks = viewMode === "fixed_pay" && canSeeFixedPay ? tasks.filter((t) => !t.claimed_by_me) : [];
+  // Only tasks nobody has claimed belong in the "available to grab" pool.
+  // The GET API returns every fixed-pay row to admins (each flagged
+  // claimed_by_me), so filtering on !claimed_by_me alone would leave tasks
+  // already claimed by *other* VAs showing a Grab button. Gate on claimed_by
+  // so a claimed task drops out of the pool for everyone.
+  const openTasks = viewMode === "fixed_pay" && canSeeFixedPay ? tasks.filter((t) => !t.claimed_by) : [];
   const totalCount = viewMode === "fixed_pay" ? pendingAssigned.length + openTasks.length : hourlyTasks.length;
 
   return (
