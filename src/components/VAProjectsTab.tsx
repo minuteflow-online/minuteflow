@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { countWords } from "@/lib/utils";
+import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -59,7 +60,8 @@ interface AddSubtaskForm {
   assigned_by_id: string;
   due_date: string;
   pay_type: string;
-  category: string;
+  category: string; // legacy Objective (project_tags) cascading value — NOT the color-coded task category
+  task_category: string; // the real assigned_tasks.category (Task/Communication/Planning/...)
   task_detail: string;
   task_notes: string;
   instructions: string;
@@ -76,6 +78,7 @@ function defaultSubtaskForm(assignedById = ""): AddSubtaskForm {
     due_date: "",
     pay_type: "hourly",
     category: "",
+    task_category: "Task",
     task_detail: "",
     task_notes: "",
     instructions: "",
@@ -482,7 +485,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
         project: addForm.category.trim() || null,
         due_date: addForm.due_date || null,
         pay_type: addForm.pay_type || "hourly",
-        category: addForm.category.trim() || null,
+        category: addForm.task_category,
         task_detail: addForm.task_detail.trim() || null,
         task_notes: addForm.task_notes.trim() || null,
         instructions: addForm.instructions.trim() || null,
@@ -525,6 +528,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
         body: JSON.stringify({
           task_name: editSubForm.task_name.trim(),
           project: editSubForm.category.trim() || null,
+          category: editSubForm.task_category,
           task_detail: editSubForm.task_detail.trim() || null,
           task_notes: editSubForm.task_notes.trim() || null,
           instructions: editSubForm.instructions.trim() || null,
@@ -1084,12 +1088,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                                     assigned_by_id: sub.assigned_by ?? "",
                                     due_date: sub.due_date ?? "",
                                     pay_type: sub.pay_type ?? "hourly",
-                                    category: sub.project ?? sub.category ?? "",
+                                    category: sub.project ?? "",
+                                    task_category: sub.category && CATEGORY_OPTIONS.includes(sub.category) ? sub.category : "Task",
                                     task_detail: sub.task_detail ?? "",
                                     task_notes: sub.task_notes ?? "",
                                     instructions: sub.instructions ?? "",
                                     status: sub.status ?? "pending",
                                     review_required: sub.review_required ?? false,
+                                    parent_task_id: "",
                                   });
                                   setEditSubError(null);
                                 }
@@ -1142,6 +1148,21 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                                     ))}
                                   </select>
                                 </div>
+                              </div>
+
+                              <div>
+                                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                                  Category
+                                </label>
+                                <select
+                                  value={editSubForm.task_category}
+                                  onChange={(e) => setEditSubForm((prev) => ({ ...prev, task_category: e.target.value }))}
+                                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                                >
+                                  {CATEGORY_OPTIONS.map((c) => (
+                                    <option key={c} value={c}>{c}</option>
+                                  ))}
+                                </select>
                               </div>
 
                               <div>
@@ -1349,6 +1370,21 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       </option>
                       {getObjectiveTaskOptions(addForm.category).map((t) => (
                         <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Category
+                    </label>
+                    <select
+                      value={addForm.task_category}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, task_category: e.target.value }))}
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                    >
+                      {CATEGORY_OPTIONS.map((c) => (
+                        <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
                   </div>

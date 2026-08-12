@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { countWords } from "@/lib/utils";
+import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 import type { Project } from "@/types/database";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -51,6 +52,7 @@ export default function TaskForm({
   const [account, setAccount] = useState("");
   const [project, setProject] = useState(""); // legacy cascading "Objective" (project_tags)
   const [taskName, setTaskName] = useState("");
+  const [category, setCategory] = useState<string>("Task");
   const [taskDetail, setTaskDetail] = useState("");
   const [taskNotes, setTaskNotes] = useState("");
   const [startDate, setStartDate] = useState(defaultDate ?? "");
@@ -139,6 +141,7 @@ export default function TaskForm({
         account: account || null,
         project: project || null,
         task_name: taskName.trim(),
+        category,
         task_detail: taskDetail.trim() || null,
         task_notes: taskNotes.trim() || null,
         due_date: dueDate || null,
@@ -176,7 +179,7 @@ export default function TaskForm({
       setSaving(false);
     }
   }, [
-    account, project, taskName, taskDetail, taskNotes, dueDate, startDate, assignedBy, currentUserId,
+    account, project, taskName, category, taskDetail, taskNotes, dueDate, startDate, assignedBy, currentUserId,
     instructions, instructionsLocked, reviewRequired, payType, linkedProjectId, parentTaskId, isAdminOrManager,
     vaId, hasSchedule, startTime, endTime, onCreated,
   ]);
@@ -233,6 +236,19 @@ export default function TaskForm({
             className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
           />
         )}
+      </div>
+
+      <div>
+        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Category</label>
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+        >
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
       </div>
 
       {/* Link to Project — the Objective/Operation goal tree */}

@@ -90,6 +90,10 @@ export function localDateOf(iso: string): string {
   return `${y}-${m}-${day}`;
 }
 
+// The 6 real categories, sourced from TaskEntryForm.tsx's CATEGORIES list — the
+// single source of truth for every task-creation form on the site.
+export const CATEGORY_OPTIONS = ["Task", "Communication", "Planning", "Collaboration", "Personal", "Break"];
+
 // Category color coding — distinct from status colors so the two systems don't
 // collide visually. Kept in sync with TaskEntryForm's CATEGORIES list.
 const CATEGORY_DOT_CLASSES: Record<string, string> = {

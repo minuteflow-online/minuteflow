@@ -13,6 +13,7 @@ import TeamWorkloadView from "@/components/TeamWorkloadView";
 import ObjectiveProgressView from "@/components/ObjectiveProgressView";
 import type { RecurringTaskTemplate } from "@/types/database";
 import { countWords } from "@/lib/utils";
+import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
@@ -375,6 +376,7 @@ export default function TaskListPage() {
     account: "",
     project: "",
     task_name: "",
+    category: "Task",
     task_detail: "",
     due_date: "",
     start_date: "",
@@ -385,6 +387,9 @@ export default function TaskListPage() {
     review_required: false,
     linked_project_id: "",
     parent_task_id: "",
+    has_schedule: false,
+    schedule_start: "09:00",
+    schedule_end: "10:00",
   });
   const [linkedProjects, setLinkedProjects] = useState<Project[]>([]);
   const [linkedParentTaskOptions, setLinkedParentTaskOptions] = useState<Array<{ id: number; task_name: string }>>([]);
@@ -1412,6 +1417,7 @@ export default function TaskListPage() {
       account: "",
       project: "",
       task_name: "",
+      category: "Task",
       task_detail: "",
       due_date: "",
       start_date: "",
@@ -1422,6 +1428,9 @@ export default function TaskListPage() {
       review_required: false,
       linked_project_id: "",
       parent_task_id: "",
+      has_schedule: false,
+      schedule_start: "09:00",
+      schedule_end: "10:00",
     });
   }, [currentUserId]);
 
@@ -1435,6 +1444,7 @@ export default function TaskListPage() {
       account: "",
       project: "",
       task_name: "",
+      category: "Task",
       task_detail: "",
       due_date: "",
       start_date: "",
@@ -1445,6 +1455,9 @@ export default function TaskListPage() {
       review_required: false,
       linked_project_id: "",
       parent_task_id: "",
+      has_schedule: false,
+      schedule_start: "09:00",
+      schedule_end: "10:00",
     });
   }, [currentUserId]);
 
@@ -1519,6 +1532,7 @@ export default function TaskListPage() {
           account: addForm.account || null,
           project: addForm.project || null,
           task_name: addForm.task_name.trim(),
+          category: addForm.category,
           task_detail: addForm.task_detail.trim() || null,
           due_date: addForm.due_date || null,
           start_date: addForm.start_date || null,
@@ -1529,6 +1543,15 @@ export default function TaskListPage() {
           review_required: addForm.review_required,
           project_id: addForm.linked_project_id || null,
           parent_task_id: addForm.parent_task_id ? Number(addForm.parent_task_id) : null,
+          // Scheduling a specific time block signals "ready to work now" — put it
+          // straight on the assignee's Dashboard queue instead of sitting Pending.
+          initial_status: addForm.has_schedule ? "on_queue" : "pending",
+          ...(addForm.has_schedule && addForm.start_date && addForm.schedule_start && addForm.schedule_end
+            ? {
+                start_time: new Date(`${addForm.start_date}T${addForm.schedule_start}:00`).toISOString(),
+                end_time: new Date(`${addForm.start_date}T${addForm.schedule_end}:00`).toISOString(),
+              }
+            : {}),
           va_ids: currentUserId ? [currentUserId] : undefined,
         }),
       });
@@ -1580,7 +1603,7 @@ export default function TaskListPage() {
     } finally {
       setAddSaving(false);
     }
-  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.start_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, addForm.linked_project_id, addForm.parent_task_id, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
+  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.start_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, addForm.category, addForm.linked_project_id, addForm.parent_task_id, addForm.has_schedule, addForm.schedule_start, addForm.schedule_end, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
 
   const handleClaimedTaskRefresh = useCallback(async () => {
     await Promise.all([fetchTasks(), canShowHourlyPool ? fetchHourlyPool() : Promise.resolve()]);
@@ -2747,6 +2770,19 @@ export default function TaskListPage() {
                 </select>
               </div>
 
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
+                <select
+                  value={addForm.category}
+                  onChange={(e) => setAddForm((form) => ({ ...form, category: e.target.value }))}
+                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                >
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
                 <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Link to Project</label>
                 <select
@@ -2803,6 +2839,39 @@ export default function TaskListPage() {
                     className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
                   />
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
+                <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone">
+                  <input
+                    type="checkbox"
+                    checked={addForm.has_schedule}
+                    onChange={(e) => setAddForm((form) => ({ ...form, has_schedule: e.target.checked }))}
+                  />
+                  Add to Calendar (specific hours)
+                </label>
+                {addForm.has_schedule && (
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[10px] font-semibold text-stone">Start Time</label>
+                      <input
+                        type="time"
+                        value={addForm.schedule_start}
+                        onChange={(e) => setAddForm((form) => ({ ...form, schedule_start: e.target.value }))}
+                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[10px] font-semibold text-stone">End Time</label>
+                      <input
+                        type="time"
+                        value={addForm.schedule_end}
+                        onChange={(e) => setAddForm((form) => ({ ...form, schedule_end: e.target.value }))}
+                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>

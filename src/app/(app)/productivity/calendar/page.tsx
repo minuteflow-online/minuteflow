@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import TaskForm from "@/components/TaskForm";
 import {
   type RawTask,
+  CATEGORY_OPTIONS,
   getDateInTimezone,
   addDaysToDateStr,
   formatDayLabel,
@@ -33,7 +34,6 @@ type DueItem = {
   isRecurring: boolean;
 };
 
-const CATEGORY_OPTIONS = ["Task", "Communication", "Planning", "Collaboration", "Personal", "Break"];
 
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 21;
