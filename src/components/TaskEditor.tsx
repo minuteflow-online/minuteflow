@@ -197,13 +197,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   // To-do checklist only exists for assigned_tasks (task_todos FKs to
   // assigned_tasks.id, not fixed_pay_tasks.id) — output_based tasks keep the
-  // plain Client Detail textarea instead.
-  const supportsTodos = mode === "time_based" && isEditing && Boolean(editingTaskId);
+  // plain Client Detail textarea instead. Available on create too, held as
+  // local pendingTodoTexts until the task actually has an id, then flushed
+  // to real rows right after creation (see handleSubmit).
+  const supportsTodos = mode === "time_based";
   // Existing tasks with no to-do items yet keep showing the plain free-text
   // Client Detail (which may hold real legacy text) instead of an empty
   // checklist — checklistMode flips on once todos load with items, or the
   // user explicitly starts one via "Switch to a to-do checklist".
   const [checklistMode, setChecklistMode] = useState(false);
+  const [pendingTodoTexts, setPendingTodoTexts] = useState<string[]>([]);
 
   useEffect(() => {
     if (!supportsTodos || !editingTaskId) return;
@@ -231,13 +234,27 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   const handleAddTodo = useCallback(async () => {
     const text = newTodoText.trim();
-    if (!text || !editingTaskId) return;
+    if (!text) return;
+    if (!editingTaskId) {
+      // No task saved yet — hold locally, flushed to real rows in handleSubmit.
+      setPendingTodoTexts((prev) => [...prev, text]);
+      setNewTodoText("");
+      return;
+    }
     const created = await addTodo(editingTaskId, text);
     if (created) {
       setTodos((prev) => [...prev, created]);
       setNewTodoText("");
     }
   }, [newTodoText, editingTaskId]);
+
+  const handleUpdatePendingTodo = useCallback((index: number, text: string) => {
+    setPendingTodoTexts((prev) => prev.map((t, i) => (i === index ? text : t)));
+  }, []);
+
+  const handleRemovePendingTodo = useCallback((index: number) => {
+    setPendingTodoTexts((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const handleUpdateTodo = useCallback(async (todoId: number, text: string) => {
     if (!editingTaskId) return;
@@ -373,6 +390,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
           task = data.task;
+
+          if (checklistMode && pendingTodoTexts.length > 0) {
+            for (const text of pendingTodoTexts) {
+              await addTodo(task.id, text);
+            }
+          }
         }
       } else {
         const body: Record<string, unknown> = {
@@ -419,6 +442,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
     assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
+    checklistMode, pendingTodoTexts,
   ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
@@ -553,7 +577,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         {supportsTodos && (
           <div>
             <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
-            {screenshotsLoading ? (
+            {!editingTaskId ? (
+              <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
+            ) : screenshotsLoading ? (
               <p className="text-[12px] text-stone">Loading screenshots...</p>
             ) : screenshots.length === 0 ? (
               <p className="text-[12px] text-stone/50">No screenshots.</p>
@@ -595,32 +621,41 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               <ClientMemoFormatTooltip />
             </div>
             <p className="mb-1.5 text-[10px] text-stone">Each item still composes into the client memo — same Who/What/Where/Why/Status format applies per item.</p>
+            {!isEditing && (
+              <p className="mb-1.5 text-[10px] text-stone">These save with the task once you click Create Task.</p>
+            )}
             {todosLoading ? (
               <p className="text-[12px] text-stone">Loading...</p>
             ) : (
               <div className="space-y-1.5">
-                {todos.map((t, i) => (
-                  <div key={t.id} className="flex items-center gap-2 rounded-lg border border-sand bg-white px-2.5 py-1.5">
-                    <span className="shrink-0 rounded bg-stone/10 px-1.5 py-0.5 text-[10px] font-bold text-stone">{todoLabel(i)}</span>
-                    <input
-                      defaultValue={t.text}
-                      disabled={todoBusyId === t.id}
-                      onBlur={(e) => {
-                        const text = e.target.value.trim();
-                        if (text && text !== t.text) void handleUpdateTodo(t.id, text);
-                      }}
-                      className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-[13px] outline-none focus:border-sand"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void handleDeleteTodo(t.id)}
-                      disabled={todoBusyId === t.id}
-                      className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline disabled:opacity-50"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                {(isEditing ? todos : pendingTodoTexts).map((t, i) => {
+                  const text = typeof t === "string" ? t : t.text;
+                  const key = typeof t === "string" ? i : t.id;
+                  return (
+                    <div key={key} className="flex items-center gap-2 rounded-lg border border-sand bg-white px-2.5 py-1.5">
+                      <span className="shrink-0 rounded bg-stone/10 px-1.5 py-0.5 text-[10px] font-bold text-stone">{todoLabel(i)}</span>
+                      <input
+                        defaultValue={text}
+                        disabled={typeof t !== "string" && todoBusyId === t.id}
+                        onBlur={(e) => {
+                          const value = e.target.value.trim();
+                          if (!value || value === text) return;
+                          if (typeof t === "string") handleUpdatePendingTodo(i, value);
+                          else void handleUpdateTodo(t.id, value);
+                        }}
+                        className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-[13px] outline-none focus:border-sand"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => (typeof t === "string" ? handleRemovePendingTodo(i) : void handleDeleteTodo(t.id))}
+                        disabled={typeof t !== "string" && todoBusyId === t.id}
+                        className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
                 <div className="flex gap-2">
                   <input
                     value={newTodoText}
@@ -656,7 +691,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             />
             <p className="mt-1 text-[10px] text-stone">
               {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(taskDetail))} words remaining
-              {mode === "time_based" && !isEditing && " — save the task to add a to-do checklist instead"}
             </p>
             {supportsTodos && (
               <button
