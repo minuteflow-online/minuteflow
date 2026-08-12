@@ -505,6 +505,65 @@ export default function ProductivityCalendarPage() {
     return { top, height };
   }
 
+  // Lays out same-day scheduled blocks side-by-side when their times overlap,
+  // instead of stacking them directly on top of each other. Groups tasks into
+  // overlap "clusters", then greedily assigns each task the first free column
+  // within its cluster (classic calendar side-by-side layout).
+  function computeOverlapLayout(tasks: RawTask[]): Map<number, { col: number; cols: number }> {
+    const sorted = [...tasks].sort((a, b) => {
+      const aStart = new Date(a.start_time!).getTime();
+      const bStart = new Date(b.start_time!).getTime();
+      if (aStart !== bStart) return aStart - bStart;
+      return new Date(a.end_time!).getTime() - new Date(b.end_time!).getTime();
+    });
+
+    const layout = new Map<number, { col: number; cols: number }>();
+    let cluster: RawTask[] = [];
+    let clusterMaxEnd = -Infinity;
+
+    const flushCluster = () => {
+      if (cluster.length === 0) return;
+      const columnEnds: number[] = [];
+      const taskCols = new Map<number, number>();
+      for (const t of cluster) {
+        const start = new Date(t.start_time!).getTime();
+        const end = new Date(t.end_time!).getTime();
+        let placed = false;
+        for (let c = 0; c < columnEnds.length; c++) {
+          if (columnEnds[c] <= start) {
+            columnEnds[c] = end;
+            taskCols.set(t.id, c);
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) {
+          columnEnds.push(end);
+          taskCols.set(t.id, columnEnds.length - 1);
+        }
+      }
+      const cols = columnEnds.length;
+      for (const t of cluster) {
+        layout.set(t.id, { col: taskCols.get(t.id)!, cols });
+      }
+      cluster = [];
+      clusterMaxEnd = -Infinity;
+    };
+
+    for (const t of sorted) {
+      const start = new Date(t.start_time!).getTime();
+      const end = new Date(t.end_time!).getTime();
+      if (cluster.length > 0 && start >= clusterMaxEnd) {
+        flushCluster();
+      }
+      cluster.push(t);
+      clusterMaxEnd = Math.max(clusterMaxEnd, end);
+    }
+    flushCluster();
+
+    return layout;
+  }
+
 
   if (!ready) {
     return <div className="p-8 text-center text-xs text-stone">Loading calendar…</div>;
@@ -812,25 +871,35 @@ export default function ProductivityCalendarPage() {
                         />
                       ))}
                       <div className="pointer-events-none absolute inset-0">
-                        {scheduledForDate(dateStr).map((task) => {
-                          const { top, height } = blockPosition(task);
-                          // Due-date-driven blocks render fully opaque; start-date-driven
-                          // blocks (the default) stay at 70% opacity.
-                          const isDueBlock = dateStr === task.due_date && dateStr !== task.start_date;
-                          return (
-                            <button
-                              key={task.id}
-                              type="button"
-                              onClick={() => openEditBlock(task)}
-                              className={`pointer-events-auto absolute left-0.5 right-0.5 overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
-                              style={{ top, height }}
-                            >
-                              <p className="truncate text-[9px] font-semibold leading-tight">
-                                {task.task_name}
-                              </p>
-                            </button>
-                          );
-                        })}
+                        {(() => {
+                          const dayTasks = scheduledForDate(dateStr);
+                          const overlapLayout = computeOverlapLayout(dayTasks);
+                          return dayTasks.map((task) => {
+                            const { top, height } = blockPosition(task);
+                            // Due-date-driven blocks render fully opaque; start-date-driven
+                            // blocks (the default) stay at 70% opacity.
+                            const isDueBlock = dateStr === task.due_date && dateStr !== task.start_date;
+                            const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
+                            return (
+                              <button
+                                key={task.id}
+                                type="button"
+                                onClick={() => openEditBlock(task)}
+                                className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
+                                style={{
+                                  top,
+                                  height,
+                                  left: `calc(2px + (100% - 4px) * ${col} / ${cols})`,
+                                  width: `calc((100% - 4px) / ${cols} - 2px)`,
+                                }}
+                              >
+                                <p className="truncate text-[9px] font-semibold leading-tight">
+                                  {task.task_name}
+                                </p>
+                              </button>
+                            );
+                          });
+                        })()}
                       </div>
                     </div>
                   ))}
@@ -928,26 +997,36 @@ export default function ProductivityCalendarPage() {
                 ))}
 
                 <div className="pointer-events-none absolute inset-0">
-                  {scheduledForDate(selectedDate).map((task) => {
-                    const { top, height } = blockPosition(task);
-                    // Due-date-driven blocks render fully opaque; start-date-driven
-                    // blocks (the default) stay at 70% opacity.
-                    const isDueBlock = selectedDate === task.due_date && selectedDate !== task.start_date;
-                    return (
-                      <button
-                        key={task.id}
-                        type="button"
-                        onClick={() => openEditBlock(task)}
-                        className={`pointer-events-auto absolute left-16 right-2 overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
-                        style={{ top, height }}
-                      >
-                        <p className="truncate text-[11px] font-semibold">
-                          {task.task_name}
-                        </p>
-                        <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>
-                      </button>
-                    );
-                  })}
+                  {(() => {
+                    const dayTasks = scheduledForDate(selectedDate);
+                    const overlapLayout = computeOverlapLayout(dayTasks);
+                    return dayTasks.map((task) => {
+                      const { top, height } = blockPosition(task);
+                      // Due-date-driven blocks render fully opaque; start-date-driven
+                      // blocks (the default) stay at 70% opacity.
+                      const isDueBlock = selectedDate === task.due_date && selectedDate !== task.start_date;
+                      const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
+                      return (
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={() => openEditBlock(task)}
+                          className={`pointer-events-auto absolute overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
+                          style={{
+                            top,
+                            height,
+                            left: `calc(4rem + (100% - 4rem - 0.5rem) * ${col} / ${cols})`,
+                            width: `calc((100% - 4rem - 0.5rem) / ${cols} - 4px)`,
+                          }}
+                        >
+                          <p className="truncate text-[11px] font-semibold">
+                            {task.task_name}
+                          </p>
+                          <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>
+                        </button>
+                      );
+                    });
+                  })()}
                 </div>
               </div>
             )}
