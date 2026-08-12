@@ -94,15 +94,20 @@ export function localDateOf(iso: string): string {
 // single source of truth for every task-creation form on the site.
 export const CATEGORY_OPTIONS = ["Task", "Communication", "Planning", "Collaboration", "Personal", "Break"];
 
-// Category color coding — distinct from status colors so the two systems don't
-// collide visually. Kept in sync with TaskEntryForm's CATEGORIES list.
+// Category color coding — uses MinuteFlow's own muted accent palette (see
+// globals.css) instead of raw Tailwind colors, which read as too saturated
+// ("neon") at full solid fill. These are the same tones used for primary
+// buttons/status badges elsewhere, so they're solid but never garish.
+// Note: Personal borrows `terracotta`, normally reserved for
+// errors/warnings — there's no 6th hue left in the fixed palette once the
+// other 5 categories claim sage/amber/plum/clay-rose/slate-blue.
 const CATEGORY_DOT_CLASSES: Record<string, string> = {
-  Task: "bg-green-500",
-  Communication: "bg-amber-500",
-  Planning: "bg-purple-500",
-  Collaboration: "bg-orange-500",
-  Personal: "bg-teal-300",
-  Break: "bg-blue-300",
+  Task: "bg-sage",
+  Communication: "bg-amber",
+  Planning: "bg-plum",
+  Collaboration: "bg-clay-rose",
+  Personal: "bg-terracotta",
+  Break: "bg-slate-blue",
 };
 
 export function categoryDotClass(category: string): string {
@@ -110,15 +115,15 @@ export function categoryDotClass(category: string): string {
 }
 
 // Full block styling (border + solid background + text) for Calendar hour
-// blocks — same hue/strength as the dot, so the whole block reads as the
+// blocks — same tokens as the dot, so the whole block reads as the
 // category color rather than just a thin border.
 const CATEGORY_BLOCK_CLASSES: Record<string, string> = {
-  Task: "border-green-600 bg-green-500 text-white",
-  Communication: "border-amber-600 bg-amber-500 text-white",
-  Planning: "border-purple-600 bg-purple-500 text-white",
-  Collaboration: "border-orange-600 bg-orange-500 text-white",
-  Personal: "border-teal-400 bg-teal-300 text-teal-950",
-  Break: "border-blue-400 bg-blue-300 text-blue-950",
+  Task: "border-sage bg-sage text-white",
+  Communication: "border-amber bg-amber text-white",
+  Planning: "border-plum bg-plum text-white",
+  Collaboration: "border-clay-rose bg-clay-rose text-white",
+  Personal: "border-terracotta bg-terracotta text-white",
+  Break: "border-slate-blue bg-slate-blue text-white",
 };
 
 export function categoryBlockClasses(category: string | null | undefined): string {
