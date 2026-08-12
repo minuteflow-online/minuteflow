@@ -2552,6 +2552,7 @@ export default function TaskListPage() {
                   // defaults to "" and its PUT wipes the task's assignee.
                   defaultVaId={selectedTask.va_id}
                   hideFooter
+                  hideScreenshots
                   onCancel={closePanel}
                   onSaved={() => void handleMetadataSaved()}
                 />
@@ -2741,6 +2742,48 @@ export default function TaskListPage() {
                         ))}
                       </select>
                     </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
+                {panelScreenshotsLoading ? (
+                  <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
+                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                    Loading screenshots...
+                  </div>
+                ) : panelScreenshots.length === 0 ? (
+                  <p className="py-2 text-[12px] text-stone/50">No screenshots.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {panelScreenshots.map((ss) => {
+                      const url = panelSignedUrls[ss.id];
+                      return (
+                        <button
+                          key={ss.id}
+                          type="button"
+                          onClick={() => {
+                            if (!url) return;
+                            const urls = panelScreenshots
+                              .map((s) => panelSignedUrls[s.id])
+                              .filter((candidate): candidate is string => Boolean(candidate));
+                            setLightboxUrls(urls);
+                            setLightboxIndex(Math.max(0, urls.indexOf(url)));
+                          }}
+                          className="relative group w-[48px] h-[36px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer hover:border-terracotta hover:scale-105 transition-all shrink-0"
+                          title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                        >
+                          {url ? (
+                            <img src={url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>

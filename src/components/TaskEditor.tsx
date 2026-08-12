@@ -60,6 +60,8 @@ export interface TaskEditorProps {
   currentPayRate?: number;
   /** Hides the built-in Save/Cancel footer — use with a ref to trigger submit() from a parent-owned footer instead. */
   hideFooter?: boolean;
+  /** Hides the built-in Screenshots block — for callers with their own Screenshots UI elsewhere (e.g. Assignment's "Status & Files" panel), so it isn't shown twice. */
+  hideScreenshots?: boolean;
   /** Set false to hide the Assign To field and never touch va_ids — for callers with their own multi-assignee UI (assigned_tasks supports several assignees; this form's Assign To is single-select). Default true. */
   manageAssignment?: boolean;
   onCancel: () => void;
@@ -105,6 +107,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   lockedProjectId,
   currentPayRate,
   hideFooter = false,
+  hideScreenshots = false,
   manageAssignment = true,
   onCancel,
   onSaved,
@@ -569,7 +572,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       <Section title="Details">
-        {supportsTodos && (
+        {supportsTodos && !hideScreenshots && (
           <div>
             <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
             {!editingTaskId ? (
