@@ -160,9 +160,13 @@ export default function TaskForm({
       const effectiveVaId = isAdminOrManager ? vaId : currentUserId;
       if (effectiveVaId) body.va_ids = [effectiveVaId];
 
-      if (hasSchedule && startDate && startTime && endTime) {
-        body.start_time = new Date(`${startDate}T${startTime}:00`).toISOString();
-        body.end_time = new Date(`${startDate}T${endTime}:00`).toISOString();
+      // Prefer Start Date for the schedule block, but fall back to Due Date
+      // so a due-date-only task can still be scheduled instead of silently
+      // dropping the time block.
+      const scheduleDate = startDate || dueDate;
+      if (hasSchedule && scheduleDate && startTime && endTime) {
+        body.start_time = new Date(`${scheduleDate}T${startTime}:00`).toISOString();
+        body.end_time = new Date(`${scheduleDate}T${endTime}:00`).toISOString();
       }
 
       const res = await fetch("/api/assigned-tasks", {

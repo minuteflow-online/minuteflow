@@ -112,9 +112,10 @@ export function categoryDotClass(category: string): string {
 }
 
 // Full block styling (border + background + text) for Calendar hour blocks.
-// Fill is at 70% opacity for a softer blend with the page. Text uses a deep
-// shade of the SAME hue (not white) — reads clearly against the lightened,
-// translucent fill where white lost contrast.
+// Start-date-driven blocks fill at 70% opacity for a softer blend with the
+// page; due-date-driven blocks are fully opaque (the established rule: due
+// dates get 100% opacity, start dates get 70%). Text uses a deep shade of
+// the SAME hue (not white) — reads clearly against the lightened fill.
 const CATEGORY_BLOCK_CLASSES: Record<string, string> = {
   Task: "border-[#3a8f5f] bg-[#4fb37a]/70 text-[#1f5c3a]",
   Communication: "border-[#cc8a1f] bg-[#f0ad3f]/70 text-[#7a5410]",
@@ -124,10 +125,21 @@ const CATEGORY_BLOCK_CLASSES: Record<string, string> = {
   Break: "border-[#3a80cc] bg-[#4f9fea]/70 text-[#1f4a82]",
 };
 
-export function categoryBlockClasses(category: string | null | undefined): string {
+const CATEGORY_BLOCK_CLASSES_SOLID: Record<string, string> = {
+  Task: "border-[#3a8f5f] bg-[#4fb37a] text-[#1f5c3a]",
+  Communication: "border-[#cc8a1f] bg-[#f0ad3f] text-[#7a5410]",
+  Planning: "border-[#8a5cc0] bg-[#a878d6] text-[#5c3a82]",
+  Collaboration: "border-[#d97830] bg-[#f2954a] text-[#8a4a1f]",
+  Personal: "border-[#2fa595] bg-[#3fc0b0] text-[#1f6b60]",
+  Break: "border-[#3a80cc] bg-[#4f9fea] text-[#1f4a82]",
+};
+
+export function categoryBlockClasses(category: string | null | undefined, fullOpacity: boolean = false): string {
   // Neutral gray, not sage — sage sits in the same green hue as the "Task"
   // category and was getting mistaken for it when category is unset.
-  return (category && CATEGORY_BLOCK_CLASSES[category]) || "border-stone-400 bg-stone-300 text-stone-800";
+  const map = fullOpacity ? CATEGORY_BLOCK_CLASSES_SOLID : CATEGORY_BLOCK_CLASSES;
+  const fallback = fullOpacity ? "border-stone-400 bg-stone-300 text-stone-800" : "border-stone-400 bg-stone-300/70 text-stone-800";
+  return (category && map[category]) || fallback;
 }
 
 export function formatTimeRange(task: Pick<RawTask, "start_time" | "end_time">): string {

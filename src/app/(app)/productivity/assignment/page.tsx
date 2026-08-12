@@ -62,6 +62,8 @@ type VATaskRow = {
     task_notes: string | null;
     due_date: string | null;
     start_date: string | null;
+    start_time: string | null;
+    end_time: string | null;
     assigned_by: string | null;
     assigned_by_profile?: { id: string; full_name: string; username: string } | null;
     instructions: string | null;
@@ -144,6 +146,8 @@ type AdminTaskFlat = {
   task_notes: string | null;
   due_date: string | null;
   start_date: string | null;
+  start_time: string | null;
+  end_time: string | null;
   review_required: boolean;
   revision_count?: number;
   created_by: string | null;
@@ -403,6 +407,10 @@ export default function TaskListPage() {
   const [panelTaskName, setPanelTaskName] = useState("");
   const [panelCategory, setPanelCategory] = useState("Task");
   const [panelDueDate, setPanelDueDate] = useState("");
+  const [panelStartDate, setPanelStartDate] = useState("");
+  const [panelHasSchedule, setPanelHasSchedule] = useState(false);
+  const [panelScheduleStart, setPanelScheduleStart] = useState("09:00");
+  const [panelScheduleEnd, setPanelScheduleEnd] = useState("10:00");
   const [panelDetail, setPanelDetail] = useState("");
   const [panelTaskNotes, setPanelTaskNotes] = useState("");
   const [panelAssignedBy, setPanelAssignedBy] = useState("");
@@ -482,6 +490,8 @@ export default function TaskListPage() {
                 task_notes: task.task_notes,
                 due_date: task.due_date,
                 start_date: task.start_date,
+                start_time: task.start_time,
+                end_time: task.end_time,
                 assigned_by: task.assigned_by ?? null,
                 assigned_by_profile: task.assigned_by_profile ?? null,
                 instructions: task.instructions ?? null,
@@ -1402,6 +1412,10 @@ export default function TaskListPage() {
     setPanelTaskName("");
     setPanelCategory("Task");
     setPanelDueDate("");
+    setPanelStartDate("");
+    setPanelHasSchedule(false);
+    setPanelScheduleStart("09:00");
+    setPanelScheduleEnd("10:00");
     setPanelDetail("");
     setPanelTaskNotes("");
     setPanelAssignedBy("");
@@ -1476,6 +1490,15 @@ export default function TaskListPage() {
       setPanelTaskName(task.assigned_tasks.task_name ?? "");
       setPanelCategory(task.assigned_tasks.category ?? "Task");
       setPanelDueDate(task.assigned_tasks.due_date ?? "");
+      setPanelStartDate(task.assigned_tasks.start_date ?? "");
+      const hasSchedule = Boolean(task.assigned_tasks.start_time && task.assigned_tasks.end_time);
+      setPanelHasSchedule(hasSchedule);
+      setPanelScheduleStart(
+        task.assigned_tasks.start_time ? new Date(task.assigned_tasks.start_time).toTimeString().slice(0, 5) : "09:00"
+      );
+      setPanelScheduleEnd(
+        task.assigned_tasks.end_time ? new Date(task.assigned_tasks.end_time).toTimeString().slice(0, 5) : "10:00"
+      );
       setPanelDetail(task.assigned_tasks.task_detail ?? "");
       setPanelTaskNotes(task.assigned_tasks.task_notes ?? "");
       setPanelAssignedBy(task.assigned_tasks.assigned_by ?? "");
@@ -1504,6 +1527,10 @@ export default function TaskListPage() {
     setPanelTaskName("");
     setPanelCategory("Task");
     setPanelDueDate("");
+    setPanelStartDate("");
+    setPanelHasSchedule(false);
+    setPanelScheduleStart("09:00");
+    setPanelScheduleEnd("10:00");
     setPanelDetail("");
     setPanelTaskNotes("");
     setPanelAssignedBy("");
@@ -1553,10 +1580,12 @@ export default function TaskListPage() {
           // Always start Pending, even when scheduled — VAs decide when to move
           // a task to On Queue themselves, scheduling it doesn't do that for them.
           initial_status: "pending",
-          ...(addForm.has_schedule && addForm.start_date && addForm.schedule_start && addForm.schedule_end
+          // Prefer Start Date for the schedule block, but fall back to Due
+          // Date so a due-date-only task can still be scheduled.
+          ...(addForm.has_schedule && (addForm.start_date || addForm.due_date) && addForm.schedule_start && addForm.schedule_end
             ? {
-                start_time: new Date(`${addForm.start_date}T${addForm.schedule_start}:00`).toISOString(),
-                end_time: new Date(`${addForm.start_date}T${addForm.schedule_end}:00`).toISOString(),
+                start_time: new Date(`${addForm.start_date || addForm.due_date}T${addForm.schedule_start}:00`).toISOString(),
+                end_time: new Date(`${addForm.start_date || addForm.due_date}T${addForm.schedule_end}:00`).toISOString(),
               }
             : {}),
           va_ids: currentUserId ? [currentUserId] : undefined,
@@ -1661,6 +1690,15 @@ export default function TaskListPage() {
     const nextTaskName = panelTaskName.trim();
     const nextCategory = panelCategory;
     const nextDueDate = panelDueDate.trim();
+    const nextStartDate = panelStartDate.trim();
+    const scheduleDateForSave = nextStartDate || nextDueDate;
+    const nextStartTimeIso =
+      panelHasSchedule && scheduleDateForSave ? new Date(`${scheduleDateForSave}T${panelScheduleStart}:00`).toISOString() : null;
+    const nextEndTimeIso =
+      panelHasSchedule && scheduleDateForSave ? new Date(`${scheduleDateForSave}T${panelScheduleEnd}:00`).toISOString() : null;
+    const scheduleChanged =
+      nextStartTimeIso !== (selectedTask.assigned_tasks.start_time ?? null) ||
+      nextEndTimeIso !== (selectedTask.assigned_tasks.end_time ?? null);
     const nextDetail = panelDetail;
     const nextTaskNotes = panelTaskNotes;
     const nextAssignedBy = panelAssignedBy;
@@ -1676,13 +1714,14 @@ export default function TaskListPage() {
       !sameText(nextTaskName, selectedTask.assigned_tasks.task_name) ||
       !sameText(nextCategory, selectedTask.assigned_tasks.category) ||
       !sameText(nextDueDate, selectedTask.assigned_tasks.due_date) ||
+      !sameText(nextStartDate, selectedTask.assigned_tasks.start_date) ||
       !sameText(nextDetail, selectedTask.assigned_tasks.task_detail) ||
       !sameText(nextTaskNotes, selectedTask.assigned_tasks.task_notes) ||
       !sameText(nextAssignedBy, selectedTask.assigned_tasks.assigned_by) ||
       !sameText(nextInstructions, selectedTask.assigned_tasks.instructions) ||
       nextInstructionsLocked !== Boolean(selectedTask.assigned_tasks.instructions_locked);
 
-    if (!statusChanged && !metadataChanged && !notesChanged && !reviewRequiredChanged) {
+    if (!statusChanged && !metadataChanged && !notesChanged && !reviewRequiredChanged && !scheduleChanged) {
       closePanel();
       return;
     }
@@ -1709,11 +1748,16 @@ export default function TaskListPage() {
         body.task_name = nextTaskName;
         body.category = nextCategory;
         body.due_date = nextDueDate || null;
+        body.start_date = nextStartDate || null;
         body.task_detail = nextDetail || null;
         body.task_notes = nextTaskNotes || null;
         body.assigned_by = nextAssignedBy || null;
         body.instructions = nextInstructions || null;
         body.instructions_locked = nextInstructionsLocked;
+      }
+      if (scheduleChanged) {
+        body.start_time = nextStartTimeIso;
+        body.end_time = nextEndTimeIso;
       }
       // Admins include review_required in the metadata body; VAs send it standalone below
       if (reviewRequiredChanged && isAdmin) {
@@ -1757,6 +1801,9 @@ export default function TaskListPage() {
                 task_name: metadataChanged ? nextTaskName : row.assigned_tasks.task_name,
                 category: metadataChanged ? nextCategory : row.assigned_tasks.category,
                 due_date: metadataChanged ? (nextDueDate || null) : row.assigned_tasks.due_date,
+                start_date: metadataChanged ? (nextStartDate || null) : row.assigned_tasks.start_date,
+                start_time: scheduleChanged ? nextStartTimeIso : row.assigned_tasks.start_time,
+                end_time: scheduleChanged ? nextEndTimeIso : row.assigned_tasks.end_time,
                 task_detail: metadataChanged ? (nextDetail || null) : row.assigned_tasks.task_detail,
                 task_notes: metadataChanged ? (nextTaskNotes || null) : row.assigned_tasks.task_notes,
                 assigned_by: metadataChanged ? (nextAssignedBy || null) : row.assigned_tasks.assigned_by,
@@ -1783,6 +1830,9 @@ export default function TaskListPage() {
                 task_name: metadataChanged ? nextTaskName : current.assigned_tasks.task_name,
                 category: metadataChanged ? nextCategory : current.assigned_tasks.category,
                 due_date: metadataChanged ? (nextDueDate || null) : current.assigned_tasks.due_date,
+                start_date: metadataChanged ? (nextStartDate || null) : current.assigned_tasks.start_date,
+                start_time: scheduleChanged ? nextStartTimeIso : current.assigned_tasks.start_time,
+                end_time: scheduleChanged ? nextEndTimeIso : current.assigned_tasks.end_time,
                 task_detail: metadataChanged ? (nextDetail || null) : current.assigned_tasks.task_detail,
                 task_notes: metadataChanged ? (nextTaskNotes || null) : current.assigned_tasks.task_notes,
                 assigned_by: metadataChanged ? (nextAssignedBy || null) : current.assigned_tasks.assigned_by,
@@ -1823,6 +1873,10 @@ export default function TaskListPage() {
     panelCategory,
     panelDetail,
     panelDueDate,
+    panelStartDate,
+    panelHasSchedule,
+    panelScheduleStart,
+    panelScheduleEnd,
     panelInstructions,
     panelInstructionsLocked,
     panelNotes,
@@ -3173,6 +3227,22 @@ export default function TaskListPage() {
               </div>
 
               <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
+                {panelCanEditFields ? (
+                  <input
+                    type="date"
+                    value={formatDateInputValue(panelStartDate)}
+                    onChange={(e) => setPanelStartDate(e.target.value)}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                  />
+                ) : (
+                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                    {selectedTask.assigned_tasks.start_date ? formatDateInputValue(selectedTask.assigned_tasks.start_date) : <span className="text-stone/60">—</span>}
+                  </div>
+                )}
+              </div>
+
+              <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
                 {panelCanEditFields ? (
                   <input
@@ -3197,6 +3267,41 @@ export default function TaskListPage() {
                   })()
                 )}
               </div>
+
+              {panelCanEditFields && (
+                <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone">
+                    <input
+                      type="checkbox"
+                      checked={panelHasSchedule}
+                      onChange={(e) => setPanelHasSchedule(e.target.checked)}
+                    />
+                    Add to Calendar (specific hours)
+                  </label>
+                  {panelHasSchedule && (
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <label className="mb-1 block text-[10px] font-semibold text-stone">Start Time</label>
+                        <input
+                          type="time"
+                          value={panelScheduleStart}
+                          onChange={(e) => setPanelScheduleStart(e.target.value)}
+                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="mb-1 block text-[10px] font-semibold text-stone">End Time</label>
+                        <input
+                          type="time"
+                          value={panelScheduleEnd}
+                          onChange={(e) => setPanelScheduleEnd(e.target.value)}
+                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <div className="mb-1 flex items-center gap-1.5">
