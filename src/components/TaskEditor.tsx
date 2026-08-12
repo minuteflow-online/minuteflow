@@ -162,12 +162,20 @@ export default function TaskEditor({
   // assigned_tasks.id, not fixed_pay_tasks.id) — output_based tasks keep the
   // plain Client Detail textarea instead.
   const supportsTodos = mode === "time_based" && isEditing && Boolean(editingTaskId);
+  // Existing tasks with no to-do items yet keep showing the plain free-text
+  // Client Detail (which may hold real legacy text) instead of an empty
+  // checklist — checklistMode flips on once todos load with items, or the
+  // user explicitly starts one via "Switch to a to-do checklist".
+  const [checklistMode, setChecklistMode] = useState(false);
 
   useEffect(() => {
     if (!supportsTodos || !editingTaskId) return;
     setTodosLoading(true);
     fetchTodos(editingTaskId)
-      .then(setTodos)
+      .then((loaded) => {
+        setTodos(loaded);
+        if (loaded.length > 0) setChecklistMode(true);
+      })
       .finally(() => setTodosLoading(false));
   }, [supportsTodos, editingTaskId]);
 
@@ -454,7 +462,7 @@ export default function TaskEditor({
       </Section>
 
       <Section title="Details" defaultOpen={Boolean(taskDetail || taskNotes || instructions)}>
-        {supportsTodos ? (
+        {supportsTodos && checklistMode ? (
           <div>
             <label className={labelClass}>To-Do List</label>
             {todosLoading ? (
@@ -517,6 +525,15 @@ export default function TaskEditor({
               {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(taskDetail))} words remaining
               {mode === "time_based" && !isEditing && " — save the task to add a to-do checklist instead"}
             </p>
+            {supportsTodos && (
+              <button
+                type="button"
+                onClick={() => setChecklistMode(true)}
+                className="mt-1 text-[11px] font-semibold text-terracotta hover:underline"
+              >
+                Switch to a to-do checklist
+              </button>
+            )}
           </div>
         )}
 

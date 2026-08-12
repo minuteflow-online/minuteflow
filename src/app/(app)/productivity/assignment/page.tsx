@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { createClient } from "@/lib/supabase/client";
 import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
+import TaskEditor from "@/components/TaskEditor";
 import FixedPayTasksPanel from "@/components/FixedPayTasksPanel";
 import ProjectInfoModal from "@/components/ProjectInfoModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -376,46 +377,9 @@ export default function TaskListPage() {
   const [inlineSaving, setInlineSaving] = useState(false);
 
   const [isCreating, setIsCreating] = useState(false);
-  const [addSaving, setAddSaving] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
-  const [addForm, setAddForm] = useState({
-    account: "",
-    project: "",
-    task_name: "",
-    category: "Task",
-    task_detail: "",
-    due_date: "",
-    start_date: "",
-    task_notes: "",
-    assigned_by: "",
-    instructions: "",
-    instructions_locked: false,
-    review_required: false,
-    linked_project_id: "",
-    parent_task_id: "",
-    has_schedule: false,
-    schedule_start: "09:00",
-    schedule_end: "10:00",
-  });
-  const [linkedProjects, setLinkedProjects] = useState<Project[]>([]);
-  const [linkedParentTaskOptions, setLinkedParentTaskOptions] = useState<Array<{ id: number; task_name: string }>>([]);
 
   const [selectedTask, setSelectedTask] = useState<VATaskRow | null>(null);
   const [panelStatus, setPanelStatus] = useState<AssignedTaskStatus>("pending");
-  const [panelAccount, setPanelAccount] = useState("");
-  const [panelProject, setPanelProject] = useState("");
-  const [panelTaskName, setPanelTaskName] = useState("");
-  const [panelCategory, setPanelCategory] = useState("Task");
-  const [panelDueDate, setPanelDueDate] = useState("");
-  const [panelStartDate, setPanelStartDate] = useState("");
-  const [panelHasSchedule, setPanelHasSchedule] = useState(false);
-  const [panelScheduleStart, setPanelScheduleStart] = useState("09:00");
-  const [panelScheduleEnd, setPanelScheduleEnd] = useState("10:00");
-  const [panelDetail, setPanelDetail] = useState("");
-  const [panelTaskNotes, setPanelTaskNotes] = useState("");
-  const [panelAssignedBy, setPanelAssignedBy] = useState("");
-  const [panelInstructions, setPanelInstructions] = useState("");
-  const [panelInstructionsLocked, setPanelInstructionsLocked] = useState(false);
   const [panelReviewRequired, setPanelReviewRequired] = useState(false);
   const [panelNotes, setPanelNotes] = useState("");
   const [panelSaving, setPanelSaving] = useState(false);
@@ -716,24 +680,6 @@ export default function TaskListPage() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/projects?mine=true", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setLinkedProjects(d.projects ?? []))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!addForm.linked_project_id) {
-      setLinkedParentTaskOptions([]);
-      return;
-    }
-    fetch(`/api/assigned-tasks?projectId=${addForm.linked_project_id}`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setLinkedParentTaskOptions((d.tasks ?? []).map((t: { id: number; task_name: string }) => ({ id: t.id, task_name: t.task_name }))))
-      .catch(() => setLinkedParentTaskOptions([]));
-  }, [addForm.linked_project_id]);
-
-  useEffect(() => {
     void fetchTasks();
   }, [fetchTasks]);
 
@@ -1016,40 +962,8 @@ export default function TaskListPage() {
     return Array.from(options).sort();
   }, [formTasksByProject, tasks]);
 
-  const addProjectsForAccount = useMemo(
-    () => formProjects.filter((project) => project.account === addForm.account),
-    [formProjects, addForm.account]
-  );
-  const addProjectId = useMemo(
-    () =>
-      formProjects.find((project) => project.account === addForm.account && project.project_name === addForm.project)?.id ??
-      null,
-    [formProjects, addForm.account, addForm.project]
-  );
-  const addTasksForProject = useMemo(
-    () => (addProjectId ? formTasksByProject[addProjectId] ?? [] : []),
-    [addProjectId, formTasksByProject]
-  );
-
   const panelCanEditFields = Boolean(selectedTask) && isAdmin;
-  const panelCanEditAssignedBy = Boolean(selectedTask) && isAdmin;
-  const panelCanEditInstructions = Boolean(selectedTask) && isAdmin;
 
-  const panelProjectsForAccount = useMemo(
-    () => formProjects.filter((project) => project.account === panelAccount),
-    [formProjects, panelAccount]
-  );
-  const panelProjectId = useMemo(
-    () =>
-      formProjects.find(
-        (project) => project.account === panelAccount && project.project_name === panelProject
-      )?.id ?? null,
-    [formProjects, panelAccount, panelProject]
-  );
-  const panelTasksForProject = useMemo(
-    () => (panelProjectId ? formTasksByProject[panelProjectId] ?? [] : []),
-    [panelProjectId, formTasksByProject]
-  );
   const panelAssignedByOptions = useMemo(() => {
     if (assignedByProfiles.length > 0) return assignedByProfiles;
     return currentUserProfile ? [currentUserProfile] : [];
@@ -1407,20 +1321,6 @@ export default function TaskListPage() {
   const openCreate = useCallback(() => {
     setSelectedTask(null);
     setPanelStatus("pending");
-    setPanelAccount("");
-    setPanelProject("");
-    setPanelTaskName("");
-    setPanelCategory("Task");
-    setPanelDueDate("");
-    setPanelStartDate("");
-    setPanelHasSchedule(false);
-    setPanelScheduleStart("09:00");
-    setPanelScheduleEnd("10:00");
-    setPanelDetail("");
-    setPanelTaskNotes("");
-    setPanelAssignedBy("");
-    setPanelInstructions("");
-    setPanelInstructionsLocked(false);
     setPanelNotes("");
     setPanelSaving(false);
     setPanelUploadSaving(false);
@@ -1428,82 +1328,21 @@ export default function TaskListPage() {
     setAttachments([]);
     setAttachmentsLoading(false);
     setIsCreating(true);
-    setAddError(null);
-    setAddSaving(false);
     setPendingCreateFiles([]);
     setCreateUploadSaving(false);
-    setAddForm({
-      account: "",
-      project: "",
-      task_name: "",
-      category: "Task",
-      task_detail: "",
-      due_date: "",
-      start_date: "",
-      task_notes: "",
-      assigned_by: currentUserId ?? "",
-      instructions: "",
-      instructions_locked: false,
-      review_required: false,
-      linked_project_id: "",
-      parent_task_id: "",
-      has_schedule: false,
-      schedule_start: "09:00",
-      schedule_end: "10:00",
-    });
-  }, [currentUserId]);
+  }, []);
 
   const closeCreate = useCallback(() => {
     setIsCreating(false);
-    setAddError(null);
-    setAddSaving(false);
     setPendingCreateFiles([]);
     setCreateUploadSaving(false);
-    setAddForm({
-      account: "",
-      project: "",
-      task_name: "",
-      category: "Task",
-      task_detail: "",
-      due_date: "",
-      start_date: "",
-      task_notes: "",
-      assigned_by: currentUserId ?? "",
-      instructions: "",
-      instructions_locked: false,
-      review_required: false,
-      linked_project_id: "",
-      parent_task_id: "",
-      has_schedule: false,
-      schedule_start: "09:00",
-      schedule_end: "10:00",
-    });
-  }, [currentUserId]);
+  }, []);
 
   const openPanel = useCallback(
     async (task: VATaskRow) => {
       closeCreate();
       setSelectedTask(task);
       setPanelStatus(task.status);
-      setPanelAccount(task.assigned_tasks.account ?? "");
-      setPanelProject(task.assigned_tasks.project ?? "");
-      setPanelTaskName(task.assigned_tasks.task_name ?? "");
-      setPanelCategory(task.assigned_tasks.category ?? "Task");
-      setPanelDueDate(task.assigned_tasks.due_date ?? "");
-      setPanelStartDate(task.assigned_tasks.start_date ?? "");
-      const hasSchedule = Boolean(task.assigned_tasks.start_time && task.assigned_tasks.end_time);
-      setPanelHasSchedule(hasSchedule);
-      setPanelScheduleStart(
-        task.assigned_tasks.start_time ? new Date(task.assigned_tasks.start_time).toTimeString().slice(0, 5) : "09:00"
-      );
-      setPanelScheduleEnd(
-        task.assigned_tasks.end_time ? new Date(task.assigned_tasks.end_time).toTimeString().slice(0, 5) : "10:00"
-      );
-      setPanelDetail(task.assigned_tasks.task_detail ?? "");
-      setPanelTaskNotes(task.assigned_tasks.task_notes ?? "");
-      setPanelAssignedBy(task.assigned_tasks.assigned_by ?? "");
-      setPanelInstructions(task.assigned_tasks.instructions ?? "");
-      setPanelInstructionsLocked(Boolean(task.assigned_tasks.instructions_locked));
       setPanelReviewRequired(Boolean(task.assigned_tasks.review_required));
       setPanelNotes(task.notes ?? "");
       setPanelUploadSaving(false);
@@ -1519,23 +1358,21 @@ export default function TaskListPage() {
     [closeCreate, fetchAttachments, fetchPanelScreenshots]
   );
 
+  // Refreshes the task list and re-syncs the open panel after TaskEditor
+  // saves metadata changes — status/notes stay in their own save (below),
+  // so this only needs to swap in the fresh assigned_tasks fields.
+  const handleMetadataSaved = useCallback(async () => {
+    const freshTasks = await fetchTasks();
+    setSelectedTask((current) => {
+      if (!current) return current;
+      const fresh = freshTasks.find((t) => t.id === current.id);
+      return fresh ?? current;
+    });
+  }, [fetchTasks]);
+
   const closePanel = useCallback(() => {
     setSelectedTask(null);
     setPanelStatus("pending");
-    setPanelAccount("");
-    setPanelProject("");
-    setPanelTaskName("");
-    setPanelCategory("Task");
-    setPanelDueDate("");
-    setPanelStartDate("");
-    setPanelHasSchedule(false);
-    setPanelScheduleStart("09:00");
-    setPanelScheduleEnd("10:00");
-    setPanelDetail("");
-    setPanelTaskNotes("");
-    setPanelAssignedBy("");
-    setPanelInstructions("");
-    setPanelInstructionsLocked(false);
     setPanelNotes("");
     setPanelSaving(false);
     setPanelUploadSaving(false);
@@ -1549,65 +1386,13 @@ export default function TaskListPage() {
     setLightboxIndex(0);
   }, []);
 
-  const handleAddTask = useCallback(async () => {
-    if (!addForm.task_name.trim()) {
-      setAddError("Task name is required.");
-      return;
-    }
+  // TaskEditor's onSaved callback for the Create Task panel — uploads any
+  // files picked before the task existed, then transitions to the detail panel.
+  const handleTaskCreated = useCallback(
+    async (task: { id: number; [key: string]: unknown }) => {
+      const newTaskId = task.id;
 
-    setAddSaving(true);
-    setAddError(null);
-
-    try {
-      const res = await fetch("/api/assigned-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          account: addForm.account || null,
-          project: addForm.project || null,
-          task_name: addForm.task_name.trim(),
-          category: addForm.category,
-          task_detail: addForm.task_detail.trim() || null,
-          due_date: addForm.due_date || null,
-          start_date: addForm.start_date || null,
-          task_notes: addForm.task_notes.trim() || null,
-          assigned_by: addForm.assigned_by || currentUserId || null,
-          instructions: addForm.instructions.trim() || null,
-          instructions_locked: addForm.instructions_locked,
-          review_required: addForm.review_required,
-          project_id: addForm.linked_project_id || null,
-          parent_task_id: addForm.parent_task_id ? Number(addForm.parent_task_id) : null,
-          // Always start Pending, even when scheduled — VAs decide when to move
-          // a task to On Queue themselves, scheduling it doesn't do that for them.
-          initial_status: "pending",
-          // Prefer Start Date for the schedule block, but fall back to Due
-          // Date so a due-date-only task can still be scheduled.
-          ...(addForm.has_schedule && (addForm.start_date || addForm.due_date) && addForm.schedule_start && addForm.schedule_end
-            ? {
-                start_time: new Date(`${addForm.start_date || addForm.due_date}T${addForm.schedule_start}:00`).toISOString(),
-                end_time: new Date(`${addForm.start_date || addForm.due_date}T${addForm.schedule_end}:00`).toISOString(),
-              }
-            : {}),
-          va_ids: currentUserId ? [currentUserId] : undefined,
-        }),
-      });
-
-      if (!res.ok) {
-        let message = `HTTP ${res.status}`;
-        try {
-          const data = await res.json();
-          if (data?.error) message = data.error;
-        } catch {
-          // ignore JSON parsing errors
-        }
-        throw new Error(message);
-      }
-
-      const responseData = await res.json();
-      const newTaskId: number | undefined = responseData?.task?.id;
-
-      // Upload any pending files before transitioning to the detail panel
-      if (newTaskId && pendingCreateFiles.length > 0) {
+      if (pendingCreateFiles.length > 0) {
         setCreateUploadSaving(true);
         for (const file of pendingCreateFiles) {
           const formData = new FormData();
@@ -1626,20 +1411,15 @@ export default function TaskListPage() {
       }
 
       const freshTasks = await fetchTasks();
-      if (newTaskId) {
-        const newTask = freshTasks.find((t) => t.assigned_tasks?.id === newTaskId);
-        if (newTask) {
-          openPanel(newTask);
-          return;
-        }
+      const newTask = freshTasks.find((t) => t.assigned_tasks?.id === newTaskId);
+      if (newTask) {
+        openPanel(newTask);
+      } else {
+        closeCreate();
       }
-      closeCreate();
-    } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Unable to add task right now.");
-    } finally {
-      setAddSaving(false);
-    }
-  }, [addForm.account, addForm.assigned_by, addForm.due_date, addForm.start_date, addForm.instructions, addForm.instructions_locked, addForm.project, addForm.task_detail, addForm.task_name, addForm.task_notes, addForm.category, addForm.linked_project_id, addForm.parent_task_id, addForm.has_schedule, addForm.schedule_start, addForm.schedule_end, closeCreate, currentUserId, fetchTasks, openPanel, pendingCreateFiles]);
+    },
+    [closeCreate, fetchTasks, openPanel, pendingCreateFiles]
+  );
 
   const handleClaimedTaskRefresh = useCallback(async () => {
     await Promise.all([fetchTasks(), canShowHourlyPool ? fetchHourlyPool() : Promise.resolve()]);
@@ -1676,6 +1456,11 @@ export default function TaskListPage() {
     [fetchHourlyPool, fetchTasks]
   );
 
+  // Saves status + private notes + (VA-only) review_required — metadata
+  // fields (account/project/task name/category/dates/schedule/detail/notes/
+  // assigned by/instructions) now save independently through TaskEditor,
+  // since status changes trigger live screen-capture start/stop that must
+  // stay isolated from a generic metadata form.
   const handleSavePanel = useCallback(async () => {
     if (!selectedTask) return;
 
@@ -1685,43 +1470,12 @@ export default function TaskListPage() {
     const previousNotes = selectedTask.notes ?? "";
     const nextStatus = panelStatus;
     const statusChanged = nextStatus !== previousStatus;
-    const nextAccount = panelAccount.trim();
-    const nextProject = panelProject.trim();
-    const nextTaskName = panelTaskName.trim();
-    const nextCategory = panelCategory;
-    const nextDueDate = panelDueDate.trim();
-    const nextStartDate = panelStartDate.trim();
-    const scheduleDateForSave = nextStartDate || nextDueDate;
-    const nextStartTimeIso =
-      panelHasSchedule && scheduleDateForSave ? new Date(`${scheduleDateForSave}T${panelScheduleStart}:00`).toISOString() : null;
-    const nextEndTimeIso =
-      panelHasSchedule && scheduleDateForSave ? new Date(`${scheduleDateForSave}T${panelScheduleEnd}:00`).toISOString() : null;
-    const scheduleChanged =
-      nextStartTimeIso !== (selectedTask.assigned_tasks.start_time ?? null) ||
-      nextEndTimeIso !== (selectedTask.assigned_tasks.end_time ?? null);
-    const nextDetail = panelDetail;
-    const nextTaskNotes = panelTaskNotes;
-    const nextAssignedBy = panelAssignedBy;
-    const nextInstructions = panelInstructions;
-    const nextInstructionsLocked = panelInstructionsLocked;
     const nextReviewRequired = panelReviewRequired;
     const nextNotes = panelNotes;
     const notesChanged = !sameText(nextNotes, previousNotes);
-    const reviewRequiredChanged = nextReviewRequired !== Boolean(selectedTask.assigned_tasks.review_required);
-    const metadataChanged =
-      !sameText(nextAccount, selectedTask.assigned_tasks.account) ||
-      !sameText(nextProject, selectedTask.assigned_tasks.project) ||
-      !sameText(nextTaskName, selectedTask.assigned_tasks.task_name) ||
-      !sameText(nextCategory, selectedTask.assigned_tasks.category) ||
-      !sameText(nextDueDate, selectedTask.assigned_tasks.due_date) ||
-      !sameText(nextStartDate, selectedTask.assigned_tasks.start_date) ||
-      !sameText(nextDetail, selectedTask.assigned_tasks.task_detail) ||
-      !sameText(nextTaskNotes, selectedTask.assigned_tasks.task_notes) ||
-      !sameText(nextAssignedBy, selectedTask.assigned_tasks.assigned_by) ||
-      !sameText(nextInstructions, selectedTask.assigned_tasks.instructions) ||
-      nextInstructionsLocked !== Boolean(selectedTask.assigned_tasks.instructions_locked);
+    const reviewRequiredChanged = !isAdmin && nextReviewRequired !== Boolean(selectedTask.assigned_tasks.review_required);
 
-    if (!statusChanged && !metadataChanged && !notesChanged && !reviewRequiredChanged && !scheduleChanged) {
+    if (!statusChanged && !notesChanged && !reviewRequiredChanged) {
       closePanel();
       return;
     }
@@ -1742,27 +1496,6 @@ export default function TaskListPage() {
           body.va_id = currentUserId;
         }
       }
-      if (metadataChanged) {
-        body.account = nextAccount || null;
-        body.project = nextProject || null;
-        body.task_name = nextTaskName;
-        body.category = nextCategory;
-        body.due_date = nextDueDate || null;
-        body.start_date = nextStartDate || null;
-        body.task_detail = nextDetail || null;
-        body.task_notes = nextTaskNotes || null;
-        body.assigned_by = nextAssignedBy || null;
-        body.instructions = nextInstructions || null;
-        body.instructions_locked = nextInstructionsLocked;
-      }
-      if (scheduleChanged) {
-        body.start_time = nextStartTimeIso;
-        body.end_time = nextEndTimeIso;
-      }
-      // Admins include review_required in the metadata body; VAs send it standalone below
-      if (reviewRequiredChanged && isAdmin) {
-        body.review_required = nextReviewRequired;
-      }
 
       if (Object.keys(body).length > 0) {
         const saveRes = await fetch(`/api/assigned-tasks/${taskId}`, {
@@ -1774,7 +1507,7 @@ export default function TaskListPage() {
       }
 
       // VAs can check (not uncheck) review_required — send as standalone PATCH
-      if (reviewRequiredChanged && !isAdmin && nextReviewRequired) {
+      if (reviewRequiredChanged && nextReviewRequired) {
         const rrRes = await fetch(`/api/assigned-tasks/${taskId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1796,21 +1529,8 @@ export default function TaskListPage() {
               updated_at: statusChanged || notesChanged ? updatedAt : row.updated_at,
               assigned_tasks: {
                 ...row.assigned_tasks,
-                account: metadataChanged ? (nextAccount || null) : row.assigned_tasks.account,
-                project: metadataChanged ? (nextProject || null) : row.assigned_tasks.project,
-                task_name: metadataChanged ? nextTaskName : row.assigned_tasks.task_name,
-                category: metadataChanged ? nextCategory : row.assigned_tasks.category,
-                due_date: metadataChanged ? (nextDueDate || null) : row.assigned_tasks.due_date,
-                start_date: metadataChanged ? (nextStartDate || null) : row.assigned_tasks.start_date,
-                start_time: scheduleChanged ? nextStartTimeIso : row.assigned_tasks.start_time,
-                end_time: scheduleChanged ? nextEndTimeIso : row.assigned_tasks.end_time,
-                task_detail: metadataChanged ? (nextDetail || null) : row.assigned_tasks.task_detail,
-                task_notes: metadataChanged ? (nextTaskNotes || null) : row.assigned_tasks.task_notes,
-                assigned_by: metadataChanged ? (nextAssignedBy || null) : row.assigned_tasks.assigned_by,
-                instructions: metadataChanged ? (nextInstructions || null) : row.assigned_tasks.instructions,
-                instructions_locked: metadataChanged ? nextInstructionsLocked : row.assigned_tasks.instructions_locked,
                 review_required: reviewRequiredChanged ? nextReviewRequired : row.assigned_tasks.review_required,
-                updated_at: (metadataChanged || reviewRequiredChanged) ? updatedAt : row.assigned_tasks.updated_at,
+                updated_at: reviewRequiredChanged ? updatedAt : row.assigned_tasks.updated_at,
               },
             };
           })
@@ -1825,21 +1545,8 @@ export default function TaskListPage() {
               updated_at: statusChanged || notesChanged ? updatedAt : current.updated_at,
               assigned_tasks: {
                 ...current.assigned_tasks,
-                account: metadataChanged ? (nextAccount || null) : current.assigned_tasks.account,
-                project: metadataChanged ? (nextProject || null) : current.assigned_tasks.project,
-                task_name: metadataChanged ? nextTaskName : current.assigned_tasks.task_name,
-                category: metadataChanged ? nextCategory : current.assigned_tasks.category,
-                due_date: metadataChanged ? (nextDueDate || null) : current.assigned_tasks.due_date,
-                start_date: metadataChanged ? (nextStartDate || null) : current.assigned_tasks.start_date,
-                start_time: scheduleChanged ? nextStartTimeIso : current.assigned_tasks.start_time,
-                end_time: scheduleChanged ? nextEndTimeIso : current.assigned_tasks.end_time,
-                task_detail: metadataChanged ? (nextDetail || null) : current.assigned_tasks.task_detail,
-                task_notes: metadataChanged ? (nextTaskNotes || null) : current.assigned_tasks.task_notes,
-                assigned_by: metadataChanged ? (nextAssignedBy || null) : current.assigned_tasks.assigned_by,
-                instructions: metadataChanged ? (nextInstructions || null) : current.assigned_tasks.instructions,
-                instructions_locked: metadataChanged ? nextInstructionsLocked : current.assigned_tasks.instructions_locked,
                 review_required: reviewRequiredChanged ? nextReviewRequired : current.assigned_tasks.review_required,
-                updated_at: (metadataChanged || reviewRequiredChanged) ? updatedAt : current.assigned_tasks.updated_at,
+                updated_at: reviewRequiredChanged ? updatedAt : current.assigned_tasks.updated_at,
               },
             }
           : current
@@ -1868,23 +1575,9 @@ export default function TaskListPage() {
   }, [
     closePanel,
     fetchTasks,
-    panelAccount,
-    panelAssignedBy,
-    panelCategory,
-    panelDetail,
-    panelDueDate,
-    panelStartDate,
-    panelHasSchedule,
-    panelScheduleStart,
-    panelScheduleEnd,
-    panelInstructions,
-    panelInstructionsLocked,
     panelNotes,
-    panelProject,
     panelReviewRequired,
     panelStatus,
-    panelTaskName,
-    panelTaskNotes,
     selectedTask,
     currentUserId,
     isAdmin,
@@ -2769,262 +2462,6 @@ export default function TaskListPage() {
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
               <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                <select
-                  value={addForm.account}
-                  onChange={(e) =>
-                    setAddForm((form) => ({
-                      ...form,
-                      account: e.target.value,
-                      project: "",
-                      task_name: "",
-                    }))
-                  }
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  <option value="">Select account...</option>
-                  {accountOptions.map((account) => (
-                    <option key={account} value={account}>
-                      {account}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Objective</label>
-                <select
-                  value={addForm.project}
-                  onChange={(e) =>
-                    setAddForm((form) => ({
-                      ...form,
-                      project: e.target.value,
-                      task_name: "",
-                    }))
-                  }
-                  disabled={!addForm.account}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                >
-                  <option value="">{addForm.account ? "Select objective..." : "Select account first..."}</option>
-                  {addProjectsForAccount.map((project) => (
-                    <option key={project.id} value={project.project_name}>
-                      {project.project_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                <select
-                  value={addForm.task_name}
-                  onChange={(e) => setAddForm((form) => ({ ...form, task_name: e.target.value }))}
-                  disabled={!addForm.project || addTasksForProject.length === 0}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                >
-                  <option value="">
-                    {addForm.project
-                      ? addTasksForProject.length > 0
-                        ? "Select task..."
-                        : "No tasks available"
-                      : "Select objective first..."}
-                  </option>
-                  {addTasksForProject.map((task) => (
-                    <option key={task.id} value={task.task_name}>
-                      {task.task_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
-                <select
-                  value={addForm.category}
-                  onChange={(e) => setAddForm((form) => ({ ...form, category: e.target.value }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  {CATEGORY_OPTIONS.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-                <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Link to Project</label>
-                <select
-                  value={addForm.linked_project_id}
-                  onChange={(e) => setAddForm((form) => ({ ...form, linked_project_id: e.target.value, parent_task_id: "" }))}
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                >
-                  <option value="">— None —</option>
-                  {linkedProjects.filter((p) => p.kind === "objective").length > 0 && (
-                    <optgroup label="Objectives">
-                      {linkedProjects.filter((p) => p.kind === "objective").map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {linkedProjects.filter((p) => p.kind === "operation").length > 0 && (
-                    <optgroup label="Operations">
-                      {linkedProjects.filter((p) => p.kind === "operation").map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-                {addForm.linked_project_id && linkedParentTaskOptions.length > 0 && (
-                  <select
-                    value={addForm.parent_task_id}
-                    onChange={(e) => setAddForm((form) => ({ ...form, parent_task_id: e.target.value }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  >
-                    <option value="">Top-level task in this project</option>
-                    {linkedParentTaskOptions.map((t) => (
-                      <option key={t.id} value={t.id}>Subtask of: {t.task_name}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
-                  <input
-                    type="date"
-                    value={addForm.start_date}
-                    onChange={(e) => setAddForm((form) => ({ ...form, start_date: e.target.value }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                  <input
-                    type="date"
-                    value={addForm.due_date}
-                    onChange={(e) => setAddForm((form) => ({ ...form, due_date: e.target.value }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-                <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone">
-                  <input
-                    type="checkbox"
-                    checked={addForm.has_schedule}
-                    onChange={(e) => setAddForm((form) => ({ ...form, has_schedule: e.target.checked }))}
-                  />
-                  Add to Calendar (specific hours)
-                </label>
-                {addForm.has_schedule && (
-                  <div className="flex gap-3">
-                    <div className="flex-1">
-                      <label className="mb-1 block text-[10px] font-semibold text-stone">Start Time</label>
-                      <input
-                        type="time"
-                        value={addForm.schedule_start}
-                        onChange={(e) => setAddForm((form) => ({ ...form, schedule_start: e.target.value }))}
-                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="mb-1 block text-[10px] font-semibold text-stone">End Time</label>
-                      <input
-                        type="time"
-                        value={addForm.schedule_end}
-                        onChange={(e) => setAddForm((form) => ({ ...form, schedule_end: e.target.value }))}
-                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center gap-1.5">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
-                  <div className="group relative">
-                    <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
-                    <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
-                      <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
-                      <div className="space-y-0.5 text-[10px]">
-                        <p><span className="font-semibold">1. Who:</span> Who</p>
-                        <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
-                        <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
-                        <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <input
-                  type="text"
-                  value={addForm.task_detail}
-                  onChange={(e) => setAddForm((form) => ({ ...form, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
-                  placeholder="Added to client memo — keep it short and sensible"
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                />
-                <p className="text-[10px] text-stone mt-1">
-                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(addForm.task_detail))} words remaining
-                </p>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Notes</label>
-                <textarea
-                  value={addForm.task_notes}
-                  onChange={(e) => setAddForm((form) => ({ ...form, task_notes: e.target.value }))}
-                  rows={2}
-                  placeholder="Add any helpful notes for this task..."
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta resize-none"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
-                {true ? (
-                  <select
-                    value={addForm.assigned_by}
-                    onChange={(e) => setAddForm((form) => ({ ...form, assigned_by: e.target.value }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  >
-                    <option value="">Select assignee...</option>
-                    {panelAssignedByOptions.map((profile) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.full_name || profile.username || profile.id}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {currentUserProfile?.full_name || currentUserProfile?.username || "—"}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
-                  <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-stone">
-                    <input
-                      type="checkbox"
-                      checked={addForm.instructions_locked}
-                      onChange={(e) => setAddForm((form) => ({ ...form, instructions_locked: e.target.checked }))}
-                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                    />
-                    Locked
-                  </label>
-                </div>
-                <textarea
-                  value={addForm.instructions}
-                  onChange={(e) => setAddForm((form) => ({ ...form, instructions: e.target.value }))}
-                  rows={2}
-                  placeholder="Add task instructions..."
-                  className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta resize-none"
-                />
-              </div>
-
-              <div>
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
                   <button
@@ -3072,35 +2509,17 @@ export default function TaskListPage() {
                     ))}
                   </div>
                 )}
+                {createUploadSaving && <p className="mt-1 text-[11px] text-stone">Uploading files...</p>}
               </div>
 
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={addForm.review_required}
-                    onChange={(e) => setAddForm((form) => ({ ...form, review_required: e.target.checked }))}
-                    className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                  />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-stone">Review Required</span>
-                </label>
-              </div>
-
-              {addError && <p className="text-xs font-medium text-red-500">{addError}</p>}
-            </div>
-
-            <div className="shrink-0 flex items-center justify-end gap-3 border-t border-sand px-5 py-4">
-              <button type="button" onClick={closeCreate} className="text-xs text-stone hover:text-espresso">
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleAddTask()}
-                disabled={addSaving || createUploadSaving || !addForm.task_name.trim()}
-                className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {createUploadSaving ? "Uploading files..." : addSaving ? "Saving..." : "Create Task"}
-              </button>
+              <TaskEditor
+                mode="time_based"
+                currentUserId={currentUserId ?? ""}
+                isAdminOrManager={isAdmin}
+                teamMembers={panelAssignedByOptions}
+                onCancel={closeCreate}
+                onSaved={(task) => void handleTaskCreated(task)}
+              />
             </div>
           </div>
       )}
@@ -3125,261 +2544,117 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                {panelCanEditFields ? (
-                  <select
-                    value={panelAccount}
-                    onChange={(e) => {
-                      const nextAccount = e.target.value;
-                      setPanelAccount(nextAccount);
-                      setPanelProject("");
-                      setPanelTaskName("");
-                    }}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  >
-                    <option value="">Select account...</option>
-                    {accountOptions.map((account) => (
-                      <option key={account} value={account}>
-                        {account}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.account || <span className="text-stone/60">—</span>}
+              {panelCanEditFields ? (
+                <TaskEditor
+                  mode="time_based"
+                  editingTaskId={selectedTask.assigned_tasks.id}
+                  initialTask={selectedTask.assigned_tasks}
+                  currentUserId={currentUserId ?? ""}
+                  isAdminOrManager={isAdmin}
+                  teamMembers={panelAssignedByOptions}
+                  onCancel={closePanel}
+                  onSaved={() => void handleMetadataSaved()}
+                />
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.account || <span className="text-stone/60">—</span>}
+                    </div>
                   </div>
-                )}
-              </div>
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Objective</label>
-                {panelCanEditFields ? (
-                  <select
-                    value={panelProject}
-                    onChange={(e) => {
-                      setPanelProject(e.target.value);
-                      setPanelTaskName("");
-                    }}
-                    disabled={!panelAccount}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                  >
-                    <option value="">{panelAccount ? "Select objective..." : "Select account first..."}</option>
-                    {panelProjectsForAccount.map((project) => (
-                      <option key={project.id} value={project.project_name}>
-                        {project.project_name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.project || <span className="text-stone/60">—</span>}
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Objective</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.project || <span className="text-stone/60">—</span>}
+                    </div>
                   </div>
-                )}
-              </div>
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                {panelCanEditFields ? (
-                  <select
-                    value={panelTaskName}
-                    onChange={(e) => setPanelTaskName(e.target.value)}
-                    disabled={!panelProject || panelTasksForProject.length === 0}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
-                  >
-                    <option value="">
-                      {panelProject
-                        ? panelTasksForProject.length > 0
-                          ? "Select task..."
-                          : "No tasks available"
-                        : "Select objective first..."}
-                    </option>
-                    {panelTasksForProject.map((task) => (
-                      <option key={task.id} value={task.task_name}>
-                        {task.task_name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.task_name || <span className="text-stone/60">—</span>}
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.task_name || <span className="text-stone/60">—</span>}
+                    </div>
                   </div>
-                )}
-              </div>
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
-                {panelCanEditFields ? (
-                  <select
-                    value={panelCategory}
-                    onChange={(e) => setPanelCategory(e.target.value)}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  >
-                    {CATEGORY_OPTIONS.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.category || <span className="text-stone/60">—</span>}
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.category || <span className="text-stone/60">—</span>}
+                    </div>
                   </div>
-                )}
-              </div>
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
-                {panelCanEditFields ? (
-                  <input
-                    type="date"
-                    value={formatDateInputValue(panelStartDate)}
-                    onChange={(e) => setPanelStartDate(e.target.value)}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.start_date ? formatDateInputValue(selectedTask.assigned_tasks.start_date) : <span className="text-stone/60">—</span>}
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.start_date ? formatDateInputValue(selectedTask.assigned_tasks.start_date) : <span className="text-stone/60">—</span>}
+                    </div>
                   </div>
-                )}
-              </div>
 
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                {panelCanEditFields ? (
-                  <input
-                    type="date"
-                    value={formatDateInputValue(panelDueDate)}
-                    onChange={(e) => setPanelDueDate(e.target.value)}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                ) : (
-                  (() => {
-                    const due = formatDueDate(selectedTask.assigned_tasks.due_date);
-                    return (
-                      <div
-                        className={`rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] ${
-                          due.isOverdue ? "text-terracotta" : "text-espresso"
-                        }`}
-                      >
-                        {due.label}
-                        {due.isOverdue && selectedTask.assigned_tasks.due_date ? " · Overdue" : ""}
-                      </div>
-                    );
-                  })()
-                )}
-              </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
+                    {(() => {
+                      const due = formatDueDate(selectedTask.assigned_tasks.due_date);
+                      return (
+                        <div
+                          className={`rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] ${
+                            due.isOverdue ? "text-terracotta" : "text-espresso"
+                          }`}
+                        >
+                          {due.label}
+                          {due.isOverdue && selectedTask.assigned_tasks.due_date ? " · Overdue" : ""}
+                        </div>
+                      );
+                    })()}
+                  </div>
 
-              {panelCanEditFields && (
-                <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-                  <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone">
-                    <input
-                      type="checkbox"
-                      checked={panelHasSchedule}
-                      onChange={(e) => setPanelHasSchedule(e.target.checked)}
-                    />
-                    Add to Calendar (specific hours)
-                  </label>
-                  {panelHasSchedule && (
-                    <div className="flex gap-3">
-                      <div className="flex-1">
-                        <label className="mb-1 block text-[10px] font-semibold text-stone">Start Time</label>
-                        <input
-                          type="time"
-                          value={panelScheduleStart}
-                          onChange={(e) => setPanelScheduleStart(e.target.value)}
-                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <label className="mb-1 block text-[10px] font-semibold text-stone">End Time</label>
-                        <input
-                          type="time"
-                          value={panelScheduleEnd}
-                          onChange={(e) => setPanelScheduleEnd(e.target.value)}
-                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                        />
+                  <div>
+                    <div className="mb-1 flex items-center gap-1.5">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
+                      <div className="group relative">
+                        <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
+                        <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+                          <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
+                          <div className="space-y-0.5 text-[10px]">
+                            <p><span className="font-semibold">1. Who:</span> Who</p>
+                            <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
+                            <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
+                            <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  )}
-                </div>
+                    <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.task_detail || <span className="text-stone/60">No detail provided.</span>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
+                    <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
+                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.assigned_by_profile?.full_name
+                        || selectedTask.assigned_tasks.assigned_by_profile?.username
+                        || selectedTask.assigned_tasks.assigned_by
+                        || <span className="text-stone/60">—</span>}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
+                    <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                      {selectedTask.assigned_tasks.instructions ? renderTextWithLinks(selectedTask.assigned_tasks.instructions) : <span className="text-stone/60">No instructions provided.</span>}
+                    </div>
+                  </div>
+                </>
               )}
-
-              <div>
-                <div className="mb-1 flex items-center gap-1.5">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
-                  <div className="group relative">
-                    <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
-                    <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
-                      <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
-                      <div className="space-y-0.5 text-[10px]">
-                        <p><span className="font-semibold">1. Who:</span> Who</p>
-                        <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
-                        <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
-                        <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                {panelCanEditFields ? (
-                  <>
-                    <textarea
-                      value={panelDetail}
-                      onChange={(e) => setPanelDetail(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
-                      rows={2}
-                      placeholder="Added to client memo — keep it short and sensible"
-                      className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                    />
-                    <p className="text-[10px] text-stone mt-1">
-                      {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(panelDetail))} words remaining
-                    </p>
-                  </>
-                ) : (
-                  <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.task_detail || <span className="text-stone/60">No detail provided.</span>}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
-                {panelCanEditFields ? (
-                  <textarea
-                    value={panelTaskNotes}
-                    onChange={(e) => setPanelTaskNotes(e.target.value)}
-                    rows={2}
-                    placeholder="Add task notes..."
-                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                ) : (
-                  <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
-                {panelCanEditAssignedBy ? (
-                  <select
-                    value={panelAssignedBy}
-                    onChange={(e) => setPanelAssignedBy(e.target.value)}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  >
-                    <option value="">Select assignee...</option>
-                    {panelAssignedByOptions.map((profile) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.full_name || profile.username || profile.id}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.assigned_by_profile?.full_name
-                      || selectedTask.assigned_tasks.assigned_by_profile?.username
-                      || selectedTask.assigned_tasks.assigned_by
-                      || <span className="text-stone/60">—</span>}
-                  </div>
-                )}
-              </div>
 
               {isSubmittedView && (
                 <div>
@@ -3389,36 +2664,6 @@ export default function TaskListPage() {
                   </div>
                 </div>
               )}
-
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
-                  {panelCanEditInstructions ? (
-                    <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-stone">
-                      <input
-                        type="checkbox"
-                        checked={panelInstructionsLocked}
-                        onChange={(e) => setPanelInstructionsLocked(e.target.checked)}
-                        className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                      />
-                      Locked
-                    </label>
-                  ) : null}
-                </div>
-                {panelCanEditInstructions && !panelInstructionsLocked ? (
-                  <textarea
-                    value={panelInstructions}
-                    onChange={(e) => setPanelInstructions(e.target.value)}
-                    rows={2}
-                    placeholder="Add task instructions..."
-                    className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
-                  />
-                ) : (
-                  <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                    {selectedTask.assigned_tasks.instructions ? renderTextWithLinks(selectedTask.assigned_tasks.instructions) : <span className="text-stone/60">No instructions provided.</span>}
-                  </div>
-                )}
-              </div>
 
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">My Notes</label>
@@ -3431,18 +2676,20 @@ export default function TaskListPage() {
                 />
               </div>
 
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer w-fit">
-                  <input
-                    type="checkbox"
-                    checked={panelReviewRequired}
-                    disabled={!isAdmin && panelReviewRequired}
-                    onChange={(e) => setPanelReviewRequired(e.target.checked)}
-                    className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-stone">Review Required</span>
-                </label>
-              </div>
+              {!panelCanEditFields && (
+                <div>
+                  <label className="flex items-center gap-2 cursor-pointer w-fit">
+                    <input
+                      type="checkbox"
+                      checked={panelReviewRequired}
+                      disabled={panelReviewRequired}
+                      onChange={(e) => setPanelReviewRequired(e.target.checked)}
+                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-stone">Review Required</span>
+                  </label>
+                </div>
+              )}
 
               <div>
                 <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
