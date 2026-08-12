@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { countWords } from "@/lib/utils";
 import type {
   Profile,
   AssignedTaskWithAssignees,
@@ -13,6 +12,7 @@ import type {
 } from "@/types/database";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
+import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
@@ -30,14 +30,6 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "project", label: "Project", defaultWidth: 120 },
   { key: "created", label: "Created", defaultWidth: 110 },
 ];
-
-const CLIENT_MEMO_WORD_LIMIT = 15;
-
-function limitToWords(text: string, limit: number): string {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  if (words.length <= limit) return text;
-  return words.slice(0, limit).join(" ");
-}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -91,22 +83,6 @@ interface TaskAssignmentsAdminTabProps {
   orgTimezone?: string;
 }
 
-interface DetailFormState {
-  task_name: string;
-  account: string;
-  project: string;
-  task_detail: string;
-  task_notes: string;
-  instructions: string;
-  instructions_locked: boolean;
-  review_required: boolean;
-  due_date: string;
-  start_date: string;
-  assigned_by_id: string;
-  recurring_template_id: string | null;
-  initial_status: AssignedTaskStatus;
-  assignee_ids: string[];
-}
 
 interface InlineEditState {
   taskId: number;
@@ -490,22 +466,8 @@ export default function TaskAssignmentsAdminTab({
     selectedTaskRef.current = selectedTask;
   }, [selectedTask]);
   const [isCreating, setIsCreating] = useState(false);
-  const [detailForm, setDetailForm] = useState<DetailFormState>({
-    task_name: "",
-    account: "",
-    project: "",
-    task_detail: "",
-    task_notes: "",
-    instructions: "",
-    instructions_locked: false,
-    review_required: false,
-    due_date: "",
-    start_date: "",
-    assigned_by_id: "",
-    recurring_template_id: null,
-    initial_status: "pending",
-    assignee_ids: [],
-  });
+  const [panelAssigneeIds, setPanelAssigneeIds] = useState<string[]>([]);
+  const taskEditorRef = useRef<TaskEditorHandle | null>(null);
   const [detailSaving, setDetailSaving] = useState(false);
   const [detailSaveMsg, setDetailSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
@@ -665,14 +627,6 @@ export default function TaskAssignmentsAdminTab({
 
   // ── Computed cascading values for detail panel ────────────────────────────────
   const accountsForPanel = formAccounts.length > 0 ? formAccounts : KNOWN_ACCOUNTS;
-  const detailObjectivesForAccount = formObjectives.filter((p) => p.account === detailForm.account);
-  const detailObjectiveTagId =
-    formObjectives.find(
-      (p) => p.account === detailForm.account && p.project_name === detailForm.project
-    )?.id ?? null;
-  const detailTasksForObjective = detailObjectiveTagId
-    ? (formTasksByObjective[detailObjectiveTagId] ?? [])
-    : [];
   const assignedByOptions = useMemo(
     () => mergeProfiles(assignedByProfiles, selectedTask?.assigned_by_profile ?? null),
     [assignedByProfiles, selectedTask?.assigned_by_profile]
@@ -823,28 +777,11 @@ export default function TaskAssignmentsAdminTab({
 
   // ─── Panel helpers ────────────────────────────────────────────────────────────
 
-  const emptyDetailForm = (): DetailFormState => ({
-    task_name: "",
-    account: "",
-    project: "",
-    task_detail: "",
-    task_notes: "",
-    instructions: "",
-    instructions_locked: false,
-    review_required: false,
-    due_date: "",
-    start_date: "",
-    assigned_by_id: "",
-    recurring_template_id: null,
-    initial_status: "pending",
-    assignee_ids: [],
-  });
-
   const openCreate = () => {
     setIsCreating(true);
     setSelectedTask(null);
     setAssignedToEdit(null);
-    setDetailForm(emptyDetailForm());
+    setPanelAssigneeIds([]);
     setDetailSaveMsg(null);
     setAttachments([]);
     setPendingFiles([]);
@@ -860,25 +797,7 @@ export default function TaskAssignmentsAdminTab({
     setIsCreating(false);
     setAssignedToEdit(null);
     setSelectedTask(task);
-    setDetailForm({
-      task_name: task.task_name,
-      account: task.account || "",
-      project: task.project || "",
-      task_detail: task.task_detail || "",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      task_notes: (task as any).task_notes || "",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      instructions: (task as any).instructions || "",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      instructions_locked: Boolean((task as any).instructions_locked),
-      review_required: Boolean(task.review_required),
-      due_date: task.due_date ? task.due_date.slice(0, 10) : "",
-      start_date: task.start_date ? task.start_date.slice(0, 10) : "",
-      assigned_by_id: task.assigned_by || "",
-      recurring_template_id: (task.recurring_template_id as string | null | undefined) ?? null,
-      initial_status: task.assigned_task_assignees[0]?.status ?? "on_queue",
-      assignee_ids: task.assigned_task_assignees.map((a) => a.va_id),
-    });
+    setPanelAssigneeIds(task.assigned_task_assignees.map((a) => a.va_id));
     setDetailSaveMsg(null);
     fetchAttachments(task.id);
     void fetchPanelScreenshots(task.id);
@@ -911,86 +830,72 @@ export default function TaskAssignmentsAdminTab({
   }, [assignedToEdit]);
 
   // ─── Detail panel save ────────────────────────────────────────────────────────
+  // TaskEditor owns metadata (task_name/account/project/category/dates/detail/
+  // notes/instructions/assigned_by/review_required) but never touches va_ids —
+  // this panel's assignees are a true multi-select (VAMultiSelect), which
+  // TaskEditor's single-select Assign To can't represent. So onSaved reconciles
+  // assignees as a follow-up PUT, using its response as the fresh task.
 
-  const handleDetailSave = useCallback(async () => {
-    if (!detailForm.task_name.trim()) return;
-    setDetailSaving(true);
-    setDetailSaveMsg(null);
-
-    const payload = {
-      task_name: detailForm.task_name.trim(),
-      account: detailForm.account.trim() || null,
-      project: detailForm.project.trim() || null,
-      task_detail: detailForm.task_detail.trim() || null,
-      task_notes: detailForm.task_notes.trim() || null,
-      instructions: detailForm.instructions.trim() || null,
-      instructions_locked: detailForm.instructions_locked,
-      review_required: detailForm.review_required,
-      due_date: detailForm.due_date || null,
-      start_date: detailForm.start_date || null,
-      assigned_by: detailForm.assigned_by_id || null,
-      recurring_template_id: detailForm.recurring_template_id,
-      va_ids: detailForm.assignee_ids,
-      ...(selectedTask ? {} : { initial_status: detailForm.initial_status }),
-    };
-
-    try {
-      const res = selectedTask
-        ? await fetch(`/api/assigned-tasks/${selectedTask.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          })
-        : await fetch("/api/assigned-tasks", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-
-      if (res.ok) {
-        const result = await res.json();
-        const newTask = result?.task as AssignedTaskWithAssignees | undefined;
-
-        if (!selectedTask && newTask) {
-          let uploadError: string | null = null;
-          for (const file of pendingFiles) {
-            const formData = new FormData();
-            formData.append("file", file);
-            const uploadRes = await fetch(`/api/assigned-tasks/${newTask.id}/attachments`, {
-              method: "POST",
-              body: formData,
-            });
-            if (!uploadRes.ok) {
-              uploadError = `Failed to upload ${file.name}`;
-              break;
-            }
-          }
-          setIsCreating(false);
-          setSelectedTask(newTask);
-          setPendingFiles([]);
-          await fetchTasks();
-          await fetchAttachments(newTask.id);
-          setDetailSaveMsg({
-            type: uploadError ? "err" : "ok",
-            text: uploadError || "Task created!",
-          });
-        } else {
-          setDetailSaveMsg({
-            type: "ok",
-            text: "Task updated!",
-          });
-          await fetchTasks();
+  const handleTaskSaved = useCallback(
+    async (task: { id: number; [key: string]: unknown }) => {
+      const wasCreating = isCreating;
+      let finalTask: AssignedTaskWithAssignees | null = null;
+      try {
+        const res = await fetch(`/api/assigned-tasks/${task.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ va_ids: panelAssigneeIds }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          finalTask = (data?.task as AssignedTaskWithAssignees | undefined) ?? null;
         }
-      } else {
-        const e = await res.json();
-        setDetailSaveMsg({ type: "err", text: e.error || "Failed to save" });
+      } catch {
+        // best-effort — fetchTasks below reflects whatever actually saved
       }
+
+      if (wasCreating) {
+        let uploadError: string | null = null;
+        for (const file of pendingFiles) {
+          const formData = new FormData();
+          formData.append("file", file);
+          const uploadRes = await fetch(`/api/assigned-tasks/${task.id}/attachments`, {
+            method: "POST",
+            body: formData,
+          });
+          if (!uploadRes.ok) {
+            uploadError = `Failed to upload ${file.name}`;
+            break;
+          }
+        }
+        setIsCreating(false);
+        setPendingFiles([]);
+        if (finalTask) {
+          setSelectedTask(finalTask);
+          await fetchAttachments(finalTask.id);
+        }
+        await fetchTasks();
+        setDetailSaveMsg({ type: uploadError ? "err" : "ok", text: uploadError || "Task created!" });
+      } else {
+        if (finalTask) setSelectedTask(finalTask);
+        await fetchTasks();
+        setDetailSaveMsg({ type: "ok", text: "Task updated!" });
+      }
+    },
+    [isCreating, panelAssigneeIds, pendingFiles, fetchTasks, fetchAttachments]
+  );
+
+  const handleSaveAll = useCallback(async () => {
+    setDetailSaveMsg(null);
+    setDetailSaving(true);
+    try {
+      await taskEditorRef.current?.submit();
     } catch {
-      setDetailSaveMsg({ type: "err", text: "Network error — please try again" });
+      setDetailSaveMsg({ type: "err", text: "Unable to save task." });
     } finally {
       setDetailSaving(false);
     }
-  }, [detailForm, selectedTask, fetchTasks, pendingFiles, fetchAttachments]);
+  }, []);
 
   // ─── Delete ───────────────────────────────────────────────────────────────────
 
@@ -2188,211 +2093,21 @@ export default function TaskAssignmentsAdminTab({
             {/* Body */}
             <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
 
-              {/* Account */}
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Account
-                </label>
-                <select
-                  value={detailForm.account}
-                  onChange={(e) => {
-                    const newAccount = e.target.value;
-                    setDetailForm((f) => ({
-                      ...f,
-                      account: newAccount,
-                      project: "",
-                      task_name: "",
-                    }));
-                  }}
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-                >
-                  <option value="">Select account...</option>
-                  {accountsForPanel.map((a) => (
-                    <option key={a} value={a}>{a}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Objective */}
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Objective
-                </label>
-                {detailObjectivesForAccount.length > 0 ? (
-                  <select
-                    value={detailForm.project}
-                    onChange={(e) => {
-                      setDetailForm((f) => ({
-                        ...f,
-                        project: e.target.value,
-                        task_name: "",
-                      }));
-                    }}
-                    disabled={!detailForm.account}
-                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer disabled:opacity-60 disabled:bg-parchment"
-                  >
-                    <option value="">
-                      {!detailForm.account ? "Select account first..." : "Select objective..."}
-                    </option>
-                    {detailObjectivesForAccount.map((p) => (
-                      <option key={p.id} value={p.project_name}>{p.project_name}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={detailForm.project}
-                    onChange={(e) =>
-                      setDetailForm((f) => ({ ...f, project: e.target.value, task_name: "" }))
-                    }
-                    placeholder="Objective name"
-                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                  />
-                )}
-              </div>
-
-              {/* Task Name */}
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Task Name <span className="text-terracotta">*</span>
-                </label>
-                <select
-                  value={detailForm.task_name}
-                  onChange={(e) =>
-                    setDetailForm((f) => ({ ...f, task_name: e.target.value }))
-                  }
-                  disabled={!detailForm.project}
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer disabled:opacity-60 disabled:bg-parchment"
-                >
-                  <option value="">{detailForm.project ? "Select task..." : "Select objective first..."}</option>
-                  {detailTasksForObjective.map((t) => (
-                    <option key={t.id} value={t.task_name}>{t.task_name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Start Date */}
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Start Date
-                </label>
-                <input
-                  type="date"
-                  value={detailForm.start_date}
-                  onChange={(e) => setDetailForm((f) => ({ ...f, start_date: e.target.value }))}
-                  className="py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-                />
-              </div>
-
-              {/* Due Date */}
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Due Date
-                </label>
-                <input
-                  type="date"
-                  value={detailForm.due_date}
-                  onChange={(e) => setDetailForm((f) => ({ ...f, due_date: e.target.value }))}
-                  className="py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-                />
-              </div>
-
-              {/* Assigned By */}
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Assigned By
-                </label>
-                <select
-                  value={detailForm.assigned_by_id}
-                  onChange={(e) => setDetailForm((f) => ({ ...f, assigned_by_id: e.target.value }))}
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta cursor-pointer"
-                >
-                  <option value="">Select assigned by...</option>
-                  {assignedByOptions.map((profile) => (
-                    <option key={profile.id} value={profile.id}>
-                      {profile.full_name || profile.username}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Detail (small / single-line) */}
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Detail
-                </label>
-                <input
-                  type="text"
-                  value={detailForm.task_detail}
-                  onChange={(e) => setDetailForm((f) => ({ ...f, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
-                  placeholder="Short summary or reference..."
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                />
-                <p className="text-[10px] text-stone mt-1">
-                  {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(detailForm.task_detail))} words remaining
-                </p>
-              </div>
-
-              {/* Notes (larger) */}
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1 tracking-wide uppercase">
-                  Notes
-                </label>
-                <textarea
-                  value={detailForm.task_notes}
-                  onChange={(e) => setDetailForm((f) => ({ ...f, task_notes: e.target.value }))}
-                  rows={2}
-                  placeholder="Detailed instructions, context, links, or anything the VA needs to know..."
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
-                />
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold text-walnut tracking-wide uppercase">Instructions</label>
-                  <label className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-stone">
-                    <input
-                      type="checkbox"
-                      checked={detailForm.instructions_locked}
-                      onChange={(e) => setDetailForm((f) => ({ ...f, instructions_locked: e.target.checked }))}
-                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                    />
-                    Locked
-                  </label>
-                </div>
-                <textarea
-                  value={detailForm.instructions}
-                  onChange={(e) => setDetailForm((f) => ({ ...f, instructions: e.target.value }))}
-                  rows={2}
-                  placeholder="Add instructions for the assignee..."
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta resize-none"
-                />
-              </div>
+              <TaskEditor
+                ref={taskEditorRef}
+                mode="time_based"
+                editingTaskId={selectedTask ? selectedTask.id : null}
+                initialTask={selectedTask as unknown as Record<string, unknown> | null}
+                currentUserId={currentUserId ?? ""}
+                isAdminOrManager
+                teamMembers={assignedByProfiles}
+                manageAssignment={false}
+                hideFooter
+                onCancel={closePanel}
+                onSaved={(task) => void handleTaskSaved(task)}
+              />
 
               {/* Assignees */}
-              {isCreating && (
-                <div>
-                  <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide uppercase">
-                    Status
-                  </label>
-                  <select
-                    value={detailForm.initial_status}
-                    onChange={(e) =>
-                      setDetailForm((f) => ({
-                        ...f,
-                        initial_status: e.target.value as AssignedTaskStatus,
-                      }))
-                    }
-                    className="min-w-[140px] rounded-lg border border-sand bg-white px-2 py-1 text-[11px] outline-none transition-colors focus:border-terracotta cursor-pointer"
-                  >
-                    {ASSIGNEE_STATUS_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
               <div>
                 <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide uppercase">
                   Assigned To <span className="text-terracotta">*</span>
@@ -2402,8 +2117,8 @@ export default function TaskAssignmentsAdminTab({
                 ) : (
                   <VAMultiSelect
                     activeProfiles={activeProfiles}
-                    selectedIds={detailForm.assignee_ids}
-                    onChange={(ids) => setDetailForm((f) => ({ ...f, assignee_ids: ids }))}
+                    selectedIds={panelAssigneeIds}
+                    onChange={setPanelAssigneeIds}
                     selectedTask={selectedTask}
                   />
                 )}
@@ -2486,18 +2201,6 @@ export default function TaskAssignmentsAdminTab({
                   )}
                 </div>
               )}
-
-              <div>
-                <label className="flex items-center gap-2 cursor-pointer w-fit">
-                  <input
-                    type="checkbox"
-                    checked={detailForm.review_required}
-                    onChange={(e) => setDetailForm((f) => ({ ...f, review_required: e.target.checked }))}
-                    className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                  />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-walnut">Review Required</span>
-                </label>
-              </div>
 
               {!selectedTask && (
                 <div className="mb-5">
@@ -2736,8 +2439,8 @@ export default function TaskAssignmentsAdminTab({
                     Cancel
                   </button>
                   <button
-                    onClick={handleDetailSave}
-                    disabled={detailSaving || !detailForm.task_name.trim()}
+                    onClick={() => void handleSaveAll()}
+                    disabled={detailSaving}
                     className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {detailSaving

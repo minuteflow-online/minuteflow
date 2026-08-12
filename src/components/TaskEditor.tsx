@@ -57,6 +57,8 @@ export interface TaskEditorProps {
   currentPayRate?: number;
   /** Hides the built-in Save/Cancel footer — use with a ref to trigger submit() from a parent-owned footer instead. */
   hideFooter?: boolean;
+  /** Set false to hide the Assign To field and never touch va_ids — for callers with their own multi-assignee UI (assigned_tasks supports several assignees; this form's Assign To is single-select). Default true. */
+  manageAssignment?: boolean;
   onCancel: () => void;
   onSaved: (task: { id: number; [key: string]: unknown }) => void;
 }
@@ -82,6 +84,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   defaultLinkedProjectId,
   currentPayRate,
   hideFooter = false,
+  manageAssignment = true,
   onCancel,
   onSaved,
 }: TaskEditorProps, ref) {
@@ -320,7 +323,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           }
         } else {
           body.initial_status = "pending";
-          if (effectiveVaId) body.va_ids = [effectiveVaId];
+          if (manageAssignment && effectiveVaId) body.va_ids = [effectiveVaId];
           const res = await fetch("/api/assigned-tasks", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -577,23 +580,25 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       <Section title="Assignment" defaultOpen={Boolean(vaId || linkedProjectId)}>
-        <div>
-          <label className={labelClass}>Assign To</label>
-          <select
-            value={isAdminOrManager ? vaId : currentUserId}
-            onChange={(e) => setVaId(e.target.value)}
-            disabled={!isAdminOrManager || isEditing}
-            className={inputClass}
-          >
-            <option value="">Unassigned</option>
-            {assignToOptions.map((m) => (
-              <option key={m.id} value={m.id}>{m.full_name || m.username}</option>
-            ))}
-          </select>
-          {isEditing && isAdminOrManager && (
-            <p className="mt-1 text-[10px] text-stone">Reassign this task from Assignment's task list — a task can have more than one assignee.</p>
-          )}
-        </div>
+        {manageAssignment && (
+          <div>
+            <label className={labelClass}>Assign To</label>
+            <select
+              value={isAdminOrManager ? vaId : currentUserId}
+              onChange={(e) => setVaId(e.target.value)}
+              disabled={!isAdminOrManager || isEditing}
+              className={inputClass}
+            >
+              <option value="">Unassigned</option>
+              {assignToOptions.map((m) => (
+                <option key={m.id} value={m.id}>{m.full_name || m.username}</option>
+              ))}
+            </select>
+            {isEditing && isAdminOrManager && (
+              <p className="mt-1 text-[10px] text-stone">Reassign this task from Assignment's task list — a task can have more than one assignee.</p>
+            )}
+          </div>
+        )}
 
         <div>
           <label className={labelClass}>Assigned By</label>
