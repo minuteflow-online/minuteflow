@@ -60,10 +60,8 @@ export interface TaskEditorProps {
   currentPayRate?: number;
   /** Hides the built-in Save/Cancel footer — use with a ref to trigger submit() from a parent-owned footer instead. */
   hideFooter?: boolean;
-  /** Hides the built-in Screenshots block — for callers with their own Screenshots UI elsewhere (e.g. Assignment's "Status & Files" panel), so it isn't shown twice. */
-  hideScreenshots?: boolean;
-  /** Extra content rendered at the end of the Details section — for callers with their own Attachments UI (e.g. Assignment's create panel) that belongs grouped with the rest of the task's content instead of floating outside every collapsible section. */
-  detailsExtra?: ReactNode;
+  /** Extra content rendered inside the "Attachments & Screenshots" section, below the screenshot grid — for callers with their own Attachments UI (upload/list/remove), so both live together in one place instead of split across the form. */
+  attachmentsExtra?: ReactNode;
   /** Set false to hide the Assign To field and never touch va_ids — for callers with their own multi-assignee UI (assigned_tasks supports several assignees; this form's Assign To is single-select). Default true. */
   manageAssignment?: boolean;
   onCancel: () => void;
@@ -109,8 +107,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   lockedProjectId,
   currentPayRate,
   hideFooter = false,
-  hideScreenshots = false,
-  detailsExtra,
+  attachmentsExtra,
   manageAssignment = true,
   onCancel,
   onSaved,
@@ -696,8 +693,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             Locked
           </label>
         </div>
-
-        {detailsExtra}
       </Section>
 
       <Section title="Assignment">
@@ -871,8 +866,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
-      {supportsTodos && !hideScreenshots && (
-        <Section title="Screenshots">
+      {supportsTodos && (
+        <Section title="Attachments & Screenshots">
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
           {!editingTaskId ? (
             <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
           ) : screenshotsLoading ? (
@@ -907,6 +903,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               onClose={() => setLightboxIndex(null)}
             />
           )}
+          {attachmentsExtra}
         </Section>
       )}
 

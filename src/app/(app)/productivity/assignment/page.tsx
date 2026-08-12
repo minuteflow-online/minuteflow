@@ -2461,7 +2461,7 @@ export default function TaskListPage() {
                 teamMembers={panelAssignedByOptions}
                 onCancel={closeCreate}
                 onSaved={(task) => void handleTaskCreated(task)}
-                detailsExtra={
+                attachmentsExtra={
                   <div>
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
@@ -2553,9 +2553,74 @@ export default function TaskListPage() {
                   // defaults to "" and its PUT wipes the task's assignee.
                   defaultVaId={selectedTask.va_id}
                   hideFooter
-                  hideScreenshots
                   onCancel={closePanel}
                   onSaved={() => void handleMetadataSaved()}
+                  attachmentsExtra={
+                    <div>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => panelAttachmentInputRef.current?.click()}
+                            disabled={panelUploadSaving}
+                            className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {panelUploadSaving ? "Uploading..." : "Attach File"}
+                          </button>
+                          <input
+                            ref={panelAttachmentInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => void handleAttachmentUpload(e)}
+                          />
+                        </div>
+                      </div>
+                      {attachmentsLoading ? (
+                        <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
+                          <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                          </svg>
+                          Loading attachments...
+                        </div>
+                      ) : attachments.length === 0 ? (
+                        <p className="py-2 text-[12px] text-stone/50">No attachments.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {attachments.map((att) => (
+                            <div key={att.id} className="flex items-start gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
+                              <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                              </svg>
+                              <div className="min-w-0 flex-1">
+                                {att.url ? (
+                                  <a
+                                    href={att.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block truncate text-[12px] text-terracotta hover:underline"
+                                    title={att.filename}
+                                  >
+                                    {att.filename}
+                                  </a>
+                                ) : (
+                                  <span className="block truncate text-[12px] text-walnut" title={att.filename}>
+                                    {att.filename}
+                                  </span>
+                                )}
+                                <div className="mt-0.5 text-[10px] text-stone">
+                                  {formatFileSize(att.file_size)}
+                                  {att.mime_type ? ` · ${att.mime_type}` : ""}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  }
                 />
               ) : (
                 <>
@@ -2747,112 +2812,6 @@ export default function TaskListPage() {
                 )}
               </div>
 
-              <div>
-                <label className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-stone">Screenshots</label>
-                {panelScreenshotsLoading ? (
-                  <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
-                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                    </svg>
-                    Loading screenshots...
-                  </div>
-                ) : panelScreenshots.length === 0 ? (
-                  <p className="py-2 text-[12px] text-stone/50">No screenshots.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {panelScreenshots.map((ss) => {
-                      const url = panelSignedUrls[ss.id];
-                      return (
-                        <button
-                          key={ss.id}
-                          type="button"
-                          onClick={() => {
-                            if (!url) return;
-                            const urls = panelScreenshots
-                              .map((s) => panelSignedUrls[s.id])
-                              .filter((candidate): candidate is string => Boolean(candidate));
-                            setLightboxUrls(urls);
-                            setLightboxIndex(Math.max(0, urls.indexOf(url)));
-                          }}
-                          className="relative group w-[48px] h-[36px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer hover:border-terracotta hover:scale-105 transition-all shrink-0"
-                          title={`Screenshot ${ss.screenshot_type || "manual"}`}
-                        >
-                          {url ? (
-                            <img src={url} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => panelAttachmentInputRef.current?.click()}
-                      disabled={panelUploadSaving}
-                      className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {panelUploadSaving ? "Uploading..." : "Attach File"}
-                    </button>
-                    <input
-                      ref={panelAttachmentInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => void handleAttachmentUpload(e)}
-                    />
-                  </div>
-                </div>
-                {attachmentsLoading ? (
-                  <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
-                    <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                    </svg>
-                    Loading attachments...
-                  </div>
-                ) : attachments.length === 0 ? (
-                  <p className="py-2 text-[12px] text-stone/50">No attachments.</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {attachments.map((att) => (
-                      <div key={att.id} className="flex items-start gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
-                        <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <polyline points="14 2 14 8 20 8" />
-                        </svg>
-                        <div className="min-w-0 flex-1">
-                          {att.url ? (
-                            <a
-                              href={att.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block truncate text-[12px] text-terracotta hover:underline"
-                              title={att.filename}
-                            >
-                              {att.filename}
-                            </a>
-                          ) : (
-                            <span className="block truncate text-[12px] text-walnut" title={att.filename}>
-                              {att.filename}
-                            </span>
-                          )}
-                          <div className="mt-0.5 text-[10px] text-stone">
-                            {formatFileSize(att.file_size)}
-                            {att.mime_type ? ` · ${att.mime_type}` : ""}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
               </Section>
 
               {panelMsg?.type === "err" && <p className="text-xs font-medium text-red-500">{panelMsg.text}</p>}
