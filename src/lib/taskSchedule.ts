@@ -112,17 +112,18 @@ export function categoryDotClass(category: string): string {
 }
 
 // Full block styling (border + background + text) for Calendar hour blocks.
-// Start-date-driven blocks fill at 70% opacity for a softer blend with the
-// page; due-date-driven blocks are fully opaque (the established rule: due
-// dates get 100% opacity, start dates get 70%). Text uses a deep shade of
-// the SAME hue (not white) — reads clearly against the lightened fill.
+// Start-date-driven blocks fill at 45% opacity — noticeably lighter than the
+// due-date variant so the two are easy to tell apart at a glance; due-date-
+// driven blocks are fully opaque (the established rule: due dates get 100%
+// opacity, start dates stay lighter). Text uses a deep shade of the SAME
+// hue (not white) — reads clearly against the lightened fill.
 const CATEGORY_BLOCK_CLASSES: Record<string, string> = {
-  Task: "border-[#3a8f5f] bg-[#4fb37a]/70 text-[#1f5c3a]",
-  Communication: "border-[#cc8a1f] bg-[#f0ad3f]/70 text-[#7a5410]",
-  Planning: "border-[#8a5cc0] bg-[#a878d6]/70 text-[#5c3a82]",
-  Collaboration: "border-[#d97830] bg-[#f2954a]/70 text-[#8a4a1f]",
-  Personal: "border-[#2fa595] bg-[#3fc0b0]/70 text-[#1f6b60]",
-  Break: "border-[#3a80cc] bg-[#4f9fea]/70 text-[#1f4a82]",
+  Task: "border-[#3a8f5f] bg-[#4fb37a]/45 text-[#1f5c3a]",
+  Communication: "border-[#cc8a1f] bg-[#f0ad3f]/45 text-[#7a5410]",
+  Planning: "border-[#8a5cc0] bg-[#a878d6]/45 text-[#5c3a82]",
+  Collaboration: "border-[#d97830] bg-[#f2954a]/45 text-[#8a4a1f]",
+  Personal: "border-[#2fa595] bg-[#3fc0b0]/45 text-[#1f6b60]",
+  Break: "border-[#3a80cc] bg-[#4f9fea]/45 text-[#1f4a82]",
 };
 
 // Due-date-driven blocks: fully opaque fill, white text (the solid color
