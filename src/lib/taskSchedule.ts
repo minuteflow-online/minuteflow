@@ -125,20 +125,23 @@ const CATEGORY_BLOCK_CLASSES: Record<string, string> = {
   Break: "border-[#3a80cc] bg-[#4f9fea]/70 text-[#1f4a82]",
 };
 
+// Due-date-driven blocks: fully opaque fill, white text (the solid color
+// itself provides contrast, unlike the 70%-opacity variant above where
+// white washed out against the page-blended fill).
 const CATEGORY_BLOCK_CLASSES_SOLID: Record<string, string> = {
-  Task: "border-[#3a8f5f] bg-[#4fb37a] text-[#1f5c3a]",
-  Communication: "border-[#cc8a1f] bg-[#f0ad3f] text-[#7a5410]",
-  Planning: "border-[#8a5cc0] bg-[#a878d6] text-[#5c3a82]",
-  Collaboration: "border-[#d97830] bg-[#f2954a] text-[#8a4a1f]",
-  Personal: "border-[#2fa595] bg-[#3fc0b0] text-[#1f6b60]",
-  Break: "border-[#3a80cc] bg-[#4f9fea] text-[#1f4a82]",
+  Task: "border-[#3a8f5f] bg-[#4fb37a] text-white",
+  Communication: "border-[#cc8a1f] bg-[#f0ad3f] text-white",
+  Planning: "border-[#8a5cc0] bg-[#a878d6] text-white",
+  Collaboration: "border-[#d97830] bg-[#f2954a] text-white",
+  Personal: "border-[#2fa595] bg-[#3fc0b0] text-white",
+  Break: "border-[#3a80cc] bg-[#4f9fea] text-white",
 };
 
 export function categoryBlockClasses(category: string | null | undefined, fullOpacity: boolean = false): string {
   // Neutral gray, not sage — sage sits in the same green hue as the "Task"
   // category and was getting mistaken for it when category is unset.
   const map = fullOpacity ? CATEGORY_BLOCK_CLASSES_SOLID : CATEGORY_BLOCK_CLASSES;
-  const fallback = fullOpacity ? "border-stone-400 bg-stone-300 text-stone-800" : "border-stone-400 bg-stone-300/70 text-stone-800";
+  const fallback = fullOpacity ? "border-stone-400 bg-stone-300 text-white" : "border-stone-400 bg-stone-300/70 text-stone-800";
   return (category && map[category]) || fallback;
 }
 

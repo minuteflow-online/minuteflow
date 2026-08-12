@@ -431,8 +431,13 @@ export default function ProductivityCalendarPage() {
   const saveBlock = async () => {
     if (!editingBlockId || formEnd <= formStart || !formTaskName.trim()) return;
     setSavingBlock(true);
-    const startIso = new Date(`${formDate}T${formStart}:00`).toISOString();
-    const endIso = new Date(`${formDate}T${formEnd}:00`).toISOString();
+    // The block's actual day follows whichever date field is set — Start Date
+    // takes priority, falling back to Due Date, so editing either one moves
+    // the scheduled block instead of leaving it pinned to the day it was
+    // originally opened on.
+    const scheduleDate = formStartDate || formDueDate || formDate;
+    const startIso = new Date(`${scheduleDate}T${formStart}:00`).toISOString();
+    const endIso = new Date(`${scheduleDate}T${formEnd}:00`).toISOString();
 
     try {
       await fetch(`/api/assigned-tasks/${editingBlockId}`, {
