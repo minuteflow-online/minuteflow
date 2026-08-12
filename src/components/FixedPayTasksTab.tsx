@@ -238,7 +238,7 @@ export default function FixedPayTasksTab() {
       setTasks(rows);
     } catch {
       setTasks([]);
-      setMessage({ type: "err", text: "Unable to load fixed pay tasks." });
+      setMessage({ type: "err", text: "Unable to load Output Based tasks." });
     } finally {
       setLoading(false);
     }
@@ -793,7 +793,7 @@ export default function FixedPayTasksTab() {
   }, [fetchAttachments, pendingAttachment, selectedTask]);
 
   const panelTitle = panelMode === "edit" ? "Edit Task" : "New Task";
-  const panelSubtitle = panelMode === "edit" && selectedTask ? `Editing #${selectedTask.id}` : "Create a task for the fixed-pay pool.";
+  const panelSubtitle = panelMode === "edit" && selectedTask ? `Editing #${selectedTask.id}` : "Create a task for the Output Based pool.";
 
   const currentAssignedProfile = selectedTask?.assigned_to_profile ?? null;
   const currentAssignedByProfile = selectedTask?.assigned_by_profile ?? null;
@@ -806,8 +806,8 @@ export default function FixedPayTasksTab() {
         <div className="border-b border-parchment px-5 py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
-              <h1 className="text-lg font-bold text-espresso">Fixed Pay Tasks</h1>
-              <p className="text-xs text-stone">Manage the fixed-pay task pool for per-task VAs.</p>
+              <h1 className="text-lg font-bold text-espresso">Output Based Tasks</h1>
+              <p className="text-xs text-stone">Manage the Output Based task pool for per-task VAs.</p>
             </div>
 
             <button
@@ -930,7 +930,7 @@ export default function FixedPayTasksTab() {
             </div>
           ) : filteredTasks.length === 0 ? (
             <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
-              No fixed pay tasks found.
+              No Output Based tasks found.
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">

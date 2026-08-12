@@ -1456,11 +1456,11 @@ export default function ReportsPage() {
                 </div>
                 <div>
                   <div className="font-serif text-xl font-bold text-sage">{reportSummary.hourlyCount}</div>
-                  <div className="text-[10px] text-bark mt-0.5">Hourly</div>
+                  <div className="text-[10px] text-bark mt-0.5">Time-based</div>
                 </div>
                 <div>
                   <div className="font-serif text-xl font-bold text-slate-blue">{reportSummary.fixedCount}</div>
-                  <div className="text-[10px] text-bark mt-0.5">Fixed</div>
+                  <div className="text-[10px] text-bark mt-0.5">Output Based</div>
                 </div>
               </div>
               <div className="flex gap-3 pt-3 border-t border-parchment">

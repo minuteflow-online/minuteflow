@@ -283,7 +283,7 @@ function buildResendEmail(data: ResendEmailData): string {
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(s.amount)}</td>
           </tr>`).join("")
             : `<tr>
-            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Hourly Rate</td>
+            <td style="padding: 6px 0; font-size: 12px; color: #6b5e52;">Time-based Rate</td>
             <td style="padding: 6px 0; font-size: 12px; color: #3d2b1f; text-align: right; font-weight: 500;">${formatCurrency(payRate)}</td>
           </tr>`}
           <tr>

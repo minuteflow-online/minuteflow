@@ -635,7 +635,7 @@ export default function ProductivityCalendarPage() {
                     {(["assigned", "fixed"] as const).map((s) => (
                       <label key={s} className="flex items-center gap-1 text-[11px] text-espresso">
                         <input type="checkbox" checked={sourceFilter.has(s)} onChange={() => toggleInSet(sourceFilter, setSourceFilter, s)} />
-                        {s === "assigned" ? "Assignment Task" : "Fixed Pay Task"}
+                        {s === "assigned" ? "Assignment Task" : "Output Based Task"}
                       </label>
                     ))}
                   </div>

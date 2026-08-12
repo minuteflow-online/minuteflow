@@ -555,7 +555,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
   if (!canViewPage) {
     return (
       <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
-        Fixed pay tasks are not enabled for your account.
+        Output Based tasks are not enabled for your account.
       </div>
     );
   }
@@ -566,8 +566,8 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
         <div className="border-b border-parchment px-5 py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
-              <h2 className="text-lg font-bold text-espresso">Fixed Pay Tasks</h2>
-              <p className="text-xs text-stone">Your fixed-pay tasks and claims.</p>
+              <h2 className="text-lg font-bold text-espresso">Output Based Tasks</h2>
+              <p className="text-xs text-stone">Your output-based tasks and claims.</p>
             </div>
 
             <button
@@ -659,7 +659,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
             </div>
           ) : filteredTasks.length === 0 ? (
             <div className="rounded-xl border border-dashed border-sand px-4 py-10 text-center text-sm text-stone">
-              No fixed pay tasks found.
+              No Output Based tasks found.
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
@@ -866,7 +866,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
               ? `Task #${selectedTask.id}`
               : panelMode === "edit"
                 ? "Update this task before it's reviewed."
-                : "Create a task for the fixed-pay pool."
+                : "Create a task for the Output Based pool."
           }
           onClose={closePanel}
           footer={
@@ -929,7 +929,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                             createMode === "hourly" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
                           }`}
                         >
-                          Hourly Task
+                          Time-based Task
                         </button>
                         <button
                           type="button"
@@ -938,7 +938,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
                             createMode === "fixed_pay" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
                           }`}
                         >
-                          Fixed-Pay Task
+                          Output Based Task
                         </button>
                       </div>
                     </div>
@@ -946,8 +946,8 @@ export default function FixedPayTasksPanel({ refreshKey = 0, onSwitchToHourly }:
 
                   {panelMode === "create" && isHybrid && createMode === "hourly" ? (
                     <div className="rounded-xl border border-sand bg-parchment/20 p-4">
-                      <p className="text-[13px] text-espresso">Hourly tasks are created from the Task List.</p>
-                      <p className="mt-1 text-[11px] text-stone">Head over to My Tasks to log or submit an hourly task.</p>
+                      <p className="text-[13px] text-espresso">Time-based tasks are created from the Task List.</p>
+                      <p className="mt-1 text-[11px] text-stone">Head over to My Tasks to log or submit a time-based task.</p>
                       <button
                         type="button"
                         onClick={() => {

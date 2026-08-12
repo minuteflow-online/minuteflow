@@ -418,8 +418,8 @@ export default function TaskForm({
             onChange={(e) => setPayType(e.target.value as "hourly" | "fixed")}
             className="rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
           >
-            <option value="hourly">Hourly</option>
-            <option value="fixed">Fixed Pay</option>
+            <option value="hourly">Time-based</option>
+            <option value="fixed">Output Based</option>
           </select>
         </div>
         <label className="mt-5 flex items-center gap-1.5 text-[11px] font-semibold text-espresso">

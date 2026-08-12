@@ -85,7 +85,7 @@ function getCategoryTag(category: string): { bg: string; text: string } {
 }
 
 function formatDuration(ms: number, billingType?: string): string {
-  if (billingType === "fixed") return "Fixed";
+  if (billingType === "fixed") return "Output Based";
   if (ms <= 0) return "0:00";
   const totalMinutes = Math.floor(ms / 60000);
   const hours = Math.floor(totalMinutes / 60);
@@ -1224,12 +1224,12 @@ export default function ActivityLog({
             <div className="flex items-center gap-1.5">
               <span className="inline-block w-2 h-2 rounded-full bg-sage"></span>
               <span className="text-[11px] font-semibold text-espresso">{summary.hourlyCount}</span>
-              <span className="text-[10px] text-bark">Hourly</span>
+              <span className="text-[10px] text-bark">Time-based</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="inline-block w-2 h-2 rounded-full bg-slate-blue"></span>
               <span className="text-[11px] font-semibold text-espresso">{summary.fixedCount}</span>
-              <span className="text-[10px] text-bark">Fixed</span>
+              <span className="text-[10px] text-bark">Output Based</span>
             </div>
             <div className="w-px h-4 bg-sand/80 self-center"></div>
             <div className="flex items-center gap-1.5">

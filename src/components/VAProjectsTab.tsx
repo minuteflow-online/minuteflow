@@ -1278,8 +1278,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                                     onChange={(e) => setEditSubForm((prev) => ({ ...prev, pay_type: e.target.value }))}
                                     className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
                                   >
-                                    <option value="hourly">Hourly</option>
-                                    <option value="fixed_pay">Fixed Pay</option>
+                                    <option value="hourly">Time-based</option>
+                                    <option value="fixed_pay">Output Based</option>
                                   </select>
                                 </div>
                               </div>
@@ -1520,8 +1520,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         onChange={(e) => setAddForm((prev) => ({ ...prev, pay_type: e.target.value }))}
                         className="w-full rounded-lg border border-sand px-2 py-1.5 text-[13px] outline-none focus:border-terracotta bg-white"
                       >
-                        <option value="hourly">Hourly</option>
-                        <option value="fixed_pay">Fixed Pay</option>
+                        <option value="hourly">Time-based</option>
+                        <option value="fixed_pay">Output Based</option>
                       </select>
                     </div>
                   </div>

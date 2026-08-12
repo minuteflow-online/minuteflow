@@ -2044,7 +2044,7 @@ export default function TaskListPage() {
                   onClick={() => { setActiveView("my_tasks"); if (canShowHourlyPool) void fetchHourlyPool(); }}
                   className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "my_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                 >
-                  Hourly Task
+                  Time-based Task
                 </button>
                 {canShowAvailableTasks && (
                   <button
@@ -2052,7 +2052,7 @@ export default function TaskListPage() {
                     onClick={() => setActiveView("available_tasks")}
                     className={`rounded-md px-3 py-1.5 transition-colors ${activeView === "available_tasks" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
                   >
-                    Fixed Pay Tasks
+                    Output Based Tasks
                   </button>
                 )}
                 {!isPerTaskVa && (

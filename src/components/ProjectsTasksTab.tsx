@@ -1318,14 +1318,14 @@ export default function ProjectsTasksTab({ timezone = "UTC" }: { timezone?: stri
                     onClick={() => setNewTaskBillingType("hourly")}
                     className={`px-2 py-0.5 rounded-full text-[10px] font-semibold cursor-pointer transition-colors ${newTaskBillingType === "hourly" ? "bg-sage text-white" : "bg-gray-100 text-stone hover:bg-gray-200"}`}
                   >
-                    Hourly
+                    Time-based
                   </button>
                   <button
                     type="button"
                     onClick={() => setNewTaskBillingType("fixed")}
                     className={`px-2 py-0.5 rounded-full text-[10px] font-semibold cursor-pointer transition-colors ${newTaskBillingType === "fixed" ? "bg-terracotta text-white" : "bg-gray-100 text-stone hover:bg-gray-200"}`}
                   >
-                    Fixed
+                    Output Based
                   </button>
                 </div>
                 <input
@@ -1868,7 +1868,7 @@ export default function ProjectsTasksTab({ timezone = "UTC" }: { timezone?: stri
                         <span className="flex-1 text-espresso truncate">{a.task_library?.task_name ?? "Unknown"}</span>
                         {/* Billing badge */}
                         <span className={`shrink-0 text-[9px] px-1 py-0.5 rounded-full font-semibold ${effectiveBilling === "fixed" ? "bg-terracotta-soft text-terracotta" : "bg-gray-100 text-stone"}`}>
-                          {effectiveBilling === "fixed" ? (effectiveRate ? `$${effectiveRate}` : "Fixed") : "Hourly"}
+                          {effectiveBilling === "fixed" ? (effectiveRate ? `$${effectiveRate}` : "Output Based") : "Time-based"}
                         </span>
                         {/* Inline rate override */}
                         <input
@@ -1904,8 +1904,8 @@ export default function ProjectsTasksTab({ timezone = "UTC" }: { timezone?: stri
                           className="rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none bg-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                         >
                           <option value="">Inherit</option>
-                          <option value="hourly">Hourly</option>
-                          <option value="fixed">Fixed</option>
+                          <option value="hourly">Time-based</option>
+                          <option value="fixed">Output Based</option>
                         </select>
                         <button
                           onClick={() => handleUnassignTask(a.id)}
@@ -2147,8 +2147,8 @@ export default function ProjectsTasksTab({ timezone = "UTC" }: { timezone?: stri
                                         onChange={(e) => handleUpdateVAProjectRate(projAssignment.id, e.target.value)}
                                         className="rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none bg-white cursor-pointer"
                                       >
-                                        <option value="hourly">Hourly</option>
-                                        <option value="fixed">Fixed</option>
+                                        <option value="hourly">Time-based</option>
+                                        <option value="fixed">Output Based</option>
                                       </select>
                                       <input
                                         type="text"
@@ -2198,8 +2198,8 @@ export default function ProjectsTasksTab({ timezone = "UTC" }: { timezone?: stri
                                             onChange={(e) => handleUpdateVATaskRate(ta.id, e.target.value)}
                                             className="rounded border border-sand px-1 py-0.5 text-[10px] text-espresso outline-none bg-white cursor-pointer"
                                           >
-                                            <option value="hourly">Hourly</option>
-                                            <option value="fixed">Fixed</option>
+                                            <option value="hourly">Time-based</option>
+                                            <option value="fixed">Output Based</option>
                                           </select>
                                           <input
                                             type="text"
