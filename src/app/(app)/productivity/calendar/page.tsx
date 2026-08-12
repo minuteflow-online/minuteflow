@@ -22,7 +22,28 @@ import {
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 
-type TeamMember = { id: string; full_name: string; username: string; role: string };
+type TeamMember = {
+  id: string;
+  full_name: string;
+  username: string;
+  role: string;
+  position?: string | null;
+  pay_rate_type?: string | null;
+  can_see_available_tasks?: boolean | null;
+};
+
+// Same derivation as FixedPayTasksPanel's isHybrid/isPerTaskVa: position
+// "Part-time VA"/"Full-time VA" is the hourly-labeled default, "Per Task VA"
+// (or pay_rate_type "per_task") is fixed-pay-only, and the "Available Tasks"
+// toggle in Team management is what actually makes an hourly-labeled VA
+// hybrid (able to pick up Output Based work too).
+function taskModesForMember(member: TeamMember | undefined): { canTimeBased: boolean; canOutputBased: boolean } {
+  if (!member) return { canTimeBased: true, canOutputBased: false };
+  const isPerTaskVa = member.position === "Per Task VA" || member.pay_rate_type === "per_task";
+  if (isPerTaskVa) return { canTimeBased: false, canOutputBased: true };
+  const isHybrid = (member.position === "Part-time VA" || member.position === "Full-time VA") && Boolean(member.can_see_available_tasks);
+  return { canTimeBased: true, canOutputBased: isHybrid };
+}
 
 type DueItem = {
   id: string;
@@ -118,6 +139,7 @@ export default function ProductivityCalendarPage() {
   const [formDate, setFormDate] = useState<string>(todayStr);
   const [formStart, setFormStart] = useState("09:00");
   const [formEnd, setFormEnd] = useState("10:00");
+  const [taskMode, setTaskMode] = useState<"time_based" | "output_based">("time_based");
 
   // Keep selectedDate at "today" until org timezone resolves
   useEffect(() => {
@@ -428,6 +450,8 @@ export default function ProductivityCalendarPage() {
     setFormDate(dateStr);
     setFormStart(`${String(hour).padStart(2, "0")}:00`);
     setFormEnd(`${String(Math.min(hour + 1, 23)).padStart(2, "0")}:00`);
+    const modes = taskModesForMember(teamMembers.find((m) => m.id === dayUserId));
+    setTaskMode(modes.canTimeBased ? "time_based" : "output_based");
     setShowForm(true);
   };
 
@@ -1127,8 +1151,31 @@ export default function ProductivityCalendarPage() {
                   Remove from Calendar
                 </button>
               )}
+              {!editingBlockId && (() => {
+                const modes = taskModesForMember(teamMembers.find((m) => m.id === dayUserId));
+                if (!modes.canTimeBased || !modes.canOutputBased) return null;
+                return (
+                  <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setTaskMode("time_based")}
+                      className={`flex-1 px-3 py-1.5 transition-colors ${taskMode === "time_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
+                    >
+                      Time-based
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTaskMode("output_based")}
+                      className={`flex-1 px-3 py-1.5 transition-colors ${taskMode === "output_based" ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"}`}
+                    >
+                      Output Based
+                    </button>
+                  </div>
+                );
+              })()}
               <TaskEditor
-                mode="time_based"
+                key={editingBlockId ? "edit" : taskMode}
+                mode={editingBlockId ? "time_based" : taskMode}
                 editingTaskId={editingBlockId}
                 initialTask={editingTaskFull}
                 currentUserId={userId!}
@@ -1142,6 +1189,7 @@ export default function ProductivityCalendarPage() {
                 onSaved={() => {
                   setShowForm(false);
                   void refreshAfterScheduleChange();
+                  if (taskMode === "output_based") void fetchFixedItems();
                 }}
               />
             </div>
