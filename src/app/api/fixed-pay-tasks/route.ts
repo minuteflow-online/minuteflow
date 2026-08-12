@@ -11,7 +11,7 @@ const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "su
 // Cancelled, and Paid are review/payroll actions — admin only.
 const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted"]);
 const TASK_SELECT =
-  "id, task_name, account, category, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
+  "id, task_name, account, category, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -203,6 +203,7 @@ export async function POST(request: Request) {
       task_name: taskName,
       account: normalizeText(body.account),
       category: normalizeText(body.category),
+      project_id: normalizeText(body.project_id),
       rate,
       archived_at: null,
       deleted_at: null,
@@ -214,6 +215,7 @@ export async function POST(request: Request) {
       status,
       start_date: normalizeDate(body.start_date),
       due_date: normalizeDate(body.due_date),
+      end_date: normalizeDate(body.end_date),
       assigned_to: isAdminOrManager ? normalizeText(body.assigned_to) : null,
       assigned_by: isAdminOrManager ? normalizeText(body.assigned_by) : null,
       is_active: isAdminOrManager ? body.is_active !== false : true,

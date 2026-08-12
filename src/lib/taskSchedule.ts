@@ -8,6 +8,7 @@ export type RawTask = {
   account: string | null;
   due_date: string | null;
   start_date: string | null;
+  end_date: string | null;
   start_time: string | null;
   end_time: string | null;
   status: string;
@@ -169,6 +170,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
           account: (nested.account as string | null) ?? null,
           due_date: (nested.due_date as string | null) ?? null,
           start_date: (nested.start_date as string | null) ?? null,
+          end_date: (nested.end_date as string | null) ?? null,
           start_time: (nested.start_time as string | null) ?? null,
           end_time: (nested.end_time as string | null) ?? null,
           status: row.status as string,
@@ -185,6 +187,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
         account: (row.account as string | null) ?? null,
         due_date: (row.due_date as string | null) ?? null,
         start_date: (row.start_date as string | null) ?? null,
+        end_date: (row.end_date as string | null) ?? null,
         start_time: (row.start_time as string | null) ?? null,
         end_time: (row.end_time as string | null) ?? null,
         status: mine?.status || assignees[0]?.status || "on_queue",

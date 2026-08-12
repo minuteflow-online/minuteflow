@@ -58,7 +58,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, due_date, start_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, due_date, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -67,6 +67,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     task_notes?: string;
     due_date?: string;
     start_date?: string;
+    end_date?: string;
     start_time?: string | null;
     end_time?: string | null;
     assigned_by?: string | null;
@@ -91,6 +92,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (task_notes !== undefined) updatePayload.task_notes = task_notes;
   if (due_date !== undefined) updatePayload.due_date = due_date;
   if (start_date !== undefined) updatePayload.start_date = start_date;
+  if (end_date !== undefined) updatePayload.end_date = end_date;
   if (start_time !== undefined) updatePayload.start_time = start_time;
   if (end_time !== undefined) updatePayload.end_time = end_time;
   if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
@@ -281,6 +283,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_notes,
     due_date,
     start_date,
+    end_date,
     start_time,
     end_time,
     assigned_by,
@@ -302,6 +305,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_notes?: string | null;
     due_date?: string | null;
     start_date?: string | null;
+    end_date?: string | null;
     start_time?: string | null;
     end_time?: string | null;
     assigned_by?: string | null;
@@ -341,6 +345,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_notes !== undefined ||
     due_date !== undefined ||
     start_date !== undefined ||
+    end_date !== undefined ||
     assigned_by !== undefined ||
     instructions !== undefined ||
     instructions_locked !== undefined;
@@ -690,6 +695,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (task_notes !== undefined) updatePayload.task_notes = task_notes;
     if (due_date !== undefined) updatePayload.due_date = due_date;
     if (start_date !== undefined) updatePayload.start_date = start_date;
+    if (end_date !== undefined) updatePayload.end_date = end_date;
     if (start_time !== undefined) updatePayload.start_time = start_time;
     if (end_time !== undefined) updatePayload.end_time = end_time;
     if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;

@@ -525,6 +525,7 @@ export interface AssignedTask {
   task_notes: string | null;
   due_date: string | null;
   start_date: string | null;
+  end_date: string | null;
   archived_at: string | null;
   deleted_at: string | null;
   assigned_by: string | null;
@@ -595,6 +596,8 @@ export interface FixedPayTaskWithClaimer {
   status: "open" | "pending" | "on_queue" | "in_progress" | "submitted" | "revision_needed" | "completed" | "cancelled" | "paid";
   start_date: string | null;
   due_date: string | null;
+  end_date: string | null;
+  project_id: string | null;
   assigned_to: string | null;
   assigned_by: string | null;
   claimed_by: string | null;
