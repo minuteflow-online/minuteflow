@@ -1091,9 +1091,26 @@ export default function ProductivityCalendarPage() {
                           </p>
                           <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>
                           {task.todos.length > 0 && (
-                            <p className="truncate text-[9px] opacity-70">
-                              {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}: {task.todos.map((t) => t.text).join(", ")}
-                            </p>
+                            // Short blocks (~1hr) only have room for one compact line;
+                            // taller blocks (multi-hour spans) can spread each to-do
+                            // onto its own line — clipped by the block's own overflow
+                            // once it runs out of room, so it never spills past the box.
+                            height >= 80 ? (
+                              <div className="mt-0.5">
+                                <p className="truncate text-[9px] font-semibold opacity-70">
+                                  {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}
+                                </p>
+                                {task.todos.map((t) => (
+                                  <p key={t.id} className="truncate text-[9px] opacity-70 leading-tight">
+                                    · {t.text}
+                                  </p>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="truncate text-[9px] opacity-70">
+                                {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}: {task.todos.map((t) => t.text).join(", ")}
+                              </p>
+                            )
                           )}
                         </button>
                       );
