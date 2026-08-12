@@ -196,26 +196,21 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   }, [linkedProjectId]);
 
   // To-do checklist only exists for assigned_tasks (task_todos FKs to
-  // assigned_tasks.id, not fixed_pay_tasks.id) — output_based tasks keep the
-  // plain Client Detail textarea instead. Available on create too, held as
-  // local pendingTodoTexts until the task actually has an id, then flushed
-  // to real rows right after creation (see handleSubmit).
+  // assigned_tasks.id, not fixed_pay_tasks.id) — output_based tasks don't get
+  // one. It's purely internal record-keeping (per-item time tracking, shows
+  // in internal reports) and coexists with Client Detail rather than
+  // replacing it — Client Detail alone is what carries over to the client
+  // memo/invoice. Available on create too, held as local pendingTodoTexts
+  // until the task actually has an id, then flushed to real rows right
+  // after creation (see handleSubmit).
   const supportsTodos = mode === "time_based";
-  // Existing tasks with no to-do items yet keep showing the plain free-text
-  // Client Detail (which may hold real legacy text) instead of an empty
-  // checklist — checklistMode flips on once todos load with items, or the
-  // user explicitly starts one via "Switch to a to-do checklist".
-  const [checklistMode, setChecklistMode] = useState(false);
   const [pendingTodoTexts, setPendingTodoTexts] = useState<string[]>([]);
 
   useEffect(() => {
     if (!supportsTodos || !editingTaskId) return;
     setTodosLoading(true);
     fetchTodos(editingTaskId)
-      .then((loaded) => {
-        setTodos(loaded);
-        if (loaded.length > 0) setChecklistMode(true);
-      })
+      .then((loaded) => setTodos(loaded))
       .finally(() => setTodosLoading(false));
   }, [supportsTodos, editingTaskId]);
 
@@ -391,7 +386,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
           task = data.task;
 
-          if (checklistMode && pendingTodoTexts.length > 0) {
+          if (pendingTodoTexts.length > 0) {
             for (const text of pendingTodoTexts) {
               await addTodo(task.id, text);
             }
@@ -442,7 +437,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
     assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
-    checklistMode, pendingTodoTexts,
+    pendingTodoTexts,
   ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
@@ -614,13 +609,27 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           </div>
         )}
 
-        {supportsTodos && checklistMode ? (
+        <div>
+          <div className="mb-1 flex items-center gap-1.5">
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-walnut">Client Detail</label>
+            <ClientMemoFormatTooltip />
+          </div>
+          <textarea
+            value={taskDetail}
+            onChange={(e) => setTaskDetail(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
+            rows={2}
+            placeholder="Client-visible memo"
+            className={`${inputClass} resize-none`}
+          />
+          <p className="mt-1 text-[10px] text-stone">
+            {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(taskDetail))} words remaining — this is what carries over to the client invoice/report.
+          </p>
+        </div>
+
+        {supportsTodos && (
           <div>
-            <div className="mb-1 flex items-center gap-1.5">
-              <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">To-Do List</label>
-              <ClientMemoFormatTooltip />
-            </div>
-            <p className="mb-1.5 text-[10px] text-stone">Each item still composes into the client memo — same Who/What/Where/Why/Status format applies per item.</p>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">To-Do List</label>
+            <p className="mb-1.5 text-[10px] text-stone">Internal only — tracks sub-steps and time per item, shows in internal reports. Doesn&apos;t affect the client memo above.</p>
             {!isEditing && (
               <p className="mb-1.5 text-[10px] text-stone">These save with the task once you click Create Task.</p>
             )}
@@ -674,32 +683,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   </button>
                 </div>
               </div>
-            )}
-          </div>
-        ) : (
-          <div>
-            <div className="mb-1 flex items-center gap-1.5">
-              <label className="block text-[11px] font-semibold uppercase tracking-wide text-walnut">Client Detail</label>
-              <ClientMemoFormatTooltip />
-            </div>
-            <textarea
-              value={taskDetail}
-              onChange={(e) => setTaskDetail(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
-              rows={2}
-              placeholder="Client-visible memo"
-              className={`${inputClass} resize-none`}
-            />
-            <p className="mt-1 text-[10px] text-stone">
-              {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(taskDetail))} words remaining
-            </p>
-            {supportsTodos && (
-              <button
-                type="button"
-                onClick={() => setChecklistMode(true)}
-                className="mt-1 text-[11px] font-semibold text-terracotta hover:underline"
-              >
-                Switch to a to-do checklist
-              </button>
             )}
           </div>
         )}

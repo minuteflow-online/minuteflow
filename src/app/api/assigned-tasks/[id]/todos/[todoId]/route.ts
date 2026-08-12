@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -23,37 +23,6 @@ async function canAccessTodos(supabase: Awaited<ReturnType<typeof createClient>>
   }
 
   return Boolean(data);
-}
-
-// Same re-composition as the list route — kept in sync so editing an
-// individual to-do's text or removing one updates the parent task's memo too.
-async function syncParentTaskDetail(admin: Pick<SupabaseClient, "from">, taskId: string) {
-  const { data: todos } = await admin
-    .from("task_todos")
-    .select("text")
-    .eq("assigned_task_id", taskId)
-    .order("sort_order", { ascending: true });
-
-  const composed = (todos ?? []).length > 0
-    ? (todos ?? []).map((t) => `- ${t.text}`).join("\n")
-    : null;
-
-  if (composed === null) return;
-
-  await admin.from("assigned_tasks").update({ task_detail: composed }).eq("id", taskId);
-
-  const { data: assigneeRows } = await admin
-    .from("assigned_task_assignees")
-    .select("log_id")
-    .eq("assigned_task_id", taskId);
-
-  const logIds = (assigneeRows ?? [])
-    .map((r: { log_id: number | null }) => r.log_id)
-    .filter((lid): lid is number => typeof lid === "number");
-
-  if (logIds.length > 0) {
-    await admin.from("time_logs").update({ client_memo: composed }).in("id", logIds);
-  }
 }
 
 /**
@@ -112,10 +81,6 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  if ("text" in updates) {
-    await syncParentTaskDetail(admin, id);
-  }
-
   return Response.json({ todo });
 }
 
@@ -156,8 +121,6 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
     .eq("assigned_task_id", id);
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
-
-  await syncParentTaskDetail(admin, id);
 
   return new Response(null, { status: 204 });
 }

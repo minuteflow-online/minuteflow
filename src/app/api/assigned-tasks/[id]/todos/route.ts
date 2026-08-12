@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -23,42 +23,6 @@ async function canAccessTodos(supabase: Awaited<ReturnType<typeof createClient>>
   }
 
   return Boolean(data);
-}
-
-// Re-composes the parent task's task_detail as a "- item" bullet list from
-// its to-dos, and syncs that same string onto client_memo for any linked
-// time_logs — same sync path already used when task_detail is edited
-// directly (see [id]/route.ts). Called after every todos mutation so the
-// parent task's memo always reflects its current checklist.
-async function syncParentTaskDetail(admin: Pick<SupabaseClient, "from">, taskId: string) {
-  const { data: todos } = await admin
-    .from("task_todos")
-    .select("text")
-    .eq("assigned_task_id", taskId)
-    .order("sort_order", { ascending: true });
-
-  const composed = (todos ?? []).length > 0
-    ? (todos ?? []).map((t) => `- ${t.text}`).join("\n")
-    : null;
-
-  // If there are no to-dos left, leave task_detail alone — it may still
-  // hold a legacy free-text memo that predates any checklist on this task.
-  if (composed === null) return;
-
-  await admin.from("assigned_tasks").update({ task_detail: composed }).eq("id", taskId);
-
-  const { data: assigneeRows } = await admin
-    .from("assigned_task_assignees")
-    .select("log_id")
-    .eq("assigned_task_id", taskId);
-
-  const logIds = (assigneeRows ?? [])
-    .map((r: { log_id: number | null }) => r.log_id)
-    .filter((lid): lid is number => typeof lid === "number");
-
-  if (logIds.length > 0) {
-    await admin.from("time_logs").update({ client_memo: composed }).in("id", logIds);
-  }
 }
 
 /**
@@ -161,8 +125,6 @@ export async function POST(request: Request, { params }: RouteContext) {
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
-
-  await syncParentTaskDetail(admin, id);
 
   return Response.json({ todo }, { status: 201 });
 }
