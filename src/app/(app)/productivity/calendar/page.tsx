@@ -1081,22 +1081,24 @@ export default function ProductivityCalendarPage() {
                             width: `calc((100% - 4rem - 0.5rem) / ${cols} - 4px)`,
                           }}
                         >
-                          <p className="truncate text-[11px] font-semibold">
-                            {label && (
-                              <span className="mr-1 rounded bg-black/10 px-1 text-[9px] font-bold uppercase tracking-wide">
-                                {label}
-                              </span>
-                            )}
-                            {task.task_name}
-                          </p>
-                          <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>
-                          {task.todos.length > 0 && (
-                            // Short blocks (~1hr) only have room for one compact line;
-                            // taller blocks (multi-hour spans) can spread each to-do
-                            // onto its own line — clipped by the block's own overflow
-                            // once it runs out of room, so it never spills past the box.
-                            height >= 80 ? (
-                              <div className="mt-0.5">
+                          <div className="flex h-full items-start gap-2">
+                            <div className="min-w-0 shrink-0 max-w-[55%]">
+                              <p className="truncate text-[11px] font-semibold">
+                                {label && (
+                                  <span className="mr-1 rounded bg-black/10 px-1 text-[9px] font-bold uppercase tracking-wide">
+                                    {label}
+                                  </span>
+                                )}
+                                {task.task_name}
+                              </p>
+                              <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>
+                            </div>
+                            {task.todos.length > 0 && (
+                              // Runs alongside the title/time instead of stacking below
+                              // it — a 1hr block is usually wide, not tall, so the to-dos
+                              // get the block's full height to themselves here. Whatever
+                              // doesn't fit is clipped by the block's own overflow.
+                              <div className="min-w-0 flex-1 border-l border-black/10 pl-2">
                                 <p className="truncate text-[9px] font-semibold opacity-70">
                                   {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}
                                 </p>
@@ -1106,12 +1108,8 @@ export default function ProductivityCalendarPage() {
                                   </p>
                                 ))}
                               </div>
-                            ) : (
-                              <p className="truncate text-[9px] opacity-70">
-                                {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}: {task.todos.map((t) => t.text).join(", ")}
-                              </p>
-                            )
-                          )}
+                            )}
+                          </div>
                         </button>
                       );
                     });
