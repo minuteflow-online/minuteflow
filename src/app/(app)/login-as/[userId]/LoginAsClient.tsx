@@ -5,6 +5,7 @@ import SessionBanner from "@/components/SessionBanner";
 import TaskEntryForm from "@/components/TaskEntryForm";
 import ProjectSidebar from "@/components/ProjectSidebar";
 import ActivityLog from "@/components/ActivityLog";
+import BudgetWidget from "@/components/BudgetWidget";
 import type { Profile, Session, TimeLog, TaskScreenshot } from "@/types/database";
 
 // ─── Helpers ───────────────────────────────────────────────
@@ -219,20 +220,25 @@ export default function LoginAsClient({
             </div>
           </div>
 
-          {/* My Assignments — locked in preview */}
-          <div className="rounded-xl border border-sand bg-white/60 p-3 flex flex-col items-center justify-center text-center min-h-[120px]">
-            <svg
-              className="h-6 w-6 text-stone/40 mb-1.5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-              <path d="M7 11V7a5 5 0 0110 0v4" />
-            </svg>
-            <p className="text-[11px] text-stone font-medium">My Assignments</p>
-            <p className="text-[10px] text-stone/60 mt-0.5">Locked in preview</p>
+          {/* Daily Budget — live, real data (VAs see this on their own dashboard) */}
+          <div className="space-y-3">
+            <BudgetWidget currentUserId={vaProfile.id} />
+
+            {/* My Assignments — locked in preview */}
+            <div className="rounded-xl border border-sand bg-white/60 p-3 flex flex-col items-center justify-center text-center min-h-[120px]">
+              <svg
+                className="h-6 w-6 text-stone/40 mb-1.5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0110 0v4" />
+              </svg>
+              <p className="text-[11px] text-stone font-medium">My Assignments</p>
+              <p className="text-[10px] text-stone/60 mt-0.5">Locked in preview</p>
+            </div>
           </div>
 
           {/* Quick Pick Sidebar — loads live org data, buttons are no-ops */}

@@ -68,6 +68,7 @@ export default function AvailableTasksWidget({
   currentUserId,
   refreshKey = 0,
   startCollapsed = false,
+  bare = false,
 }: {
   onClaimed?: () => void;
   canSeeFixedPay?: boolean;
@@ -78,6 +79,8 @@ export default function AvailableTasksWidget({
   /** Initial collapsed state of the whole panel — VAs get it collapsed by
    *  default, admins expanded. User can still toggle it after mount. */
   startCollapsed?: boolean;
+  /** Skip the outer card/header/collapse chrome — for embedding inside a shared tabbed container that already provides its own box and tab strip. */
+  bare?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [viewMode, setViewMode] = useState<"fixed_pay" | "hourly">(
@@ -322,28 +325,30 @@ export default function AvailableTasksWidget({
   const totalCount = viewMode === "fixed_pay" ? pendingAssigned.length + openTasks.length : hourlyTasks.length;
 
   return (
-    <div className="rounded-xl border border-amber/30 bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto">
-      <button
-        type="button"
-        onClick={() => setCollapsed((prev) => !prev)}
-        className="sticky top-0 z-10 flex w-full cursor-pointer items-center gap-1.5 rounded-lg border border-amber/30 bg-amber-soft px-3 py-2.5 text-left transition-colors hover:bg-amber-soft/70"
-      >
-        <svg className="h-3.5 w-3.5 shrink-0 text-amber-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M12 2L2 7l10 5 10-5-10-5z" />
-          <path d="M2 17l10 5 10-5" />
-          <path d="M2 12l10 5 10-5" />
-        </svg>
-        <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide">
-          Available Tasks <span className="text-amber-700 font-normal normal-case">({totalCount})</span>
-        </h3>
-        <span className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber/40 bg-white text-amber-700 transition-colors hover:bg-amber-100">
-          <svg className={`h-4 w-4 transition-transform ${collapsed ? "" : "rotate-180"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M6 9l6 6 6-6" />
+    <div className={bare ? "space-y-2" : "rounded-xl border border-amber/30 bg-white p-3 space-y-2 max-h-[75vh] overflow-y-auto"}>
+      {!bare && (
+        <button
+          type="button"
+          onClick={() => setCollapsed((prev) => !prev)}
+          className="sticky top-0 z-10 flex w-full cursor-pointer items-center gap-1.5 rounded-lg border border-amber/30 bg-amber-soft px-3 py-2.5 text-left transition-colors hover:bg-amber-soft/70"
+        >
+          <svg className="h-3.5 w-3.5 shrink-0 text-amber-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
           </svg>
-        </span>
-      </button>
+          <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide">
+            Available Tasks <span className="text-amber-700 font-normal normal-case">({totalCount})</span>
+          </h3>
+          <span className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-amber/40 bg-white text-amber-700 transition-colors hover:bg-amber-100">
+            <svg className={`h-4 w-4 transition-transform ${collapsed ? "" : "rotate-180"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </span>
+        </button>
+      )}
 
-      {!collapsed && (
+      {(bare || !collapsed) && (
       <>
       {!fixedPayOnly && (
         <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-xs font-semibold">

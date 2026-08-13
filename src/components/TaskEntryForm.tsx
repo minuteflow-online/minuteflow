@@ -89,11 +89,13 @@ interface TaskEntryFormProps {
   sessionState?: "idle" | "clocked-in" | "on-break";
   previewMode?: boolean;
   activeTaskClientMemo?: string;
+  /** Skip the outer card/header chrome — for embedding inside a shared tabbed container that already provides its own box and tab strip. */
+  bare?: boolean;
 }
 
 type WizardStep = "form" | "close-old" | "log-fixed";
 
-export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle", previewMode = false, activeTaskClientMemo = "" }: TaskEntryFormProps) {
+export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle", previewMode = false, activeTaskClientMemo = "", bare = false }: TaskEntryFormProps) {
   const isAdmin = role === "admin" || role === "manager";
 
   // ─── Form Fields ───
@@ -473,16 +475,18 @@ export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role
 
   return (
     <>
-      <div className="bg-white border border-sand rounded-xl" data-task-form>
-        <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
-          <h3 className="text-sm font-bold text-espresso">Log a Task</h3>
-          {isAdmin && formStartTimeRef.current && formFillElapsed > 0 && (
-            <span className="text-[11px] font-semibold text-walnut bg-walnut/10 px-2 py-0.5 rounded-full tabular-nums">
-              ⏱ {Math.floor(formFillElapsed / 60)}:{(formFillElapsed % 60).toString().padStart(2, "0")} wizard time
-            </span>
-          )}
-        </div>
-        <div className="p-[18px_20px]">
+      <div className={bare ? "" : "bg-white border border-sand rounded-xl"} data-task-form>
+        {!bare && (
+          <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
+            <h3 className="text-sm font-bold text-espresso">Log a Task</h3>
+            {isAdmin && formStartTimeRef.current && formFillElapsed > 0 && (
+              <span className="text-[11px] font-semibold text-walnut bg-walnut/10 px-2 py-0.5 rounded-full tabular-nums">
+                ⏱ {Math.floor(formFillElapsed / 60)}:{(formFillElapsed % 60).toString().padStart(2, "0")} wizard time
+              </span>
+            )}
+          </div>
+        )}
+        <div className={bare ? "" : "p-[18px_20px]"}>
 
           {/* Non-billable info for Personal/Break */}
           {isPersonalOrBreak && (

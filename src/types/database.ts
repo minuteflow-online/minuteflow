@@ -36,6 +36,34 @@ export interface Profile {
   employment_type: string | null;
   requires_extension: boolean;
   extension_popup_shown: boolean;
+  // Daily/monthly budget. Time-based VAs (position/pay_rate_type != per_task)
+  // are tracked in hours: shift_hours is the direct daily value, or
+  // shift_start/shift_end give a time range whose span is used when
+  // shift_hours is null; monthly_budget_limit is their monthly hours cap.
+  // Output Based VAs (per-task) are tracked in dollars instead: daily_budget_limit
+  // is their daily $ cap, monthly_budget_limit their monthly $ cap (same column,
+  // unit follows from the VA's type — see isOutputBasedProfile in lib/budget.ts).
+  // Null limits mean no cap is set for that VA.
+  shift_hours: number | null;
+  shift_start: string | null;
+  shift_end: string | null;
+  daily_budget_unit: 'hours' | 'dollars' | null;
+  daily_budget_limit: number | null;
+  weekly_budget_limit: number | null;
+  monthly_budget_limit: number | null;
+}
+
+export interface BudgetRequest {
+  id: number;
+  va_id: string;
+  amount: number;
+  unit: 'hours' | 'dollars';
+  reason: string | null;
+  status: 'pending' | 'approved' | 'denied';
+  reviewed_by: string | null;
+  review_notes: string | null;
+  created_at: string;
+  reviewed_at: string | null;
 }
 
 export interface PayRateHistory {
