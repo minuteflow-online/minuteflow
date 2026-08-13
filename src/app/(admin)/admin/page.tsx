@@ -40,6 +40,7 @@ import PaystubTab from "@/components/PaystubTab";
 import VaResourcesAdminTab from "@/components/VaResourcesAdminTab";
 import VaFeedbackAdminTab from "@/components/VaFeedbackAdminTab";
 import VaRequestsAdminTab from "@/components/VaRequestsAdminTab";
+import BudgetRequestsAdminTab from "@/components/BudgetRequestsAdminTab";
 import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
 import VaTokensAdminTab from "@/components/VaTokensAdminTab";
 import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
@@ -1586,7 +1587,10 @@ export default function AdminPage() {
             <VaFeedbackAdminTab />
           )}
           {activeTab === "va_requests" && (
-            <VaRequestsAdminTab />
+            <div className="space-y-6">
+              <VaRequestsAdminTab />
+              <BudgetRequestsAdminTab />
+            </div>
           )}
           {activeTab === "va_reviews" && (
             <VaReviewsAdminTab />

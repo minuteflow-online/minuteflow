@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { PaymentAccountDetails } from "@/types/database";
+import { shiftHoursFromProfile } from "@/lib/budget";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,11 @@ type ExtendedProfile = {
   birthday: string | null;
   date_started: string | null;
   payment_accounts: PaymentAccountDetails | null;
+  pay_rate: number | null;
+  shift_hours: number | null;
+  shift_start: string | null;
+  shift_end: string | null;
+  daily_budget_unit: "hours" | "dollars" | null;
 };
 
 type ProfileMilestone = {
@@ -88,7 +94,7 @@ export default function TeamProfilePanel({ userId, isAdmin }: { userId: string; 
       supabase.auth.getUser(),
       supabase
         .from("profiles")
-        .select("id,full_name,username,department,position,phone,address,emergency_contact_name,emergency_contact_phone,birthday,date_started,payment_accounts")
+        .select("id,full_name,username,department,position,phone,address,emergency_contact_name,emergency_contact_phone,birthday,date_started,payment_accounts,pay_rate,shift_hours,shift_start,shift_end,daily_budget_unit")
         .eq("id", userId)
         .single(),
       supabase.from("profile_milestones").select("*").eq("user_id", userId).order("milestone_date", { ascending: false }),
@@ -136,6 +142,12 @@ export default function TeamProfilePanel({ userId, isAdmin }: { userId: string; 
         onRefresh={load}
       />
       <PaymentInfoSection
+        profile={profile}
+        userId={userId}
+        isAdmin={isAdmin}
+        onRefresh={load}
+      />
+      <ShiftBudgetSection
         profile={profile}
         userId={userId}
         isAdmin={isAdmin}
@@ -610,6 +622,165 @@ function PaymentInfoSection({
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Shift & Budget Section ─────────────────────────────────────────────────
+
+function ShiftBudgetSection({
+  profile,
+  userId,
+  isAdmin,
+  onRefresh,
+}: {
+  profile: ExtendedProfile | null;
+  userId: string;
+  isAdmin: boolean;
+  onRefresh: () => void;
+}) {
+  const supabase = createClient();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // "hours" = enter a direct shift length; "range" = enter start/end times.
+  const [mode, setMode] = useState<"hours" | "range">(
+    profile?.shift_start && profile?.shift_end ? "range" : "hours"
+  );
+  const [shiftHours, setShiftHours] = useState(profile?.shift_hours != null ? String(profile.shift_hours) : "");
+  const [shiftStart, setShiftStart] = useState(profile?.shift_start ?? "");
+  const [shiftEnd, setShiftEnd] = useState(profile?.shift_end ?? "");
+  const [unit, setUnit] = useState<"hours" | "dollars">(profile?.daily_budget_unit ?? "hours");
+
+  useEffect(() => {
+    setMode(profile?.shift_start && profile?.shift_end ? "range" : "hours");
+    setShiftHours(profile?.shift_hours != null ? String(profile.shift_hours) : "");
+    setShiftStart(profile?.shift_start ?? "");
+    setShiftEnd(profile?.shift_end ?? "");
+    setUnit(profile?.daily_budget_unit ?? "hours");
+  }, [profile]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    // Persist whichever input the admin used; clear the other so the two never
+    // disagree. shiftHoursFromProfile() prefers shift_hours, then the range.
+    const updates =
+      mode === "range"
+        ? { shift_hours: null, shift_start: shiftStart || null, shift_end: shiftEnd || null, daily_budget_unit: unit }
+        : { shift_hours: shiftHours.trim() ? Number(shiftHours) : null, shift_start: null, shift_end: null, daily_budget_unit: unit };
+    await supabase.from("profiles").update(updates).eq("id", userId);
+    setSaving(false);
+    setEditing(false);
+    onRefresh();
+  };
+
+  const displayHours = profile ? shiftHoursFromProfile(profile) : null;
+  const rate = profile?.pay_rate ?? null;
+
+  return (
+    <div className="rounded-xl border border-sand bg-white p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Shift &amp; Daily Budget</h3>
+        {isAdmin && !editing && (
+          <button
+            onClick={() => setEditing(true)}
+            className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="space-y-3">
+          <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-[11px] font-semibold">
+            <button
+              type="button"
+              onClick={() => setMode("hours")}
+              className={`rounded-md px-3 py-1 transition-colors ${mode === "hours" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+            >
+              Hours
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("range")}
+              className={`rounded-md px-3 py-1 transition-colors ${mode === "range" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+            >
+              Time Range
+            </button>
+          </div>
+
+          {mode === "hours" ? (
+            <div className="max-w-[180px]">
+              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Shift Hours / Day</p>
+              <input
+                type="number"
+                min="0"
+                step="0.25"
+                value={shiftHours}
+                onChange={(e) => setShiftHours(e.target.value)}
+                placeholder="e.g. 8"
+                className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 max-w-[320px]">
+              <div>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Shift Start</p>
+                <input type="time" value={shiftStart} onChange={(e) => setShiftStart(e.target.value)} className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white" />
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Shift End</p>
+                <input type="time" value={shiftEnd} onChange={(e) => setShiftEnd(e.target.value)} className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white" />
+              </div>
+            </div>
+          )}
+
+          <div className="max-w-[180px]">
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Budget Shown In</p>
+            <select value={unit} onChange={(e) => setUnit(e.target.value as "hours" | "dollars")} className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white">
+              <option value="hours">Hours</option>
+              <option value="dollars">Dollars</option>
+            </select>
+            {unit === "dollars" && rate == null && (
+              <p className="mt-1 text-[10px] text-terracotta">No pay rate set — dollar budget will read $0 until a rate is added.</p>
+            )}
+          </div>
+
+          <p className="text-[10px] text-stone">Leave the shift empty for no daily budget limit. VAs get a soft warning at 90% of their shift.</p>
+
+          <div className="flex gap-2 pt-1">
+            <button onClick={handleSave} disabled={saving} className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50">
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button onClick={() => setEditing(false)} className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Shift</p>
+            <p className="text-[13px] text-espresso mt-0.5">
+              {displayHours != null
+                ? profile?.shift_start && profile?.shift_end
+                  ? `${profile.shift_start}–${profile.shift_end} (${displayHours.toFixed(2)}h)`
+                  : `${displayHours.toFixed(2)}h / day`
+                : "No limit set"}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Daily Budget</p>
+            <p className="text-[13px] text-espresso mt-0.5">
+              {displayHours == null
+                ? "—"
+                : (profile?.daily_budget_unit ?? "hours") === "dollars"
+                ? `$${(displayHours * (rate ?? 0)).toFixed(2)} / day`
+                : `${displayHours.toFixed(2)} hours / day`}
+            </p>
           </div>
         </div>
       )}

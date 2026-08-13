@@ -384,10 +384,15 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
 
   // Mirrors the server-side check in the PATCH/DELETE routes: a VA may only
   // edit or delete a task they claimed, and only before it's been reviewed.
+  // Admins/managers can edit any fixed-pay/output-based task (the PATCH API
+  // already accepts their edits on any field/status via its admin path). VAs
+  // stay restricted to their own claimed task while it's still in a
+  // VA-editable status.
   const canEditSelectedTask = Boolean(
     selectedTask &&
-    (selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
-    VA_STATUS_OPTIONS.includes(selectedTask.status)
+    (isAdminOrManager ||
+      ((selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
+        VA_STATUS_OPTIONS.includes(selectedTask.status)))
   );
 
   if (profileLoading) {

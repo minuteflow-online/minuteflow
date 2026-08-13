@@ -36,6 +36,28 @@ export interface Profile {
   employment_type: string | null;
   requires_extension: boolean;
   extension_popup_shown: boolean;
+  // Daily shift / budget. shift_hours is the direct hours value; shift_start/
+  // shift_end are an optional time range whose span is used when shift_hours is
+  // null. daily_budget_unit controls whether the remaining budget is shown in
+  // hours or dollars (dollars = remaining hours × pay_rate). A null shift means
+  // the VA has no budget limit.
+  shift_hours: number | null;
+  shift_start: string | null;
+  shift_end: string | null;
+  daily_budget_unit: 'hours' | 'dollars' | null;
+}
+
+export interface BudgetRequest {
+  id: number;
+  va_id: string;
+  amount: number;
+  unit: 'hours' | 'dollars';
+  reason: string | null;
+  status: 'pending' | 'approved' | 'denied';
+  reviewed_by: string | null;
+  review_notes: string | null;
+  created_at: string;
+  reviewed_at: string | null;
 }
 
 export interface PayRateHistory {

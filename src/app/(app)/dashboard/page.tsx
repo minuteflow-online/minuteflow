@@ -14,6 +14,7 @@ import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSid
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
 import AssignedTasksWidget from "@/components/AssignedTasksWidget";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
+import BudgetWidget from "@/components/BudgetWidget";
 import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
@@ -3382,6 +3383,9 @@ export default function DashboardPage() {
                 activeAssignedTaskId={activeTask?.assignedTaskId ?? null}
                 activeTodoLabel={activeTask?.todoLabel ?? null}
               />
+            )}
+            {isVa && userId && (
+              <BudgetWidget currentUserId={userId} refreshKey={claimRefreshKey} />
             )}
             {isVa && sessionState === "idle" && (
               <AvailableTasksWidget
