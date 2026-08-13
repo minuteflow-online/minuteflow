@@ -41,6 +41,65 @@ function limitToWords(text: string, limit: number): string {
   return words.slice(0, limit).join(" ");
 }
 
+// Toolbar multi-select filter dropdown for dimensions that don't have their own
+// table column (Assigned By, Project) — mirrors ColumnHeader's caret popover so
+// the filter UI stays consistent across the page.
+function ToolbarFilterDropdown({ label, options, selected, onChange }: {
+  label: string;
+  options: string[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const isFiltered = selected.length > 0;
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={`flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[12px] transition-colors ${
+          isFiltered ? "border-terracotta text-terracotta" : "border-sand text-stone hover:text-walnut"
+        }`}
+      >
+        {label}
+        {isFiltered && <span className="rounded-full bg-terracotta/10 px-1.5 text-[10px] font-semibold">{selected.length}</span>}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3 w-3">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-50 mt-1 max-h-72 min-w-[200px] overflow-y-auto rounded-xl border border-sand bg-white py-1 shadow-lg">
+            <div className="flex items-center justify-between border-b border-sand px-3 py-1.5">
+              <button type="button" onClick={() => onChange(options)} className="text-[11px] text-terracotta hover:underline">Select All</button>
+              <button type="button" onClick={() => onChange([])} className="text-[11px] text-stone hover:underline">Clear</button>
+            </div>
+            {options.length > 0 ? (
+              options.map((opt) => (
+                <label key={opt} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-parchment">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(opt)}
+                    onChange={(e) => {
+                      if (e.target.checked) onChange([...selected, opt]);
+                      else onChange(selected.filter((v) => v !== opt));
+                    }}
+                    className="accent-terracotta"
+                  />
+                  <span className="text-[13px] text-espresso">{opt}</span>
+                </label>
+              ))
+            ) : (
+              <div className="px-3 py-2 text-[12px] text-stone">No options</div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 type VATaskRow = {
   id: number;
   va_id: string;
@@ -339,6 +398,13 @@ export default function TaskListPage() {
   const [filterSubmittedBy, setFilterSubmittedBy] = useState<string[]>([]);
   const [filterDueStart, setFilterDueStart] = useState("");
   const [filterDueEnd, setFilterDueEnd] = useState("");
+  const [filterStartStart, setFilterStartStart] = useState("");
+  const [filterStartEnd, setFilterStartEnd] = useState("");
+  const [filterCreatedStart, setFilterCreatedStart] = useState("");
+  const [filterCreatedEnd, setFilterCreatedEnd] = useState("");
+  const [filterAssignedBy, setFilterAssignedBy] = useState<string[]>([]);
+  const [filterProjects, setFilterProjects] = useState<string[]>([]);
+  const [filterOverdue, setFilterOverdue] = useState(false);
   const [taskNameSearch, setTaskNameSearch] = useState("");
 
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
@@ -991,11 +1057,41 @@ export default function TaskListPage() {
       ).sort((a, b) => a.localeCompare(b)),
     [tasks]
   );
+  const assignedByFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          tasks
+            .map((task) => {
+              const profile = task.assigned_tasks.assigned_by_profile;
+              return profile?.full_name || profile?.username || "";
+            })
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
+  const projectFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(tasks.map((task) => task.assigned_tasks.projects?.name ?? "").filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
 
   const filteredTasks = useMemo(() => {
     const start = filterDueStart ? parseDueDateSafe(filterDueStart) : null;
     const end = filterDueEnd ? new Date(filterDueEnd.slice(0, 10) + "T23:59:59Z") : null;
+    const startFrom = filterStartStart ? parseDueDateSafe(filterStartStart) : null;
+    const startTo = filterStartEnd ? new Date(filterStartEnd.slice(0, 10) + "T23:59:59Z") : null;
+    const createdFrom = filterCreatedStart ? new Date(filterCreatedStart.slice(0, 10) + "T00:00:00Z") : null;
+    const createdTo = filterCreatedEnd ? new Date(filterCreatedEnd.slice(0, 10) + "T23:59:59Z") : null;
     const taskNameSearchLower = taskNameSearch.trim().toLowerCase();
+    // A task counts as overdue when its due date is in the past and it hasn't
+    // reached a terminal state (completed/paid/cancelled) — those are done, not
+    // late.
+    const now = Date.now();
+    const terminalStatuses = new Set(["completed", "paid", "cancelled"]);
 
     return tasks.filter((task) => {
       const detail = task.assigned_tasks;
@@ -1007,6 +1103,11 @@ export default function TaskListPage() {
       if (filterAccounts.length > 0 && !filterAccounts.includes(detail.account ?? "")) return false;
       if (filterTaskNames.length > 0 && !filterTaskNames.includes(detail.task_name)) return false;
       if (filterObjectives.length > 0 && !filterObjectives.includes(detail.project ?? "")) return false;
+      if (filterProjects.length > 0 && !filterProjects.includes(detail.projects?.name ?? "")) return false;
+      if (filterAssignedBy.length > 0) {
+        const assignedByName = detail.assigned_by_profile?.full_name || detail.assigned_by_profile?.username || "";
+        if (!filterAssignedBy.includes(assignedByName)) return false;
+      }
       if (filterSubmittedBy.length > 0) {
         const vaName = task.profiles?.full_name || task.profiles?.username || "";
         if (!filterSubmittedBy.includes(vaName)) return false;
@@ -1014,9 +1115,24 @@ export default function TaskListPage() {
       if (taskNameSearchLower && !detail.task_name.toLowerCase().includes(taskNameSearchLower)) return false;
       if (start && (!dueTime || dueTime < start.getTime())) return false;
       if (end && (!dueTime || dueTime > end.getTime())) return false;
+      if (startFrom || startTo) {
+        const sd = detail.start_date ? parseDueDateSafe(detail.start_date) : null;
+        const sdTime = sd && !Number.isNaN(sd.getTime()) ? sd.getTime() : null;
+        if (startFrom && (!sdTime || sdTime < startFrom.getTime())) return false;
+        if (startTo && (!sdTime || sdTime > startTo.getTime())) return false;
+      }
+      if (createdFrom || createdTo) {
+        const cd = detail.created_at ? new Date(detail.created_at) : null;
+        const cdTime = cd && !Number.isNaN(cd.getTime()) ? cd.getTime() : null;
+        if (createdFrom && (!cdTime || cdTime < createdFrom.getTime())) return false;
+        if (createdTo && (!cdTime || cdTime > createdTo.getTime())) return false;
+      }
+      if (filterOverdue) {
+        if (!dueTime || dueTime >= now || terminalStatuses.has(task.status)) return false;
+      }
       return true;
     });
-  }, [filterAccounts, filterDueEnd, filterDueStart, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks, activeView, objectiveProjectIds]);
+  }, [filterAccounts, filterDueEnd, filterDueStart, filterStartStart, filterStartEnd, filterCreatedStart, filterCreatedEnd, filterAssignedBy, filterProjects, filterOverdue, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks, activeView, objectiveProjectIds]);
 
   const avgAccuracy = useMemo(() => {
     const rows = filteredTasks.filter((t) => typeof t.accuracy_score === "number");
@@ -1146,8 +1262,56 @@ export default function TaskListPage() {
             className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
           />
         </div>
+        <label className="flex cursor-pointer items-center gap-2 border-t border-sand pt-2 text-[12px] text-espresso">
+          <input
+            type="checkbox"
+            checked={filterOverdue}
+            onChange={(e) => setFilterOverdue(e.target.checked)}
+            className="accent-terracotta"
+          />
+          Overdue only
+        </label>
         <div className="flex items-center justify-between border-t border-sand pt-2">
-          <button type="button" onClick={() => { setFilterDueStart(""); setFilterDueEnd(""); }} className="cursor-pointer text-[11px] text-stone hover:underline">
+          <button type="button" onClick={() => { setFilterDueStart(""); setFilterDueEnd(""); setFilterOverdue(false); }} className="cursor-pointer text-[11px] text-stone hover:underline">
+            Clear
+          </button>
+          <button type="button" onClick={close} className="cursor-pointer text-[11px] font-semibold text-terracotta hover:underline">
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function DateRangeFilter({ from, to, setFrom, setTo, close }: {
+    from: string;
+    to: string;
+    setFrom: (v: string) => void;
+    setTo: (v: string) => void;
+    close: () => void;
+  }) {
+    return (
+      <div className="space-y-3">
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">To</label>
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+          />
+        </div>
+        <div className="flex items-center justify-between border-t border-sand pt-2">
+          <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="cursor-pointer text-[11px] text-stone hover:underline">
             Clear
           </button>
           <button type="button" onClick={close} className="cursor-pointer text-[11px] font-semibold text-terracotta hover:underline">
@@ -1991,7 +2155,9 @@ export default function TaskListPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
                 <div className="flex items-center gap-2">
-                  {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterDueStart || filterDueEnd || taskNameSearch) && (
+                  <ToolbarFilterDropdown label="Assigned By" options={assignedByFilterOptions} selected={filterAssignedBy} onChange={setFilterAssignedBy} />
+                  <ToolbarFilterDropdown label="Project" options={projectFilterOptions} selected={filterProjects} onChange={setFilterProjects} />
+                  {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || filterDueStart || filterDueEnd || filterStartStart || filterStartEnd || filterCreatedStart || filterCreatedEnd || filterOverdue || taskNameSearch) && (
                     <button
                       type="button"
                       onClick={() => {
@@ -2000,8 +2166,15 @@ export default function TaskListPage() {
                         setFilterTaskNames([]);
                         setFilterObjectives([]);
                         setFilterSubmittedBy([]);
+                        setFilterAssignedBy([]);
+                        setFilterProjects([]);
                         setFilterDueStart("");
                         setFilterDueEnd("");
+                        setFilterStartStart("");
+                        setFilterStartEnd("");
+                        setFilterCreatedStart("");
+                        setFilterCreatedEnd("");
+                        setFilterOverdue(false);
                         setTaskNameSearch("");
                       }}
                       className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
@@ -2018,7 +2191,7 @@ export default function TaskListPage() {
         <div className="px-5 py-4">
           {canShowAvailableTasks && activeView === "available_tasks" ? (
             <div className="space-y-4">
-              <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} fixedPayOnly={true} currentUserId={currentUserId ?? undefined} refreshKey={availableRefreshKey} startCollapsed={!isAdmin} />
+              <AvailableTasksWidget onClaimed={handleClaimedTaskRefresh} canSeeFixedPay={isPerTaskVa || canSeeAvailableTasks} fixedPayOnly={true} currentUserId={currentUserId ?? undefined} refreshKey={availableRefreshKey} startCollapsed={true} />
               <FixedPayTasksPanel refreshKey={availableRefreshKey} />
             </div>
           ) : activeView === "recurring" ? (
@@ -2132,8 +2305,8 @@ export default function TaskListPage() {
                   No assigned tasks found.
                 </div>
               ) : (
-                <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
-                  <table className="w-full table-fixed">
+                <div className="overflow-x-auto rounded-xl border border-sand bg-white shadow-sm">
+                  <table className="w-max min-w-full table-fixed">
                     <thead>
                       <tr className="border-b border-sand bg-parchment">
                         <th className="w-8 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">
@@ -2207,19 +2380,35 @@ export default function TaskListPage() {
                           />
                         )}
                         {!hiddenColumns.has("start_date") && (
-                          <ColumnHeader label="Start Date" width={columnWidths.start_date} onResize={(w) => setColumnWidth("start_date", w)} />
+                          <ColumnHeader
+                            label="Start Date"
+                            width={columnWidths.start_date}
+                            onResize={(w) => setColumnWidth("start_date", w)}
+                            isFiltered={Boolean(filterStartStart || filterStartEnd)}
+                            customFilter={(close) => (
+                              <DateRangeFilter from={filterStartStart} to={filterStartEnd} setFrom={setFilterStartStart} setTo={setFilterStartEnd} close={close} />
+                            )}
+                          />
                         )}
                         {!hiddenColumns.has("due_date") && (
                           <ColumnHeader
                             label="Due Date"
                             width={columnWidths.due_date}
                             onResize={(w) => setColumnWidth("due_date", w)}
-                            isFiltered={Boolean(filterDueStart || filterDueEnd)}
+                            isFiltered={Boolean(filterDueStart || filterDueEnd || filterOverdue)}
                             customFilter={(close) => <DueDateRangeFilter close={close} />}
                           />
                         )}
                         {!hiddenColumns.has("created") && (
-                          <ColumnHeader label="Created" width={columnWidths.created} onResize={(w) => setColumnWidth("created", w)} />
+                          <ColumnHeader
+                            label="Created"
+                            width={columnWidths.created}
+                            onResize={(w) => setColumnWidth("created", w)}
+                            isFiltered={Boolean(filterCreatedStart || filterCreatedEnd)}
+                            customFilter={(close) => (
+                              <DateRangeFilter from={filterCreatedStart} to={filterCreatedEnd} setFrom={setFilterCreatedStart} setTo={setFilterCreatedEnd} close={close} />
+                            )}
+                          />
                         )}
                         {(taskView === "archived" || taskView === "trash") && (
                           <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">Actions</th>

@@ -62,6 +62,10 @@ type DueItem = {
   category: string | null;
   projectId: string | null;
   isRecurring: boolean;
+  // True for the per-day items of a multi-day span (start_date..end_date) —
+  // rendered in Month view as a connected line across the days rather than a
+  // single dot.
+  isSpan: boolean;
 };
 
 
@@ -119,6 +123,12 @@ export default function ProductivityCalendarPage() {
 
   const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
   const [scope, setScope] = useState<string>("__self__");
+  // Multi-VA "compare" for Day view: pick several teammates and see each as its
+  // own skinny column. Separate from `scope` (which drives the single grid).
+  const [compareVaIds, setCompareVaIds] = useState<string[]>([]);
+  const [draftVaIds, setDraftVaIds] = useState<string[]>([]);
+  const [compareSchedules, setCompareSchedules] = useState<Record<string, RawTask[]>>({});
+  const [showComparePicker, setShowComparePicker] = useState(false);
   const [monthYear, setMonthYear] = useState<number>(new Date().getFullYear());
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -146,6 +156,18 @@ export default function ProductivityCalendarPage() {
   const [projectFilter, setProjectFilter] = useState<Set<string>>(new Set());
   const [recurringOnly, setRecurringOnly] = useState(false);
   const [dateTypeFilter, setDateTypeFilter] = useState<"all" | "start" | "due">("all");
+  // Filters use a draft → Apply model: the checkboxes above are the DRAFT; the
+  // calendar doesn't change until Apply copies the draft into `applied`, which
+  // is the snapshot every filter below actually reads from.
+  const emptyApplied = () => ({
+    status: new Set<string>(),
+    source: new Set<"assigned" | "fixed">(),
+    category: new Set<string>(),
+    project: new Set<string>(),
+    recurring: false,
+    dateType: "all" as "all" | "start" | "due",
+  });
+  const [applied, setApplied] = useState(emptyApplied);
   const filtersRef = useRef<HTMLDivElement | null>(null);
 
   const [showForm, setShowForm] = useState(false);
@@ -277,14 +299,15 @@ export default function ProductivityCalendarPage() {
         const out: DueItem[] = [];
         if (t.start_date) {
           const endDate = t.end_date && t.end_date > t.start_date ? t.end_date : t.start_date;
+          const isSpan = endDate !== t.start_date;
           for (let cursor = t.start_date; cursor <= endDate; cursor = addDaysToDateStr(cursor, 1)) {
-            out.push({ ...base, id: `fixed-${t.id}-${cursor}`, date: cursor, dateType: cursor === t.due_date ? "due" : "start", dueTime: null });
+            out.push({ ...base, id: `fixed-${t.id}-${cursor}`, date: cursor, dateType: cursor === t.due_date ? "due" : "start", dueTime: null, isSpan });
           }
         }
         if (t.due_date) {
           const dueCoveredByStart = Boolean(t.start_date) && isDateInSpan(t.due_date, t.start_date as string, t.end_date);
           if (!dueCoveredByStart) {
-            out.push({ ...base, id: `fixed-${t.id}-due`, date: t.due_date, dateType: "due", dueTime: null });
+            out.push({ ...base, id: `fixed-${t.id}-due`, date: t.due_date, dateType: "due", dueTime: null, isSpan: false });
           }
         }
         return out;
@@ -325,6 +348,59 @@ export default function ProductivityCalendarPage() {
     if (viewMode === "day" || viewMode === "week") fetchDaySchedule();
   }, [viewMode, fetchDaySchedule]);
 
+  // Fetch a schedule per compared VA (Day view multi-column). Runs one active-
+  // tasks request per selected teammate.
+  const fetchCompareSchedules = useCallback(async () => {
+    if (compareVaIds.length === 0) {
+      setCompareSchedules({});
+      return;
+    }
+    const entries = await Promise.all(
+      compareVaIds.map(async (vaId) => {
+        try {
+          const url = vaId === userId
+            ? "/api/assigned-tasks?selfOnly=true&view=active"
+            : `/api/assigned-tasks?viewAsVa=${vaId}&view=active`;
+          const res = await fetch(url);
+          const data = await res.json();
+          return [vaId, normalizeAssignedRows(data.tasks ?? [], vaId)] as const;
+        } catch {
+          return [vaId, [] as RawTask[]] as const;
+        }
+      })
+    );
+    setCompareSchedules(Object.fromEntries(entries));
+  }, [compareVaIds, userId]);
+
+  useEffect(() => {
+    if (viewMode === "day") fetchCompareSchedules();
+  }, [viewMode, fetchCompareSchedules]);
+
+  // The "My View" control is a multi-select of teammates. Opening it seeds the
+  // draft from what's applied; Apply commits it. 0 selected = just me; 1 = that
+  // teammate everywhere; 2+ = the Day grid splits into a column per teammate.
+  const openVaPicker = () => {
+    setDraftVaIds(compareVaIds);
+    setShowComparePicker(true);
+  };
+  const applyVaSelection = () => {
+    setCompareVaIds(draftVaIds);
+    // Drive the single-scope views (month/week + single-day) from the selection:
+    // none = me, one = that teammate, all = agency-wide, an in-between set falls
+    // back to me (the Day grid handles the multi case with columns).
+    if (draftVaIds.length === 0) setScope("__self__");
+    else if (draftVaIds.length === 1) setScope(draftVaIds[0]);
+    else if (teamMembers.length > 0 && draftVaIds.length === teamMembers.length) setScope("__all__");
+    else setScope("__self__");
+    setShowComparePicker(false);
+  };
+  const vaPickerLabel =
+    compareVaIds.length === 0
+      ? "My View"
+      : compareVaIds.length === 1
+      ? teamMembers.find((m) => m.id === compareVaIds[0])?.full_name ?? "1 selected"
+      : `${compareVaIds.length} VAs`;
+
   // Month-view due/start dots, derived from the full assigned-task list.
   // A task with a start_date span (start_date..end_date) gets one item per
   // day in that inclusive range; the exact due_date day (if it falls within
@@ -348,6 +424,7 @@ export default function ProductivityCalendarPage() {
         const items: DueItem[] = [];
         if (t.start_date) {
           const endDate = t.end_date && t.end_date > t.start_date ? t.end_date : t.start_date;
+          const isSpan = endDate !== t.start_date;
           for (let cursor = t.start_date; cursor <= endDate; cursor = addDaysToDateStr(cursor, 1)) {
             items.push({
               ...base,
@@ -355,13 +432,14 @@ export default function ProductivityCalendarPage() {
               date: cursor,
               dateType: cursor === t.due_date ? "due" : "start",
               dueTime: cursor === t.due_date ? t.due_time : null,
+              isSpan,
             });
           }
         }
         if (t.due_date) {
           const dueCoveredByStart = Boolean(t.start_date) && isDateInSpan(t.due_date, t.start_date as string, t.end_date);
           if (!dueCoveredByStart) {
-            items.push({ ...base, id: `assigned-${t.id}-due`, date: t.due_date, dateType: "due", dueTime: t.due_time });
+            items.push({ ...base, id: `assigned-${t.id}-due`, date: t.due_date, dateType: "due", dueTime: t.due_time, isSpan: false });
           }
         }
         return items;
@@ -372,23 +450,23 @@ export default function ProductivityCalendarPage() {
   const allDueItems = useMemo(() => [...assignedDueItems, ...fixedItems], [assignedDueItems, fixedItems]);
 
   const activeFilterCount =
-    statusFilter.size + sourceFilter.size + categoryFilter.size + projectFilter.size + (recurringOnly ? 1 : 0) +
-    (dateTypeFilter !== "all" ? 1 : 0);
+    applied.status.size + applied.source.size + applied.category.size + applied.project.size + (applied.recurring ? 1 : 0) +
+    (applied.dateType !== "all" ? 1 : 0);
 
   const filteredDueItems = useMemo(() => {
     return allDueItems.filter((item) => {
-      if (statusFilter.size > 0 && !statusFilter.has(item.status)) return false;
-      if (sourceFilter.size > 0 && !sourceFilter.has(item.source)) return false;
-      if (categoryFilter.size > 0 && !(item.category && categoryFilter.has(item.category))) return false;
-      if (projectFilter.size > 0) {
+      if (applied.status.size > 0 && !applied.status.has(item.status)) return false;
+      if (applied.source.size > 0 && !applied.source.has(item.source)) return false;
+      if (applied.category.size > 0 && !(item.category && applied.category.has(item.category))) return false;
+      if (applied.project.size > 0) {
         const key = item.projectId ?? "__none__";
-        if (!projectFilter.has(key)) return false;
+        if (!applied.project.has(key)) return false;
       }
-      if (recurringOnly && !item.isRecurring) return false;
-      if (dateTypeFilter !== "all" && item.dateType !== dateTypeFilter) return false;
+      if (applied.recurring && !item.isRecurring) return false;
+      if (applied.dateType !== "all" && item.dateType !== applied.dateType) return false;
       return true;
     });
-  }, [allDueItems, statusFilter, sourceFilter, categoryFilter, projectFilter, recurringOnly, dateTypeFilter]);
+  }, [allDueItems, applied]);
 
   const dueItemsByDate = useMemo(() => {
     const map: Record<string, DueItem[]> = {};
@@ -413,6 +491,32 @@ export default function ProductivityCalendarPage() {
     setProjectFilter(new Set());
     setRecurringOnly(false);
     setDateTypeFilter("all");
+    setApplied(emptyApplied());
+  };
+
+  // Commit the draft to `applied` — this is when the calendar actually updates.
+  const applyFilters = () => {
+    setApplied({
+      status: new Set(statusFilter),
+      source: new Set(sourceFilter),
+      category: new Set(categoryFilter),
+      project: new Set(projectFilter),
+      recurring: recurringOnly,
+      dateType: dateTypeFilter,
+    });
+    setShowFilters(false);
+  };
+
+  // Opening the popover seeds the draft from what's currently applied, so it
+  // shows reality and any unapplied edits from before are discarded.
+  const openFilters = () => {
+    setStatusFilter(new Set(applied.status));
+    setSourceFilter(new Set(applied.source));
+    setCategoryFilter(new Set(applied.category));
+    setProjectFilter(new Set(applied.project));
+    setRecurringOnly(applied.recurring);
+    setDateTypeFilter(applied.dateType);
+    setShowFilters(true);
   };
 
   const allStatuses = useMemo(() => {
@@ -460,6 +564,15 @@ export default function ProductivityCalendarPage() {
   const goToNextDay = () => setSelectedDate((d) => addDaysToDateStr(d, 1));
   const goToPrevWeek = () => setSelectedDate((d) => addDaysToDateStr(d, -7));
   const goToNextWeek = () => setSelectedDate((d) => addDaysToDateStr(d, 7));
+
+  // Jump the whole calendar (month grid + week/day cursor) to any date.
+  const jumpToDate = (dateStr: string) => {
+    if (!dateStr) return;
+    setSelectedDate(dateStr);
+    setMonthYear(Number(dateStr.slice(0, 4)));
+    setMonthMonth(Number(dateStr.slice(5, 7)) - 1);
+  };
+  const goToToday = () => jumpToDate(todayStr);
 
   const openAddBlock = (hour: number, dateStr: string = selectedDate) => {
     setEditingBlockId(null);
@@ -518,7 +631,28 @@ export default function ProductivityCalendarPage() {
     await refreshAfterScheduleChange();
   };
 
-  const scheduledTasks = useMemo(() => daySchedule.filter((t) => t.start_time && t.end_time), [daySchedule]);
+  // Same applied-filter predicate the month dots use, so the week/day hour
+  // blocks respect Source/Status/Category/Project/Recurring too. Date Type is
+  // left out here — a scheduled block is inherently start-anchored, so gating
+  // the whole time grid on "Due Date" would just blank it out.
+  const taskPassesFilters = useCallback(
+    (t: RawTask) => {
+      if (applied.status.size > 0 && !applied.status.has(t.status)) return false;
+      // Day/week schedule rows are always assigned-source (fetched from
+      // assigned-tasks), so a source filter that excludes "assigned" hides them.
+      if (applied.source.size > 0 && !applied.source.has("assigned")) return false;
+      if (applied.category.size > 0 && !(t.category && applied.category.has(t.category))) return false;
+      if (applied.project.size > 0 && !applied.project.has(t.projectId ?? "__none__")) return false;
+      if (applied.recurring && !t.isRecurring) return false;
+      return true;
+    },
+    [applied]
+  );
+
+  const scheduledTasks = useMemo(
+    () => daySchedule.filter((t) => t.start_time && t.end_time && taskPassesFilters(t)),
+    [daySchedule, taskPassesFilters]
+  );
   const unscheduledTasks = useMemo(() => daySchedule.filter((t) => !t.start_time || !t.end_time), [daySchedule]);
   const scheduledForDate = useCallback(
     (dateStr: string) =>
@@ -536,6 +670,23 @@ export default function ProductivityCalendarPage() {
         })
         .map((t) => reanchorToDate(t, dateStr)),
     [scheduledTasks]
+  );
+  // Same day-anchoring as scheduledForDate, but against a compared VA's own
+  // fetched schedule, time-sorted for the skinny column list. Filters apply.
+  const blocksForVaOnDate = useCallback(
+    (vaId: string, dateStr: string) =>
+      (compareSchedules[vaId] ?? [])
+        .filter((t) => t.start_time && t.end_time && taskPassesFilters(t))
+        .filter((t) => {
+          const anchorDay = localDateOf(t.start_time as string);
+          if (t.start_date === anchorDay && t.end_date && t.end_date !== t.start_date) {
+            return isDateInSpan(dateStr, t.start_date, t.end_date);
+          }
+          return anchorDay === dateStr;
+        })
+        .map((t) => reanchorToDate(t, dateStr))
+        .sort((a, b) => new Date(a.start_time as string).getTime() - new Date(b.start_time as string).getTime()),
+    [compareSchedules, taskPassesFilters]
   );
   const dayTotalLabel = useMemo(() => {
     const totalMinutes = scheduledForDate(selectedDate).reduce(
@@ -672,13 +823,29 @@ export default function ProductivityCalendarPage() {
           >
             Day
           </button>
+
+          <span className="mx-1 h-4 w-px bg-sand" />
+          <button
+            type="button"
+            onClick={goToToday}
+            className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+          >
+            Today
+          </button>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => jumpToDate(e.target.value)}
+            title="Jump to date"
+            className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+          />
         </div>
 
         <div className="flex items-center gap-2">
           <div className="relative" ref={filtersRef}>
             <button
               type="button"
-              onClick={() => setShowFilters((v) => !v)}
+              onClick={() => (showFilters ? setShowFilters(false) : openFilters())}
               className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
                 activeFilterCount > 0 ? "bg-terracotta-soft text-terracotta" : "bg-stone/10 text-stone hover:bg-stone/20"
               }`}
@@ -753,7 +920,7 @@ export default function ProductivityCalendarPage() {
                     ))}
                   </div>
                   <p className="mt-1 text-[10px] text-stone">
-                    In Month view: <span className="inline-block h-1.5 w-1.5 rounded-full bg-stone align-middle" /> circle = start date, <span className="inline-block h-1.5 w-1.5 rotate-45 bg-stone align-middle" /> diamond = due date.
+                    In Month view: <span className="inline-block h-2 w-2 rounded-sm bg-stone align-middle" /> square = start date, <span className="inline-block h-2 w-2 rounded-sm rotate-45 bg-stone align-middle" /> diamond = due date, and a bar = a task spanning several days.
                   </p>
                 </div>
 
@@ -781,24 +948,73 @@ export default function ProductivityCalendarPage() {
                   <input type="checkbox" checked={recurringOnly} onChange={(e) => setRecurringOnly(e.target.checked)} />
                   Recurring only
                 </label>
+
+                <div className="flex items-center gap-2 border-t border-sand pt-3">
+                  <button
+                    type="button"
+                    onClick={applyFilters}
+                    className="flex-1 rounded-lg bg-sage px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-sage/90 transition-colors"
+                  >
+                    Apply
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowFilters(false)}
+                    className="rounded-lg bg-stone/10 px-3 py-1.5 text-[11px] font-semibold text-stone hover:bg-stone/20 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
           </div>
 
           {isAdminOrManager && (
-            <select
-              value={scope}
-              onChange={(e) => setScope(e.target.value)}
-              className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-            >
-              <option value="__self__">My View</option>
-              <option value="__all__">Agency-wide (All)</option>
-              {teamMembers.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.full_name}
-                </option>
-              ))}
-            </select>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => (showComparePicker ? setShowComparePicker(false) : openVaPicker())}
+                className={`flex items-center gap-1.5 rounded-lg border border-sand px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                  compareVaIds.length >= 2 ? "bg-terracotta-soft text-terracotta" : "bg-white text-espresso hover:bg-parchment"
+                }`}
+              >
+                {vaPickerLabel}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3 w-3">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              {showComparePicker && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setShowComparePicker(false)} />
+                  <div className="absolute right-0 z-30 mt-2 w-60 rounded-xl border border-sand bg-white shadow-lg">
+                    <div className="flex items-center justify-between border-b border-sand px-3 py-1.5">
+                      <button type="button" onClick={() => setDraftVaIds(teamMembers.map((m) => m.id))} className="text-[10px] font-semibold text-terracotta hover:underline">All</button>
+                      <span className="text-[10px] text-stone">none = My View</span>
+                      <button type="button" onClick={() => setDraftVaIds([])} className="text-[10px] font-semibold text-stone hover:underline">Clear</button>
+                    </div>
+                    <div className="max-h-56 overflow-y-auto py-1">
+                      {teamMembers.map((m) => (
+                        <label key={m.id} className="flex cursor-pointer items-center gap-2 px-3 py-1 hover:bg-parchment">
+                          <input
+                            type="checkbox"
+                            checked={draftVaIds.includes(m.id)}
+                            onChange={(e) =>
+                              setDraftVaIds((prev) => (e.target.checked ? [...prev, m.id] : prev.filter((id) => id !== m.id)))
+                            }
+                          />
+                          <span className="text-[12px] text-espresso">{m.full_name || m.username}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="px-3 pt-1 text-[10px] text-stone">Pick 2+ to split the Day view into columns.</p>
+                    <div className="flex items-center gap-2 border-t border-sand p-2">
+                      <button type="button" onClick={applyVaSelection} className="flex-1 rounded-lg bg-sage px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-sage/90">Apply</button>
+                      <button type="button" onClick={() => setShowComparePicker(false)} className="rounded-lg bg-stone/10 px-3 py-1.5 text-[11px] font-semibold text-stone hover:bg-stone/20">Cancel</button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -848,15 +1064,28 @@ export default function ProductivityCalendarPage() {
                   <span className={`text-[11px] font-semibold ${isCurrentMonth ? "text-espresso" : "text-stone"}`}>
                     {Number(dateStr.slice(8, 10))}
                   </span>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {items.slice(0, 5).map((item) => (
-                      <span
+                  <div className="mt-1 space-y-1">
+                    {/* Multi-day spans render as a bar; adjacent days line up into
+                        a continuous line across the span. */}
+                    {items.filter((i) => i.isSpan).slice(0, 3).map((item) => (
+                      <div
                         key={item.id}
-                        title={`${item.title} — ${item.category ?? "No category"}, ${statusLabel(item.status)} (${item.dateType === "due" ? `due${item.dueTime ? ` ${formatDueTime(item.dueTime)}` : ""}` : "starts"} this day)`}
-                        className={`h-1.5 w-1.5 ${item.dateType === "due" ? "rounded-sm rotate-45" : "rounded-full"} ${categoryDotClass(item.category ?? "")}`}
+                        title={`${item.title} — ${item.category ?? "No category"}, ${statusLabel(item.status)} (spans this day)`}
+                        className={`h-1.5 w-full rounded-sm ${categoryDotClass(item.category ?? "")}`}
                       />
                     ))}
-                    {items.length > 5 && <span className="text-[9px] text-stone">+{items.length - 5}</span>}
+                    <div className="flex flex-wrap gap-1">
+                      {items.filter((i) => !i.isSpan).slice(0, 5).map((item) => (
+                        <span
+                          key={item.id}
+                          title={`${item.title} — ${item.category ?? "No category"}, ${statusLabel(item.status)} (${item.dateType === "due" ? `due${item.dueTime ? ` ${formatDueTime(item.dueTime)}` : ""}` : "starts"} this day)`}
+                          className={`h-2.5 w-2.5 ${item.dateType === "due" ? "rounded-sm rotate-45" : "rounded-sm"} ${categoryDotClass(item.category ?? "")}`}
+                        />
+                      ))}
+                      {items.filter((i) => !i.isSpan).length > 5 && (
+                        <span className="text-[9px] text-stone">+{items.filter((i) => !i.isSpan).length - 5}</span>
+                      )}
+                    </div>
                   </div>
                 </button>
               );
@@ -1060,6 +1289,80 @@ export default function ProductivityCalendarPage() {
 
             {loadingDay ? (
               <div className="py-8 text-center text-xs text-stone">Loading…</div>
+            ) : compareVaIds.length >= 2 ? (
+              // Multi-VA compare: the day grid itself splits into a column per
+              // selected teammate. Read-only (blocks open to edit); add-by-click
+              // stays in single-VA mode to keep the target VA unambiguous.
+              <div>
+                <div className="mb-1 flex border-b border-sand pb-1">
+                  <div className="w-14 shrink-0" />
+                  {compareVaIds.map((vaId) => {
+                    const member = teamMembers.find((m) => m.id === vaId);
+                    const blocks = blocksForVaOnDate(vaId, selectedDate);
+                    const totalMin = blocks.reduce((s, t) => s + (new Date(t.end_time as string).getTime() - new Date(t.start_time as string).getTime()) / 60000, 0);
+                    return (
+                      <div key={vaId} className="min-w-0 flex-1 px-1 text-center">
+                        <p className="truncate text-[11px] font-bold text-espresso">{member?.full_name || member?.username || "VA"}</p>
+                        <p className="text-[9px] text-stone">{Math.floor(totalMin / 60)}h{totalMin % 60 > 0 ? ` ${Math.round(totalMin % 60)}m` : ""}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="relative" style={{ height: hours.length * HOUR_HEIGHT }}>
+                  {hours.map((hour, i) => (
+                    <div
+                      key={hour}
+                      className="absolute left-0 right-0 flex items-start gap-2 border-t border-sand"
+                      style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                    >
+                      <span className="w-14 shrink-0 pt-0.5 text-[10px] text-stone">
+                        {new Date(2000, 0, 1, hour).toLocaleTimeString("en-US", { hour: "numeric" })}
+                      </span>
+                    </div>
+                  ))}
+                  {compareVaIds.map((_, colIdx) => (
+                    <div
+                      key={`sep-${colIdx}`}
+                      className="absolute top-0 bottom-0 border-l border-sand/60"
+                      style={{ left: `calc(3.5rem + (100% - 3.5rem) * ${colIdx} / ${compareVaIds.length})` }}
+                    />
+                  ))}
+                  <div className="pointer-events-none absolute inset-0">
+                    {compareVaIds.map((vaId, colIdx) => {
+                      const blocks = blocksForVaOnDate(vaId, selectedDate);
+                      const overlap = computeOverlapLayout(blocks);
+                      const n = compareVaIds.length;
+                      return blocks.map((task) => {
+                        const { top, height } = blockPosition(task);
+                        const { col, cols } = overlap.get(task.id) ?? { col: 0, cols: 1 };
+                        const isDueBlock = selectedDate === task.due_date && selectedDate !== task.start_date;
+                        const frac = colIdx + col / cols;
+                        const label = spanLabel(task, selectedDate);
+                        return (
+                          <button
+                            key={`${vaId}-${task.id}`}
+                            type="button"
+                            onClick={() => openEditBlock(task)}
+                            className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
+                            style={{
+                              top,
+                              height,
+                              left: `calc(3.5rem + (100% - 3.5rem) * ${frac} / ${n})`,
+                              width: `calc((100% - 3.5rem) / ${n * cols} - 3px)`,
+                            }}
+                          >
+                            <p className="truncate text-[10px] font-semibold leading-tight">
+                              {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
+                              {task.task_name}
+                            </p>
+                            <p className="truncate text-[9px] opacity-80">{formatTimeRange(task)}</p>
+                          </button>
+                        );
+                      });
+                    })}
+                  </div>
+                </div>
+              </div>
             ) : (
               <div className="relative" style={{ height: hours.length * HOUR_HEIGHT }}>
                 {hours.map((hour, i) => (

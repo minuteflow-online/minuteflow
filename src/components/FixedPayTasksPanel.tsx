@@ -115,6 +115,8 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   const [filterRates, setFilterRates] = useState<number[]>([]);
   const [filterStartDates, setFilterStartDates] = useState<string[]>([]);
   const [filterDueDates, setFilterDueDates] = useState<string[]>([]);
+  const [filterClaimStates, setFilterClaimStates] = useState<string[]>([]);
+  const [filterCreators, setFilterCreators] = useState<string[]>([]);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
@@ -206,6 +208,13 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     () => Array.from(new Set(tasks.map((task) => task.category ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [tasks]
   );
+  const creatorFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(tasks.map((task) => task.created_by_profile?.full_name || task.created_by_profile?.username || "").filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
 
   const filterBaseTasks = useMemo(() => {
     return tasks.filter((task) => {
@@ -241,9 +250,18 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       if (filterRates.length > 0 && !filterRates.includes(Number(task.rate))) return false;
       if (filterStartDates.length > 0 && !filterStartDates.includes(task.start_date ?? "")) return false;
       if (filterDueDates.length > 0 && !filterDueDates.includes(task.due_date ?? "")) return false;
+      if (filterClaimStates.length > 0) {
+        const mine = task.claimed_by_me || task.claimed_by === currentUserId;
+        const state = !task.claimed_by ? "unclaimed" : mine ? "mine" : "others";
+        if (!filterClaimStates.includes(state)) return false;
+      }
+      if (filterCreators.length > 0) {
+        const creator = task.created_by_profile?.full_name || task.created_by_profile?.username || "";
+        if (!filterCreators.includes(creator)) return false;
+      }
       return true;
     });
-  }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates]);
+  }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates, filterClaimStates, filterCreators, currentUserId]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const allVisibleSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
@@ -384,10 +402,15 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
 
   // Mirrors the server-side check in the PATCH/DELETE routes: a VA may only
   // edit or delete a task they claimed, and only before it's been reviewed.
+  // Admins/managers can edit any fixed-pay/output-based task (the PATCH API
+  // already accepts their edits on any field/status via its admin path). VAs
+  // stay restricted to their own claimed task while it's still in a
+  // VA-editable status.
   const canEditSelectedTask = Boolean(
     selectedTask &&
-    (selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
-    VA_STATUS_OPTIONS.includes(selectedTask.status)
+    (isAdminOrManager ||
+      ((selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
+        VA_STATUS_OPTIONS.includes(selectedTask.status)))
   );
 
   if (profileLoading) {
@@ -445,7 +468,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
             <div className="flex items-center gap-2">
-              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || activeFilter !== "all") && (
+              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || filterClaimStates.length > 0 || filterCreators.length > 0 || activeFilter !== "all") && (
                 <button
                   type="button"
                   onClick={() => {
@@ -457,6 +480,8 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     setFilterRates([]);
                     setFilterStartDates([]);
                     setFilterDueDates([]);
+                    setFilterClaimStates([]);
+                    setFilterCreators([]);
                   }}
                   className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
                 >
@@ -595,10 +620,28 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                       />
                     )}
                     {!hiddenColumns.has("claimed") && (
-                      <ColumnHeader label="Claimed" width={columnWidths.claimed} onResize={(w) => setColumnWidth("claimed", w)} />
+                      <ColumnHeader
+                        label="Claimed"
+                        width={columnWidths.claimed}
+                        onResize={(w) => setColumnWidth("claimed", w)}
+                        filterOptions={[
+                          { value: "mine", label: "You" },
+                          { value: "others", label: "Claimed" },
+                          { value: "unclaimed", label: "Unclaimed" },
+                        ]}
+                        selected={filterClaimStates}
+                        onFilterChange={setFilterClaimStates}
+                      />
                     )}
                     {!hiddenColumns.has("created") && (
-                      <ColumnHeader label="Created" width={columnWidths.created} onResize={(w) => setColumnWidth("created", w)} />
+                      <ColumnHeader
+                        label="Created"
+                        width={columnWidths.created}
+                        onResize={(w) => setColumnWidth("created", w)}
+                        filterOptions={creatorFilterOptions.map((name) => ({ value: name, label: name }))}
+                        selected={filterCreators}
+                        onFilterChange={setFilterCreators}
+                      />
                     )}
                     {!hiddenColumns.has("active") && (
                       <ColumnHeader label="Active" width={columnWidths.active} onResize={(w) => setColumnWidth("active", w)} />
