@@ -86,6 +86,8 @@ export interface TaskEditorProps {
   currentPayRate?: number;
   /** Hides the built-in Save/Cancel footer — use with a ref to trigger submit() from a parent-owned footer instead. */
   hideFooter?: boolean;
+  /** Renders every field disabled and swaps the footer to a single Close button — for viewers who can't edit this task. Submit is blocked even via the ref. */
+  readOnly?: boolean;
   /** Extra content rendered inside the "Attachments & Screenshots" section, below the screenshot grid — for callers with their own Attachments UI (upload/list/remove), so both live together in one place instead of split across the form. */
   attachmentsExtra?: ReactNode;
   /** Set false to hide the Assign To field and never touch va_ids — for callers with their own multi-assignee UI (assigned_tasks supports several assignees; this form's Assign To is single-select). Default true. */
@@ -133,6 +135,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   lockedProjectId,
   currentPayRate,
   hideFooter = false,
+  readOnly = false,
   attachmentsExtra,
   manageAssignment = true,
   onCancel,
@@ -354,6 +357,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   }, [hasSchedule, startTime, endTime, startDate, endDate]);
 
   const handleSubmit = useCallback(async () => {
+    if (readOnly) return;
     if (!taskName.trim()) {
       setError("Task name is required.");
       throw new Error("Task name is required.");
@@ -490,7 +494,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
     assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
-    pendingTodoTexts,
+    pendingTodoTexts, readOnly,
   ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
@@ -500,7 +504,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   return (
     <div className="space-y-3">
-      <Section title="Basics">
+      <Section title="Basics" defaultOpen>
         <div>
           <label className={labelClass}>Account</label>
           <select
@@ -512,6 +516,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               if (!isEditing) setTaskName("");
               applyAutoCategory(value, "", isEditing ? taskName : "");
             }}
+            disabled={readOnly}
             className={inputClass}
           >
             <option value="">Select account...</option>
@@ -531,7 +536,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               if (!isEditing) setTaskName("");
               applyAutoCategory(account, value, isEditing ? taskName : "");
             }}
-            disabled={!account}
+            disabled={!account || readOnly}
             className={inputClass}
           >
             <option value="">{account ? "Select objective..." : "Select account first..."}</option>
@@ -551,6 +556,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 setTaskName(value);
                 applyAutoCategory(account, project, value);
               }}
+              disabled={readOnly}
               className={inputClass}
             >
               <option value="">Select task...</option>
@@ -559,13 +565,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               ))}
             </select>
           ) : (
-            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} placeholder="Task name" className={inputClass} />
+            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} disabled={readOnly} placeholder="Task name" className={inputClass} />
           )}
         </div>
 
         <div>
           <label className={labelClass}>Category</label>
-          <select value={category} onChange={(e) => { setCategory(e.target.value); setCategoryAutoSet(false); }} className={inputClass}>
+          <select value={category} onChange={(e) => { setCategory(e.target.value); setCategoryAutoSet(false); }} disabled={readOnly} className={inputClass}>
             {CATEGORY_OPTIONS.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
@@ -573,22 +579,22 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Schedule">
+      <Section title="Schedule" defaultOpen>
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional) — its own hours make the daily time block on the Calendar</p>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Start Date</label>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputClass} />
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={readOnly} className={inputClass} />
             </div>
             <div className="flex-1">
               <label className={labelClass}>End Date</label>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} />
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={readOnly} className={inputClass} />
             </div>
           </div>
 
           <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-walnut">
-            <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} />
+            <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} disabled={readOnly} />
             Add to Calendar (specific hours)
           </label>
           {hasSchedule && (
@@ -596,11 +602,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               <div className="flex gap-3">
                 <div className="flex-1">
                   <label className="mb-1 block text-[10px] font-semibold text-walnut">Start Time</label>
-                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className={inputClass} />
+                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={readOnly} className={inputClass} />
                 </div>
                 <div className="flex-1">
                   <label className="mb-1 block text-[10px] font-semibold text-walnut">End Time</label>
-                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className={inputClass} />
+                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={readOnly} className={inputClass} />
                 </div>
               </div>
               {scheduleHelperText && <p className="text-[11px] text-stone">{scheduleHelperText}</p>}
@@ -613,19 +619,19 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline — unrelated to the work span above, its own single time</p>
           <div>
             <label className={labelClass}>Due Date</label>
-            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={readOnly} className={inputClass} />
           </div>
           {dueDate && (
             <div>
               <label className="mb-1 block text-[10px] font-semibold text-walnut">Due Time (optional)</label>
-              <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} className={inputClass} />
+              <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} disabled={readOnly} className={inputClass} />
               <p className="mt-1 text-[10px] text-stone">Shows this deadline on the Calendar at this time — doesn&apos;t count toward blocked hours.</p>
             </div>
           )}
         </div>
       </Section>
 
-      <Section title="Details">
+      <Section title="Details" defaultOpen>
         <div>
           <div className="mb-1 flex items-center gap-1.5">
             <label className="block text-[11px] font-bold uppercase tracking-wide text-amber">Client Detail</label>
@@ -635,6 +641,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             value={taskDetail}
             onChange={(e) => setTaskDetail(limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT))}
             rows={2}
+            disabled={readOnly}
             placeholder="Client-visible memo"
             className={`${inputClass} resize-none`}
           />
@@ -662,7 +669,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                       <span className="shrink-0 rounded bg-stone/10 px-1.5 py-0.5 text-[10px] font-bold text-stone">{todoLabel(i)}</span>
                       <input
                         defaultValue={text}
-                        disabled={typeof t !== "string" && todoBusyId === t.id}
+                        disabled={readOnly || (typeof t !== "string" && todoBusyId === t.id)}
                         onBlur={(e) => {
                           const value = e.target.value.trim();
                           if (!value || value === text) return;
@@ -671,34 +678,38 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                         }}
                         className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-[13px] outline-none focus:border-sand"
                       />
-                      <button
-                        type="button"
-                        onClick={() => (typeof t === "string" ? handleRemovePendingTodo(i) : void handleDeleteTodo(t.id))}
-                        disabled={typeof t !== "string" && todoBusyId === t.id}
-                        className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline disabled:opacity-50"
-                      >
-                        Remove
-                      </button>
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          onClick={() => (typeof t === "string" ? handleRemovePendingTodo(i) : void handleDeleteTodo(t.id))}
+                          disabled={typeof t !== "string" && todoBusyId === t.id}
+                          className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      )}
                     </div>
                   );
                 })}
-                <div className="flex gap-2">
-                  <input
-                    value={newTodoText}
-                    onChange={(e) => setNewTodoText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleAddTodo(); } }}
-                    placeholder="Add a to-do item..."
-                    className={`${inputClass} flex-1`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleAddTodo()}
-                    disabled={!newTodoText.trim()}
-                    className="shrink-0 rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white hover:bg-sage/90 disabled:opacity-50"
-                  >
-                    Add
-                  </button>
-                </div>
+                {!readOnly && (
+                  <div className="flex gap-2">
+                    <input
+                      value={newTodoText}
+                      onChange={(e) => setNewTodoText(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleAddTodo(); } }}
+                      placeholder="Add a to-do item..."
+                      className={`${inputClass} flex-1`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleAddTodo()}
+                      disabled={!newTodoText.trim()}
+                      className="shrink-0 rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white hover:bg-sage/90 disabled:opacity-50"
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -706,34 +717,34 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Notes</label>
-          <textarea value={taskNotes} onChange={(e) => setTaskNotes(e.target.value)} rows={2} placeholder="Internal notes" className={`${inputClass} resize-none`} />
+          <textarea value={taskNotes} onChange={(e) => setTaskNotes(e.target.value)} rows={2} disabled={readOnly} placeholder="Internal notes" className={`${inputClass} resize-none`} />
         </div>
 
         {mode === "output_based" && (
           <div>
             <label className={labelClass}>Link</label>
-            <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://..." className={inputClass} />
+            <input value={link} onChange={(e) => setLink(e.target.value)} disabled={readOnly} placeholder="https://..." className={inputClass} />
           </div>
         )}
 
         <div>
           <label className={labelClass}>Instructions</label>
-          <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} className={`${inputClass} resize-none`} />
+          <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} disabled={readOnly} className={`${inputClass} resize-none`} />
           <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
-            <input type="checkbox" checked={instructionsLocked} onChange={(e) => setInstructionsLocked(e.target.checked)} />
+            <input type="checkbox" checked={instructionsLocked} onChange={(e) => setInstructionsLocked(e.target.checked)} disabled={readOnly} />
             Locked
           </label>
         </div>
       </Section>
 
-      <Section title="Assignment">
+      <Section title="Assignment" defaultOpen>
         {manageAssignment && (
           <div>
             <label className={labelClass}>Assign To</label>
             <select
               value={isAdminOrManager ? vaId : currentUserId}
               onChange={(e) => setVaId(e.target.value)}
-              disabled={!isAdminOrManager || isEditing}
+              disabled={!isAdminOrManager || isEditing || readOnly}
               className={inputClass}
             >
               <option value="">Unassigned</option>
@@ -749,7 +760,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Assigned By</label>
-          <select value={assignedBy} onChange={(e) => setAssignedBy(e.target.value)} className={inputClass}>
+          <select value={assignedBy} onChange={(e) => setAssignedBy(e.target.value)} disabled={readOnly} className={inputClass}>
             {assignByOptions.map((m) => (
               <option key={m.id} value={m.id}>{m.full_name || m.username}</option>
             ))}
@@ -759,7 +770,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         {!isEditing && isAdminOrManager && (
           <div>
             <label className={labelClass}>Status</label>
-            <select value={initialStatus} onChange={(e) => setInitialStatus(e.target.value)} className={inputClass}>
+            <select value={initialStatus} onChange={(e) => setInitialStatus(e.target.value)} disabled={readOnly} className={inputClass}>
               {(mode === "time_based" ? TIME_BASED_STATUS_OPTIONS : OUTPUT_BASED_STATUS_OPTIONS).map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
@@ -773,7 +784,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           ) : (
             <>
               <label className={labelClass}>Link to Project</label>
-              <select value={linkedProjectId} onChange={(e) => setLinkedProjectId(e.target.value)} className={inputClass}>
+              <select value={linkedProjectId} onChange={(e) => setLinkedProjectId(e.target.value)} disabled={readOnly} className={inputClass}>
                 <option value="">— None —</option>
                 {linkedObjectives.length > 0 && (
                   <optgroup label="Objectives">
@@ -793,7 +804,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             </>
           )}
           {mode === "time_based" && linkedProjectId && parentTaskOptions.length > 0 && (
-            <select value={parentTaskId} onChange={(e) => setParentTaskId(e.target.value)} className={inputClass}>
+            <select value={parentTaskId} onChange={(e) => setParentTaskId(e.target.value)} disabled={readOnly} className={inputClass}>
               <option value="">Top-level task in this project</option>
               {parentTaskOptions.map((t) => (
                 <option key={t.id} value={t.id}>Subtask of: {t.task_name}</option>
@@ -806,13 +817,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           <div className="flex items-center gap-4">
             <div>
               <label className={labelClass}>Pay Type</label>
-              <select value={payType} onChange={(e) => setPayType(e.target.value as "hourly" | "fixed")} className={inputClass}>
+              <select value={payType} onChange={(e) => setPayType(e.target.value as "hourly" | "fixed")} disabled={readOnly} className={inputClass}>
                 <option value="hourly">Time-based</option>
                 <option value="fixed">Output Based</option>
               </select>
             </div>
             <label className="mt-5 flex items-center gap-1.5 text-[11px] font-semibold text-espresso">
-              <input type="checkbox" checked={reviewRequired} onChange={(e) => setReviewRequired(e.target.checked)} />
+              <input type="checkbox" checked={reviewRequired} onChange={(e) => setReviewRequired(e.target.checked)} disabled={readOnly} />
               Review Required
             </label>
           </div>
@@ -820,7 +831,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       {mode === "output_based" && (
-        <Section title="Rate">
+        <Section title="Rate" defaultOpen>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Unit Rate</label>
@@ -832,6 +843,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   setUnitRate(value);
                   if (total != null) setRate(total.toFixed(2));
                 }}
+                disabled={readOnly}
                 placeholder="0.00"
                 className={inputClass}
               />
@@ -846,6 +858,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   setQuantity(value);
                   if (total != null) setRate(total.toFixed(2));
                 }}
+                disabled={readOnly}
                 placeholder="0"
                 className={inputClass}
               />
@@ -872,6 +885,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   setDurationValue(value);
                   if (equivalent != null) setRate(equivalent.toFixed(2));
                 }}
+                disabled={readOnly}
                 placeholder="0"
                 className={inputClass}
               />
@@ -886,6 +900,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   setDurationUnit(unit);
                   if (equivalent != null) setRate(equivalent.toFixed(2));
                 }}
+                disabled={readOnly}
                 className={inputClass}
               >
                 <option value="hours">Hours</option>
@@ -903,13 +918,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
           <div>
             <label className={labelClass}>Final Rate</label>
-            <input value={rate} onChange={(e) => setRate(e.target.value)} placeholder="0.00" className={inputClass} />
+            <input value={rate} onChange={(e) => setRate(e.target.value)} disabled={readOnly} placeholder="0.00" className={inputClass} />
           </div>
         </Section>
       )}
 
       {(supportsTodos || attachmentsExtra) && (
-        <Section title={supportsTodos ? "Attachments & Screenshots" : "Attachments"}>
+        <Section title={supportsTodos ? "Attachments & Screenshots" : "Attachments"} defaultOpen>
           {supportsTodos && (
             <>
               <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber">Screenshots</label>
@@ -957,16 +972,24 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
       {!hideFooter && (
         <div className="flex items-center gap-2 pt-1">
-          <button
-            onClick={() => void handleSubmit().catch(() => {})}
-            disabled={saving || !taskName.trim()}
-            className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
-          >
-            {saving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
-          </button>
-          <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
-            Cancel
-          </button>
+          {readOnly ? (
+            <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
+              Close
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => void handleSubmit().catch(() => {})}
+                disabled={saving || !taskName.trim()}
+                className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+              >
+                {saving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
+              </button>
+              <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
+                Cancel
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

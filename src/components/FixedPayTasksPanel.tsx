@@ -83,6 +83,8 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "rate", label: "Rate", defaultWidth: 90 },
   { key: "start_date", label: "Start Date", defaultWidth: 110 },
   { key: "due_date", label: "Due Date", defaultWidth: 110 },
+  { key: "assigned_by", label: "Assigned By", defaultWidth: 130 },
+  { key: "project", label: "Project", defaultWidth: 140 },
   { key: "claimed", label: "Claimed", defaultWidth: 130 },
   { key: "created", label: "Created", defaultWidth: 150 },
   { key: "active", label: "Active", defaultWidth: 90 },
@@ -117,6 +119,8 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   const [filterDueDates, setFilterDueDates] = useState<string[]>([]);
   const [filterClaimStates, setFilterClaimStates] = useState<string[]>([]);
   const [filterCreators, setFilterCreators] = useState<string[]>([]);
+  const [filterAssignedBy, setFilterAssignedBy] = useState<string[]>([]);
+  const [filterProjects, setFilterProjects] = useState<string[]>([]);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
@@ -178,15 +182,21 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { tasks?: FixedPayTaskWithClaimer[] } | FixedPayTaskWithClaimer[];
       const rows = Array.isArray(json) ? json : json.tasks ?? [];
-      // Scope to the logged-in VA: only tasks they claimed or created.
-      setTasks(rows.filter((task) => task.claimed_by_me || task.claimed_by === currentUserId || task.created_by === currentUserId));
+      // The API already scopes VA responses to unclaimed + their own; admins/
+      // managers get every task and should see all of them here too — only
+      // narrow to "mine" for VAs.
+      setTasks(
+        isAdminOrManager
+          ? rows
+          : rows.filter((task) => task.claimed_by_me || task.claimed_by === currentUserId || task.created_by === currentUserId)
+      );
     } catch {
       setTasks([]);
       setMessage({ type: "err", text: "Unable to load fixed pay tasks." });
     } finally {
       setLoading(false);
     }
-  }, [currentUserId]);
+  }, [currentUserId, isAdminOrManager]);
 
   useEffect(() => {
     void fetchCurrentUser();
@@ -213,6 +223,17 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       Array.from(
         new Set(tasks.map((task) => task.created_by_profile?.full_name || task.created_by_profile?.username || "").filter(Boolean))
       ).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
+  const assignedByFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(tasks.map((task) => task.assigned_by_profile?.full_name || task.assigned_by_profile?.username || "").filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
+  const projectFilterOptions = useMemo(
+    () => Array.from(new Set(tasks.map((task) => task.projects?.name ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [tasks]
   );
 
@@ -259,9 +280,14 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
         const creator = task.created_by_profile?.full_name || task.created_by_profile?.username || "";
         if (!filterCreators.includes(creator)) return false;
       }
+      if (filterAssignedBy.length > 0) {
+        const assignedByName = task.assigned_by_profile?.full_name || task.assigned_by_profile?.username || "";
+        if (!filterAssignedBy.includes(assignedByName)) return false;
+      }
+      if (filterProjects.length > 0 && !filterProjects.includes(task.projects?.name ?? "")) return false;
       return true;
     });
-  }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates, filterClaimStates, filterCreators, currentUserId]);
+  }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterProjects, currentUserId]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const allVisibleSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
@@ -619,6 +645,26 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         onFilterChange={setFilterDueDates}
                       />
                     )}
+                    {!hiddenColumns.has("assigned_by") && (
+                      <ColumnHeader
+                        label="Assigned By"
+                        width={columnWidths.assigned_by}
+                        onResize={(w) => setColumnWidth("assigned_by", w)}
+                        filterOptions={assignedByFilterOptions.map((name) => ({ value: name, label: name }))}
+                        selected={filterAssignedBy}
+                        onFilterChange={setFilterAssignedBy}
+                      />
+                    )}
+                    {!hiddenColumns.has("project") && (
+                      <ColumnHeader
+                        label="Project"
+                        width={columnWidths.project}
+                        onResize={(w) => setColumnWidth("project", w)}
+                        filterOptions={projectFilterOptions.map((name) => ({ value: name, label: name }))}
+                        selected={filterProjects}
+                        onFilterChange={setFilterProjects}
+                      />
+                    )}
                     {!hiddenColumns.has("claimed") && (
                       <ColumnHeader
                         label="Claimed"
@@ -715,6 +761,16 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         )}
                         {!hiddenColumns.has("due_date") && (
                           <td className="px-3 py-3 text-[13px] text-walnut">{formatDateOnly(task.due_date)}</td>
+                        )}
+                        {!hiddenColumns.has("assigned_by") && (
+                          <td className="truncate px-3 py-3 text-[13px] text-walnut">
+                            {task.assigned_by_profile?.full_name || task.assigned_by_profile?.username || <span className="text-stone/60">—</span>}
+                          </td>
+                        )}
+                        {!hiddenColumns.has("project") && (
+                          <td className="truncate px-3 py-3 text-[13px] text-walnut">
+                            {task.projects?.name || <span className="text-stone/60">—</span>}
+                          </td>
                         )}
                         {!hiddenColumns.has("claimed") && (
                           <td className="px-3 py-3 text-[13px] text-walnut">
@@ -856,90 +912,43 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
 
               {panelMode === "view" && selectedTask && (
                 <>
+                  <TaskEditor
+                    key={`view-${selectedTask.id}`}
+                    mode="output_based"
+                    editingTaskId={selectedTask.id}
+                    initialTask={selectedTask as unknown as Record<string, unknown>}
+                    currentUserId={currentUserId ?? ""}
+                    isAdminOrManager={isAdminOrManager}
+                    teamMembers={[]}
+                    currentPayRate={currentPayRate ?? undefined}
+                    readOnly
+                    hideFooter
+                    onCancel={closePanel}
+                    onSaved={handleTaskSaved}
+                  />
+
                   <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                    <div className="text-[13px] text-espresso">{selectedTask.task_name}</div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                      <div className="text-[13px] text-espresso">{selectedTask.account || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
-                      <div className="text-[13px] text-espresso">{selectedTask.category || "—"}</div>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Rate</label>
-                      <div className="text-[13px] font-medium text-espresso">{formatRate(selectedTask.rate)}</div>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
-                      <div className="text-[13px] text-espresso">{formatDateOnly(selectedTask.start_date)}</div>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                      <div className="text-[13px] text-espresso">{formatDateOnly(selectedTask.due_date)}</div>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
-                      {(selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
-                      VA_STATUS_OPTIONS.includes(selectedTask.status) ? (
-                        <select
-                          value={selectedTask.status}
-                          disabled={statusSaving}
-                          onChange={(event) => void handleStatusChange(selectedTask.id, event.target.value as FixedPayTaskWithClaimer["status"])}
-                          className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta disabled:opacity-50"
-                        >
-                          {VA_STATUS_OPTIONS.map((status) => (
-                            <option key={status} value={status}>
-                              {STATUS_LABELS[status]}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[selectedTask.status]}`}>
-                          {STATUS_LABELS[selectedTask.status]}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {selectedTask.task_detail && (
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Detail</label>
-                      <div className="rounded-lg border border-sand bg-parchment/20 px-3 py-2 text-[13px] text-espresso whitespace-pre-wrap">{selectedTask.task_detail}</div>
-                    </div>
-                  )}
-
-                  {selectedTask.task_notes && (
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
-                      <div className="rounded-lg border border-sand bg-parchment/20 px-3 py-2 text-[13px] text-espresso whitespace-pre-wrap">{selectedTask.task_notes}</div>
-                    </div>
-                  )}
-
-                  {selectedTask.link && (
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Link</label>
-                      <a
-                        href={selectedTask.link.startsWith("http") ? selectedTask.link : `https://${selectedTask.link}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-[13px] text-terracotta hover:underline break-all"
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
+                    {(selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
+                    VA_STATUS_OPTIONS.includes(selectedTask.status) ? (
+                      <select
+                        value={selectedTask.status}
+                        disabled={statusSaving}
+                        onChange={(event) => void handleStatusChange(selectedTask.id, event.target.value as FixedPayTaskWithClaimer["status"])}
+                        className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta disabled:opacity-50"
                       >
-                        {selectedTask.link}
-                      </a>
-                    </div>
-                  )}
-
-                  {selectedTask.instructions && (
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
-                      <div className="rounded-lg border border-sand bg-parchment/20 px-3 py-2 text-[13px] text-espresso whitespace-pre-wrap">{selectedTask.instructions}</div>
-                    </div>
-                  )}
+                        {VA_STATUS_OPTIONS.map((status) => (
+                          <option key={status} value={status}>
+                            {STATUS_LABELS[status]}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[selectedTask.status]}`}>
+                        {STATUS_LABELS[selectedTask.status]}
+                      </span>
+                    )}
+                  </div>
 
                   <div className="rounded-xl border border-sand bg-parchment/20 p-4">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Claimed</div>

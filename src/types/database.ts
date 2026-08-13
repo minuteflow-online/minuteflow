@@ -640,6 +640,8 @@ export interface FixedPayTaskWithClaimer {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** Joined linked project (Objective/Operation) — same projects(id, name) join used by assigned_tasks */
+  projects?: { id: string; name: string } | null;
   /** Joined profile for the assignee — present on admin responses, absent on VA responses */
   assigned_to_profile?: { id: string; full_name: string; username: string } | null;
   /** Joined profile for the task creator/assigner — present on admin responses */

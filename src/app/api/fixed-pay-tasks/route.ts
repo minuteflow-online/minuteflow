@@ -11,7 +11,7 @@ const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "su
 // Cancelled, and Paid are review/payroll actions — admin only.
 const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted"]);
 const TASK_SELECT =
-  "id, task_name, account, category, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at";
+  "id, task_name, account, category, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -127,7 +127,7 @@ export async function GET(request: Request) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = await hydrateTaskProfiles(supabase, (data ?? []) as FixedPayTaskWithClaimer[]);
+  const rows = await hydrateTaskProfiles(supabase, (data ?? []) as unknown as FixedPayTaskWithClaimer[]);
 
   if (!isAdminOrManager) {
     const visibleRows = rows.filter((task) => matchesTaskView(task, "active"));
@@ -266,6 +266,6 @@ export async function POST(request: Request) {
     }
   }
 
-  const [task] = await hydrateTaskProfiles(admin, [data as FixedPayTaskWithClaimer]);
+  const [task] = await hydrateTaskProfiles(admin, [data as unknown as FixedPayTaskWithClaimer]);
   return Response.json({ task }, { status: 201 });
 }
