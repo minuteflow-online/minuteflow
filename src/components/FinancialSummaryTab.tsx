@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo, Fragment } from "react";
 import { createClient } from "@/lib/supabase/client";
 import CSVUploadModal from "@/components/CSVUploadModal";
 import { computeHourlyGross, type PayRateHistoryRow } from "@/lib/payroll";
+import { shiftHoursFromProfile, vaBudgetType, hourlyRateFromProfile } from "@/lib/budget";
 
 
 /* ── Types ──────────────────────────────────────────────── */
@@ -29,6 +30,13 @@ interface ProfileRow {
   role: string;
   is_active: boolean;
   position?: string;
+  // Budget/shift config (from team management overview)
+  shift_hours: number | null;
+  shift_start: string | null;
+  shift_end: string | null;
+  daily_budget_limit: number | null;
+  weekly_budget_limit: number | null;
+  monthly_budget_limit: number | null;
 }
 
 interface LogRow {
@@ -135,6 +143,32 @@ const EXPENSE_CATEGORIES = [
   { value: "other", label: "Other" },
 ];
 
+const PROJECTED_FREQUENCIES = [
+  { value: "one_time", label: "One-time" },
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+];
+
+// Approx. periods used to annualise/monthlyise recurring projected costs.
+const WEEKS_PER_MONTH = 4.33;
+
+/* ── Projected Expenses ───────────────────────────────────── */
+// Forward-looking spend estimates, kept in their own `projected_expenses`
+// table (admin-only RLS), separate from actual financial_expenses.
+
+interface ProjectedExpense {
+  id: string;
+  description: string;
+  amount: number;      // per-unit amount
+  quantity: number;
+  category: string;
+  account: string;     // "" = general / no client
+  frequency: "one_time" | "weekly" | "monthly";
+  start_date: string;  // ISO yyyy-mm-dd
+  end_date: string;    // ISO yyyy-mm-dd or "" for single date
+  notes: string;
+}
+
 /* ── Helpers ─────────────────────────────────────────────── */
 
 function msToHours(ms: number): number {
@@ -148,6 +182,12 @@ function fmtMoney(n: number): string {
 function fmtHours(ms: number): string {
   const h = msToHours(ms);
   return h.toFixed(1) + "h";
+}
+
+/** Format a budget limit in its native unit ($ for output-based, hours otherwise). */
+function fmtLimit(v: number | null, unit: "hours" | "dollars"): string {
+  if (v == null) return "—";
+  return unit === "dollars" ? fmtMoney(v) : `${v.toFixed(2)}h`;
 }
 
 function getMonthRange(): { start: string; end: string } {
@@ -238,6 +278,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const [showExpenseUpload, setShowExpenseUpload] = useState(false);
   const [showTimeLogUpload, setShowTimeLogUpload] = useState(false);
 
+  // Projected expenses (localStorage-backed) + its modal
+  const [projectedExpenses, setProjectedExpenses] = useState<ProjectedExpense[]>([]);
+  const [showProjectedModal, setShowProjectedModal] = useState(false);
+  const [editingProjected, setEditingProjected] = useState<ProjectedExpense | null>(null);
+
   /* ── Toggle helpers ────────────────────────────────────── */
 
   const toggleVa = (userId: string) => {
@@ -274,11 +319,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const rangeStart = `${startDate}T00:00:00.000Z`;
     const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes, paystubSnapRes] = await Promise.all([
+    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes, paystubSnapRes, projExpRes] = await Promise.all([
       fetch("/api/accounts"),
       supabase
         .from("profiles")
-        .select("id, full_name, pay_rate, pay_rate_type, role, is_active, position"),
+        .select("id, full_name, pay_rate, pay_rate_type, role, is_active, position, shift_hours, shift_start, shift_end, daily_budget_limit, weekly_budget_limit, monthly_budget_limit"),
       supabase
         .from("time_logs")
         .select(
@@ -322,6 +367,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .not("custom_line_items", "is", null)
         .lte("period_start", endDate)
         .gte("period_end", startDate),
+      // Projected expenses — forward-looking plans, not date-filtered
+      supabase
+        .from("projected_expenses")
+        .select("id, description, amount, quantity, category, account, frequency, start_date, end_date, notes")
+        .order("start_date", { ascending: true }),
     ]);
 
     const accData = await accRes.json();
@@ -388,6 +438,24 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       });
     });
     setCustomPaystubByVa(customByVa);
+
+    // Projected expenses — coerce numerics and null → "" for the form fields
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const projRows = (projExpRes.data ?? []) as any[];
+    setProjectedExpenses(
+      projRows.map((r) => ({
+        id: String(r.id),
+        description: r.description ?? "",
+        amount: Number(r.amount) || 0,
+        quantity: Number(r.quantity) || 0,
+        category: r.category ?? "other",
+        account: r.account ?? "",
+        frequency: (r.frequency ?? "one_time") as ProjectedExpense["frequency"],
+        start_date: r.start_date ?? "",
+        end_date: r.end_date ?? "",
+        notes: r.notes ?? "",
+      }))
+    );
 
     setLoading(false);
   }, [startDate, endDate, supabase]);
@@ -814,6 +882,87 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     return { revenue, cost, net, margin, expenseTotal, collected, receivable, vaPaid, vaPayable };
   }, [revenueData, vaCostData, expenseData]);
 
+  /* ── Budgeting — Projected VA Cost ───────────────────── */
+  // Pulls each VA's assigned budget from their team-management overview and
+  // derives an expected monthly $ so the admin can see what to expect. Time-
+  // based limits (hours) are converted to $ via the VA's hourly-equivalent rate;
+  // output-based VAs are already in dollars. Precedence for the projection:
+  // monthly limit → weekly × 4.33 → daily × 22 working days.
+  const budgetData = useMemo(() => {
+    const WORK_DAYS_PER_MONTH = 22;
+
+    const rows = vaProfiles
+      .filter((p) => (filterVa ? p.id === filterVa : true))
+      .map((p) => {
+        const type = vaBudgetType(p);
+        const outputBased = type === "output_based";
+        const unit: "hours" | "dollars" = outputBased ? "dollars" : "hours";
+        const hourlyRate = hourlyRateFromProfile(p);
+
+        // Limits in their native unit (hours for time-based, $ for output-based)
+        const daily = outputBased ? p.daily_budget_limit ?? null : shiftHoursFromProfile(p);
+        const weekly = p.weekly_budget_limit ?? null;
+        const monthly = p.monthly_budget_limit ?? null;
+
+        // Monthly amount in the native unit, using precedence
+        const monthlyNative =
+          monthly != null ? monthly
+          : weekly != null ? weekly * WEEKS_PER_MONTH
+          : daily != null ? daily * WORK_DAYS_PER_MONTH
+          : null;
+
+        // Convert to projected $ (time-based needs the hourly rate)
+        let projected: number | null = null;
+        if (monthlyNative != null) {
+          projected = outputBased
+            ? monthlyNative
+            : hourlyRate != null
+              ? monthlyNative * hourlyRate
+              : null;
+        }
+
+        return {
+          userId: p.id,
+          name: p.full_name,
+          type,
+          unit,
+          daily,
+          weekly,
+          monthly,
+          hourlyRate,
+          projected,
+          hasLimit: daily != null || weekly != null || monthly != null,
+        };
+      })
+      .sort((a, b) => (b.projected ?? 0) - (a.projected ?? 0));
+
+    const totalProjected = rows.reduce((s, r) => s + (r.projected ?? 0), 0);
+    const anyMissingRate = rows.some((r) => r.hasLimit && r.projected == null);
+    const configuredCount = rows.filter((r) => r.hasLimit).length;
+
+    return { rows, totalProjected, anyMissingRate, configuredCount };
+  }, [vaProfiles, filterVa]);
+
+  /* ── Projected Expenses — Totals ─────────────────────── */
+  const projectedExpenseData = useMemo(() => {
+    const rows = [...projectedExpenses].sort((a, b) =>
+      (a.start_date || "").localeCompare(b.start_date || "")
+    );
+    const lineTotal = (e: ProjectedExpense) => (Number(e.amount) || 0) * (Number(e.quantity) || 0);
+    const total = rows.reduce((s, e) => s + lineTotal(e), 0);
+    // Monthly-equivalent of anything recurring (for "what to expect" per month)
+    const monthlyRecurring = rows.reduce((s, e) => {
+      const t = lineTotal(e);
+      if (e.frequency === "monthly") return s + t;
+      if (e.frequency === "weekly") return s + t * WEEKS_PER_MONTH;
+      return s;
+    }, 0);
+    const oneTimeTotal = rows
+      .filter((e) => e.frequency === "one_time")
+      .reduce((s, e) => s + lineTotal(e), 0);
+    return { rows, total, monthlyRecurring, oneTimeTotal, lineTotal };
+  }, [projectedExpenses]);
+
   /* ── Unique accounts for filter (active only) ──────────── */
   const activeAccountNames = useMemo(() => {
     const activeSet = new Set(activeAccounts.map((a) => a.name));
@@ -925,6 +1074,36 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     fetchData();
   };
 
+  /* ── Projected Expense handlers (projected_expenses table) ── */
+
+  const saveProjectedExpense = async (form: Omit<ProjectedExpense, "id">, id?: string) => {
+    const payload = {
+      description: form.description,
+      amount: form.amount,
+      quantity: form.quantity,
+      category: form.category,
+      account: form.account || null,
+      frequency: form.frequency,
+      start_date: form.start_date || null,
+      end_date: form.end_date || null,
+      notes: form.notes || null,
+    };
+    const { error } = id
+      ? await supabase.from("projected_expenses").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", id)
+      : await supabase.from("projected_expenses").insert(payload);
+    if (error) { alert("Error saving projected expense: " + error.message); return; }
+    setShowProjectedModal(false);
+    setEditingProjected(null);
+    fetchData();
+  };
+
+  const deleteProjectedExpense = async (id: string) => {
+    if (!confirm("Delete this projected expense?")) return;
+    const { error } = await supabase.from("projected_expenses").delete().eq("id", id);
+    if (error) { alert("Error deleting projected expense: " + error.message); return; }
+    fetchData();
+  };
+
   /* ── Render ──────────────────────────────────────────── */
 
   return (
@@ -1011,8 +1190,180 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         </div>
       ) : (
         <>
+          {/* ── Budgeting — Projected VA Cost ─────────────── */}
+          <Section title="Budgeting — Projected VA Cost">
+            <div className="px-5 pt-4">
+              <p className="text-[11px] text-bark/70">
+                Expected monthly cost from each VA&apos;s assigned budget (set in Team Management).
+                Hours-based limits are converted to $ using the VA&apos;s hourly-equivalent rate.
+              </p>
+            </div>
+            {budgetData.configuredCount === 0 ? (
+              <EmptyState text="No budgets assigned yet. Set a daily/weekly/monthly limit on a VA in Team Management." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                      <th className="px-4 py-3">VA</th>
+                      <th className="px-3 py-3">Type</th>
+                      <th className="px-3 py-3 text-right">Daily</th>
+                      <th className="px-3 py-3 text-right">Weekly</th>
+                      <th className="px-3 py-3 text-right">Monthly</th>
+                      <th className="px-3 py-3 text-right">Projected / mo</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-parchment">
+                    {budgetData.rows.map((row) => (
+                      <tr key={row.userId} className="hover:bg-parchment/20 transition-colors">
+                        <td className="px-4 py-3 font-semibold text-espresso">{row.name}</td>
+                        <td className="px-3 py-3">
+                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            row.type === "output_based"
+                              ? "bg-plum-soft text-plum"
+                              : "bg-slate-blue-soft text-slate-blue"
+                          }`}>
+                            {row.type === "output_based" ? "Output" : "Time"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-right text-bark">{fmtLimit(row.daily, row.unit)}</td>
+                        <td className="px-3 py-3 text-right text-bark">{fmtLimit(row.weekly, row.unit)}</td>
+                        <td className="px-3 py-3 text-right text-bark">{fmtLimit(row.monthly, row.unit)}</td>
+                        <td className="px-3 py-3 text-right font-semibold">
+                          {row.projected != null ? (
+                            <span className="text-terracotta">{fmtMoney(row.projected)}</span>
+                          ) : row.hasLimit ? (
+                            <span className="italic text-bark/50" title="No pay rate set for this VA">Rate not set</span>
+                          ) : (
+                            <span className="italic text-bark/40">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-espresso/20 bg-parchment/20 font-semibold text-espresso">
+                      <td className="px-4 py-3" colSpan={5}>
+                        Total Projected Monthly VA Cost
+                        {budgetData.anyMissingRate && (
+                          <span className="ml-2 text-[10px] font-normal text-amber-600">Some rates not set</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-right text-terracotta">{fmtMoney(budgetData.totalProjected)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </Section>
+
+          {/* ── Projected Expenses ─────────────────────────── */}
+          <Section
+            title="Projected Expenses"
+            action={
+              <button
+                onClick={() => { setEditingProjected(null); setShowProjectedModal(true); }}
+                className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white hover:bg-sage/80 transition-colors cursor-pointer"
+              >
+                + Add Projected Expense
+              </button>
+            }
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 p-5 pb-0">
+              <SummaryCard
+                label="Total Projected"
+                value={fmtMoney(projectedExpenseData.total)}
+                sub={projectedExpenseData.rows.length + " items"}
+                color="text-amber-600"
+              />
+              <SummaryCard
+                label="One-time"
+                value={fmtMoney(projectedExpenseData.oneTimeTotal)}
+                sub="non-recurring"
+                color="text-slate-blue"
+              />
+              <SummaryCard
+                label="Recurring / month"
+                value={fmtMoney(projectedExpenseData.monthlyRecurring)}
+                sub="monthly-equivalent"
+                color="text-terracotta"
+              />
+            </div>
+            {projectedExpenseData.rows.length === 0 ? (
+              <EmptyState text="No projected expenses yet. Add one to plan what to expect." />
+            ) : (
+              <div className="overflow-x-auto mt-4">
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-3 py-3">Description</th>
+                      <th className="px-3 py-3">Category</th>
+                      <th className="px-3 py-3">Account</th>
+                      <th className="px-3 py-3 text-center">Frequency</th>
+                      <th className="px-3 py-3 text-right">Amount</th>
+                      <th className="px-3 py-3 text-right">Qty</th>
+                      <th className="px-3 py-3 text-right">Total</th>
+                      <th className="px-3 py-3 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-parchment">
+                    {projectedExpenseData.rows.map((e) => (
+                      <tr key={e.id} className="hover:bg-parchment/20 transition-colors">
+                        <td className="px-4 py-3 text-bark text-[11px]">
+                          {e.start_date ? fmtDate(e.start_date, timezone) : "—"}
+                          {e.end_date && e.end_date !== e.start_date ? ` – ${fmtDate(e.end_date, timezone)}` : ""}
+                        </td>
+                        <td className="px-3 py-3 text-espresso font-medium">
+                          {e.description}
+                          {e.notes && <span className="block text-[10px] text-bark/60">{e.notes}</span>}
+                        </td>
+                        <td className="px-3 py-3 text-bark capitalize">{e.category || "—"}</td>
+                        <td className="px-3 py-3 text-bark">{e.account || "—"}</td>
+                        <td className="px-3 py-3 text-center text-bark text-[11px]">
+                          {PROJECTED_FREQUENCIES.find((f) => f.value === e.frequency)?.label ?? e.frequency}
+                        </td>
+                        <td className="px-3 py-3 text-right text-bark">{fmtMoney(Number(e.amount) || 0)}</td>
+                        <td className="px-3 py-3 text-right text-bark">{e.quantity}</td>
+                        <td className="px-3 py-3 text-right font-semibold text-amber-600">
+                          {fmtMoney(projectedExpenseData.lineTotal(e))}
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => { setEditingProjected(e); setShowProjectedModal(true); }}
+                              className="text-bark/40 hover:text-terracotta text-[10px] cursor-pointer"
+                              title="Edit"
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              onClick={() => deleteProjectedExpense(e.id)}
+                              className="text-red-400 hover:text-red-600 text-[10px] cursor-pointer"
+                              title="Delete"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-espresso/20 bg-parchment/20 font-semibold text-espresso">
+                      <td className="px-4 py-3" colSpan={7}>Total Projected</td>
+                      <td className="px-3 py-3 text-right text-amber-600">{fmtMoney(projectedExpenseData.total)}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </Section>
+
           {/* ── Summary Cards — Organized by Paid/Collected vs Payable/Receivable ── */}
-          <div className="space-y-3">
+          <Section title="Financial Summary">
+          <div className="space-y-3 p-5">
             {/* Row 1: What's been paid & collected (done) */}
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-wider text-bark/60 mb-2 px-1">Paid & Collected</div>
@@ -1074,6 +1425,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
               </div>
             </div>
           </div>
+          </Section>
 
           {/* ── Reimbursable Expenses Summary ──── */}
           <Section title="Reimbursable Expenses — Summary">
@@ -1925,6 +2277,18 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         />
       )}
 
+      {/* ── Projected Expense Modal ─────────────────────── */}
+      {showProjectedModal && (
+        <ProjectedExpenseModal
+          accounts={activeAccountNames}
+          expenseCategories={EXPENSE_CATEGORIES}
+          defaultDate={new Date().toISOString().slice(0, 10)}
+          initial={editingProjected}
+          onClose={() => { setShowProjectedModal(false); setEditingProjected(null); }}
+          onSave={(form) => saveProjectedExpense(form, editingProjected?.id)}
+        />
+      )}
+
       {/* ── Expense CSV Upload Modal ─────────────────────── */}
       {showExpenseUpload && (
         <CSVUploadModal
@@ -1994,14 +2358,33 @@ function SummaryCard({
   );
 }
 
-function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
+function Section({
+  title,
+  children,
+  action,
+  defaultOpen = true,
+}: {
+  title: string;
+  children: React.ReactNode;
+  action?: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="rounded-xl border border-sand bg-white overflow-hidden">
-      <div className="border-b border-parchment bg-parchment/20 px-5 py-3 flex items-center justify-between">
-        <h3 className="text-sm font-bold text-espresso">{title}</h3>
+      <div className={`bg-parchment/20 px-5 py-3 flex items-center justify-between gap-3 ${open ? "border-b border-parchment" : ""}`}>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer"
+          aria-expanded={open}
+        >
+          <span className={`text-bark text-[11px] shrink-0 transition-transform ${open ? "rotate-90" : ""}`}>▶</span>
+          <h3 className="text-sm font-bold text-espresso truncate">{title}</h3>
+        </button>
         {action}
       </div>
-      <div>{children}</div>
+      {open && <div>{children}</div>}
     </div>
   );
 }
@@ -2345,6 +2728,149 @@ function ExpenseModal({
           <button onClick={handleSave} disabled={saving}
             className="rounded-lg bg-amber-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-amber-700 transition-colors disabled:opacity-50 cursor-pointer">
             {saving ? "Saving..." : "Save Expense"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Projected Expense Modal ──────────────────────────── */
+
+function ProjectedExpenseModal({
+  accounts,
+  expenseCategories,
+  defaultDate,
+  initial,
+  onClose,
+  onSave,
+}: {
+  accounts: string[];
+  expenseCategories: { value: string; label: string }[];
+  defaultDate: string;
+  initial: ProjectedExpense | null;
+  onClose: () => void;
+  onSave: (form: Omit<ProjectedExpense, "id">) => void;
+}) {
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
+  const [quantity, setQuantity] = useState(initial ? String(initial.quantity) : "1");
+  const knownCat = initial ? expenseCategories.some((c) => c.value === initial.category) : true;
+  const [category, setCategory] = useState(initial ? (knownCat ? initial.category : "custom") : "other");
+  const [customCategory, setCustomCategory] = useState(initial && !knownCat ? initial.category : "");
+  const [account, setAccount] = useState(initial?.account ?? "");
+  const [frequency, setFrequency] = useState<ProjectedExpense["frequency"]>(initial?.frequency ?? "one_time");
+  const [startDate, setStartDate] = useState(initial?.start_date || defaultDate);
+  const [endDate, setEndDate] = useState(initial?.end_date ?? "");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
+
+  const amt = parseFloat(amount) || 0;
+  const qty = parseFloat(quantity) || 0;
+  const lineTotal = amt * qty;
+
+  const handleSave = () => {
+    if (!description.trim()) { alert("Please enter a description."); return; }
+    if (!amount || amt <= 0) { alert("Please enter a valid amount."); return; }
+    if (!quantity || qty <= 0) { alert("Please enter a valid quantity."); return; }
+    const finalCategory = category === "custom" ? (customCategory.trim().toLowerCase() || "other") : category;
+    if (category === "custom" && !customCategory.trim()) { alert("Please enter a custom category name."); return; }
+    if (endDate && startDate && endDate < startDate) { alert("End date can't be before the start date."); return; }
+    onSave({
+      description: description.trim(),
+      amount: amt,
+      quantity: qty,
+      category: finalCategory,
+      account,
+      frequency,
+      start_date: startDate,
+      end_date: endDate,
+      notes: notes.trim(),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl border border-sand bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-sm font-bold text-espresso mb-4">{initial ? "Edit Projected Expense" : "Add Projected Expense"}</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Description</label>
+            <input type="text" value={description} onChange={(e) => setDescription(e.target.value)}
+              className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" placeholder="e.g. New laptops for VAs" />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Amount ($)</label>
+              <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" placeholder="0.00" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Quantity</label>
+              <input type="number" step="1" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" placeholder="1" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Total</label>
+              <div className="w-full rounded-lg border border-sand bg-parchment/30 px-3 py-2 text-[13px] font-semibold text-amber-600">
+                {fmtMoney(lineTotal)}
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Category</label>
+              <select value={category} onChange={(e) => { setCategory(e.target.value); if (e.target.value !== "custom") setCustomCategory(""); }}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta">
+                {expenseCategories.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                <option value="custom">+ Custom Category</option>
+              </select>
+              {category === "custom" && (
+                <input type="text" value={customCategory} onChange={(e) => setCustomCategory(e.target.value)}
+                  className="w-full mt-1.5 rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+                  placeholder="Type custom category name" />
+              )}
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Account (optional)</label>
+              <select value={account} onChange={(e) => setAccount(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta">
+                <option value="">General (no client)</option>
+                {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Frequency</label>
+              <select value={frequency} onChange={(e) => setFrequency(e.target.value as ProjectedExpense["frequency"])}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta">
+                {PROJECTED_FREQUENCIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Start Date</label>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">End Date</label>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-bark mb-1">Notes</label>
+            <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)}
+              className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta" placeholder="Optional (vendor, reason, etc.)" />
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-sand px-4 py-2 text-[12px] font-medium text-bark hover:bg-parchment transition-colors cursor-pointer">
+            Cancel
+          </button>
+          <button onClick={handleSave}
+            className="rounded-lg bg-sage px-4 py-2 text-[12px] font-semibold text-white hover:bg-sage/80 transition-colors cursor-pointer">
+            {initial ? "Save Changes" : "Add Projected Expense"}
           </button>
         </div>
       </div>
