@@ -199,6 +199,13 @@ const REQUEST_CHOICES: { key: string; label: string; type: RequestType; partial?
   { key: "general", label: "General Request", type: "general" },
 ];
 
+function fmt12(t: string): string {
+  const [h, m] = t.split(":").map(Number);
+  const p = h >= 12 ? "pm" : "am";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m > 0 ? `${h12}:${String(m).padStart(2, "0")}${p}` : `${h12}${p}`;
+}
+
 const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string }> = {
   pending:  { bg: "bg-amber-soft",       text: "text-amber",      label: "Pending"  },
   approved: { bg: "bg-sage-soft",        text: "text-sage",       label: "Approved" },
@@ -347,6 +354,8 @@ function RequestsTab({
   const [endDate, setEndDate] = useState("");
   const [offStartTime, setOffStartTime] = useState("13:00");
   const [offEndTime, setOffEndTime] = useState("17:00");
+  // Change Shift: one or more proposed new shift windows for the admin to pick from.
+  const [shiftSuggestions, setShiftSuggestions] = useState<{ start: string; end: string }[]>([{ start: "09:00", end: "17:00" }]);
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
@@ -413,11 +422,21 @@ function RequestsTab({
       if (startDate) payload.start_date = startDate;
       if (endDate) payload.end_date = endDate;
     }
-    // Short Day = partial time off; the window marks the hours off. Everything
-    // else leaves the times null.
+    // Short Day = partial time off; the window marks the hours off.
     if (isPartial) {
       payload.start_time = offStartTime || null;
       payload.end_time = offEndTime || null;
+    } else if (reqType === "schedule_change") {
+      // Change Shift: proposed new shift windows. The first is stored in the
+      // time columns; all of them are written into the message for review.
+      const valid = shiftSuggestions.filter((s) => s.start && s.end);
+      payload.start_time = valid[0]?.start ?? null;
+      payload.end_time = valid[0]?.end ?? null;
+      if (valid.length > 0) {
+        const list = valid.map((s, i) => `${i + 1}. ${fmt12(s.start)}–${fmt12(s.end)}`).join("\n");
+        const details = message.trim();
+        payload.message = `Suggested new shift${valid.length > 1 ? "s" : ""}:\n${list}${details ? `\n\n${details}` : ""}`;
+      }
     } else {
       payload.start_time = null;
       payload.end_time = null;
@@ -440,7 +459,7 @@ function RequestsTab({
     setSubmitMsg({ type: "ok", text: "Request submitted!" });
     setTimeout(() => setSubmitMsg(null), 3000);
     fetchRequests();
-  }, [supabase, currentUserId, reqType, isPartial, offStartTime, offEndTime, subject, message, startDate, endDate, fetchRequests]);
+  }, [supabase, currentUserId, reqType, isPartial, offStartTime, offEndTime, shiftSuggestions, subject, message, startDate, endDate, fetchRequests]);
 
   // ── Admin review ──
   const handleReview = useCallback(
@@ -569,6 +588,47 @@ function RequestsTab({
                     />
                   </div>
                   <p className="sm:col-span-2 text-[11px] text-stone">A <span className="font-semibold">Short Day</span> marks these hours off.</p>
+                </div>
+              )}
+
+              {reqType === "schedule_change" && (
+                <div className="space-y-2">
+                  <label className="block text-[11px] font-semibold text-walnut tracking-wide">Suggested New Shift(s)</label>
+                  {shiftSuggestions.map((s, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={s.start}
+                        onChange={(e) => setShiftSuggestions((prev) => prev.map((x, xi) => (xi === i ? { ...x, start: e.target.value } : x)))}
+                        className="flex-1 py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                      />
+                      <span className="text-[12px] text-stone">to</span>
+                      <input
+                        type="time"
+                        value={s.end}
+                        onChange={(e) => setShiftSuggestions((prev) => prev.map((x, xi) => (xi === i ? { ...x, end: e.target.value } : x)))}
+                        className="flex-1 py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                      />
+                      {shiftSuggestions.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setShiftSuggestions((prev) => prev.filter((_, xi) => xi !== i))}
+                          className="px-1 text-[13px] font-semibold text-stone hover:text-terracotta"
+                          aria-label="Remove suggestion"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setShiftSuggestions((prev) => [...prev, { start: "09:00", end: "17:00" }])}
+                    className="text-[12px] font-semibold text-terracotta hover:underline"
+                  >
+                    + Add another suggestion
+                  </button>
+                  <p className="text-[11px] text-stone">Propose one or more shift times — the admin can pick from your options.</p>
                 </div>
               )}
             </div>
