@@ -10,6 +10,32 @@ import type { Project } from "@/types/database";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
+const TIME_BASED_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "unassigned", label: "Unassigned" },
+  { value: "pending", label: "Pending" },
+  { value: "on_queue", label: "On Queue" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "submitted", label: "Submitted" },
+  { value: "reviewing", label: "Reviewing" },
+  { value: "revision_needed", label: "Revision Needed" },
+  { value: "approved", label: "Approved" },
+  { value: "completed", label: "Completed" },
+  { value: "paid", label: "Paid" },
+  { value: "cancelled", label: "Cancelled" },
+];
+
+const OUTPUT_BASED_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "open", label: "Open" },
+  { value: "pending", label: "Pending" },
+  { value: "on_queue", label: "On Queue" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "submitted", label: "Submitted" },
+  { value: "revision_needed", label: "Revision Needed" },
+  { value: "completed", label: "Completed" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "paid", label: "Paid" },
+];
+
 function limitToWords(text: string, limit: number): string {
   const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length <= limit) return text;
@@ -163,6 +189,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Assignment
+  // Initial status — create-only, admin/manager-only (matches the pre-consolidation
+  // forms: TaskAssignmentsAdminTab's Status select and FixedPayTasksTab's Status
+  // select both let the creator pick a starting status other than the default).
+  const [initialStatus, setInitialStatus] = useState(mode === "time_based" ? "pending" : "open");
   const [assignedBy, setAssignedBy] = useState((initialTask?.assigned_by as string) ?? currentUserId);
   const initialVaId = initialTask?.assigned_task_assignees?.[0]?.va_id ?? (initialTask?.assigned_to as string) ?? defaultVaId ?? (isAdminOrManager ? "" : currentUserId);
   const [vaId, setVaId] = useState(initialVaId);
@@ -397,7 +427,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             task = data.task ?? { id: editingTaskId };
           }
         } else {
-          body.initial_status = "pending";
+          body.initial_status = isAdminOrManager ? initialStatus : "pending";
           if (manageAssignment && effectiveVaId) body.va_ids = [effectiveVaId];
           const res = await fetch("/api/assigned-tasks", {
             method: "POST",
@@ -432,6 +462,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         if (isAdminOrManager) {
           body.assigned_to = vaId || null;
           body.assigned_by = assignedBy || null;
+          if (!isEditing) body.status = initialStatus;
         }
         if (!isEditing) body.instructions_locked = instructionsLocked;
 
@@ -724,6 +755,17 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             ))}
           </select>
         </div>
+
+        {!isEditing && isAdminOrManager && (
+          <div>
+            <label className={labelClass}>Status</label>
+            <select value={initialStatus} onChange={(e) => setInitialStatus(e.target.value)} className={inputClass}>
+              {(mode === "time_based" ? TIME_BASED_STATUS_OPTIONS : OUTPUT_BASED_STATUS_OPTIONS).map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           {lockedProjectId ? (
