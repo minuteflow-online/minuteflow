@@ -58,15 +58,20 @@ export async function GET() {
   return Response.json({ requests });
 }
 
-// POST — a VA submits an over-budget request for themselves.
+// POST — a VA submits an over-budget request for themselves (lands "pending").
+// An admin/manager may instead grant budget directly to any VA by passing
+// va_id — that lands pre-"approved", attributed to themselves as reviewer, so
+// it counts toward that VA's limit immediately without a separate approve step.
 export async function POST(request: Request) {
   const auth = await requireAuthed();
   if ("error" in auth) return auth.error;
+  const isAdminOrManager = auth.role === "admin" || auth.role === "manager";
 
   const body = await request.json().catch(() => ({}));
   const amount = Number(body.amount);
   const unit = String(body.unit ?? "");
   const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
+  const targetVaId = typeof body.va_id === "string" && body.va_id.trim() ? body.va_id.trim() : null;
 
   if (!Number.isFinite(amount) || amount <= 0) {
     return Response.json({ error: "A positive amount is required." }, { status: 400 });
@@ -74,11 +79,25 @@ export async function POST(request: Request) {
   if (unit !== "hours" && unit !== "dollars") {
     return Response.json({ error: "unit must be 'hours' or 'dollars'." }, { status: 400 });
   }
+  if (targetVaId && !isAdminOrManager) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const isDirectGrant = isAdminOrManager && Boolean(targetVaId);
+  const now = new Date().toISOString();
 
   const admin = makeAdminClient();
   const { data, error } = await admin
     .from("budget_requests")
-    .insert({ va_id: auth.userId, amount, unit, reason, status: "pending" })
+    .insert({
+      va_id: isDirectGrant ? targetVaId : auth.userId,
+      amount,
+      unit,
+      reason,
+      status: isDirectGrant ? "approved" : "pending",
+      reviewed_by: isDirectGrant ? auth.userId : null,
+      reviewed_at: isDirectGrant ? now : null,
+    })
     .select("id, va_id, amount, unit, reason, status, reviewed_by, review_notes, created_at, reviewed_at")
     .single();
 

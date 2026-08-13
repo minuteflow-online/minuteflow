@@ -2,15 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { shiftHoursFromProfile, computeBudgetStatus, type BudgetStatus } from "@/lib/budget";
+import { shiftHoursFromProfile, computeBudgetStatus, vaBudgetType, type BudgetStatus } from "@/lib/budget";
 import type { BudgetRequest } from "@/types/database";
 
 type BudgetProfile = {
+  position: string | null;
+  pay_rate_type: string | null;
   shift_hours: number | null;
   shift_start: string | null;
   shift_end: string | null;
-  daily_budget_unit: "hours" | "dollars" | null;
-  pay_rate: number | null;
+  daily_budget_limit: number | null;
+  weekly_budget_limit: number | null;
+  monthly_budget_limit: number | null;
 };
 
 function startOfTodayISO(): string {
@@ -18,14 +21,29 @@ function startOfTodayISO(): string {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).toISOString();
 }
 
+// Week starts Sunday, matching Calendar's buildWeekGrid.
+function startOfWeekISO(): string {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
+  return d.toISOString();
+}
+
+function startOfMonthISO(): string {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).toISOString();
+}
+
 function formatAmount(value: number, unit: "hours" | "dollars"): string {
   return unit === "dollars" ? `$${value.toFixed(2)}` : `${value.toFixed(2)}h`;
 }
 
-export default function BudgetWidget({ currentUserId, refreshKey = 0 }: { currentUserId: string; refreshKey?: number }) {
+export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = false }: { currentUserId: string; refreshKey?: number; bare?: boolean }) {
   const supabase = useMemo(() => createClient(), []);
   const [profile, setProfile] = useState<BudgetProfile | null>(null);
-  const [workedHours, setWorkedHours] = useState(0);
+  const [dailyUsed, setDailyUsed] = useState(0);
+  const [weeklyUsed, setWeeklyUsed] = useState(0);
+  const [monthlyUsed, setMonthlyUsed] = useState(0);
   const [requests, setRequests] = useState<BudgetRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -41,31 +59,60 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0 }: { curren
       const [{ data: prof }, { data: logs }, reqRes] = await Promise.all([
         supabase
           .from("profiles")
-          .select("shift_hours, shift_start, shift_end, daily_budget_unit, pay_rate")
+          .select("position, pay_rate_type, shift_hours, shift_start, shift_end, daily_budget_limit, weekly_budget_limit, monthly_budget_limit")
           .eq("id", currentUserId)
           .single(),
+        // Pull from whichever is earlier, week-start or month-start (a week
+        // can start in the previous month) — today's and this week's totals
+        // are just subsets of this same result, so one query covers all three.
         supabase
           .from("time_logs")
-          .select("duration_ms, start_time, end_time")
+          .select("duration_ms, start_time, end_time, billing_type, task_rate")
           .eq("user_id", currentUserId)
-          .gte("start_time", startOfTodayISO()),
+          .gte("start_time", new Date(Math.min(new Date(startOfWeekISO()).getTime(), new Date(startOfMonthISO()).getTime())).toISOString()),
         fetch("/api/budget-requests", { cache: "no-store" }),
       ]);
 
-      setProfile((prof as BudgetProfile | null) ?? null);
+      const p = (prof as BudgetProfile | null) ?? null;
+      setProfile(p);
 
+      const type = p ? vaBudgetType(p) : "time_based";
       const now = Date.now();
-      const totalMs = (logs ?? []).reduce((sum: number, log: { duration_ms: number | null; start_time: string | null; end_time: string | null }) => {
-        if (log.duration_ms && log.duration_ms > 0) return sum + log.duration_ms;
-        // Open log (running) — count elapsed time so the budget reflects the
-        // task in progress, not just closed ones.
-        if (!log.end_time && log.start_time) {
-          const elapsed = now - new Date(log.start_time).getTime();
-          return sum + (elapsed > 0 ? elapsed : 0);
+      const todayStartMs = new Date(startOfTodayISO()).getTime();
+      const weekStartMs = new Date(startOfWeekISO()).getTime();
+      const monthStartMs = new Date(startOfMonthISO()).getTime();
+
+      let daily = 0;
+      let weekly = 0;
+      let monthly = 0;
+      for (const log of (logs ?? []) as { duration_ms: number | null; start_time: string | null; end_time: string | null; billing_type: string | null; task_rate: number | null }[]) {
+        const startMs = log.start_time ? new Date(log.start_time).getTime() : null;
+        const isToday = startMs != null && startMs >= todayStartMs;
+        const isThisWeek = startMs != null && startMs >= weekStartMs;
+        const isThisMonth = startMs != null && startMs >= monthStartMs;
+        let amount: number;
+        if (type === "output_based") {
+          // Output Based VAs are tracked in dollars — sum the task_rate of
+          // their fixed-price logs (task_rate is the whole task's price, set
+          // once when that log was created, not a per-hour rate).
+          if (log.billing_type !== "fixed" || !log.task_rate) continue;
+          amount = log.task_rate;
+        } else {
+          // Time-based VAs are tracked in hours worked.
+          let ms = log.duration_ms && log.duration_ms > 0 ? log.duration_ms : 0;
+          if (!log.end_time && log.start_time) {
+            const elapsed = now - new Date(log.start_time).getTime();
+            ms = elapsed > 0 ? elapsed : 0;
+          }
+          amount = ms / 3_600_000;
         }
-        return sum;
-      }, 0);
-      setWorkedHours(totalMs / 3_600_000);
+        if (isThisMonth) monthly += amount;
+        if (isThisWeek) weekly += amount;
+        if (isToday) daily += amount;
+      }
+      setDailyUsed(daily);
+      setWeeklyUsed(weekly);
+      setMonthlyUsed(monthly);
 
       if (reqRes.ok) {
         const json = await reqRes.json();
@@ -82,12 +129,25 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0 }: { curren
     void load();
   }, [load, refreshKey]);
 
-  const status: BudgetStatus | null = useMemo(() => {
-    if (!profile) return null;
-    const shiftHours = shiftHoursFromProfile(profile);
-    const unit = profile.daily_budget_unit ?? "hours";
-    return computeBudgetStatus(shiftHours, workedHours, unit, profile.pay_rate);
-  }, [profile, workedHours]);
+  const budgetType = profile ? vaBudgetType(profile) : "time_based";
+  const unit: "hours" | "dollars" = budgetType === "output_based" ? "dollars" : "hours";
+
+  // Approved requests only count toward the day they were actually approved on —
+  // otherwise an old approval would silently keep padding every future day's
+  // budget forever instead of being a one-time exception for that day. Only
+  // the daily period is request/grant-able; monthly is read-only.
+  const approvedTodayTotal = useMemo(() => {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    return requests
+      .filter((r) => r.status === "approved" && r.reviewed_at && new Date(r.reviewed_at) >= todayStart)
+      .reduce((sum, r) => sum + Number(r.amount), 0);
+  }, [requests]);
+
+  const dailyLimit = profile ? (budgetType === "output_based" ? profile.daily_budget_limit : shiftHoursFromProfile(profile)) : null;
+  const dailyStatus: BudgetStatus | null = computeBudgetStatus(dailyLimit, dailyUsed, unit, approvedTodayTotal);
+  const weeklyStatus: BudgetStatus | null = computeBudgetStatus(profile?.weekly_budget_limit ?? null, weeklyUsed, unit);
+  const monthlyStatus: BudgetStatus | null = computeBudgetStatus(profile?.monthly_budget_limit ?? null, monthlyUsed, unit);
 
   const pendingRequest = requests.find((r) => r.status === "pending");
 
@@ -103,7 +163,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0 }: { curren
       const res = await fetch("/api/budget-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount, unit: status?.unit ?? "hours", reason: requestReason.trim() || null }),
+        body: JSON.stringify({ amount, unit, reason: requestReason.trim() || null }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -118,58 +178,79 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0 }: { curren
     } finally {
       setSubmitting(false);
     }
-  }, [requestAmount, requestReason, status, load]);
+  }, [requestAmount, requestReason, unit, load]);
 
-  // No shift configured → no budget to show. Stay out of the way.
-  if (!loading && !status) return null;
+  // No limits configured at all → nothing to show. In the standalone card
+  // that means stay out of the way entirely; inside the tabbed container the
+  // tab itself is still a deliberate choice, so it gets an explanation instead.
+  const hasAnyLimit = Boolean(dailyStatus || weeklyStatus || monthlyStatus);
+  if (!loading && !hasAnyLimit && !bare) return null;
 
-  const barColor = status?.over ? "bg-terracotta" : status?.warn ? "bg-amber" : "bg-sage";
-  const pct = status ? Math.min(100, Math.round(status.fraction * 100)) : 0;
-
-  return (
-    <div className="rounded-xl border border-sand bg-white p-3 space-y-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Daily Budget</h3>
-        {status && (
-          <span className="text-[11px] font-semibold text-walnut">
-            {formatAmount(status.remaining, status.unit)} left
+  function PeriodSection({ label, status }: { label: string; status: BudgetStatus | null }) {
+    if (!status) {
+      return (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut mb-1">{label}</p>
+          <p className="text-[11px] text-stone italic">No limit set.</p>
+        </div>
+      );
+    }
+    const barColor = status.over ? "bg-terracotta" : status.warn ? "bg-amber" : "bg-sage";
+    const pct = Math.min(100, Math.round(status.fraction * 100));
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">{label}</p>
+          <span className="text-[11px] font-semibold text-walnut">{formatAmount(status.remaining, status.unit)} left</span>
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-parchment">
+          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+        <div className="flex items-center justify-between text-[10px] text-stone">
+          <span>{formatAmount(status.used, status.unit)} used</span>
+          <span>
+            {formatAmount(status.limit, status.unit)} limit
+            {label === "Daily Limit" && approvedTodayTotal > 0 ? ` (+${formatAmount(approvedTodayTotal, status.unit)} approved today)` : ""}
           </span>
-        )}
+        </div>
+        {status.over ? (
+          <p className="text-[11px] font-semibold text-terracotta">Over {label.toLowerCase()}.</p>
+        ) : status.warn ? (
+          <p className="text-[11px] font-semibold text-amber">At {pct}% — should wrap up soon.</p>
+        ) : null}
       </div>
+    );
+  }
+
+  const content = (
+    <>
+      {!bare && <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Budget and Limit</h3>}
 
       {loading ? (
         <p className="text-[11px] text-stone">Loading…</p>
-      ) : status ? (
+      ) : hasAnyLimit ? (
         <>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-parchment">
-            <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
-          </div>
-          <div className="flex items-center justify-between text-[10px] text-stone">
-            <span>{formatAmount(status.used, status.unit)} used</span>
-            <span>{formatAmount(status.limit, status.unit)} shift</span>
-          </div>
+          <PeriodSection label="Daily Limit" status={dailyStatus} />
+          <div className="border-t border-parchment" />
+          <PeriodSection label="Weekly Limit" status={weeklyStatus} />
+          <div className="border-t border-parchment" />
+          <PeriodSection label="Monthly Budget" status={monthlyStatus} />
 
-          {status.over ? (
-            <p className="text-[11px] font-semibold text-terracotta">Over your daily budget.</p>
-          ) : status.warn ? (
-            <p className="text-[11px] font-semibold text-amber">You&apos;re at {pct}% — should wrap up soon.</p>
-          ) : null}
-
-          {pendingRequest ? (
+          {dailyStatus && (pendingRequest ? (
             <p className="rounded-lg bg-amber-soft/60 px-2.5 py-1.5 text-[11px] text-walnut">
               Request for {formatAmount(pendingRequest.amount, pendingRequest.unit)} more is pending admin approval.
             </p>
           ) : showRequest ? (
             <div className="space-y-2 rounded-lg border border-sand bg-parchment/30 p-2.5">
               <div>
-                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">Extra budget ({status.unit})</label>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">Extra budget ({unit})</label>
                 <input
                   type="number"
                   min="0"
-                  step={status.unit === "dollars" ? "0.01" : "0.25"}
+                  step={unit === "dollars" ? "0.01" : "0.25"}
                   value={requestAmount}
                   onChange={(e) => setRequestAmount(e.target.value)}
-                  placeholder={status.unit === "dollars" ? "e.g. 20" : "e.g. 2"}
+                  placeholder={unit === "dollars" ? "e.g. 20" : "e.g. 2"}
                   className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
                 />
               </div>
@@ -201,7 +282,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0 }: { curren
               </div>
             </div>
           ) : (
-            (status.warn || status.over) && (
+            (dailyStatus.warn || dailyStatus.over) && (
               <button
                 type="button"
                 onClick={() => setShowRequest(true)}
@@ -210,11 +291,16 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0 }: { curren
                 Request more budget
               </button>
             )
-          )}
+          ))}
         </>
+      ) : bare ? (
+        <p className="text-[11px] text-stone italic">No limit set — nothing to track yet.</p>
       ) : null}
 
       {error && <p className="text-[11px] text-terracotta">{error}</p>}
-    </div>
+    </>
   );
+
+  if (bare) return <div className="space-y-3">{content}</div>;
+  return <div className="rounded-xl border border-sand bg-white p-3 space-y-3">{content}</div>;
 }

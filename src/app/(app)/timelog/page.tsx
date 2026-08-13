@@ -156,6 +156,19 @@ function PencilIcon({ className }: { className?: string }) {
 
 /* ── Page Component ───────────────────────────────────────── */
 
+// Full day off (times null) → "Time Off"; partial window → "Short Day (h–h)".
+function formatTimeOffLabel(entry: { start_time: string | null; end_time: string | null } | undefined): string | null {
+  if (!entry) return null;
+  if (!entry.start_time || !entry.end_time) return "Time Off";
+  const fmt = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    const p = h >= 12 ? "pm" : "am";
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return m > 0 ? `${h12}:${String(m).padStart(2, "0")}${p}` : `${h12}${p}`;
+  };
+  return `Short Day (${fmt(entry.start_time)}–${fmt(entry.end_time)})`;
+}
+
 export default function TimeLogPage() {
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -172,6 +185,9 @@ export default function TimeLogPage() {
   const [role, setRole] = useState<string>("va");
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedVA, setSelectedVA] = useState<string>(""); // "" = all
+  // Approved time off (va_requests type=time_off): full day (times null) or a
+  // partial "short day" window. Used to flag days when a single VA is in view.
+  const [timeOff, setTimeOff] = useState<Array<{ user_id: string; start_date: string; end_date: string; start_time: string | null; end_time: string | null }>>([]);
 
   /* ── Modal state ────────────────────────────────────────── */
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);
@@ -885,15 +901,57 @@ export default function TimeLogPage() {
 
   type DaySummary = ReturnType<typeof computeSummary>;
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/va-requests", { cache: "no-store" });
+        const data = await res.json();
+        const approved = (data.requests ?? [])
+          .filter((r: { type: string; status: string; start_date: string | null }) => r.type === "time_off" && r.status === "approved" && r.start_date)
+          .map((r: { user_id: string; start_date: string; end_date: string | null; start_time: string | null; end_time: string | null }) => ({
+            user_id: r.user_id,
+            start_date: r.start_date,
+            end_date: r.end_date || r.start_date,
+            start_time: r.start_time ?? null,
+            end_time: r.end_time ?? null,
+          }));
+        setTimeOff(approved);
+      } catch {
+        setTimeOff([]);
+      }
+    })();
+  }, []);
+
+  // The single VA currently in view (explicit VA filter, or self for a VA).
+  const singleViewedUserId = selectedVA || (role === "va" ? currentUserId : "");
+  const timeOffOn = useCallback(
+    (userId: string, dateKey: string) =>
+      userId ? timeOff.find((t) => t.user_id === userId && dateKey >= t.start_date && dateKey <= t.end_date) : undefined,
+    [timeOff]
+  );
+
   type TableItem =
-    | { _type: "header"; dateKey: string; dayLabel: string; dayTotalMs: number; summary: DaySummary }
+    | { _type: "header"; dateKey: string; dayLabel: string; dayTotalMs: number; summary: DaySummary; timeOff: string | null }
     | { _type: "log"; log: TimeLog };
 
   const tableItems: TableItem[] = useMemo(() => {
     if (viewMode !== "day") {
-      return Object.entries(logsByDay)
-        .sort(([a], [b]) => b.localeCompare(a))
-        .flatMap(([dateKey, dayLogs]) => {
+      // Days that have logs, plus (when one VA is in view) their full-day off
+      // days that have no logs at all — so an entirely-off day still shows.
+      const dateKeys = new Set(Object.keys(logsByDay));
+      if (singleViewedUserId) {
+        const cursor = new Date(rangeStart);
+        while (cursor <= rangeEnd) {
+          const key = dateToDateStr(cursor, orgTimezone);
+          const off = timeOffOn(singleViewedUserId, key);
+          if (off && !off.start_time && !off.end_time) dateKeys.add(key);
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      }
+      return Array.from(dateKeys)
+        .sort((a, b) => b.localeCompare(a))
+        .flatMap((dateKey) => {
+          const dayLogs = logsByDay[dateKey] ?? [];
           const d = new Date(dateKey + "T12:00:00Z");
           const dayLabel = d.toLocaleDateString("en-US", {
             weekday: "short",
@@ -901,14 +959,14 @@ export default function TimeLogPage() {
             day: "numeric",
             timeZone: orgTimezone,
           });
-          const dayTotalMs = dayLogs
-            .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+          const dayTotalMs = dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
           const sortedDayLogs = [...dayLogs].sort(
             (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
           );
           const summary = computeSummary(dayLogs);
+          const timeOffLabel = formatTimeOffLabel(timeOffOn(singleViewedUserId, dateKey));
           return [
-            { _type: "header" as const, dateKey, dayLabel, dayTotalMs, summary },
+            { _type: "header" as const, dateKey, dayLabel, dayTotalMs, summary, timeOff: timeOffLabel },
             ...sortedDayLogs.map((l) => ({ _type: "log" as const, log: l })),
           ];
         });
@@ -917,7 +975,7 @@ export default function TimeLogPage() {
     return [...columnFilteredLogs]
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
       .map((l) => ({ _type: "log" as const, log: l }));
-  }, [viewMode, logsByDay, columnFilteredLogs, computeSummary]);
+  }, [viewMode, logsByDay, columnFilteredLogs, computeSummary, singleViewedUserId, rangeStart, rangeEnd, orgTimezone, timeOffOn]);
 
   /* ── Render ────────────────────────────────────────────── */
 
@@ -1303,7 +1361,14 @@ export default function TimeLogPage() {
                           <tr key={`hdr-${item.dateKey}`} className="bg-parchment/40">
                             <td colSpan={colSpan} className="px-4 py-2.5">
                               <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-espresso">{item.dayLabel}</span>
+                                <span className="flex items-center gap-2">
+                                  <span className="text-[11px] font-bold text-espresso">{item.dayLabel}</span>
+                                  {item.timeOff && (
+                                    <span className="rounded-full border border-terracotta/30 bg-terracotta-soft px-2 py-[1px] text-[10px] font-bold uppercase tracking-wide text-terracotta">
+                                      {item.timeOff}
+                                    </span>
+                                  )}
+                                </span>
                                 <span className="text-[11px] font-bold text-sage">{formatDuration(item.dayTotalMs)}</span>
                               </div>
                               <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">

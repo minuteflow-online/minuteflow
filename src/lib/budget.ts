@@ -1,6 +1,11 @@
-// Shared budget/shift helpers. A VA's daily budget is driven by their shift:
-// either an explicit shift_hours value, or the span between shift_start and
-// shift_end. A null result means the VA has no shift set → no budget limit.
+// Shared budget/shift/limit helpers.
+//
+// A VA's budget type follows their pay setup, not a manual toggle:
+// Output Based (per-task) VAs are tracked in dollars (daily_budget_limit /
+// monthly_budget_limit, both admin-set caps); everyone else is tracked in
+// hours (shift_hours or the shift_start/shift_end span for daily, plus
+// monthly_budget_limit in hours for monthly). A null limit means no cap is
+// set for that VA/period.
 
 export type ShiftProfile = {
   shift_hours: number | null;
@@ -22,10 +27,18 @@ export function shiftHoursFromProfile(p: ShiftProfile): number | null {
   return null;
 }
 
+export type VaBudgetType = "time_based" | "output_based";
+
+/** Same per-task derivation used elsewhere (FixedPayTasksPanel, Calendar's taskModesForMember). */
+export function vaBudgetType(profile: { position?: string | null; pay_rate_type?: string | null }): VaBudgetType {
+  if (profile.position === "Per Task VA" || profile.pay_rate_type === "per_task") return "output_based";
+  return "time_based";
+}
+
 export type BudgetStatus = {
-  /** The daily limit, in the display unit (hours or dollars). */
+  /** The limit for this period, in `unit`. */
   limit: number;
-  /** Amount used so far today, in the display unit. */
+  /** Amount used so far this period, in `unit`. */
   used: number;
   /** limit - used, clamped at 0. */
   remaining: number;
@@ -41,30 +54,32 @@ export type BudgetStatus = {
 export const BUDGET_WARN_THRESHOLD = 0.9;
 
 /**
- * Compute a VA's remaining daily budget from their shift and the hours they've
- * already worked today. `unit` picks whether the numbers are expressed in hours
- * or dollars (dollars = hours × payRate). Returns null when the VA has no shift
- * configured (no limit applies).
+ * Compute remaining budget for one period (day or month) from a limit and
+ * amount already used, both expressed in `unit`. Returns null when no limit
+ * is configured for that period (no cap applies).
+ *
+ * `extraApproved` is any additional budget approved for today — from an
+ * approved over-budget request or a direct admin grant, already in `unit` —
+ * added straight onto the limit. Only meaningful for the daily period; leave
+ * at 0 for monthly (requests/grants are day-scoped, see BudgetWidget).
  */
 export function computeBudgetStatus(
-  shiftHours: number | null,
-  workedHoursToday: number,
+  limit: number | null,
+  used: number,
   unit: "hours" | "dollars",
-  payRate: number | null
+  extraApproved: number = 0
 ): BudgetStatus | null {
-  if (shiftHours == null || shiftHours <= 0) return null;
-  const toUnit = (hours: number) => (unit === "dollars" ? hours * (payRate ?? 0) : hours);
-  const limit = toUnit(shiftHours);
-  const used = toUnit(workedHoursToday);
-  const remaining = Math.max(0, limit - used);
-  const fraction = limit > 0 ? used / limit : 0;
+  if (limit == null || limit <= 0) return null;
+  const effectiveLimit = limit + Math.max(0, extraApproved);
+  const remaining = Math.max(0, effectiveLimit - used);
+  const fraction = effectiveLimit > 0 ? used / effectiveLimit : 0;
   return {
-    limit,
+    limit: effectiveLimit,
     used,
     remaining,
     unit,
     fraction,
     warn: fraction >= BUDGET_WARN_THRESHOLD,
-    over: used >= limit,
+    over: used >= effectiveLimit,
   };
 }

@@ -82,10 +82,10 @@ export default function ColumnHeader<T extends FilterOptionValue>({
             <button
               type="button"
               onClick={() => setOpen((o) => !o)}
-              className={`flex h-4 w-4 items-center justify-center rounded ${isFiltered ? "text-terracotta" : "text-stone hover:text-walnut"}`}
+              className="flex h-5 w-5 items-center justify-center rounded text-terracotta hover:text-[#a85840]"
               aria-label={`Filter ${label}`}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3 w-3">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="h-4 w-4">
                 <polyline points="6 9 12 15 18 9" />
               </svg>
             </button>

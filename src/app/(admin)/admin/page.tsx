@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import {
   VA_POSITION_OPTIONS,
   type Profile,
@@ -2098,6 +2099,16 @@ function TeamManagementTab({
 
   // Column filter state (col -> selected values; absent key = all shown)
   const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
+  // Column visibility — Name and Actions always show; everything else can be hidden.
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const toggleColumnHidden = (key: string) => {
+    setHiddenColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
   const [joinedStart, setJoinedStart] = useState("");
   const [joinedEnd, setJoinedEnd] = useState("");
   const [openFilter, setOpenFilter] = useState<string | null>(null);
@@ -2621,6 +2632,22 @@ function TeamManagementTab({
           )}
         </div>
         <div className="flex items-center gap-2">
+          <ColumnVisibilityPicker
+            columns={[
+              { key: "status", label: "Status" },
+              { key: "username", label: "Username" },
+              { key: "role", label: "Role" },
+              { key: "department", label: "Department" },
+              { key: "position", label: "Position" },
+              { key: "payRate", label: "Pay Rate" },
+              { key: "rateType", label: "Rate Type" },
+              { key: "assignments", label: "Assignments" },
+              { key: "availTasks", label: "Avail. Tasks" },
+              { key: "joined", label: "Joined" },
+            ]}
+            hidden={hiddenColumns}
+            onToggle={toggleColumnHidden}
+          />
           <button
             onClick={() => { setInviteOpen(true); setInviteResult(null); setInviteEmail(""); }}
             className="rounded-lg border border-terracotta px-4 py-2 text-[13px] font-semibold text-terracotta transition-all hover:bg-terracotta/10"
@@ -2981,7 +3008,9 @@ function TeamManagementTab({
                   { col: "assignments", label: "Assignments", cls: "px-3 py-2.5" },
                   { col: "availTasks", label: "Avail. Tasks", cls: "px-3 py-2.5 text-center" },
                   { col: "joined", label: "Joined", cls: "px-3 py-2.5" },
-                ] as { col: string; label: string; cls: string }[]).map(({ col, label, cls }) => {
+                ] as { col: string; label: string; cls: string }[])
+                  .filter(({ col }) => col === "name" || !hiddenColumns.has(col))
+                  .map(({ col, label, cls }) => {
                   const isActive = col in colFilters || (col === "joined" && (!!joinedStart || !!joinedEnd));
                   return (
                     <th key={col} className={cls}>
@@ -2990,7 +3019,7 @@ function TeamManagementTab({
                         className={`flex items-center gap-1 group cursor-pointer transition-colors ${isActive ? "text-terracotta" : "text-bark hover:text-espresso"}`}
                       >
                         <span className="uppercase tracking-wider text-[10px] font-semibold whitespace-nowrap">{label}</span>
-                        <svg className={`h-2.5 w-2.5 shrink-0 transition-transform ${openFilter === col ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="currentColor">
+                        <svg className={`h-4 w-4 shrink-0 text-terracotta transition-transform ${openFilter === col ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="currentColor">
                           <path d="M7 10l5 5 5-5H7z" />
                         </svg>
                         {isActive && <span className="w-1.5 h-1.5 rounded-full bg-terracotta shrink-0" />}
@@ -3026,6 +3055,7 @@ function TeamManagementTab({
                       <span className="font-semibold text-espresso text-[13px]">{p.full_name}</span>
                     </div>
                   </td>
+                  {!hiddenColumns.has("status") && (
                   <td className="px-3 py-3 text-center">
                     <button
                       onClick={async () => {
@@ -3050,8 +3080,10 @@ function TeamManagementTab({
                       {p.is_active !== false ? "Active" : "Inactive"}
                     </button>
                   </td>
-                  <td className="px-3 py-3 text-bark">{p.username}</td>
+                  )}
+                  {!hiddenColumns.has("username") && <td className="px-3 py-3 text-bark">{p.username}</td>}
                   {/* Role - editable */}
+                  {!hiddenColumns.has("role") && (
                   <td className="px-3 py-3">
                     {editingCell?.userId === p.id && editingCell.field === "role" ? (
                       <div className="flex items-center gap-1">
@@ -3079,7 +3111,9 @@ function TeamManagementTab({
                       </button>
                     )}
                   </td>
+                  )}
                   {/* Department */}
+                  {!hiddenColumns.has("department") && (
                   <td className="px-3 py-3">
                     {editingCell?.userId === p.id && editingCell.field === "department" ? (
                       <div className="flex items-center gap-1">
@@ -3102,7 +3136,9 @@ function TeamManagementTab({
                       </button>
                     )}
                   </td>
+                  )}
                   {/* Position */}
+                  {!hiddenColumns.has("position") && (
                   <td className="px-3 py-3">
                     {editingCell?.userId === p.id && editingCell.field === "position" ? (
                       <div className="flex items-center gap-1">
@@ -3129,7 +3165,9 @@ function TeamManagementTab({
                       </button>
                     )}
                   </td>
+                  )}
                   {/* Pay Rate - opens Add New Rate modal (admin only) */}
+                  {!hiddenColumns.has("payRate") && (
                   <td className="px-3 py-3 text-right">
                     {isFullAdmin ? (
                       <button
@@ -3143,7 +3181,9 @@ function TeamManagementTab({
                       <span title="Hidden" className="text-stone">🔒</span>
                     )}
                   </td>
+                  )}
                   {/* Pay Rate Type - opens Add New Rate modal (admin only) */}
+                  {!hiddenColumns.has("rateType") && (
                   <td className="px-3 py-3">
                     {isFullAdmin ? (
                       <button
@@ -3157,7 +3197,9 @@ function TeamManagementTab({
                       <span title="Hidden" className="text-stone text-[11px]">🔒</span>
                     )}
                   </td>
+                  )}
                   {/* Category Assignments */}
+                  {!hiddenColumns.has("assignments") && (
                   <td className="px-3 py-3">
                     {(() => {
                       const cats = getCategoryBadges(p.id);
@@ -3173,7 +3215,9 @@ function TeamManagementTab({
                       );
                     })()}
                   </td>
+                  )}
                   {/* Available Tasks toggle */}
+                  {!hiddenColumns.has("availTasks") && (
                   <td className="px-3 py-3 text-center">
                     <div className="flex flex-col items-center gap-1">
                       <button
@@ -3222,9 +3266,12 @@ function TeamManagementTab({
                       </button>
                     </div>
                   </td>
+                  )}
+                  {!hiddenColumns.has("joined") && (
                   <td className="px-3 py-3 text-[11px] text-stone whitespace-nowrap">
                     {new Date(p.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone })}
                   </td>
+                  )}
                   <td className="px-3 py-3 text-center">
                     <div className="flex flex-col items-center gap-1">
                     <div className="flex items-center justify-center gap-1">

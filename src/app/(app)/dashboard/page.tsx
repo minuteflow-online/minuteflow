@@ -12,9 +12,8 @@ import ActivityLog from "@/components/ActivityLog";
 import LiveSessionPrompt from "@/components/LiveSessionPrompt";
 import ProjectSidebar, { type QuickActionMapping } from "@/components/ProjectSidebar";
 import ClaimableTasksColumn from "@/components/ClaimableTasksColumn";
-import AssignedTasksWidget from "@/components/AssignedTasksWidget";
+import TaskWidgetsTabs from "@/components/TaskWidgetsTabs";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
-import BudgetWidget from "@/components/BudgetWidget";
 import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
@@ -3352,29 +3351,23 @@ export default function DashboardPage() {
         const isHourly = !isProjectBased && !isPerTask; // Full-time, Part-time, null
         const canSeeAvailable = isVa && !!profile?.can_see_available_tasks;
 
-        // Grid: when VA is idle, always show 4 columns (locked panels fill the gaps)
-        // When VA is clocked in, show 4 columns: form | plan | assigned tasks | quick pick
+        // Grid: Log a Task/Assigned Tasks/Daily Budget are one tabbed box now
+        // (TaskWidgetsTabs) — it takes the flexible middle column so it fills
+        // whatever room is left between Team and Quick Pick's fixed widths,
+        // instead of leaving dead space on the right at a fixed narrow width.
         const gridClass = isVa
-          ? "grid-cols-1 md:grid-cols-[1fr_1.2fr_240px]"
-          : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px_280px]";
+          ? "grid-cols-1 md:grid-cols-[1fr_240px]"
+          : "grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[240px_1fr_280px]";
 
         return (
           <div className={`grid gap-5 mb-6 ${gridClass}`}>
             {role !== "va" && <TeamSidebar members={teamMembers} timeLogs={timeLogs} timezone={orgTimezone} />}
-            <TaskEntryForm
-              onStartTask={handleCheckAndStartTask}
-              hasActiveTask={!!activeTask || sessionState === "clocked-in" || sessionState === "on-break"}
-              role={role}
-              sessionState={sessionState}
-              activeTaskClientMemo={activeTask?.client_memo || ""}
-            />
-            {/* Assigned Tasks Widget — visible for all users */}
+            {/* Log a Task / Assigned Tasks / Daily Budget — one tabbed box instead of three stacked ones, sized to match Quick Pick's column. Assigned Tasks is the default view. */}
             {userId && (
-              <AssignedTasksWidget
-                key={`assigned-${claimRefreshKey}`}
+              <TaskWidgetsTabs
                 userId={userId}
                 sessionState={sessionState}
-                hasActiveTask={!!activeTask}
+                hasActiveTask={!!activeTask || sessionState === "clocked-in" || sessionState === "on-break"}
                 onPlayAssignedTask={handlePlayAssignedTask}
                 onPlayTodo={handlePlayTodo}
                 orgTimezone={orgTimezone}
@@ -3382,10 +3375,12 @@ export default function DashboardPage() {
                 refetchCount={widgetRefetchCount}
                 activeAssignedTaskId={activeTask?.assignedTaskId ?? null}
                 activeTodoLabel={activeTask?.todoLabel ?? null}
+                assignedKey={claimRefreshKey}
+                claimRefreshKey={claimRefreshKey}
+                onStartTask={handleCheckAndStartTask}
+                role={role}
+                activeTaskClientMemo={activeTask?.client_memo || ""}
               />
-            )}
-            {isVa && userId && (
-              <BudgetWidget currentUserId={userId} refreshKey={claimRefreshKey} />
             )}
             {isVa && sessionState === "idle" && (
               <AvailableTasksWidget

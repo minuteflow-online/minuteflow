@@ -19,6 +19,8 @@ interface AssignedTasksWidgetProps {
   activeAssignedTaskId?: number | null;
   /** "TD1"/"TD2"/etc. of the currently-playing to-do, if any. */
   activeTodoLabel?: string | null;
+  /** Skip the outer card/header/collapse chrome — for embedding inside a shared tabbed container that already provides its own box and tab strip. */
+  bare?: boolean;
 }
 
 function formatDueDate(dueDateStr: string, orgTimezone: string): { label: string; isOverdue: boolean } {
@@ -103,6 +105,7 @@ export default function AssignedTasksWidget({
   refetchCount = 0,
   activeAssignedTaskId = null,
   activeTodoLabel = null,
+  bare = false,
 }: AssignedTasksWidgetProps) {
   const [tasks, setTasks] = useState<VAAssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -353,41 +356,43 @@ export default function AssignedTasksWidget({
   };
 
   return (
-    <div className="bg-white border border-sand rounded-xl">
-      {/* Header */}
-      <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex items-center gap-2 cursor-pointer"
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            className={`text-bark transition-transform ${collapsed ? "" : "rotate-90"}`}
+    <div className={bare ? "" : "bg-white border border-sand rounded-xl"}>
+      {/* Header — skipped in bare mode, where a shared tab strip replaces both the title and the collapse toggle */}
+      {!bare && (
+        <div className="py-4 px-5 border-b border-parchment flex items-center justify-between">
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="flex items-center gap-2 cursor-pointer"
           >
-            <path
-              d="M4 2l4 4-4 4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          <h3 className="text-sm font-bold text-espresso">Assigned Tasks</h3>
-        </button>
-        <div className="flex items-center gap-2">
-          {tasks.length > 0 && (
-            <span className="text-[10px] font-semibold py-[2px] px-2 rounded-full bg-terracotta-soft text-terracotta">
-              {tasks.length} task{tasks.length !== 1 ? "s" : ""}
-            </span>
-          )}
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              className={`text-bark transition-transform ${collapsed ? "" : "rotate-90"}`}
+            >
+              <path
+                d="M4 2l4 4-4 4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <h3 className="text-sm font-bold text-espresso">Assigned Tasks</h3>
+          </button>
+          <div className="flex items-center gap-2">
+            {tasks.length > 0 && (
+              <span className="text-[10px] font-semibold py-[2px] px-2 rounded-full bg-terracotta-soft text-terracotta">
+                {tasks.length} task{tasks.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {!collapsed && (
-        <div className="p-[18px_20px]">
+      {(bare || !collapsed) && (
+        <div className={bare ? "" : "p-[18px_20px]"}>
           {loading ? (
             <div className="space-y-2">
               {[1, 2, 3].map((i) => (

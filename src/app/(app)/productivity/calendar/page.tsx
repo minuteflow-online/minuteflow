@@ -138,6 +138,10 @@ export default function ProductivityCalendarPage() {
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [daySchedule, setDaySchedule] = useState<RawTask[]>([]);
   const [loadingDay, setLoadingDay] = useState(false);
+  // Approved time off (va_requests type=time_off). Admin sees everyone; a VA
+  // sees their own. start_time/end_time null = full day off; set = a partial
+  // "short day" for that window.
+  const [timeOff, setTimeOff] = useState<Array<{ user_id: string; start_date: string; end_date: string; start_time: string | null; end_time: string | null }>>([]);
 
   const [showFilters, setShowFilters] = useState(false);
   const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
@@ -375,6 +379,48 @@ export default function ProductivityCalendarPage() {
   useEffect(() => {
     if (viewMode === "day") fetchCompareSchedules();
   }, [viewMode, fetchCompareSchedules]);
+
+  const fetchTimeOff = useCallback(async () => {
+    try {
+      const res = await fetch("/api/va-requests", { cache: "no-store" });
+      const data = await res.json();
+      const approved = (data.requests ?? [])
+        .filter((r: { type: string; status: string; start_date: string | null }) => r.type === "time_off" && r.status === "approved" && r.start_date)
+        .map((r: { user_id: string; start_date: string; end_date: string | null; start_time: string | null; end_time: string | null }) => ({
+          user_id: r.user_id,
+          start_date: r.start_date,
+          end_date: r.end_date || r.start_date,
+          start_time: r.start_time ?? null,
+          end_time: r.end_time ?? null,
+        }));
+      setTimeOff(approved);
+    } catch {
+      setTimeOff([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTimeOff();
+  }, [fetchTimeOff]);
+
+  // The approved time-off entry covering this VA on this date, if any.
+  const timeOffForVaOnDate = useCallback(
+    (vaId: string, dateStr: string) => timeOff.find((t) => t.user_id === vaId && dateStr >= t.start_date && dateStr <= t.end_date),
+    [timeOff]
+  );
+  const isVaOffOnDate = useCallback((vaId: string, dateStr: string) => Boolean(timeOffForVaOnDate(vaId, dateStr)), [timeOffForVaOnDate]);
+  // Label for an off entry: full day → "Time Off"; partial → "Short Day (h–h)".
+  const timeOffLabel = (entry: { start_time: string | null; end_time: string | null } | undefined) => {
+    if (!entry) return null;
+    if (!entry.start_time || !entry.end_time) return "Time Off";
+    const fmt = (t: string) => {
+      const [h, m] = t.split(":").map(Number);
+      const period = h >= 12 ? "pm" : "am";
+      const hour12 = h % 12 === 0 ? 12 : h % 12;
+      return m > 0 ? `${hour12}:${String(m).padStart(2, "0")}${period}` : `${hour12}${period}`;
+    };
+    return `Short Day (${fmt(entry.start_time)}–${fmt(entry.end_time)})`;
+  };
 
   // The "My View" control is a multi-select of teammates. Opening it seeds the
   // draft from what's applied; Apply commits it. 0 selected = just me; 1 = that
@@ -1061,9 +1107,21 @@ export default function ProductivityCalendarPage() {
                     isCurrentMonth ? "border-sand bg-white hover:bg-cream" : "border-transparent bg-parchment/40"
                   } ${isToday ? "ring-2 ring-terracotta" : ""}`}
                 >
-                  <span className={`text-[11px] font-semibold ${isCurrentMonth ? "text-espresso" : "text-stone"}`}>
-                    {Number(dateStr.slice(8, 10))}
-                  </span>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className={`text-[11px] font-semibold ${isCurrentMonth ? "text-espresso" : "text-stone"}`}>
+                      {Number(dateStr.slice(8, 10))}
+                    </span>
+                    {(() => {
+                      const off = timeOffForVaOnDate(dayUserId ?? "", dateStr);
+                      if (!off) return null;
+                      const partial = Boolean(off.start_time && off.end_time);
+                      return (
+                        <span className="rounded bg-terracotta-soft px-1 text-[8px] font-bold uppercase leading-tight text-terracotta" title={timeOffLabel(off) ?? undefined}>
+                          {partial ? "½ Day" : "Off"}
+                        </span>
+                      );
+                    })()}
+                  </div>
                   <div className="mt-1 space-y-1">
                     {/* Multi-day spans render as a bar; adjacent days line up into
                         a continuous line across the span. */}
@@ -1248,6 +1306,12 @@ export default function ProductivityCalendarPage() {
               </p>
             )}
 
+            {compareVaIds.length < 2 && isVaOffOnDate(dayUserId ?? "", selectedDate) && (
+              <div className="mb-3 rounded-lg border border-terracotta/30 bg-terracotta-soft px-3 py-2 text-[12px] font-semibold text-terracotta">
+                {timeOffLabel(timeOffForVaOnDate(dayUserId ?? "", selectedDate))} — approved.
+              </div>
+            )}
+
             {dueTodayItems.length > 0 && (
               <div className="mb-3 flex flex-wrap gap-1.5">
                 {dueTodayItems.map((item) => {
@@ -1303,7 +1367,11 @@ export default function ProductivityCalendarPage() {
                     return (
                       <div key={vaId} className="min-w-0 flex-1 px-1 text-center">
                         <p className="truncate text-[11px] font-bold text-espresso">{member?.full_name || member?.username || "VA"}</p>
-                        <p className="text-[9px] text-stone">{Math.floor(totalMin / 60)}h{totalMin % 60 > 0 ? ` ${Math.round(totalMin % 60)}m` : ""}</p>
+                        {isVaOffOnDate(vaId, selectedDate) ? (
+                          <p className="text-[9px] font-bold uppercase tracking-wide text-terracotta">{timeOffLabel(timeOffForVaOnDate(vaId, selectedDate))}</p>
+                        ) : (
+                          <p className="text-[9px] text-stone">{Math.floor(totalMin / 60)}h{totalMin % 60 > 0 ? ` ${Math.round(totalMin % 60)}m` : ""}</p>
+                        )}
                       </div>
                     );
                   })}
