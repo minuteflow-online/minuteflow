@@ -183,10 +183,21 @@ const PORTAL_TABS: { id: PortalTab; label: string; icon: React.ReactNode }[] = [
 
 const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
   time_off: "Time Off",
-  schedule_change: "Schedule Change",
+  schedule_change: "Change Shift",
   pay_question: "Pay Question",
   general: "General Request",
 };
+
+// What the VA actually picks. "Short Day" is a partial time_off (stored with a
+// time window); "Change Shift" is a schedule_change. Full time_off, pay
+// question, and general map straight through.
+const REQUEST_CHOICES: { key: string; label: string; type: RequestType; partial?: boolean }[] = [
+  { key: "time_off", label: "Time Off", type: "time_off" },
+  { key: "short_day", label: "Short Day", type: "time_off", partial: true },
+  { key: "change_shift", label: "Change Shift", type: "schedule_change" },
+  { key: "pay_question", label: "Pay Question", type: "pay_question" },
+  { key: "general", label: "General Request", type: "general" },
+];
 
 const STATUS_STYLES: Record<RequestStatus, { bg: string; text: string; label: string }> = {
   pending:  { bg: "bg-amber-soft",       text: "text-amber",      label: "Pending"  },
@@ -326,11 +337,16 @@ function RequestsTab({
 
   // ── Form state ──
   const [showForm, setShowForm] = useState(false);
-  const [reqType, setReqType] = useState<RequestType>("time_off");
+  const [reqChoice, setReqChoice] = useState<string>("time_off");
+  const choice = REQUEST_CHOICES.find((c) => c.key === reqChoice) ?? REQUEST_CHOICES[0];
+  const reqType = choice.type;
+  const isPartial = Boolean(choice.partial); // Short Day
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [offStartTime, setOffStartTime] = useState("13:00");
+  const [offEndTime, setOffEndTime] = useState("17:00");
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
@@ -393,9 +409,18 @@ function RequestsTab({
       subject: subject.trim(),
       message: message.trim(),
     };
-    if (reqType === "time_off") {
+    if (reqType === "time_off" || reqType === "schedule_change") {
       if (startDate) payload.start_date = startDate;
       if (endDate) payload.end_date = endDate;
+    }
+    // Short Day = partial time off; the window marks the hours off. Everything
+    // else leaves the times null.
+    if (isPartial) {
+      payload.start_time = offStartTime || null;
+      payload.end_time = offEndTime || null;
+    } else {
+      payload.start_time = null;
+      payload.end_time = null;
     }
 
     const { error } = await supabase.from("va_requests").insert(payload);
@@ -415,7 +440,7 @@ function RequestsTab({
     setSubmitMsg({ type: "ok", text: "Request submitted!" });
     setTimeout(() => setSubmitMsg(null), 3000);
     fetchRequests();
-  }, [supabase, currentUserId, reqType, subject, message, startDate, endDate, fetchRequests]);
+  }, [supabase, currentUserId, reqType, isPartial, offStartTime, offEndTime, subject, message, startDate, endDate, fetchRequests]);
 
   // ── Admin review ──
   const handleReview = useCallback(
@@ -479,47 +504,73 @@ function RequestsTab({
             </button>
           </div>
 
-          {/* Type */}
+          {/* Type — what the VA is requesting */}
           <div className="mb-4">
             <label className="block text-[11px] font-semibold text-walnut mb-2 tracking-wide">Request Type</label>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {(["time_off", "schedule_change", "pay_question", "general"] as RequestType[]).map((t) => (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {REQUEST_CHOICES.map((c) => (
                 <button
-                  key={t}
-                  onClick={() => setReqType(t)}
+                  key={c.key}
+                  onClick={() => setReqChoice(c.key)}
                   className={`py-2 px-3 rounded-lg text-[12px] font-medium border transition-all cursor-pointer ${
-                    reqType === t
+                    reqChoice === c.key
                       ? "bg-terracotta text-white border-terracotta"
                       : "bg-white text-walnut border-sand hover:border-terracotta"
                   }`}
                 >
-                  {REQUEST_TYPE_LABELS[t]}
+                  {c.label}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Date range (Time Off only) */}
-          {reqType === "time_off" && (
-            <div className="mb-4 grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">From</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                />
+          {/* Dates — Time Off, Short Day, Change Shift */}
+          {(reqType === "time_off" || reqType === "schedule_change") && (
+            <div className="mb-4 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">From</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">To</label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">To</label>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                />
-              </div>
+
+              {isPartial && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Off from</label>
+                    <input
+                      type="time"
+                      value={offStartTime}
+                      onChange={(e) => setOffStartTime(e.target.value)}
+                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Off until</label>
+                    <input
+                      type="time"
+                      value={offEndTime}
+                      onChange={(e) => setOffEndTime(e.target.value)}
+                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                    />
+                  </div>
+                  <p className="sm:col-span-2 text-[11px] text-stone">A <span className="font-semibold">Short Day</span> marks these hours off.</p>
+                </div>
+              )}
             </div>
           )}
 

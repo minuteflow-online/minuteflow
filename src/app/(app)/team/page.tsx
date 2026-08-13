@@ -41,11 +41,19 @@ type TeamMember = {
   messageMs: number;
   // Period's logs for expandable task list
   todayLogs: TimeLog[];
-  // Approved absences (day off / time off / schedule change) overlapping the selected range
-  absences: { type: string; start_date: string | null; end_date: string | null; subject: string }[];
+  // Approved absences (day off / time off / schedule change) overlapping the selected range.
+  // start_time/end_time set = a partial "short day"; null = full day.
+  absences: { type: string; start_date: string | null; end_date: string | null; start_time: string | null; end_time: string | null; subject: string }[];
 };
 
 /* ── Helpers ──────────────────────────────────────────────── */
+
+function formatOffTime(t: string): string {
+  const [h, m] = t.split(":").map(Number);
+  const p = h >= 12 ? "pm" : "am";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m > 0 ? `${h12}:${String(m).padStart(2, "0")}${p}` : `${h12}${p}`;
+}
 
 function computePayable(hoursMs: number, rate: number, rateType: string): number {
   const hours = hoursMs / 3600000;
@@ -106,6 +114,9 @@ export default function TeamPage() {
 
   // Member name filter
   const [memberFilter, setMemberFilter] = useState<string>("all");
+
+  // Show only VAs with an approved absence (time off / short day) in the period
+  const [absentOnly, setAbsentOnly] = useState(false);
 
   // Mood data: { [userId]: { [session_date_YYYY-MM-DD]: mood } }
   const [moodData, setMoodData] = useState<Record<string, Record<string, string>>>({});
@@ -206,7 +217,7 @@ export default function TeamPage() {
         supabase.from("organization_settings").select("timezone").limit(1).single(),
         supabase
           .from("va_requests")
-          .select("user_id, type, subject, start_date, end_date, status")
+          .select("user_id, type, subject, start_date, end_date, start_time, end_time, status")
           .eq("status", "approved")
           .in("type", ["time_off", "schedule_change"]),
       ]);
@@ -232,7 +243,7 @@ export default function TeamPage() {
     setMoodData(moodLookup);
 
     // Build approved-absence lookup: only requests overlapping the selected date range
-    type ApprovedRequest = { user_id: string; type: string; subject: string; start_date: string | null; end_date: string | null };
+    type ApprovedRequest = { user_id: string; type: string; subject: string; start_date: string | null; end_date: string | null; start_time: string | null; end_time: string | null };
     const approvedRequests = (requestsRes.data ?? []) as ApprovedRequest[];
     const absenceLookup: Record<string, TeamMember["absences"]> = {};
     approvedRequests.forEach((r) => {
@@ -242,7 +253,7 @@ export default function TeamPage() {
       // overlap check against the selected range (YYYY-MM-DD strings compare lexically)
       if (reqStart > moodEnd || reqEnd < moodStart) return;
       if (!absenceLookup[r.user_id]) absenceLookup[r.user_id] = [];
-      absenceLookup[r.user_id].push({ type: r.type, start_date: r.start_date, end_date: r.end_date, subject: r.subject });
+      absenceLookup[r.user_id].push({ type: r.type, start_date: r.start_date, end_date: r.end_date, start_time: r.start_time ?? null, end_time: r.end_time ?? null, subject: r.subject });
     });
 
     const teamMembers: TeamMember[] = profiles.map((profile) => {
@@ -490,9 +501,13 @@ export default function TeamPage() {
     : members.filter((m) => m.status === statusFilter);
 
   // Apply member name filter
-  const filteredMembers = memberFilter === "all"
+  const nameFiltered = memberFilter === "all"
     ? statusFiltered
     : statusFiltered.filter((m) => m.profile.id === memberFilter);
+
+  // Apply the "off / short day" filter
+  const filteredMembers = absentOnly ? nameFiltered.filter((m) => m.absences.length > 0) : nameFiltered;
+  const absentCount = members.filter((m) => m.absences.length > 0).length;
 
   // Split members into selected (expanded) and unselected (compact)
   const expandedMembers = hasSelection
@@ -666,6 +681,16 @@ export default function TeamPage() {
               </button>
             );
           })}
+          {/* Off / Short Day filter — jump straight to who's out */}
+          <button
+            onClick={() => setAbsentOnly((v) => !v)}
+            className={`rounded-full px-4 py-1.5 text-[12px] font-semibold border transition-all cursor-pointer ${
+              absentOnly ? "bg-terracotta-soft text-terracotta border-terracotta/40" : `bg-white text-stone border-sand hover:bg-parchment`
+            }`}
+          >
+            Off / Short Day
+            <span className="ml-1.5 opacity-60">({absentCount})</span>
+          </button>
           {/* Member name filter */}
           <select
             value={memberFilter}
@@ -966,7 +991,11 @@ function MemberCard({ member, isAdmin, isToday, isSelected, onSelect, onForceLog
           {member.absences.map((a, i) => (
             <span key={i} className="inline-flex items-center gap-1 rounded-full bg-amber-soft px-2.5 py-[3px] text-[10px] font-semibold text-amber">
               <span className="w-1.5 h-1.5 rounded-full bg-amber" />
-              {a.type === "schedule_change" ? "Schedule Change" : "Time Off"} &middot; {formatAbsenceRange(a.start_date, a.end_date)}
+              {a.type === "schedule_change"
+                ? "Schedule Change"
+                : a.start_time && a.end_time
+                ? `Short Day (${formatOffTime(a.start_time)}–${formatOffTime(a.end_time)})`
+                : "Time Off"} &middot; {formatAbsenceRange(a.start_date, a.end_date)}
             </span>
           ))}
         </div>

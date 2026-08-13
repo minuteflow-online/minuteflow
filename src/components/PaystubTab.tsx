@@ -192,8 +192,17 @@ function formatDateLabel(iso: string): string {
 
 /* ── Component ───────────────────────────────────────────── */
 
+function fmtStubTime(t: string): string {
+  const [h, m] = t.split(":").map(Number);
+  const p = h >= 12 ? "pm" : "am";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m > 0 ? `${h12}:${String(m).padStart(2, "0")}${p}` : `${h12}${p}`;
+}
+
 export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [selectedUserId, setSelectedUserId] = useState<string>("");
+  // Approved time off / short days overlapping the pay period, shown on the stub.
+  const [periodTimeOff, setPeriodTimeOff] = useState<Array<{ start_date: string; end_date: string; start_time: string | null; end_time: string | null }>>([]);
   const [preset, setPreset] = useState<PeriodPreset>("last_second_half");
   const [customStart, setCustomStart] = useState<string>("");
   const [customEnd, setCustomEnd] = useState<string>("");
@@ -292,6 +301,22 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       // Default amount = total gross pay (hourly + fixed)
       const net = data.totalGrossPay || data.grossPay;
       setCustomAmount(net.toFixed(2));
+
+      // Approved time off / short days overlapping this pay period.
+      try {
+        const toRes = await fetch("/api/va-requests", { cache: "no-store" });
+        const toJson = await toRes.json();
+        const off = (toJson.requests ?? [])
+          .filter((r: { user_id: string; type: string; status: string; start_date: string | null; end_date: string | null }) =>
+            r.user_id === selectedUserId && r.type === "time_off" && r.status === "approved" && r.start_date &&
+            !((r.end_date || r.start_date) < range.start || r.start_date > range.end))
+          .map((r: { start_date: string; end_date: string | null; start_time: string | null; end_time: string | null }) => ({
+            start_date: r.start_date, end_date: r.end_date || r.start_date, start_time: r.start_time ?? null, end_time: r.end_time ?? null,
+          }));
+        setPeriodTimeOff(off);
+      } catch {
+        setPeriodTimeOff([]);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
     } finally {
@@ -803,6 +828,27 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {/* Time off / short days in this period */}
+              {periodTimeOff.length > 0 && (
+                <div className="px-5 py-3 border-t border-linen">
+                  <div className="text-[11px] font-bold text-bark uppercase tracking-wide mb-1.5">Time Off This Period</div>
+                  <div className="space-y-1">
+                    {periodTimeOff.map((t, i) => {
+                      const partial = Boolean(t.start_time && t.end_time);
+                      const range = t.end_date && t.end_date !== t.start_date ? `${t.start_date} – ${t.end_date}` : t.start_date;
+                      return (
+                        <div key={i} className="flex justify-between text-xs text-bark/70">
+                          <span>{range}</span>
+                          <span className="font-semibold">
+                            {partial ? `Short Day (${fmtStubTime(t.start_time!)}–${fmtStubTime(t.end_time!)})` : "Time Off"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
