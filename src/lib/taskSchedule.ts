@@ -17,6 +17,7 @@ export type RawTask = {
   projectId: string | null;
   isRecurring: boolean;
   todos: { id: number; text: string; sort_order: number }[];
+  task_detail: string | null;
 };
 
 export function statusDotClass(status: string): string {
@@ -263,6 +264,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
           projectId: (nested.project_id as string | null) ?? null,
           isRecurring: Boolean(nested.recurring_template_id),
           todos: normalizeTodos(nested.task_todos),
+          task_detail: (nested.task_detail as string | null) ?? null,
         };
       }
       const assignees = (row.assigned_task_assignees ?? []) as Array<{ va_id: string; status: string }>;
@@ -282,6 +284,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
         projectId: (row.project_id as string | null) ?? null,
         isRecurring: Boolean(row.recurring_template_id),
         todos: normalizeTodos(row.task_todos),
+        task_detail: (row.task_detail as string | null) ?? null,
       };
     })
     .filter((t): t is RawTask => Boolean(t.id && t.task_name));

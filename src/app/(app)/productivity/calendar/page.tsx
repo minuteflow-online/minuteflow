@@ -131,6 +131,15 @@ export default function ProductivityCalendarPage() {
 
   const [showFilters, setShowFilters] = useState(false);
   const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
+  const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
+  const toggleUnscheduledExpand = (id: number) => {
+    setExpandedUnscheduledIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   const [sourceFilter, setSourceFilter] = useState<Set<"assigned" | "fixed">>(new Set());
   const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
@@ -1190,24 +1199,48 @@ export default function ProductivityCalendarPage() {
                   <p className="text-[11px] text-stone">Nothing unscheduled.</p>
                 ) : (
                   <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
-                    {unscheduledTasks.map((task) => (
+                    {unscheduledTasks.map((task) => {
+                      const isExpanded = expandedUnscheduledIds.has(task.id);
+                      return (
                       <div
                         key={task.id}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-white px-2.5 py-2"
+                        className="rounded-lg border border-sand bg-white px-2.5 py-2"
                       >
-                        <div className="min-w-0">
-                          <p className="truncate text-[12px] font-semibold text-espresso">{task.task_name}</p>
-                          {task.account && <p className="truncate text-[10px] text-stone">{task.account}</p>}
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleUnscheduledExpand(task.id)}
+                            className="flex min-w-0 flex-1 items-start gap-1 text-left cursor-pointer"
+                          >
+                            <svg
+                              width="9"
+                              height="9"
+                              viewBox="0 0 12 12"
+                              className={`mt-[3px] shrink-0 text-bark transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                            >
+                              <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                            <span className="min-w-0">
+                              <p className="truncate text-[12px] font-semibold text-espresso">{task.task_name}</p>
+                              {task.account && <p className="truncate text-[10px] text-stone">{task.account}</p>}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openScheduleExisting(task)}
+                            className="shrink-0 px-2 py-1 rounded-lg bg-sage text-white text-[10px] font-semibold hover:bg-sage/90 transition-colors cursor-pointer"
+                          >
+                            Schedule
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => openScheduleExisting(task)}
-                          className="shrink-0 px-2 py-1 rounded-lg bg-sage text-white text-[10px] font-semibold hover:bg-sage/90 transition-colors cursor-pointer"
-                        >
-                          Schedule
-                        </button>
+                        {isExpanded && (
+                          <p className="mt-1.5 pl-[17px] text-[11px] text-stone/80 leading-relaxed whitespace-pre-wrap">
+                            {task.task_detail || "No description."}
+                          </p>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
                 <button
