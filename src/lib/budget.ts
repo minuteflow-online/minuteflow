@@ -35,6 +35,21 @@ export function vaBudgetType(profile: { position?: string | null; pay_rate_type?
   return "time_based";
 }
 
+/**
+ * Convert a VA's pay rate to a $/hour equivalent, for showing a dollar
+ * estimate alongside an hours-based budget. Same daily/monthly-to-hourly
+ * conversion used by FinancialSummaryTab and team/page.tsx's computePayable
+ * (daily assumes an 8h day, monthly assumes a 160h month). Null when there's
+ * no rate to convert (per_task VAs are dollar-tracked directly, not via this).
+ */
+export function hourlyRateFromProfile(profile: { pay_rate: number | null; pay_rate_type: string | null }): number | null {
+  if (!profile.pay_rate || profile.pay_rate <= 0) return null;
+  if (profile.pay_rate_type === "daily") return profile.pay_rate / 8;
+  if (profile.pay_rate_type === "monthly") return profile.pay_rate / 160;
+  if (profile.pay_rate_type === "hourly" || !profile.pay_rate_type) return profile.pay_rate;
+  return null;
+}
+
 export type BudgetStatus = {
   /** The limit for this period, in `unit`. */
   limit: number;

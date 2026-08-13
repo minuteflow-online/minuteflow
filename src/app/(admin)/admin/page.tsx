@@ -48,7 +48,7 @@ import VaBroadcastsAdminTab from "@/components/VaBroadcastsAdminTab";
 import EmailStatusTab from "@/components/EmailStatusTab";
 import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
 import FixedPayTasksTab from "@/components/FixedPayTasksTab";
-import TeamProfilePanel from "@/components/TeamProfilePanel";
+import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePanel";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 
 /* ── Constants ───────────────────────────────────────────── */
@@ -3456,6 +3456,10 @@ function TeamManagementTab({
                             ) : (
                               <p className="text-[11px] text-bark/40 italic">No payment accounts set. Click Edit to add.</p>
                             )}
+                          </div>
+                          {/* Budget and Limit */}
+                          <div className="mt-4 pt-4 border-t border-sand/50" onClick={(e) => e.stopPropagation()}>
+                            <ShiftBudgetSection profile={p} userId={p.id} isAdmin={isFullAdmin} onRefresh={fetchData} />
                           </div>
                         </div>
                       )}

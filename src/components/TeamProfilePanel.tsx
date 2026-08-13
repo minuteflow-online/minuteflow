@@ -3,11 +3,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { PaymentAccountDetails } from "@/types/database";
-import { shiftHoursFromProfile, vaBudgetType } from "@/lib/budget";
+import { shiftHoursFromProfile, vaBudgetType, hourlyRateFromProfile } from "@/lib/budget";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type ExtendedProfile = {
+export type ExtendedProfile = {
   id: string;
   full_name: string;
   username: string;
@@ -635,13 +635,30 @@ function PaymentInfoSection({
 
 // ── Shift & Budget Section ─────────────────────────────────────────────────
 
-function ShiftBudgetSection({
+// Only the fields this section actually reads — lets callers pass either the
+// full ExtendedProfile or a plainer Profile row (e.g. Team Management's table)
+// without needing every field TeamProfilePanel otherwise fetches.
+export type ShiftBudgetProfile = Pick<
+  ExtendedProfile,
+  | "position"
+  | "pay_rate"
+  | "pay_rate_type"
+  | "shift_hours"
+  | "shift_start"
+  | "shift_end"
+  | "daily_budget_unit"
+  | "daily_budget_limit"
+  | "weekly_budget_limit"
+  | "monthly_budget_limit"
+>;
+
+export function ShiftBudgetSection({
   profile,
   userId,
   isAdmin,
   onRefresh,
 }: {
-  profile: ExtendedProfile | null;
+  profile: ShiftBudgetProfile | null;
   userId: string;
   isAdmin: boolean;
   onRefresh: () => void;
@@ -661,6 +678,13 @@ function ShiftBudgetSection({
   const [dailyLimit, setDailyLimit] = useState(profile?.daily_budget_limit != null ? String(profile.daily_budget_limit) : "");
   const [weeklyLimit, setWeeklyLimit] = useState(profile?.weekly_budget_limit != null ? String(profile.weekly_budget_limit) : "");
   const [monthlyLimit, setMonthlyLimit] = useState(profile?.monthly_budget_limit != null ? String(profile.monthly_budget_limit) : "");
+  // Time-based VAs: which unit the Daily/Weekly/Monthly number fields above are
+  // currently being typed in. Storage is always hours (shift_hours /
+  // weekly_budget_limit / monthly_budget_limit) — dollars is just an alternate
+  // entry mode, converted via the VA's hourly-equivalent pay rate on toggle
+  // and again on Save so the stored value is always correct regardless of
+  // which unit was left showing.
+  const [inputUnit, setInputUnit] = useState<"hours" | "dollars">("hours");
 
   useEffect(() => {
     setMode(profile?.shift_start && profile?.shift_end ? "range" : "hours");
@@ -670,17 +694,45 @@ function ShiftBudgetSection({
     setDailyLimit(profile?.daily_budget_limit != null ? String(profile.daily_budget_limit) : "");
     setWeeklyLimit(profile?.weekly_budget_limit != null ? String(profile.weekly_budget_limit) : "");
     setMonthlyLimit(profile?.monthly_budget_limit != null ? String(profile.monthly_budget_limit) : "");
+    setInputUnit("hours"); // stored values are always hours; start the form showing hours
   }, [profile]);
 
   const budgetType = profile ? vaBudgetType(profile) : "time_based";
   const isOutputBased = budgetType === "output_based";
   const unit: "hours" | "dollars" = isOutputBased ? "dollars" : "hours";
 
+  // For time-based VAs, also show a $ estimate (hours × their hourly-equivalent
+  // pay rate) alongside the hours — output-based VAs are dollars already.
+  const hourlyRate = profile ? hourlyRateFromProfile(profile) : null;
+  // Which unit the Weekly/Monthly (and Daily-in-hours-mode) fields are shown
+  // in right now: output-based VAs are always dollars; time-based VAs follow
+  // whichever the admin picked via the Hours/Dollars toggle above.
+  const effectiveUnit: "hours" | "dollars" = isOutputBased ? "dollars" : inputUnit;
+
+  // Convert every visible Daily/Weekly/Monthly field to the new unit when the
+  // admin toggles Hours <-> Dollars, so switching doesn't lose what's typed.
+  const switchInputUnit = (next: "hours" | "dollars") => {
+    if (next === inputUnit || !hourlyRate) return;
+    const convert = (v: string) => {
+      if (!v.trim() || Number.isNaN(Number(v))) return v;
+      const n = Number(v);
+      return (next === "dollars" ? n * hourlyRate : n / hourlyRate).toFixed(2);
+    };
+    if (mode === "hours") setShiftHours(convert(shiftHours));
+    setWeeklyLimit(convert(weeklyLimit));
+    setMonthlyLimit(convert(monthlyLimit));
+    setInputUnit(next);
+  };
+
   const handleSave = async () => {
     setSaving(true);
+    // Fields may currently hold dollars (inputUnit === "dollars") — convert
+    // back to hours before persisting, since storage is always hours for
+    // time-based VAs.
+    const toHours = (v: string) => (!isOutputBased && inputUnit === "dollars" && hourlyRate ? String(Number(v) / hourlyRate) : v);
     const updates: Record<string, unknown> = {
-      weekly_budget_limit: weeklyLimit.trim() ? Number(weeklyLimit) : null,
-      monthly_budget_limit: monthlyLimit.trim() ? Number(monthlyLimit) : null,
+      weekly_budget_limit: weeklyLimit.trim() ? Number(toHours(weeklyLimit)) : null,
+      monthly_budget_limit: monthlyLimit.trim() ? Number(toHours(monthlyLimit)) : null,
     };
     if (isOutputBased) {
       updates.daily_budget_limit = dailyLimit.trim() ? Number(dailyLimit) : null;
@@ -691,7 +743,7 @@ function ShiftBudgetSection({
         updates,
         mode === "range"
           ? { shift_hours: null, shift_start: shiftStart || null, shift_end: shiftEnd || null }
-          : { shift_hours: shiftHours.trim() ? Number(shiftHours) : null, shift_start: null, shift_end: null }
+          : { shift_hours: shiftHours.trim() ? Number(toHours(shiftHours)) : null, shift_start: null, shift_end: null }
       );
     }
     await supabase.from("profiles").update(updates).eq("id", userId);
@@ -705,7 +757,12 @@ function ShiftBudgetSection({
   const displayWeekly = profile?.weekly_budget_limit ?? null;
   const displayMonthly = profile?.monthly_budget_limit ?? null;
 
-  const formatLimit = (v: number) => (unit === "dollars" ? `$${v.toFixed(2)}` : `${v.toFixed(2)}h`);
+  const formatLimit = (v: number) =>
+    unit === "dollars"
+      ? `$${v.toFixed(2)}`
+      : hourlyRate != null
+        ? `${v.toFixed(2)}h ($${(v * hourlyRate).toFixed(2)})`
+        : `${v.toFixed(2)}h`;
 
   return (
     <div className="rounded-xl border border-sand bg-white p-4">
@@ -748,16 +805,40 @@ function ShiftBudgetSection({
                 </button>
               </div>
 
+              {hourlyRate != null && (
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Enter limits in</p>
+                  <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-[11px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => switchInputUnit("hours")}
+                      className={`rounded-md px-3 py-1 transition-colors ${inputUnit === "hours" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                    >
+                      Hours
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => switchInputUnit("dollars")}
+                      className={`rounded-md px-3 py-1 transition-colors ${inputUnit === "dollars" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+                    >
+                      Dollars
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {mode === "hours" ? (
                 <div className="max-w-[180px]">
-                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Daily Limit (hours)</p>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">
+                    Daily Limit ({inputUnit === "dollars" ? "$" : "hours"})
+                  </p>
                   <input
                     type="number"
                     min="0"
-                    step="0.25"
+                    step={inputUnit === "dollars" ? "0.01" : "0.25"}
                     value={shiftHours}
                     onChange={(e) => setShiftHours(e.target.value)}
-                    placeholder="e.g. 8"
+                    placeholder={inputUnit === "dollars" ? "e.g. 24" : "e.g. 8"}
                     className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
                   />
                 </div>
@@ -793,30 +874,30 @@ function ShiftBudgetSection({
 
           <div className="max-w-[180px]">
             <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">
-              Weekly Limit ({unit === "dollars" ? "$" : "hours"})
+              Weekly Limit ({effectiveUnit === "dollars" ? "$" : "hours"})
             </p>
             <input
               type="number"
               min="0"
-              step={unit === "dollars" ? "0.01" : "0.25"}
+              step={effectiveUnit === "dollars" ? "0.01" : "0.25"}
               value={weeklyLimit}
               onChange={(e) => setWeeklyLimit(e.target.value)}
-              placeholder={unit === "dollars" ? "e.g. 200" : "e.g. 40"}
+              placeholder={effectiveUnit === "dollars" ? "e.g. 200" : "e.g. 40"}
               className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
             />
           </div>
 
           <div className="max-w-[180px]">
             <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">
-              Monthly Budget ({unit === "dollars" ? "$" : "hours"})
+              Monthly Budget ({effectiveUnit === "dollars" ? "$" : "hours"})
             </p>
             <input
               type="number"
               min="0"
-              step={unit === "dollars" ? "0.01" : "0.25"}
+              step={effectiveUnit === "dollars" ? "0.01" : "0.25"}
               value={monthlyLimit}
               onChange={(e) => setMonthlyLimit(e.target.value)}
-              placeholder={unit === "dollars" ? "e.g. 800" : "e.g. 160"}
+              placeholder={effectiveUnit === "dollars" ? "e.g. 800" : "e.g. 160"}
               className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
             />
           </div>
