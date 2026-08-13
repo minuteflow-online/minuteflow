@@ -331,10 +331,6 @@ function RequestsTab({
   const [message, setMessage] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  // Time-off can be a full day or a partial "short day" (a time window).
-  const [dayType, setDayType] = useState<"full" | "partial">("full");
-  const [offStartTime, setOffStartTime] = useState("13:00");
-  const [offEndTime, setOffEndTime] = useState("17:00");
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
@@ -400,15 +396,6 @@ function RequestsTab({
     if (reqType === "time_off") {
       if (startDate) payload.start_date = startDate;
       if (endDate) payload.end_date = endDate;
-      // Partial = a short/half day; times mark the window off. Full day leaves
-      // them null.
-      if (dayType === "partial") {
-        payload.start_time = offStartTime || null;
-        payload.end_time = offEndTime || null;
-      } else {
-        payload.start_time = null;
-        payload.end_time = null;
-      }
     }
 
     const { error } = await supabase.from("va_requests").insert(payload);
@@ -514,68 +501,25 @@ function RequestsTab({
 
           {/* Date range (Time Off only) */}
           {reqType === "time_off" && (
-            <div className="mb-4 space-y-3">
-              <div className="inline-flex rounded-lg border border-sand bg-parchment/40 p-1 text-[12px] font-semibold">
-                <button
-                  type="button"
-                  onClick={() => setDayType("full")}
-                  className={`rounded-md px-3 py-1 transition-colors ${dayType === "full" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                >
-                  Full day
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDayType("partial")}
-                  className={`rounded-md px-3 py-1 transition-colors ${dayType === "partial" ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
-                >
-                  Half / partial day
-                </button>
+            <div className="mb-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">From</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                />
               </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">From</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">To</label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                  />
-                </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">To</label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
+                />
               </div>
-
-              {dayType === "partial" && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Off from</label>
-                    <input
-                      type="time"
-                      value={offStartTime}
-                      onChange={(e) => setOffStartTime(e.target.value)}
-                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-walnut mb-1.5 tracking-wide">Off until</label>
-                    <input
-                      type="time"
-                      value={offEndTime}
-                      onChange={(e) => setOffEndTime(e.target.value)}
-                      className="w-full py-2 px-3 border border-sand rounded-lg text-[13px] text-ink bg-white outline-none focus:border-terracotta"
-                    />
-                  </div>
-                  <p className="sm:col-span-2 text-[11px] text-stone">Partial time off shows as a <span className="font-semibold">Short Day</span> for those hours.</p>
-                </div>
-              )}
             </div>
           )}
 
