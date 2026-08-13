@@ -22,7 +22,7 @@ type AssignedTaskStatus =
 type RouteContext = { params: Promise<{ id: string }> };
 
 const TASK_SELECT =
-  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, assigned_task_assignees(id, va_id, status)";
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, assigned_task_assignees(id, va_id, status)";
 
 /**
  * GET /api/assigned-tasks/[id]
@@ -102,13 +102,14 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
     task_name?: string;
     task_detail?: string;
     task_notes?: string;
+    link?: string | null;
     due_date?: string;
     due_time?: string | null;
     start_date?: string;
@@ -135,6 +136,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (task_name !== undefined) updatePayload.task_name = task_name.trim();
   if (task_detail !== undefined) updatePayload.task_detail = task_detail;
   if (task_notes !== undefined) updatePayload.task_notes = task_notes;
+  if (link !== undefined) updatePayload.link = link;
   if (due_date !== undefined) updatePayload.due_date = due_date;
   if (due_time !== undefined) updatePayload.due_time = due_time;
   if (start_date !== undefined) updatePayload.start_date = start_date;
@@ -327,6 +329,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_name,
     task_detail,
     task_notes,
+    link,
     due_date,
     due_time,
     start_date,
@@ -350,6 +353,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_name?: string;
     task_detail?: string | null;
     task_notes?: string | null;
+    link?: string | null;
     due_date?: string | null;
     due_time?: string | null;
     start_date?: string | null;
@@ -391,6 +395,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     task_name !== undefined ||
     task_detail !== undefined ||
     task_notes !== undefined ||
+    link !== undefined ||
     due_date !== undefined ||
     due_time !== undefined ||
     start_date !== undefined ||
@@ -742,6 +747,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (task_name !== undefined) updatePayload.task_name = task_name.trim();
     if (task_detail !== undefined) updatePayload.task_detail = task_detail;
     if (task_notes !== undefined) updatePayload.task_notes = task_notes;
+    if (link !== undefined) updatePayload.link = link;
     if (due_date !== undefined) updatePayload.due_date = due_date;
     if (due_time !== undefined) updatePayload.due_time = due_time;
     if (start_date !== undefined) updatePayload.start_date = start_date;

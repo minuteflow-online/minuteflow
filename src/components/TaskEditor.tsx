@@ -380,6 +380,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           category,
           task_detail: taskDetail.trim() || null,
           task_notes: taskNotes.trim() || null,
+          link: link.trim() || null,
           due_date: dueDate || null,
           due_time: dueDate ? dueTime || null : null,
           start_date: startDate || null,
@@ -720,12 +721,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           <textarea value={taskNotes} onChange={(e) => setTaskNotes(e.target.value)} rows={2} disabled={readOnly} placeholder="Internal notes" className={`${inputClass} resize-none`} />
         </div>
 
-        {mode === "output_based" && (
-          <div>
-            <label className={labelClass}>Link</label>
-            <input value={link} onChange={(e) => setLink(e.target.value)} disabled={readOnly} placeholder="https://..." className={inputClass} />
-          </div>
-        )}
+        <div>
+          <label className={labelClass}>Link</label>
+          <input value={link} onChange={(e) => setLink(e.target.value)} disabled={readOnly} placeholder="https://..." className={inputClass} />
+        </div>
 
         <div>
           <label className={labelClass}>Instructions</label>
