@@ -8,6 +8,7 @@ import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import TableRowDetailPanel from "@/components/table/TableRowDetailPanel";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
+import Section from "@/components/ui/Section";
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "all", label: "All" },
@@ -1070,7 +1071,7 @@ export default function FixedPayTasksTab() {
               )}
 
               {panelMode === "edit" && selectedTask && (
-                <>
+                <Section title="Status & Files" defaultOpen>
                   <div>
                     <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
                     <select
@@ -1095,130 +1096,122 @@ export default function FixedPayTasksTab() {
                     />
                     Active
                   </label>
-                </>
-              )}
 
-              {panelMode === "edit" && selectedTask && (
-                <div className="flex flex-wrap gap-2">
-                  {selectedTask.archived_at || selectedTask.deleted_at ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => void handleRestoreTask(selectedTask)}
-                        className="rounded-lg border border-sage px-3 py-1.5 text-[11px] font-semibold text-sage transition-colors hover:bg-sage-soft"
-                      >
-                        Restore
-                      </button>
-                      {selectedTask.deleted_at && (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedTask.archived_at || selectedTask.deleted_at ? (
+                      <>
                         <button
                           type="button"
-                          onClick={() => void deleteTaskPermanently(selectedTask)}
-                          className="rounded-lg border border-stone px-3 py-1.5 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/5"
+                          onClick={() => void handleRestoreTask(selectedTask)}
+                          className="rounded-lg border border-sage px-3 py-1.5 text-[11px] font-semibold text-sage transition-colors hover:bg-sage-soft"
                         >
-                          Permanently Delete
+                          Restore
                         </button>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => void handleArchiveTask(selectedTask)}
-                        className="rounded-lg border border-amber-400 px-3 py-1.5 text-[11px] font-semibold text-amber-700 transition-colors hover:bg-amber-50"
-                      >
-                        Archive
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleTrashTask(selectedTask)}
-                        className="rounded-lg border border-red-300 px-3 py-1.5 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-50"
-                      >
-                        Trash
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-
-              <div className="rounded-xl border border-sand bg-parchment/20 p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</div>
-                    <div className="text-[11px] text-stone">Upload files to the task-attachments bucket.</div>
-                  </div>
-                  <span className="text-[11px] text-stone">{attachments.length} file{attachments.length === 1 ? "" : "s"}</span>
-                </div>
-
-                {attachmentMessage && (
-                  <div className={`mb-3 rounded-lg px-3 py-2 text-sm ${attachmentMessage.type === "ok" ? "bg-sage-soft text-sage" : "bg-red-50 text-red-700"}`}>
-                    {attachmentMessage.text}
-                  </div>
-                )}
-
-                {panelMode === "edit" && selectedTask ? (
-                  <div className="space-y-3">
-                    <input
-                      ref={attachmentInputRef}
-                      type="file"
-                      onChange={handleAttachmentPick}
-                      className="block w-full text-[13px] text-stone file:mr-3 file:rounded-lg file:border-0 file:bg-terracotta file:px-3 file:py-2 file:text-[12px] file:font-semibold file:text-white hover:file:bg-[#a85840]"
-                    />
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleUploadAttachment()}
-                        disabled={attachmentUploading || !pendingAttachment}
-                        className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {attachmentUploading ? "Uploading..." : "Upload Attachment"}
-                      </button>
-                      {pendingAttachment && <span className="text-[11px] text-stone">{pendingAttachment.name}</span>}
-                    </div>
-
-                    {attachmentsLoading ? (
-                      <div className="space-y-2">
-                        {[1, 2].map((item) => (
-                          <div key={item} className="h-12 animate-pulse rounded-lg bg-parchment" />
-                        ))}
-                      </div>
-                    ) : attachments.length === 0 ? (
-                      <div className="rounded-lg border border-dashed border-sand px-3 py-4 text-[12px] text-stone">
-                        No attachments yet.
-                      </div>
+                        {selectedTask.deleted_at && (
+                          <button
+                            type="button"
+                            onClick={() => void deleteTaskPermanently(selectedTask)}
+                            className="rounded-lg border border-stone px-3 py-1.5 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/5"
+                          >
+                            Permanently Delete
+                          </button>
+                        )}
+                      </>
                     ) : (
-                      <div className="space-y-2">
-                        {attachments.map((attachment) => (
-                          <div key={attachment.id} className="rounded-lg border border-sand bg-white px-3 py-2 text-[12px] text-walnut">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="truncate font-medium">{attachment.filename}</div>
-                                <div className="text-[11px] text-stone">
-                                  {formatAttachmentSize(attachment.file_size)}
-                                  {attachment.file_size ? " · " : ""}
-                                  {formatTimestamp(attachment.uploaded_at)}
-                                </div>
-                              </div>
-                              <a
-                                href={attachment.url ?? undefined}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="shrink-0 rounded-md border border-sand px-2 py-1 text-[11px] font-semibold text-stone transition-colors hover:border-terracotta hover:text-terracotta"
-                              >
-                                Open
-                              </a>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void handleArchiveTask(selectedTask)}
+                          className="rounded-lg border border-amber-400 px-3 py-1.5 text-[11px] font-semibold text-amber-700 transition-colors hover:bg-amber-50"
+                        >
+                          Archive
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleTrashTask(selectedTask)}
+                          className="rounded-lg border border-red-300 px-3 py-1.5 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-50"
+                        >
+                          Trash
+                        </button>
+                      </>
                     )}
                   </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-sand px-3 py-4 text-[12px] text-stone">
-                    Save the task first to upload attachments.
+
+                  <div className="rounded-xl border border-sand bg-parchment/20 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</div>
+                        <div className="text-[11px] text-stone">Upload files to the task-attachments bucket.</div>
+                      </div>
+                      <span className="text-[11px] text-stone">{attachments.length} file{attachments.length === 1 ? "" : "s"}</span>
+                    </div>
+
+                    {attachmentMessage && (
+                      <div className={`mb-3 rounded-lg px-3 py-2 text-sm ${attachmentMessage.type === "ok" ? "bg-sage-soft text-sage" : "bg-red-50 text-red-700"}`}>
+                        {attachmentMessage.text}
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <input
+                        ref={attachmentInputRef}
+                        type="file"
+                        onChange={handleAttachmentPick}
+                        className="block w-full text-[13px] text-stone file:mr-3 file:rounded-lg file:border-0 file:bg-terracotta file:px-3 file:py-2 file:text-[12px] file:font-semibold file:text-white hover:file:bg-[#a85840]"
+                      />
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleUploadAttachment()}
+                          disabled={attachmentUploading || !pendingAttachment}
+                          className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {attachmentUploading ? "Uploading..." : "Upload Attachment"}
+                        </button>
+                        {pendingAttachment && <span className="text-[11px] text-stone">{pendingAttachment.name}</span>}
+                      </div>
+
+                      {attachmentsLoading ? (
+                        <div className="space-y-2">
+                          {[1, 2].map((item) => (
+                            <div key={item} className="h-12 animate-pulse rounded-lg bg-parchment" />
+                          ))}
+                        </div>
+                      ) : attachments.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-sand px-3 py-4 text-[12px] text-stone">
+                          No attachments yet.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {attachments.map((attachment) => (
+                            <div key={attachment.id} className="rounded-lg border border-sand bg-white px-3 py-2 text-[12px] text-walnut">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="truncate font-medium">{attachment.filename}</div>
+                                  <div className="text-[11px] text-stone">
+                                    {formatAttachmentSize(attachment.file_size)}
+                                    {attachment.file_size ? " · " : ""}
+                                    {formatTimestamp(attachment.uploaded_at)}
+                                  </div>
+                                </div>
+                                <a
+                                  href={attachment.url ?? undefined}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="shrink-0 rounded-md border border-sand px-2 py-1 text-[11px] font-semibold text-stone transition-colors hover:border-terracotta hover:text-terracotta"
+                                >
+                                  Open
+                                </a>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
+                </Section>
+              )}
         </TableRowDetailPanel>
       )}
     </div>

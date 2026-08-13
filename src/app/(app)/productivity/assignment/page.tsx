@@ -414,6 +414,12 @@ export default function TaskListPage() {
   const [currentPosition, setCurrentPosition] = useState<string | null>(null);
   const [currentPayRateType, setCurrentPayRateType] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  // Gates panelCanEditFields so an admin can't get stuck on the read-only
+  // fallback just because fetchCurrentUser's profile lookup hasn't resolved
+  // yet — isAdmin defaults false while loading, which used to be
+  // indistinguishable from "confirmed not an admin".
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileLoadError, setProfileLoadError] = useState(false);
   const { widths: columnWidths, hidden: hiddenColumns, setColumnWidth, toggleColumnVisible } = useColumnPrefs(
     "task-list-va",
     currentUserId,
@@ -611,11 +617,13 @@ export default function TaskListPage() {
 
       setCurrentUserId(data.user.id);
 
-      const { data: profile } = await supabase
+      const { data: profile, error } = await supabase
         .from("profiles")
         .select("id, role, position, pay_rate_type, can_see_available_tasks, full_name, username")
         .eq("id", data.user.id)
         .single();
+
+      if (error) throw error;
 
       setCurrentRole(profile?.role ?? null);
       setCurrentPosition(profile?.position ?? null);
@@ -627,7 +635,13 @@ export default function TaskListPage() {
       );
       setCanSeeAvailableTasks(Boolean(profile?.can_see_available_tasks));
     } catch {
-      // leave the task list usable for all users if profile lookup fails
+      // Surfaced via profileLoadError rather than left silent — a failed
+      // lookup here used to leave currentRole permanently null, stranding a
+      // real admin on the read-only task-detail fallback for the whole
+      // session with no indication why.
+      setProfileLoadError(true);
+    } finally {
+      setProfileLoading(false);
     }
   }, [supabase]);
 
@@ -1027,7 +1041,7 @@ export default function TaskListPage() {
     return Array.from(options).sort();
   }, [formTasksByProject, tasks]);
 
-  const panelCanEditFields = Boolean(selectedTask) && isAdmin;
+  const panelCanEditFields = Boolean(selectedTask) && isAdmin && !profileLoading;
 
   const panelAssignedByOptions = useMemo(() => {
     if (assignedByProfiles.length > 0) return assignedByProfiles;
@@ -2753,7 +2767,14 @@ export default function TaskListPage() {
             </div>
 
             <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
-              {panelCanEditFields ? (
+              {profileLoading ? (
+                <div className="flex items-center gap-2 py-6 text-[13px] text-stone">
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                  Loading...
+                </div>
+              ) : (
                 <TaskEditor
                   ref={taskEditorRef}
                   mode="time_based"
@@ -2767,6 +2788,7 @@ export default function TaskListPage() {
                   // dedicated GET — without this, TaskEditor's va_id fallback
                   // defaults to "" and its PUT wipes the task's assignee.
                   defaultVaId={selectedTask.va_id}
+                  readOnly={!panelCanEditFields}
                   hideFooter
                   onCancel={closePanel}
                   onSaved={() => void handleMetadataSaved()}
@@ -2837,105 +2859,6 @@ export default function TaskListPage() {
                     </div>
                   }
                 />
-              ) : (
-                <>
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Account</label>
-                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                      {selectedTask.assigned_tasks.account || <span className="text-stone/60">—</span>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Objective</label>
-                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                      {selectedTask.assigned_tasks.project || <span className="text-stone/60">—</span>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Name</label>
-                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                      {selectedTask.assigned_tasks.task_name || <span className="text-stone/60">—</span>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Category</label>
-                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                      {selectedTask.assigned_tasks.category || <span className="text-stone/60">—</span>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Start Date</label>
-                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                      {selectedTask.assigned_tasks.start_date ? formatDateInputValue(selectedTask.assigned_tasks.start_date) : <span className="text-stone/60">—</span>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Due Date</label>
-                    {(() => {
-                      const due = formatDueDate(selectedTask.assigned_tasks.due_date);
-                      return (
-                        <div
-                          className={`rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] ${
-                            due.isOverdue ? "text-terracotta" : "text-espresso"
-                          }`}
-                        >
-                          {due.label}
-                          {due.isOverdue && selectedTask.assigned_tasks.due_date ? " · Overdue" : ""}
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  <div>
-                    <div className="mb-1 flex items-center gap-1.5">
-                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Client Detail</label>
-                      <div className="group relative">
-                        <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
-                        <div className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
-                          <p className="mb-2 italic text-[10px] text-walnut">Client Memo should answer: Who, What, Where, Why, Status.</p>
-                          <div className="space-y-0.5 text-[10px]">
-                            <p><span className="font-semibold">1. Who:</span> Who</p>
-                            <p><span className="font-semibold">2. What:</span> Event, task title, or specific item (e.g., Checking May payment, Early bird flyer)</p>
-                            <p><span className="font-semibold">3. Where:</span> Platform or destination (e.g., Social media post, Email Marketing, CRM)</p>
-                            <p><span className="font-semibold">4. Why:</span> Purpose (e.g., Start Production, Continue Production, Revise flyer)</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="min-h-[44px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                      {selectedTask.assigned_tasks.task_detail || <span className="text-stone/60">No detail provided.</span>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Task Notes</label>
-                    <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                      {selectedTask.assigned_tasks.task_notes || <span className="text-stone/60">No notes provided.</span>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Assigned By</label>
-                    <div className="rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                      {selectedTask.assigned_tasks.assigned_by_profile?.full_name
-                        || selectedTask.assigned_tasks.assigned_by_profile?.username
-                        || selectedTask.assigned_tasks.assigned_by
-                        || <span className="text-stone/60">—</span>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Instructions</label>
-                    <div className="min-h-[80px] whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                      {selectedTask.assigned_tasks.instructions ? renderTextWithLinks(selectedTask.assigned_tasks.instructions) : <span className="text-stone/60">No instructions provided.</span>}
-                    </div>
-                  </div>
-                </>
               )}
 
               {isSubmittedView && (
