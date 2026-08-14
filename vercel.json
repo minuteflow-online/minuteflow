@@ -19,7 +19,7 @@
     },
     {
       "path": "/api/cron/generate-paystubs",
-      "schedule": "0 8 5,20 * *"
+      "schedule": "0 8 1,16 * *"
     }
   ]
 }
