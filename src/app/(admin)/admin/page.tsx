@@ -51,6 +51,7 @@ import TaskAssignmentsAdminTab from "@/components/TaskAssignmentsAdminTab";
 import FixedPayTasksTab from "@/components/FixedPayTasksTab";
 import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePanel";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
+import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -1506,6 +1507,7 @@ export default function AdminPage() {
               fetchData={fetchData}
               orgTimezone={orgTimezone}
               isFullAdmin={isFullAdmin}
+              currentUserId={currentUserId}
             />
           )}
 
@@ -2082,16 +2084,25 @@ function ScreenshotsTab({
 
 /* ── Team Management Tab ───────────────────────────────────── */
 
+type StoredTeamManagementFilters = {
+  colFilters?: Record<string, string[]>;
+  hiddenColumns?: string[];
+  joinedStart?: string;
+  joinedEnd?: string;
+};
+
 function TeamManagementTab({
   profiles,
   fetchData,
   orgTimezone,
   isFullAdmin,
+  currentUserId,
 }: {
   profiles: Profile[];
   fetchData: () => void;
   orgTimezone: string;
   isFullAdmin: boolean;
+  currentUserId: string | null;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
@@ -2115,6 +2126,30 @@ function TeamManagementTab({
   const [openFilter, setOpenFilter] = useState<string | null>(null);
   const [dropPos, setDropPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const colFilterDropRef = useRef<HTMLDivElement>(null);
+
+  const { ready: filterPrefsReady, stored: storedFilterPrefs, persist: persistFilterPrefs } =
+    useFilterPrefs<StoredTeamManagementFilters>("team-management", currentUserId);
+  const filterPrefsAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (filterPrefsAppliedRef.current || !filterPrefsReady) return;
+    filterPrefsAppliedRef.current = true;
+    if (!storedFilterPrefs) return;
+    if (storedFilterPrefs.colFilters) setColFilters(storedFilterPrefs.colFilters);
+    if (storedFilterPrefs.hiddenColumns) setHiddenColumns(new Set(storedFilterPrefs.hiddenColumns));
+    if (storedFilterPrefs.joinedStart) setJoinedStart(storedFilterPrefs.joinedStart);
+    if (storedFilterPrefs.joinedEnd) setJoinedEnd(storedFilterPrefs.joinedEnd);
+  }, [filterPrefsReady, storedFilterPrefs]);
+
+  useEffect(() => {
+    if (!filterPrefsAppliedRef.current) return;
+    persistFilterPrefs({
+      colFilters,
+      hiddenColumns: Array.from(hiddenColumns),
+      joinedStart,
+      joinedEnd,
+    });
+  }, [colFilters, hiddenColumns, joinedStart, joinedEnd, persistFilterPrefs]);
 
   // Add VA form state
   const [newEmail, setNewEmail] = useState("");

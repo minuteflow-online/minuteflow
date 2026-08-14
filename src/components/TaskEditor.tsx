@@ -505,7 +505,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   return (
     <div className="space-y-3">
-      <Section title="Basics" defaultOpen>
+      <Section title="Basics">
         <div>
           <label className={labelClass}>Account</label>
           <select
@@ -580,7 +580,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Schedule" defaultOpen>
+      <Section title="Schedule">
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional) — its own hours make the daily time block on the Calendar</p>
           <div className="flex gap-3">
@@ -632,7 +632,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Details" defaultOpen>
+      <Section title="Details">
         <div>
           <div className="mb-1 flex items-center gap-1.5">
             <label className="block text-[11px] font-bold uppercase tracking-wide text-amber">Client Detail</label>
@@ -736,7 +736,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Assignment" defaultOpen>
+      <Section title="Assignment">
         {manageAssignment && (
           <div>
             <label className={labelClass}>Assign To</label>
@@ -830,7 +830,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       {mode === "output_based" && (
-        <Section title="Rate" defaultOpen>
+        <Section title="Rate">
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Unit Rate</label>
@@ -923,7 +923,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       )}
 
       {(supportsTodos || attachmentsExtra) && (
-        <Section title={supportsTodos ? "Attachments & Screenshots" : "Attachments"} defaultOpen>
+        <Section title={supportsTodos ? "Attachments & Screenshots" : "Attachments"}>
           {supportsTodos && (
             <>
               <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber">Screenshots</label>

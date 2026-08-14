@@ -5,9 +5,11 @@ import { createClient } from "@/lib/supabase/client";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
+import ToolbarFilterDropdown from "@/components/table/ToolbarFilterDropdown";
 import TableRowDetailPanel from "@/components/table/TableRowDetailPanel";
 import TaskEditor from "@/components/TaskEditor";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
+import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "all", label: "All" },
@@ -48,6 +50,21 @@ type PanelMode = "create" | "edit" | "view" | null;
 type ActiveFilter = "all" | "active" | "inactive" | "archived" | "trash";
 type CreateMode = "hourly" | "fixed_pay";
 
+type StoredFixedPayFilters = {
+  activeFilter?: ActiveFilter;
+  filterTaskNames?: string[];
+  filterAccounts?: string[];
+  filterCategories?: string[];
+  filterStatuses?: FixedPayTaskWithClaimer["status"][];
+  filterRates?: number[];
+  filterStartDates?: string[];
+  filterDueDates?: string[];
+  filterClaimStates?: string[];
+  filterCreators?: string[];
+  filterAssignedBy?: string[];
+  filterProjects?: string[];
+};
+
 function formatRate(rate: number | string | null | undefined) {
   const parsed = typeof rate === "number" ? rate : Number(rate ?? NaN);
   if (Number.isNaN(parsed)) return "—";
@@ -84,7 +101,6 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "start_date", label: "Start Date", defaultWidth: 110 },
   { key: "due_date", label: "Due Date", defaultWidth: 110 },
   { key: "assigned_by", label: "Assigned By", defaultWidth: 130 },
-  { key: "project", label: "Project", defaultWidth: 140 },
   { key: "claimed", label: "Claimed", defaultWidth: 130 },
   { key: "created", label: "Created", defaultWidth: 150 },
   { key: "active", label: "Active", defaultWidth: 90 },
@@ -135,6 +151,44 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     currentUserId,
     TABLE_COLUMNS
   );
+
+  // Remember the filter selections across visits — same pattern as Timelog's
+  // useFilterPrefs (localStorage instant, /api/table-prefs durable).
+  const { ready: filterPrefsReady, stored: storedFilters, persist: persistFilters } = useFilterPrefs<StoredFixedPayFilters>(
+    "fixed-pay-tasks-va",
+    currentUserId
+  );
+  const filterPrefsAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!filterPrefsReady || filterPrefsAppliedRef.current) return;
+    filterPrefsAppliedRef.current = true;
+    if (storedFilters) {
+      if (storedFilters.activeFilter !== undefined) setActiveFilter(storedFilters.activeFilter);
+      if (storedFilters.filterTaskNames !== undefined) setFilterTaskNames(storedFilters.filterTaskNames);
+      if (storedFilters.filterAccounts !== undefined) setFilterAccounts(storedFilters.filterAccounts);
+      if (storedFilters.filterCategories !== undefined) setFilterCategories(storedFilters.filterCategories);
+      if (storedFilters.filterStatuses !== undefined) setFilterStatuses(storedFilters.filterStatuses);
+      if (storedFilters.filterRates !== undefined) setFilterRates(storedFilters.filterRates);
+      if (storedFilters.filterStartDates !== undefined) setFilterStartDates(storedFilters.filterStartDates);
+      if (storedFilters.filterDueDates !== undefined) setFilterDueDates(storedFilters.filterDueDates);
+      if (storedFilters.filterClaimStates !== undefined) setFilterClaimStates(storedFilters.filterClaimStates);
+      if (storedFilters.filterCreators !== undefined) setFilterCreators(storedFilters.filterCreators);
+      if (storedFilters.filterAssignedBy !== undefined) setFilterAssignedBy(storedFilters.filterAssignedBy);
+      if (storedFilters.filterProjects !== undefined) setFilterProjects(storedFilters.filterProjects);
+    }
+  }, [filterPrefsReady, storedFilters]);
+
+  useEffect(() => {
+    if (!filterPrefsReady || !filterPrefsAppliedRef.current) return;
+    persistFilters({
+      activeFilter, filterTaskNames, filterAccounts, filterCategories, filterStatuses, filterRates,
+      filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterProjects,
+    });
+  }, [
+    filterPrefsReady, activeFilter, filterTaskNames, filterAccounts, filterCategories, filterStatuses, filterRates,
+    filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterProjects, persistFilters,
+  ]);
 
   // Same eligibility as the fixed-pay-tasks POST route: per-task VAs, or hourly VAs
   // with the hybrid "Avail. Tasks" toggle on. Hybrid VAs additionally get the
@@ -494,7 +548,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
             <div className="flex items-center gap-2">
-              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || filterClaimStates.length > 0 || filterCreators.length > 0 || activeFilter !== "all") && (
+              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || filterClaimStates.length > 0 || filterCreators.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || activeFilter !== "all") && (
                 <button
                   type="button"
                   onClick={() => {
@@ -508,12 +562,15 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     setFilterDueDates([]);
                     setFilterClaimStates([]);
                     setFilterCreators([]);
+                    setFilterAssignedBy([]);
+                    setFilterProjects([]);
                   }}
                   className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
                 >
                   Clear all filters
                 </button>
               )}
+              <ToolbarFilterDropdown label="Project" options={projectFilterOptions} selected={filterProjects} onChange={setFilterProjects} />
               <ColumnVisibilityPicker columns={TABLE_COLUMNS} hidden={hiddenColumns} onToggle={toggleColumnVisible} />
             </div>
           </div>
@@ -655,16 +712,6 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         onFilterChange={setFilterAssignedBy}
                       />
                     )}
-                    {!hiddenColumns.has("project") && (
-                      <ColumnHeader
-                        label="Project"
-                        width={columnWidths.project}
-                        onResize={(w) => setColumnWidth("project", w)}
-                        filterOptions={projectFilterOptions.map((name) => ({ value: name, label: name }))}
-                        selected={filterProjects}
-                        onFilterChange={setFilterProjects}
-                      />
-                    )}
                     {!hiddenColumns.has("claimed") && (
                       <ColumnHeader
                         label="Claimed"
@@ -765,11 +812,6 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         {!hiddenColumns.has("assigned_by") && (
                           <td className="truncate px-3 py-3 text-[13px] text-walnut">
                             {task.assigned_by_profile?.full_name || task.assigned_by_profile?.username || <span className="text-stone/60">—</span>}
-                          </td>
-                        )}
-                        {!hiddenColumns.has("project") && (
-                          <td className="truncate px-3 py-3 text-[13px] text-walnut">
-                            {task.projects?.name || <span className="text-stone/60">—</span>}
                           </td>
                         )}
                         {!hiddenColumns.has("claimed") && (
