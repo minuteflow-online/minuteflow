@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -83,7 +84,7 @@ function booleanOrDefault(value: unknown, fallback = true): boolean {
 }
 
 async function requireUser(): Promise<
-  { user: { id: string }; role: string } | { error: Response }
+  { user: { id: string }; role: string; isAdminEquivalent: boolean } | { error: Response }
 > {
   const supabase = await createClient();
   const {
@@ -94,10 +95,10 @@ async function requireUser(): Promise<
   }
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  return { user, role: profile?.role ?? "va" };
+  return { user, role: profile?.role ?? "va", isAdminEquivalent: hasBroadAdminAccess(profile) };
 }
 
 async function decorateTemplates(rows: TemplateRow[], supabase = serviceClient()) {
@@ -173,7 +174,7 @@ function parseAssignedToIds(body: Record<string, unknown>) {
 export async function GET(request: Request) {
   const auth = await requireUser();
   if ("error" in auth) return auth.error;
-  const { user, role } = auth;
+  const { user, isAdminEquivalent } = auth;
 
   const { searchParams } = new URL(request.url);
   const mineOnly = searchParams.get("mine") === "true";
@@ -184,7 +185,7 @@ export async function GET(request: Request) {
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (role !== "admin" || mineOnly) {
+  if (!isAdminEquivalent || mineOnly) {
     // VAs always see only their own templates.
     // Admins also see only their own when ?mine=true (VA task-list context).
     query = query.contains("assigned_to_ids", [user.id]);
@@ -203,13 +204,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requireUser();
   if ("error" in auth) return auth.error;
-  const { user, role } = auth;
+  const { user, isAdminEquivalent } = auth;
 
   const body = (await request.json()) as Record<string, unknown>;
   const title = stringOrNull(body.title) ?? stringOrNull(body.task_name) ?? "";
   // VAs can only create templates for themselves
   let assignedToIds = parseAssignedToIds(body);
-  if (role !== "admin") {
+  if (!isAdminEquivalent) {
     assignedToIds = [user.id];
   }
   const recurrence_type = parseRecurrenceType(body.recurrence_type);
@@ -272,13 +273,13 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const auth = await requireUser();
   if ("error" in auth) return auth.error;
-  const { user, role } = auth;
+  const { user, isAdminEquivalent } = auth;
 
   const body = (await request.json()) as Record<string, unknown>;
   const id = parseId(request, body);
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
 
-  if (role !== "admin") {
+  if (!isAdminEquivalent) {
     // Verify VA owns this template
     const supabase = serviceClient();
     const { data: existing } = await supabase
@@ -353,12 +354,12 @@ export async function PATCH(request: Request) {
 export async function DELETE(request: Request) {
   const auth = await requireUser();
   if ("error" in auth) return auth.error;
-  const { user, role } = auth;
+  const { user, isAdminEquivalent } = auth;
 
   const id = parseId(request);
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
 
-  if (role !== "admin") {
+  if (!isAdminEquivalent) {
     // Verify VA owns this template before deleting
     const supabase = serviceClient();
     const { data: existing } = await supabase

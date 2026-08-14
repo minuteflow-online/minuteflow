@@ -7,6 +7,7 @@ import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 import VAProfileTab from "@/components/VAProfileTab";
 import { normalizeByDateValue, type ByDateValue } from "@/lib/payroll";
 import { useUrlTab } from "@/hooks/useUrlTab";
+import { hasModerationAccess } from "@/lib/financialAccess";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -1953,7 +1954,7 @@ export default function VaPortalPage() {
     load();
   }, [supabase]);
 
-  const isAdmin = profile?.role === "admin";
+  const isAdmin = hasModerationAccess(profile);
 
   const tabLabel: Record<PortalTab, string> = {
     profile: "My Profile",

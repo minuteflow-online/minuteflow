@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -8,8 +9,8 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  const isAdmin = profile?.role === "admin";
+  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
+  const isAdmin = hasBroadAdminAccess(profile);
 
   let query = supabase.from("va_reviews").select("*").order("created_at", { ascending: false });
   if (!isAdmin) {
@@ -40,8 +41,8 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  if (profile?.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
+  if (!hasBroadAdminAccess(profile)) return Response.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await request.json();
   const { user_id, title, period, overall_rating, strengths, improvements, comments, is_visible_to_va } = body;
@@ -76,8 +77,8 @@ export async function PATCH(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  if (profile?.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
+  if (!hasBroadAdminAccess(profile)) return Response.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
@@ -101,8 +102,8 @@ export async function DELETE(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  if (profile?.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
+  if (!hasBroadAdminAccess(profile)) return Response.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");

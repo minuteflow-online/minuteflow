@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
 
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
       return Response.json({ submissions: [] });
     }
     query = query.in("va_task_assignment_id", ids);
-  } else if (profile?.role !== "admin") {
+  } else if (!hasBroadAdminAccess(profile)) {
     // Non-admin without filters: only their own
     const { data: assignments } = await supabase
       .from("va_task_assignments")
@@ -93,11 +94,11 @@ export async function POST(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
 
-  const isAdmin = profile?.role === "admin";
+  const isAdmin = hasBroadAdminAccess(profile);
   const body = await request.json();
   const { va_task_assignment_id, message_type, content, submission_link, submission_comment, submission_screenshot_drive_id, submission_screenshot_url } = body;
 

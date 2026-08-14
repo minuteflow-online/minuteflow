@@ -53,6 +53,8 @@ import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePa
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
+import { ADMIN_PERMISSION_BUNDLES, type AdminPermissionBundle } from "@/lib/adminPermissions";
+import { hasFinancialAccess, hasBroadAdminAccess, hasAccountsClientsAccess } from "@/lib/financialAccess";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -407,16 +409,49 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [...ADMIN_SIDEBAR_GROUPS, ...TEAM_SIDEBAR
 // Tab IDs that belong to the TEAM section
 const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "paystubs", "email_log", "reset_va_password"];
 
-// Tabs reserved for full admins only — financials, invoices, and paystubs stay
-// hidden from IT staff (Department = "IT") even though they can otherwise
-// use the rest of the admin panel.
-const ADMIN_ONLY_TABS: AdminTab[] = ["invoices", "financial", "paystubs"];
+// Tabs reserved for financial access (Founder/Accounting, see
+// financialAccess.ts) — invoices, paystubs, and the send-history log stay
+// hidden from everyone else with broad (admin/manager/IT/Project
+// Coordinator) access, even though they can otherwise use the rest of the
+// admin panel. email_log surfaces invoice/paystub send history, so it's
+// financial too even though it isn't named like the other three.
+const ADMIN_ONLY_TABS: AdminTab[] = ["invoices", "financial", "paystubs", "email_log"];
 
-function filterGroupsForRole(groups: SidebarGroup[], isFullAdmin: boolean): SidebarGroup[] {
-  if (isFullAdmin) return groups;
-  return groups
-    .map((g) => ({ ...g, tabs: g.tabs.filter((t) => !ADMIN_ONLY_TABS.includes(t.id)) }))
-    .filter((g) => g.tabs.length > 0);
+// Billing-adjacent — Admin and Project Coordinator are deliberately excluded
+// even though they get the rest of the broad tier. See
+// hasAccountsClientsAccess in financialAccess.ts.
+const ACCOUNTS_CLIENTS_TABS: AdminTab[] = ["accounts", "clients"];
+
+// Which admin tabs each admin_permissions bundle (see adminPermissions.ts)
+// unlocks for a plain "va" role account. Kept here rather than in the shared
+// helper since it's a page-rendering concern, not a permission-checking one.
+const PERMISSION_BUNDLE_TABS: Record<AdminPermissionBundle, AdminTab[]> = {
+  task_management: ["task_assignments", "fixed_pay_tasks"],
+};
+
+function filterGroupsForRole(
+  groups: SidebarGroup[],
+  isFullAdmin: boolean,
+  allowedTabs: Set<AdminTab> | null,
+  canSeeAccountsClients: boolean
+): SidebarGroup[] {
+  let result = groups;
+  if (!isFullAdmin) {
+    result = result
+      .map((g) => ({ ...g, tabs: g.tabs.filter((t) => !ADMIN_ONLY_TABS.includes(t.id)) }))
+      .filter((g) => g.tabs.length > 0);
+  }
+  if (!canSeeAccountsClients) {
+    result = result
+      .map((g) => ({ ...g, tabs: g.tabs.filter((t) => !ACCOUNTS_CLIENTS_TABS.includes(t.id)) }))
+      .filter((g) => g.tabs.length > 0);
+  }
+  if (allowedTabs) {
+    result = result
+      .map((g) => ({ ...g, tabs: g.tabs.filter((t) => allowedTabs.has(t.id)) }))
+      .filter((g) => g.tabs.length > 0);
+  }
+  return result;
 }
 
 /* ── Main Admin Page ─────────────────────────────────────── */
@@ -451,26 +486,53 @@ export default function AdminPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // The caller's own role — only a true "admin" gets financials, invoices,
-  // paystubs, and VA/client rate figures. IT staff (Department = "IT") get
-  // everything else in the admin panel.
-  const currentUserRole = useMemo(
-    () => profiles.find((p) => p.id === currentUserId)?.role ?? null,
+  // The caller's own tier — Founder/Accounting (department tags) get
+  // financials, invoices, paystubs, and VA/client rate figures. Everyone
+  // else with broad access (admin, manager, or IT/Project Coordinator
+  // department tags) gets everything else in the admin panel. See
+  // src/lib/financialAccess.ts.
+  const currentUserProfile = useMemo(
+    () => profiles.find((p) => p.id === currentUserId) ?? null,
     [profiles, currentUserId]
   );
-  // ?viewAs=it lets a real admin preview the locked-down IT view. It can only
-  // ever hide more — it cannot grant access beyond the caller's real DB role.
+  // ?viewAs=it lets a real admin preview the locked-down non-financial view.
+  // It can only ever hide more — it cannot grant access beyond the caller's
+  // real profile.
   const searchParams = useSearchParams();
   const previewAsIT = searchParams.get("viewAs") === "it";
-  const isFullAdmin = currentUserRole === "admin" && !previewAsIT;
+  const isFullAdmin = hasFinancialAccess(currentUserProfile) && !previewAsIT;
+  const hasBroadAccess = hasBroadAdminAccess(currentUserProfile);
+  const canSeeAccountsClients = hasAccountsClientsAccess(currentUserProfile);
+
+  // A plain "va" role account only reaches /admin at all if the layout gate
+  // let them in via admin_permissions (see (admin)/layout.tsx) — restrict
+  // them to exactly the tabs their granted bundles unlock, plus Overview as
+  // a safe landing page. Anyone with broad or financial access is unrestricted here.
+  const restrictedTabs = useMemo(() => {
+    if (hasBroadAccess) return null;
+    const perms = (currentUserProfile?.admin_permissions ?? []) as AdminPermissionBundle[];
+    if (perms.length === 0) return null;
+    const tabs = new Set<AdminTab>(["overview"]);
+    perms.forEach((bundle) => (PERMISSION_BUNDLE_TABS[bundle] ?? []).forEach((t) => tabs.add(t)));
+    return tabs;
+  }, [hasBroadAccess, currentUserProfile]);
 
   // Defense in depth: if a restricted tab is somehow active (e.g. stale
-  // state) for a non-admin role, bounce back to Overview.
+  // state, or a typed-in ?tab= URL) for a role that shouldn't see it,
+  // bounce back to Overview.
   useEffect(() => {
     if (!isFullAdmin && ADMIN_ONLY_TABS.includes(activeTab)) {
       setActiveTab("overview");
+      return;
     }
-  }, [isFullAdmin, activeTab]);
+    if (!canSeeAccountsClients && ACCOUNTS_CLIENTS_TABS.includes(activeTab)) {
+      setActiveTab("overview");
+      return;
+    }
+    if (restrictedTabs && !restrictedTabs.has(activeTab)) {
+      setActiveTab("overview");
+    }
+  }, [isFullAdmin, activeTab, restrictedTabs, canSeeAccountsClients, setActiveTab]);
 
   // Screenshot viewer state
   const [selectedScreenshot, setSelectedScreenshot] = useState<TaskScreenshot | null>(null);
@@ -1303,7 +1365,7 @@ export default function AdminPage() {
           </div>
         </div>
         <nav className="flex-1 py-2 px-2 overflow-y-auto">
-          {filterGroupsForRole(sidebarSection === "admin" ? ADMIN_SIDEBAR_GROUPS : TEAM_SIDEBAR_GROUPS, isFullAdmin).map((group) => {
+          {filterGroupsForRole(sidebarSection === "admin" ? ADMIN_SIDEBAR_GROUPS : TEAM_SIDEBAR_GROUPS, isFullAdmin, restrictedTabs, canSeeAccountsClients).map((group) => {
             if (!group.label) {
               // Pinned tabs (Overview) — no group header
               return group.tabs.map((tab) => {
@@ -1523,12 +1585,12 @@ export default function AdminPage() {
             <ProjectsTasksTab />
           )}
 
-          {activeTab === "accounts" && (
-            <AccountsTab isFullAdmin={isFullAdmin} />
+          {activeTab === "accounts" && canSeeAccountsClients && (
+            <AccountsTab isFullAdmin={canSeeAccountsClients} />
           )}
 
-          {activeTab === "clients" && (
-            <ClientsTab isFullAdmin={isFullAdmin} />
+          {activeTab === "clients" && canSeeAccountsClients && (
+            <ClientsTab isFullAdmin={canSeeAccountsClients} />
           )}
 
           {activeTab === "invoices" && isFullAdmin && (
@@ -1607,7 +1669,7 @@ export default function AdminPage() {
           {activeTab === "va_broadcasts" && (
             <VaBroadcastsAdminTab />
           )}
-          {activeTab === "email_log" && (
+          {activeTab === "email_log" && isFullAdmin && (
             <EmailStatusTab />
           )}
 
@@ -3495,6 +3557,43 @@ function TeamManagementTab({
                               <p className="text-[11px] text-bark/40 italic">No payment accounts set. Click Edit to add.</p>
                             )}
                           </div>
+                          {/* Admin Access — grant a VA narrow admin-panel access without
+                              touching role or department. Founder/Accounting only. */}
+                          {isFullAdmin && (
+                            <div className="mt-4 pt-4 border-t border-sand/50" onClick={(e) => e.stopPropagation()}>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Admin Access</span>
+                              <div className="mt-2 space-y-1.5">
+                                {ADMIN_PERMISSION_BUNDLES.map((bundle) => {
+                                  const granted = (p.admin_permissions ?? []).includes(bundle.key);
+                                  return (
+                                    <label key={bundle.key} className="flex items-start gap-2 text-[12px] text-espresso cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={granted}
+                                        onChange={async (e) => {
+                                          const current = p.admin_permissions ?? [];
+                                          const next = e.target.checked
+                                            ? [...current, bundle.key]
+                                            : current.filter((k) => k !== bundle.key);
+                                          await fetch("/api/users", {
+                                            method: "PATCH",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ user_id: p.id, admin_permissions: next }),
+                                          });
+                                          fetchData();
+                                        }}
+                                        className="mt-0.5 h-3.5 w-3.5 rounded border-sand text-terracotta focus:ring-terracotta cursor-pointer"
+                                      />
+                                      <span>
+                                        <span className="font-medium">{bundle.label}</span>
+                                        <span className="block text-[11px] text-stone">{bundle.description}</span>
+                                      </span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                           {/* Budget and Limit */}
                           <div className="mt-4 pt-4 border-t border-sand/50" onClick={(e) => e.stopPropagation()}>
                             <ShiftBudgetSection profile={p} userId={p.id} isAdmin={isFullAdmin} onRefresh={fetchData} />
@@ -3504,7 +3603,7 @@ function TeamManagementTab({
 
                       {/* Profile Tab */}
                       {expandedTab === "profile" && (
-                        <TeamProfilePanel userId={p.id} isAdmin={true} />
+                        <TeamProfilePanel userId={p.id} isAdmin={isFullAdmin} />
                       )}
                     </td>
                   </tr>

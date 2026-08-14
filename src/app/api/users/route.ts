@@ -1,15 +1,18 @@
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess, hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-/** Verify the caller is an authenticated admin or IT staff member (Department
- * = "IT"). IT gets team-management access but never pay rates or role
- * escalation — those are enforced field-by-field in each handler below. */
-async function verifyAdmin(): Promise<{ userId: string; role: string } | Response> {
+/** Verify the caller has broad admin access (admin, manager, IT, or Project
+ * Coordinator — see financialAccess.ts). Broad access gets team-management
+ * access but never pay rates, role escalation, or admin_permissions grants
+ * — those are enforced field-by-field in each handler below, gated to
+ * financial access (Founder/Accounting) specifically. */
+async function verifyAdmin(): Promise<{ userId: string; role: string; isFinancialAccess: boolean } | Response> {
   const supabase = await createServerClient();
   const {
     data: { user },
@@ -22,18 +25,17 @@ async function verifyAdmin(): Promise<{ userId: string; role: string } | Respons
     .select("role, department")
     .eq("id", user.id)
     .single();
-  const isITStaff = profile?.department?.trim().toUpperCase() === "IT";
-  if (!profile || (profile.role !== "admin" && !isITStaff)) {
+  if (!profile || !hasBroadAdminAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
-  return { userId: user.id, role: profile.role };
+  return { userId: user.id, role: profile.role, isFinancialAccess: hasFinancialAccess(profile) };
 }
 
 /** POST: Create a new user via Supabase Admin API */
 export async function POST(request: Request) {
   const authResult = await verifyAdmin();
   if (authResult instanceof Response) return authResult;
-  const isFullAdmin = authResult.role === "admin";
+  const isFullAdmin = authResult.isFinancialAccess;
 
   const body = await request.json();
   let { email, password, username, full_name, role, department, position, pay_rate, pay_rate_type } = body;
@@ -159,15 +161,19 @@ export async function PUT(request: Request) {
 export async function PATCH(request: Request) {
   const authResult = await verifyAdmin();
   if (authResult instanceof Response) return authResult;
-  const isFullAdmin = authResult.role === "admin";
+  const isFullAdmin = authResult.isFinancialAccess;
 
   const body = await request.json();
   const { user_id, action, email, ...updates } = body;
 
-  // Only full admins may see/change pay rates or grant the admin role.
+  // Only financial-access accounts (Founder/Accounting) may see/change pay
+  // rates, grant the admin role, or grant admin_permissions bundles (see
+  // adminPermissions.ts) — everyone else with broad access (admin, manager,
+  // IT, Project Coordinator) can't self-escalate or escalate anyone else.
   if (!isFullAdmin) {
     delete updates.pay_rate;
     delete updates.pay_rate_type;
+    delete updates.admin_permissions;
     if (updates.role === "admin") {
       return Response.json({ error: "Only admins can grant the admin role" }, { status: 403 });
     }
@@ -269,6 +275,7 @@ export async function PATCH(request: Request) {
     "employment_type",
     "requires_extension",
     "extension_popup_shown",
+    "admin_permissions",
   ];
   for (const field of allowedFields) {
     if (field in updates) {

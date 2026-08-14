@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +23,8 @@ async function requireAdmin() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  if (profile?.role !== "admin") return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
+  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
+  if (!hasBroadAdminAccess(profile)) return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
   return { user };
 }
 
@@ -31,8 +32,8 @@ async function getUserAndRole() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  return { user, isAdmin: profile?.role === "admin" };
+  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
+  return { user, isAdmin: hasBroadAdminAccess(profile) };
 }
 
 export async function GET(request: Request) {

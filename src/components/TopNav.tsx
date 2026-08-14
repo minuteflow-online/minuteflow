@@ -37,6 +37,7 @@ type TopNavProps = {
     full_name: string;
     role: UserRole;
     department?: string | null;
+    admin_permissions?: string[] | null;
   };
 };
 
@@ -433,7 +434,7 @@ export default function TopNav({ user }: TopNavProps) {
               </div>
             </div>
 
-            {(user.role === "admin" || user.department?.trim().toUpperCase() === "IT") && (
+            {(user.role === "admin" || user.department?.trim().toUpperCase() === "IT" || (user.admin_permissions?.length ?? 0) > 0) && (
               <Link
                 href="/admin"
                 className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso"

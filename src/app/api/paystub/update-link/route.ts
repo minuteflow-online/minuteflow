@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +21,10 @@ export async function PATCH(request: Request) {
 
   const { data: callerProfile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (!callerProfile || callerProfile.role !== "admin") {
+  if (!hasFinancialAccess(callerProfile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

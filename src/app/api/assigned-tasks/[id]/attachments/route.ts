@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { hasAdminPermission } from "@/lib/adminPermissions";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -8,8 +9,14 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-async function canAccessAttachments(supabase: Awaited<ReturnType<typeof createClient>>, taskId: string, userId: string, role?: string | null) {
-  if (role === "admin" || role === "manager") return true;
+type CallerProfile = { role?: string | null; admin_permissions?: string[] | null } | null;
+
+function isAdminEquivalent(profile: CallerProfile) {
+  return profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management");
+}
+
+async function canAccessAttachments(supabase: Awaited<ReturnType<typeof createClient>>, taskId: string, userId: string, profile: CallerProfile) {
+  if (isAdminEquivalent(profile)) return true;
 
   const { data, error } = await supabase
     .from("assigned_task_assignees")
@@ -27,7 +34,9 @@ async function canAccessAttachments(supabase: Awaited<ReturnType<typeof createCl
 
 /**
  * GET /api/assigned-tasks/[id]/attachments
- * Returns all attachments for a task. Admin/manager can view any task; VAs can view tasks assigned to them.
+ * Returns all attachments for a task. Admin/manager (and permission-granted
+ * VAs, see adminPermissions.ts) can view any task; VAs can view tasks
+ * assigned to them.
  */
 export async function GET(_request: Request, { params }: RouteContext) {
   const supabase = await createClient();
@@ -37,14 +46,14 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
   const { id } = await params;
 
   try {
-    const allowed = await canAccessAttachments(supabase, id, user.id, profile?.role ?? null);
+    const allowed = await canAccessAttachments(supabase, id, user.id, profile);
     if (!allowed) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
@@ -52,7 +61,14 @@ export async function GET(_request: Request, { params }: RouteContext) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to verify access" }, { status: 500 });
   }
 
-  const { data, error } = await supabase
+  // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
+  // RLS check (role stays "va"), so read via the service-role client once
+  // the app-layer check above has already cleared the caller.
+  const readClient = isAdminEquivalent(profile)
+    ? createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
+    : supabase;
+
+  const { data, error } = await readClient
     .from("assigned_task_attachments")
     .select("id, filename, storage_path, file_size, mime_type, uploaded_by, uploaded_at")
     .eq("assigned_task_id", id)
@@ -63,7 +79,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
   // Generate signed URLs for each attachment (1 hour expiry)
   const attachments = await Promise.all(
     (data ?? []).map(async (att) => {
-      const { data: signedData } = await supabase.storage
+      const { data: signedData } = await readClient.storage
         .from("task-attachments")
         .createSignedUrl(att.storage_path, 3600);
       return {
@@ -78,7 +94,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
 /**
  * POST /api/assigned-tasks/[id]/attachments
- * Upload a file attachment for a task. Admin/manager can upload any task; VAs can upload to tasks assigned to them.
+ * Upload a file attachment for a task. Admin/manager (and permission-granted
+ * VAs) can upload to any task; VAs can upload to tasks assigned to them.
  * Accepts multipart/form-data with a "file" field.
  */
 export async function POST(request: Request, { params }: RouteContext) {
@@ -90,14 +107,14 @@ export async function POST(request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
   const { id } = await params;
 
   try {
-    const allowed = await canAccessAttachments(supabase, id, user.id, profile?.role ?? null);
+    const allowed = await canAccessAttachments(supabase, id, user.id, profile);
     if (!allowed) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
@@ -105,7 +122,9 @@ export async function POST(request: Request, { params }: RouteContext) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to verify access" }, { status: 500 });
   }
 
-  const { data: task, error: taskError } = await supabase
+  // Use the service-role client for the existence check too — a
+  // permission-granted plain VA wouldn't pass RLS on the session client.
+  const { data: task, error: taskError } = await admin
     .from("assigned_tasks")
     .select("id")
     .eq("id", id)
@@ -211,7 +230,7 @@ export async function POST(request: Request, { params }: RouteContext) {
 
 /**
  * DELETE /api/assigned-tasks/[id]/attachments?attachmentId=<id>
- * Delete a specific attachment. Admin/manager only.
+ * Delete a specific attachment. Admin/manager (and permission-granted VAs) only.
  */
 export async function DELETE(request: Request, { params }: RouteContext) {
   const supabase = await createClient();
@@ -222,13 +241,18 @@ export async function DELETE(request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
-  if (!["admin", "manager"].includes(profile?.role ?? "")) {
+  if (!isAdminEquivalent(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
+  // RLS check (role stays "va"), so use the service-role client here once
+  // the app-layer check above has already cleared the caller.
+  const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } });
 
   const { id } = await params;
   const { searchParams } = new URL(request.url);
@@ -239,7 +263,7 @@ export async function DELETE(request: Request, { params }: RouteContext) {
   }
 
   // Fetch the attachment record (to get storage_path)
-  const { data: att, error: fetchError } = await supabase
+  const { data: att, error: fetchError } = await admin
     .from("assigned_task_attachments")
     .select("id, storage_path")
     .eq("id", attachmentId)
@@ -251,10 +275,10 @@ export async function DELETE(request: Request, { params }: RouteContext) {
   }
 
   // Delete from storage
-  await supabase.storage.from("task-attachments").remove([att.storage_path]);
+  await admin.storage.from("task-attachments").remove([att.storage_path]);
 
   // Delete DB record
-  const { error: deleteError } = await supabase
+  const { error: deleteError } = await admin
     .from("assigned_task_attachments")
     .delete()
     .eq("id", attachmentId);

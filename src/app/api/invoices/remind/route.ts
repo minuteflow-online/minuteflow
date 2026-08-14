@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -14,13 +15,13 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Admin role check — only admins may send invoice reminders
+  // Financial access check — only Founder/Accounting may send invoice reminders
   const { data: senderProfile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (senderProfile?.role !== "admin") {
+  if (!hasFinancialAccess(senderProfile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

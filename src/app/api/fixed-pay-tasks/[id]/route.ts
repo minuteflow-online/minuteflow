@@ -1,6 +1,7 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
+import { hasAdminPermission } from "@/lib/adminPermissions";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +34,7 @@ async function requireAuthed() {
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
@@ -41,7 +42,12 @@ async function requireAuthed() {
     return { error: Response.json({ error: error.message }, { status: 500 }) as Response };
   }
 
-  return { userId: user.id, role: profile?.role ?? null };
+  return {
+    userId: user.id,
+    role: profile?.role ?? null,
+    isPermitted:
+      profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management"),
+  };
 }
 
 function makeAdminClient() {
@@ -121,7 +127,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return Response.json({ error: "Invalid task id" }, { status: 400 });
   }
 
-  const isAdminOrManager = auth.role === "admin" || auth.role === "manager";
+  const isAdminOrManager = auth.isPermitted;
 
   if (!isAdminOrManager) {
     // VA self-service: either a status change (restricted to non-review/
@@ -377,7 +383,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
     return Response.json({ error: "Invalid task id" }, { status: 400 });
   }
 
-  const isAdminOrManager = auth.role === "admin" || auth.role === "manager";
+  const isAdminOrManager = auth.isPermitted;
   const admin = makeAdminClient();
 
   if (!isAdminOrManager) {

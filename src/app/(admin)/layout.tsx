@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import TopNav from "@/components/TopNav";
 import type { UserRole } from "@/types/database";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export default async function AdminLayout({
   children,
@@ -17,17 +18,19 @@ export default async function AdminLayout({
     redirect("/login");
   }
 
-  // Check role — admins and staff whose Department is "IT" can access admin pages.
-  // (Department is used instead of a dedicated role because the `profiles.role`
-  // column has a DB check constraint limited to admin/manager/va.)
+  // Check role — admins, managers, staff tagged Founder/Accounting/IT/Project
+  // Coordinator (see financialAccess.ts), and VAs granted a specific admin
+  // permission (see adminPermissions.ts) can access admin pages. (Department
+  // is used instead of a dedicated role because the `profiles.role` column
+  // has a DB check constraint limited to admin/manager/va.)
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, role, department")
+    .select("full_name, role, department, admin_permissions")
     .eq("id", user.id)
     .single();
 
-  const isITStaff = profile?.department?.trim().toUpperCase() === "IT";
-  if (!profile || (profile.role !== "admin" && !isITStaff)) {
+  const hasAnyAdminPermission = (profile?.admin_permissions?.length ?? 0) > 0;
+  if (!profile || (!hasBroadAdminAccess(profile) && !hasAnyAdminPermission)) {
     redirect("/dashboard");
   }
 
@@ -37,7 +40,7 @@ export default async function AdminLayout({
 
   return (
     <>
-      <TopNav user={{ full_name: fullName, role, department: profile.department }} />
+      <TopNav user={{ full_name: fullName, role, department: profile.department, admin_permissions: profile.admin_permissions }} />
       <main className="flex-1">{children}</main>
     </>
   );
