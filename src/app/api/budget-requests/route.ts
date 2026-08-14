@@ -23,6 +23,54 @@ function makeAdminClient() {
   });
 }
 
+// Best-effort email to every admin/manager when a VA submits a budget request,
+// with a link to the approval page. Never throws — a mail failure must not fail
+// the request itself.
+async function notifyAdminsOfRequest(
+  admin: ReturnType<typeof makeAdminClient>,
+  vaId: string,
+  amount: number,
+  unit: string,
+  period: string,
+  reason: string | null
+) {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  try {
+    const { data: va } = await admin.from("profiles").select("full_name, username").eq("id", vaId).single();
+    const vaName = va?.full_name || va?.username || "A VA";
+
+    const { data: admins } = await admin.from("profiles").select("id").in("role", ["admin", "manager"]);
+    const emails: string[] = [];
+    for (const a of (admins ?? []) as { id: string }[]) {
+      const { data: authData } = await admin.auth.admin.getUserById(a.id);
+      if (authData?.user?.email) emails.push(authData.user.email);
+    }
+    if (emails.length === 0) return;
+
+    const periodWord = period === "day" ? "daily" : period === "week" ? "weekly" : "monthly";
+    const amountStr = unit === "dollars" ? `$${amount.toFixed(2)}` : `${amount}h`;
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "Toni Colina <noreply@minuteflow.click>",
+        to: emails,
+        subject: `Budget request: ${vaName} needs ${amountStr} more (${periodWord})`,
+        html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
+          <h2 style="color:#c2694f">Budget increase request</h2>
+          <p><strong>${vaName}</strong> requested <strong>${amountStr}</strong> more for their <strong>${periodWord}</strong> budget.</p>
+          ${reason ? `<p style="background:#f3ede4;padding:10px 12px;border-radius:8px"><em>Reason:</em> ${reason}</p>` : ""}
+          <p style="margin-top:18px"><a href="https://minuteflow.click/admin" style="background:#6b8f71;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Review &amp; approve</a></p>
+          <p style="color:#b5a898;font-size:12px">Admin → VA Requests → Budget Requests</p>
+        </div>`,
+      }),
+    });
+  } catch (e) {
+    console.error("budget-request notify error:", e);
+  }
+}
+
 // GET — admins see every request (with VA/reviewer names); VAs see only their
 // own. Newest first.
 export async function GET() {
@@ -105,5 +153,12 @@ export async function POST(request: Request) {
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  // A VA request needs admin sign-off → notify them. A direct grant is already
+  // approved, so no notification.
+  if (!isDirectGrant) {
+    await notifyAdminsOfRequest(admin, auth.userId, amount, unit, period, reason);
+  }
+
   return Response.json({ request: data });
 }
