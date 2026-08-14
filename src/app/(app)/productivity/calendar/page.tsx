@@ -21,6 +21,7 @@ import {
   spanLabel,
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
+import { useUrlTab } from "@/hooks/useUrlTab";
 
 type TeamMember = {
   id: string;
@@ -121,7 +122,7 @@ export default function ProductivityCalendarPage() {
   const todayStr = getDateInTimezone(orgTimezone);
   const isAdminOrManager = role === "admin" || role === "manager";
 
-  const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
+  const [viewMode, setViewMode] = useUrlTab<"month" | "week" | "day">("view", "month", ["month", "week", "day"]);
   const [scope, setScope] = useState<string>("__self__");
   // Multi-VA "compare" for Day view: pick several teammates and see each as its
   // own skinny column. Separate from `scope` (which drives the single grid).

@@ -19,6 +19,7 @@ import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
+import { useUrlTab } from "@/hooks/useUrlTab";
 
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 200 },
@@ -390,7 +391,7 @@ export default function TaskListPage() {
   const [tasks, setTasks] = useState<VATaskRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [taskView, setTaskView] = useState<"active" | "archived" | "trash">("active");
+  const [taskView, setTaskView] = useUrlTab<"active" | "archived" | "trash">("status", "active", ["active", "archived", "trash"]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [filterStatuses, setFilterStatuses] = useState<AssignedTaskStatus[]>([]);
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
@@ -430,9 +431,13 @@ export default function TaskListPage() {
   const [assignedByProfiles, setAssignedByProfiles] = useState<ProfileOption[]>([]);
   const [assignedByProfilesLoaded, setAssignedByProfilesLoaded] = useState(false);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
-  const [activeView, setActiveView] = useState<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "team" | "objective">("my_tasks");
+  const [activeView, setActiveView] = useUrlTab<"my_tasks" | "submitted" | "available_tasks" | "recurring" | "team" | "objective">(
+    "view",
+    "my_tasks",
+    ["my_tasks", "submitted", "available_tasks", "recurring", "team", "objective"]
+  );
   const [objectiveProjectIds, setObjectiveProjectIds] = useState<Set<string>>(new Set());
-  const [objectiveSubView, setObjectiveSubView] = useState<"list" | "progress">("list");
+  const [objectiveSubView, setObjectiveSubView] = useUrlTab<"list" | "progress">("objView", "list", ["list", "progress"]);
   const [hourlyPoolTasks, setHourlyPoolTasks] = useState<HourlyPoolTask[]>([]);
   const [hourlyPoolLoading, setHourlyPoolLoading] = useState(true);
   const [hourlyPoolError, setHourlyPoolError] = useState<string | null>(null);

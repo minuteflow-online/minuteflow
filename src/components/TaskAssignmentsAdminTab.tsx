@@ -16,6 +16,7 @@ import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
+import { useUrlTab } from "@/hooks/useUrlTab";
 
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 180 },
@@ -495,7 +496,11 @@ export default function TaskAssignmentsAdminTab({
   const [filterDueStart, setFilterDueStart] = useState<string>("");
   const [filterDueEnd, setFilterDueEnd] = useState<string>("");
   const [taskNameSearch, setTaskNameSearch] = useState<string>("");
-  const [taskView, setTaskView] = useState<"active" | "submitted" | "archived" | "trash" | "recurring">("active");
+  const [taskView, setTaskView] = useUrlTab<"active" | "submitted" | "archived" | "trash" | "recurring">(
+    "view",
+    "active",
+    ["active", "submitted", "archived", "trash", "recurring"]
+  );
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
 
   // ── CSV Upload state ─────────────────────────────────────────────────────────

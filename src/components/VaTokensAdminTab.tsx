@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useUrlTab } from "@/hooks/useUrlTab";
 
 interface Profile {
   id: string;
@@ -37,7 +38,7 @@ export default function VaTokensAdminTab() {
   const [tokens, setTokens] = useState<VaToken[]>([]);
   const [ratings, setRatings] = useState<VaDailyRating[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeView, setActiveView] = useState<"tokens" | "ratings">("tokens");
+  const [activeView, setActiveView] = useUrlTab<"tokens" | "ratings">("view", "tokens", ["tokens", "ratings"]);
 
   // Token form
   const [showTokenForm, setShowTokenForm] = useState(false);

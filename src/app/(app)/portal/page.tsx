@@ -6,6 +6,7 @@ import type { Profile } from "@/types/database";
 import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 import VAProfileTab from "@/components/VAProfileTab";
 import { normalizeByDateValue, type ByDateValue } from "@/lib/payroll";
+import { useUrlTab } from "@/hooks/useUrlTab";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -1292,7 +1293,7 @@ function TokensTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmin:
   const [tokens, setTokens] = useState<VaToken[]>([]);
   const [ratings, setRatings] = useState<VaDailyRating[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"overview" | "tokens" | "ratings">("overview");
+  const [view, setView] = useUrlTab<"overview" | "tokens" | "ratings">("view", "overview", ["overview", "tokens", "ratings"]);
 
   useEffect(() => {
     Promise.all([
@@ -1917,7 +1918,7 @@ function PortalChangePasswordTab() {
 
 export default function VaPortalPage() {
   const supabase = createClient();
-  const [activeTab, setActiveTab] = useState<PortalTab>("profile");
+  const [activeTab, setActiveTab] = useUrlTab<PortalTab>("tab", "profile");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [loading, setLoading] = useState(true);
