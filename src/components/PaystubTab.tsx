@@ -241,6 +241,23 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [resendSuccessId, setResendSuccessId] = useState<string | null>(null);
 
+  // Pending auto-generated paystub drafts (awaiting review), across all VAs
+  const [drafts, setDrafts] = useState<Array<{ id: string; user_id: string; full_name: string; period_start: string; period_end: string; pay_period_label: string | null; total_hours_ms: number; gross_pay: number }>>([]);
+  const [draftsLoading, setDraftsLoading] = useState(true);
+  const loadDrafts = useCallback(async () => {
+    setDraftsLoading(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("paystub_snapshots")
+      .select("id, user_id, full_name, period_start, period_end, pay_period_label, total_hours_ms, gross_pay")
+      .eq("status", "draft")
+      .order("created_at", { ascending: false });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setDrafts((data ?? []) as any);
+    setDraftsLoading(false);
+  }, []);
+  useEffect(() => { loadDrafts(); }, [loadDrafts]);
+
   // Editable payment fields (post-send, in expanded history row)
   const [editInputs, setEditInputs] = useState<Record<string, {
     amount_paid: string;
@@ -1093,6 +1110,49 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Pending Paystub Drafts (auto-generated, awaiting review) */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-bark">Paystub Drafts</h3>
+            <p className="text-xs text-bark/50 mt-0.5">Auto-generated on the 1st &amp; 16th — waiting for your review. Click a row to review and send. VAs can&apos;t see these until you send.</p>
+          </div>
+          <button onClick={loadDrafts} className="text-xs text-bark/50 hover:text-bark transition-colors">↻ Refresh</button>
+        </div>
+        {draftsLoading ? (
+          <div className="text-xs text-bark/40 animate-pulse">Loading drafts…</div>
+        ) : drafts.length === 0 ? (
+          <div className="rounded-xl border border-sand bg-white p-6 text-center text-[13px] text-bark/50">No paystub drafts waiting for review.</div>
+        ) : (
+          <div className="rounded-xl border border-sand bg-white overflow-x-auto">
+            <table className="w-full text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                  <th className="px-4 py-3">Virtual Assistant</th>
+                  <th className="px-3 py-3">Pay Period</th>
+                  <th className="px-3 py-3 text-right">Hours</th>
+                  <th className="px-3 py-3 text-right">Gross Pay</th>
+                  <th className="px-3 py-3 text-right"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-parchment">
+                {drafts.map((d) => (
+                  <tr key={d.id} className="hover:bg-parchment/20 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-espresso">{d.full_name}</td>
+                    <td className="px-3 py-3 text-bark">{d.pay_period_label || `${d.period_start} → ${d.period_end}`}</td>
+                    <td className="px-3 py-3 text-right text-bark">{(Number(d.total_hours_ms) / 3_600_000).toFixed(2)} hrs</td>
+                    <td className="px-3 py-3 text-right font-semibold text-espresso">{Number(d.gross_pay).toLocaleString("en-US", { style: "currency", currency: "USD" })}</td>
+                    <td className="px-3 py-3 text-right">
+                      <a href={`/admin/paystub-review/${d.id}`} className="inline-block rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white hover:bg-terracotta/90 transition-colors">Review &amp; Send →</a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Paystub History */}
