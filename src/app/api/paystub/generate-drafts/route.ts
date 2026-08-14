@@ -42,7 +42,7 @@ async function handle(request: NextRequest) {
 
   const { data: settings } = await admin
     .from("organization_settings")
-    .select("timezone, billing_email, org_name")
+    .select("timezone, billing_email, notification_email, org_name")
     .limit(1)
     .single();
   const timeZone = settings?.timezone || "UTC";
@@ -68,13 +68,19 @@ async function handle(request: NextRequest) {
     periodEnd = qsEnd;
   }
 
+  // Optional recipient override for the review email (e.g. testing).
+  const qsTo = url.searchParams.get("to");
+  const notifyEmail = qsTo && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(qsTo)
+    ? qsTo
+    : (settings?.notification_email || settings?.billing_email || null);
+
   const result = await runPaystubDraftGeneration(admin, {
     periodStart,
     periodEnd,
-    notifyEmail: settings?.billing_email || null,
+    notifyEmail,
     orgName: settings?.org_name || null,
   });
-  return Response.json({ ...result, note: "Drafts saved. A review email was sent to the org billing email. Open each review link to approve + send to the VA." });
+  return Response.json({ ...result, sentReviewTo: notifyEmail, note: "Drafts saved. A review email was sent to the address shown in sentReviewTo. Open each review link to approve + send to the VA." });
 }
 
 export async function GET(request: NextRequest) { return handle(request); }

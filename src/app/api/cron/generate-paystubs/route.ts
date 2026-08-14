@@ -52,7 +52,7 @@ async function handleCron(request: NextRequest) {
   const supabase = serviceClient();
   const { data: settings } = await supabase
     .from("organization_settings")
-    .select("timezone, billing_email, org_name")
+    .select("timezone, billing_email, notification_email, org_name")
     .limit(1)
     .single();
   const timeZone = settings?.timezone || "UTC";
@@ -83,7 +83,7 @@ async function handleCron(request: NextRequest) {
   const result = await runPaystubDraftGeneration(supabase, {
     periodStart,
     periodEnd,
-    notifyEmail: settings?.billing_email || null,
+    notifyEmail: settings?.notification_email || settings?.billing_email || null,
     orgName: settings?.org_name || null,
   });
   return Response.json(result);
