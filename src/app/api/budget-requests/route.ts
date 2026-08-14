@@ -56,9 +56,9 @@ async function notifyAdminsOfRequest(
       body: JSON.stringify({
         from: "Toni Colina <noreply@minuteflow.click>",
         to: emails,
-        subject: `Budget request: ${vaName} needs ${amountStr} more (${periodWord})`,
+        subject: `🔔 Budget request: ${vaName} needs ${amountStr} more (${periodWord})`,
         html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
-          <h2 style="color:#c2694f">Budget increase request</h2>
+          <h2 style="color:#c2694f">🔔 Budget increase request</h2>
           <p><strong>${vaName}</strong> requested <strong>${amountStr}</strong> more for their <strong>${periodWord}</strong> budget.</p>
           ${reason ? `<p style="background:#f3ede4;padding:10px 12px;border-radius:8px"><em>Reason:</em> ${reason}</p>` : ""}
           <p style="margin-top:18px"><a href="https://minuteflow.click/admin" style="background:#6b8f71;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Review &amp; approve</a></p>
