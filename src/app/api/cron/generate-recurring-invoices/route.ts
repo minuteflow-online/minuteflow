@@ -212,25 +212,9 @@ async function handleCron(request: NextRequest) {
 
     const isHourly = (source.invoice_type ?? "custom") === "timelog";
 
-    // Fixed rule: don't generate the next until the previous is paid.
-    if (!isHourly && source.status !== "paid") {
-      results.push({ series: seriesId, skipped: `previous invoice not paid (status: ${source.status})` });
-      // Reminder that the fixed series is waiting on payment
-      if (notifyEmail) {
-        await notifyAdmin({
-          to: notifyEmail,
-          fromName: source.from_name || settings?.org_name || "MinuteFlow",
-          subject: `Recurring invoice on hold — ${source.invoice_number} not yet paid`,
-          text: `The recurring invoice for ${source.to_name} won't regenerate until ${source.invoice_number} is marked paid. Mark it paid in MinuteFlow to resume.`,
-          html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto;padding:24px;">
-            <div style="font-size:16px;font-weight:800;color:#2d1a00;margin-bottom:8px;">Recurring invoice on hold</div>
-            <div style="font-size:13px;color:#3d2b1f;">The monthly invoice for <strong>${source.to_name}</strong> won't regenerate until <strong>${source.invoice_number}</strong> is marked <strong>paid</strong>.</div>
-            <div style="font-size:12px;color:#9e9080;margin-top:12px;">Mark it paid in MinuteFlow → Admin → Financial to resume the series.</div>
-          </div>`,
-        });
-      }
-      continue;
-    }
+    // Both types generate a draft every month for review. The "don't send until
+    // the previous is paid" rule is enforced at the Send step on the review
+    // page, not here — so the draft is always created for Toni to look at.
 
     const issueDate = `${year}-${pad2(month)}-${pad2(day)}`;
     const sendCode = makeSendCode();

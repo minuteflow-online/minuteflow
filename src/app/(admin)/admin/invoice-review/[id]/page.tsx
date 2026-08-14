@@ -30,6 +30,7 @@ interface InvoiceRow {
   custom_line_items: string | null;
   period_start: string | null;
   period_end: string | null;
+  recurring_series_id: string | null;
 }
 
 interface LineItemRow {
@@ -58,6 +59,8 @@ export default function InvoiceReviewPage() {
   const [confInput, setConfInput] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // Previous invoice in this recurring series that isn't paid yet — blocks Send.
+  const [prevUnpaid, setPrevUnpaid] = useState<{ number: string; status: string } | null>(null);
 
   const load = useCallback(async () => {
     const { data: inv } = await supabase.from("invoices").select("*").eq("id", id).single();
@@ -69,6 +72,21 @@ export default function InvoiceReviewPage() {
       .eq("invoice_id", id)
       .order("sort_order", { ascending: true });
     setItems((li ?? []) as LineItemRow[]);
+
+    // Rule: don't send a new recurring invoice until the previous one is paid.
+    setPrevUnpaid(null);
+    if (inv?.recurring_series_id && inv?.period_start) {
+      const { data: prev } = await supabase
+        .from("invoices")
+        .select("invoice_number, status, period_start")
+        .eq("recurring_series_id", inv.recurring_series_id)
+        .lt("period_start", inv.period_start)
+        .not("status", "in", '("cancelled","trash")')
+        .order("period_start", { ascending: false })
+        .limit(1);
+      const p = prev?.[0];
+      if (p && p.status !== "paid") setPrevUnpaid({ number: p.invoice_number as string, status: p.status as string });
+    }
     setLoading(false);
   }, [id, supabase]);
 
@@ -108,7 +126,7 @@ export default function InvoiceReviewPage() {
   };
 
   const send = async () => {
-    if (!codeOk) return;
+    if (!codeOk || prevUnpaid) return;
     setBusy("send"); setMsg(null);
     try {
       const res = await fetch("/api/invoices/send", {
@@ -260,17 +278,23 @@ export default function InvoiceReviewPage() {
               ? "Already sent."
               : "Type the send-code from your email to unlock Send — this prevents accidental sends."}
           </div>
+          {!alreadySent && prevUnpaid && (
+            <div className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-700">
+              Previous invoice <span className="font-semibold">{prevUnpaid.number}</span> in this series is <span className="font-semibold">{prevUnpaid.status}</span>, not paid. Mark it paid before sending this one.
+            </div>
+          )}
           {!alreadySent && (
             <div className="flex flex-wrap items-center gap-2">
               <input
                 value={codeInput}
                 onChange={(e) => setCodeInput(e.target.value)}
                 placeholder="Send code"
-                className="rounded-lg border border-sand px-3 py-2 text-[13px] uppercase tracking-widest text-espresso outline-none focus:border-terracotta w-36"
+                disabled={!!prevUnpaid}
+                className="rounded-lg border border-sand px-3 py-2 text-[13px] uppercase tracking-widest text-espresso outline-none focus:border-terracotta w-36 disabled:bg-parchment disabled:opacity-60"
               />
               <button
                 onClick={send}
-                disabled={!codeOk || busy === "send"}
+                disabled={!codeOk || !!prevUnpaid || busy === "send"}
                 className="rounded-lg bg-sage px-4 py-2 text-[12px] font-semibold text-white hover:bg-sage/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {busy === "send" ? "Sending…" : "Send"}
