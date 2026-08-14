@@ -149,6 +149,14 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
   const weeklyStatus: BudgetStatus | null = computeBudgetStatus(profile?.weekly_budget_limit ?? null, weeklyUsed, unit);
   const monthlyStatus: BudgetStatus | null = computeBudgetStatus(profile?.monthly_budget_limit ?? null, monthlyUsed, unit);
 
+  // A request can be offered whenever ANY period is at/over its limit — not just
+  // the daily one — so being over the weekly or monthly budget surfaces it too.
+  const anyOverOrWarn = Boolean(
+    (dailyStatus && (dailyStatus.warn || dailyStatus.over)) ||
+    (weeklyStatus && (weeklyStatus.warn || weeklyStatus.over)) ||
+    (monthlyStatus && (monthlyStatus.warn || monthlyStatus.over))
+  );
+
   const pendingRequest = requests.find((r) => r.status === "pending");
 
   const submitRequest = useCallback(async () => {
@@ -236,7 +244,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
           <div className="border-t border-parchment" />
           <PeriodSection label="Monthly Budget" status={monthlyStatus} />
 
-          {dailyStatus && (pendingRequest ? (
+          {(pendingRequest ? (
             <p className="rounded-lg bg-amber-soft/60 px-2.5 py-1.5 text-[11px] text-walnut">
               Request for {formatAmount(pendingRequest.amount, pendingRequest.unit)} more is pending admin approval.
             </p>
@@ -282,7 +290,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
               </div>
             </div>
           ) : (
-            (dailyStatus.warn || dailyStatus.over) && (
+            anyOverOrWarn && (
               <button
                 type="button"
                 onClick={() => setShowRequest(true)}
