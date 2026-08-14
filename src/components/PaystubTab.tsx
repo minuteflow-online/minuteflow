@@ -218,6 +218,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
   // Miscellaneous amount (added on top of Amount to Pay)
   const [miscAmount, setMiscAmount] = useState<string>("");
+  // Amount already sent this period (advance / split payment) — recorded as a
+  // prior payment so the paystub shows it as already paid.
+  const [advanceAmount, setAdvanceAmount] = useState<string>("");
 
   // Custom line items (label + rate × quantity) — added on top of Amount to Pay
   const [customLineItems, setCustomLineItems] = useState<{ label: string; rate: string; quantity: string }[]>([]);
@@ -301,6 +304,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
     setCustomLineItems([]);
     setFee("");
+    setAdvanceAmount("");
     setLoading(true);
     try {
       const res = await fetch("/api/paystub/send", {
@@ -387,6 +391,22 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     if (!range) return;
 
     try {
+      // Log an advance / previously-sent amount as a prior payment first, so the
+      // paystub shows it as already paid and the remaining settles correctly.
+      const advance = parseFloat(advanceAmount) || 0;
+      if (advance > 0) {
+        const sb = createClient();
+        await sb.from("va_payments").insert({
+          va_id: selectedUserId,
+          amount: advance,
+          payment_date: paymentDate,
+          payment_method: paymentMethod,
+          period_start: range.start,
+          period_end: range.end,
+          notes: "Advance / previously sent",
+        });
+      }
+
       const res = await fetch("/api/paystub/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -443,7 +463,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, companyName, customLineItems, lineItemsTotal, fee, loadDrafts]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, companyName, customLineItems, lineItemsTotal, fee, loadDrafts]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -1016,6 +1036,38 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     </span>
                   </div>
                 ) : null}
+              </div>
+
+              {/* Already sent / advance (split payment) */}
+              <div className="px-5 pb-4">
+                <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                  Already Sent <span className="normal-case font-normal text-bark/40">(advance / split payment — logged as a prior payment)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-bark/50">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={advanceAmount}
+                    onChange={(e) => setAdvanceAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="flex-1 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  />
+                </div>
+                {advanceAmount !== "" && parseFloat(advanceAmount) > 0 && (() => {
+                  const gross = preview.totalGrossPay ?? preview.grossPay;
+                  const now = customAmount !== "" ? (parseFloat(customAmount) || 0) : gross;
+                  const adv = parseFloat(advanceAmount) || 0;
+                  const remaining = gross - adv - now;
+                  return (
+                    <div className="mt-2 rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark space-y-1">
+                      <div className="flex justify-between"><span>Already sent (advance)</span><span>{formatCurrency(adv)}</span></div>
+                      <div className="flex justify-between"><span>Paying now</span><span>{formatCurrency(now)}</span></div>
+                      <div className="flex justify-between border-t border-bark/10 pt-1"><span>Remaining after this</span><span className={Math.abs(remaining) < 0.005 ? "text-sage" : "text-terracotta"}>{formatCurrency(remaining)}</span></div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Processing Fee */}
