@@ -23,6 +23,7 @@ import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPref
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 200 },
   { key: "account", label: "Account", defaultWidth: 140 },
+  { key: "assigned_by", label: "Assigned By", defaultWidth: 140 },
   { key: "objective", label: "Objective", defaultWidth: 140 },
   { key: "detail", label: "Client Detail", defaultWidth: 180 },
   { key: "status", label: "Status", defaultWidth: 150 },
@@ -2169,7 +2170,6 @@ export default function TaskListPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
                 <div className="flex items-center gap-2">
-                  <ToolbarFilterDropdown label="Assigned By" options={assignedByFilterOptions} selected={filterAssignedBy} onChange={setFilterAssignedBy} />
                   <ToolbarFilterDropdown label="Project" options={projectFilterOptions} selected={filterProjects} onChange={setFilterProjects} />
                   {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || filterDueStart || filterDueEnd || filterStartStart || filterStartEnd || filterCreatedStart || filterCreatedEnd || filterOverdue || taskNameSearch) && (
                     <button
@@ -2357,6 +2357,16 @@ export default function TaskListPage() {
                             onFilterChange={setFilterAccounts}
                           />
                         )}
+                        {!hiddenColumns.has("assigned_by") && (
+                          <ColumnHeader
+                            label="Assigned By"
+                            width={columnWidths.assigned_by}
+                            onResize={(w) => setColumnWidth("assigned_by", w)}
+                            filterOptions={assignedByFilterOptions.map((name) => ({ value: name, label: name }))}
+                            selected={filterAssignedBy}
+                            onFilterChange={setFilterAssignedBy}
+                          />
+                        )}
                         {!hiddenColumns.has("objective") && (
                           <ColumnHeader
                             label="Objective"
@@ -2511,6 +2521,12 @@ export default function TaskListPage() {
                                 disabled={taskView !== "active"}
                                 display={detail.account || <span className="text-stone/60">—</span>}
                               />
+                            )}
+
+                            {!hiddenColumns.has("assigned_by") && (
+                              <td className="px-3 py-3 text-[13px] text-walnut truncate">
+                                {detail.assigned_by_profile?.full_name ?? detail.assigned_by_profile?.username ?? <span className="text-stone/30">—</span>}
+                              </td>
                             )}
 
                             {!hiddenColumns.has("objective") && (
