@@ -52,6 +52,7 @@ import FixedPayTasksTab from "@/components/FixedPayTasksTab";
 import TeamProfilePanel, { ShiftBudgetSection } from "@/components/TeamProfilePanel";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
+import { useUrlTab } from "@/hooks/useUrlTab";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -423,8 +424,9 @@ function filterGroupsForRole(groups: SidebarGroup[], isFullAdmin: boolean): Side
 export default function AdminPage() {
   const supabase = createClient();
 
-  // Active tab + sidebar section (admin | team)
-  const [activeTab, setActiveTab] = useState<AdminTab>("overview");
+  // Active tab + sidebar section (admin | team) — synced to the URL so a
+  // refresh (or a bookmarked/shared link) lands back on the same tab.
+  const [activeTab, setActiveTab] = useUrlTab<AdminTab>("tab", "overview");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [sidebarSection, setSidebarSection] = useState<"admin" | "team">("admin");
 

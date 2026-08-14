@@ -13,6 +13,7 @@ import {
   getYearBoundsInTimezone,
 } from "@/lib/utils";
 import { ProductivityMeterWidget } from "@/components/ProductivityMeterWidget";
+import { useUrlTab } from "@/hooks/useUrlTab";
 import { ProgressBar } from "@/components/VAPerformanceMetrics";
 
 /* ── Types ────────────────────────────────────────────────── */
@@ -115,7 +116,7 @@ export default function ReportsPage() {
   const [selectedClient, setSelectedClient] = useState<string>("all");
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const [tasksCollapsed, setTasksCollapsed] = useState(false);
-  const [reportTab, setReportTab] = useState<"overview" | "progress">("overview");
+  const [reportTab, setReportTab] = useUrlTab<"overview" | "progress">("tab", "overview", ["overview", "progress"]);
   const [compLogs, setCompLogs] = useState<TimeLog[]>([]);
 
   /* ── Fetch org timezone on mount ────────────────────────── */
