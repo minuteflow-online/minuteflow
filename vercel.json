@@ -12,6 +12,14 @@
     {
       "path": "/api/screenshot-health",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/generate-recurring-invoices",
+      "schedule": "0 8 1 * *"
+    },
+    {
+      "path": "/api/cron/generate-paystubs",
+      "schedule": "0 8 5,20 * *"
     }
   ]
 }

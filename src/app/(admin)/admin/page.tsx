@@ -6831,6 +6831,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
   const [serviceType, setServiceType] = useState("");
   const [paymentLink, setPaymentLink] = useState("");
   const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [repeatMonthly, setRepeatMonthly] = useState(false);
   const [fromName, setFromName] = useState("");
   const [fromPhone, setFromPhone] = useState("");
 
@@ -7680,6 +7681,9 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       payment_schedule: createSchedule.length > 0 ? createSchedule : null,
       payment_template_id: createTemplateId,
       ach_enabled: true,
+      // Recurring: flag as a monthly series template so the cron regenerates it
+      is_recurring: repeatMonthly,
+      recurring_series_id: repeatMonthly ? crypto.randomUUID() : null,
     };
 
     // Retry up to 5 times on duplicate invoice number (race condition guard)
@@ -7790,6 +7794,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
     setServiceType("");
     setPaymentLink("");
     setReminderEnabled(false);
+    setRepeatMonthly(false);
     setInvoiceNotes("");
     setHoursNotBilled("");
     setHoursNotBilledLabel("Volunteer");
@@ -9099,6 +9104,15 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
                   <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${reminderEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
                 </button>
                 <span className="text-[13px] text-bark">Daily reminder email (includes payment link)</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setRepeatMonthly(!repeatMonthly)}
+                  className={`relative h-6 w-11 rounded-full transition-colors cursor-pointer overflow-hidden ${repeatMonthly ? "bg-terracotta" : "bg-clay"}`}
+                >
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${repeatMonthly ? "translate-x-5" : "translate-x-0.5"}`} />
+                </button>
+                <span className="text-[13px] text-bark">Repeat monthly — auto-generate a draft on the 1st for your review</span>
               </div>
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Notes</label>
