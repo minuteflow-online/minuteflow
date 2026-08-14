@@ -17,14 +17,18 @@ async function requireVa() {
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
 
   if (error) {
     return { error: Response.json({ error: error.message }, { status: 500 }) as Response };
   }
-  if (profile?.role !== "va") {
+  // "manager" role is only ever granted alongside department "IT" (see
+  // "Add IT-department admin access with financials/rates locked out") for
+  // staff who both administer AND do task work.
+  const canGrab = profile?.role === "va" || (profile?.role === "manager" && profile?.department === "IT");
+  if (!canGrab) {
     return { error: Response.json({ error: "Forbidden" }, { status: 403 }) as Response };
   }
 

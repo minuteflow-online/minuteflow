@@ -54,6 +54,18 @@ export function getAvatarColor(seed: string): string {
   return avatarColors[Math.abs(hash) % avatarColors.length];
 }
 
+/**
+ * Display label for a profile's role. "manager" is the underlying DB value
+ * used for IT-department staff with admin-panel access (see the IT-admin
+ * access commit) but reads confusingly like a real people-manager role —
+ * this shows "IT Admin" instead wherever role + department are both known.
+ * The database column itself is untouched; this is display-only.
+ */
+export function displayRole(role: string | null | undefined, department?: string | null): string {
+  if (role === "manager" && department?.trim().toUpperCase() === "IT") return "IT Admin";
+  return role ?? "";
+}
+
 /** Format a date to time display in a specific timezone (e.g. "3:45 PM") */
 export function formatTimeTZ(date: Date | string, timezone: string): string {
   const d = typeof date === "string" ? new Date(date) : date;

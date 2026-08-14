@@ -2067,7 +2067,10 @@ export default function DashboardPage() {
   // ─── Auto-update assignment status helper ───────────────────
   const autoUpdateAssignmentStatus = useCallback(
     async (taskName: string) => {
-      if (role !== "va" || !taskName || !userId) return;
+      // Same IT-admin carve-out as canWorkTasks below — "manager" role only
+      // ever pairs with department "IT" for staff who also do task work.
+      const canWorkTasks = role === "va" || (role === "manager" && profile?.department === "IT");
+      if (!canWorkTasks || !taskName || !userId) return;
       try {
         const assignRes = await fetch(`/api/va-task-assignments?va_id=${userId}&assignment_type=include`);
         const assignData = await assignRes.json();
@@ -2092,7 +2095,7 @@ export default function DashboardPage() {
         console.error("Auto-status update failed:", err);
       }
     },
-    [role, userId]
+    [role, userId, profile]
   );
 
   // ─── Start Task ─────────────────────────────────────────────
@@ -3350,6 +3353,11 @@ export default function DashboardPage() {
         const isPerTask = pos === "Per Task VA";
         const isHourly = !isProjectBased && !isPerTask; // Full-time, Part-time, null
         const canSeeAvailable = isVa && !!profile?.can_see_available_tasks;
+        // "manager" role is only ever granted alongside department "IT" (IT-admin
+        // accounts that also do task work, e.g. Neil) — this carve-out lets them
+        // claim/accept tasks the same as a VA without turning on full VA layout
+        // (isVa alone still governs the grid/TeamSidebar/Quick Pick visibility).
+        const canWorkTasks = isVa || (role === "manager" && profile?.department === "IT");
 
         // Grid: Log a Task/Assigned Tasks/Daily Budget are one tabbed box now
         // (TaskWidgetsTabs) — it takes the flexible middle column so it fills
@@ -3382,7 +3390,7 @@ export default function DashboardPage() {
                 activeTaskClientMemo={activeTask?.client_memo || ""}
               />
             )}
-            {isVa && sessionState === "idle" && (
+            {canWorkTasks && sessionState === "idle" && (
               <AvailableTasksWidget
                 key={`avail-${claimRefreshKey}`}
                 onClaimed={() => setClaimRefreshKey((k) => k + 1)}
