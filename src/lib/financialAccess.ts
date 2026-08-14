@@ -1,5 +1,3 @@
-import { createClient } from "@/lib/supabase/server";
-
 // Department tags that grant financial visibility (Invoices, Paystubs, the
 // Financial tab, pay rates) — deliberately independent of `role`, mirroring
 // the existing `department === "IT"` carve-out already shipped for Neil.
@@ -47,29 +45,4 @@ export function hasModerationAccess(
 ): boolean {
   if (hasFinancialAccess(profile)) return true;
   return profile?.role === "admin" || profile?.role === "manager";
-}
-
-/** Server-route guard: verifies the caller is authenticated and has
- * financial access (Founder/Accounting department tag). Returns
- * `{ userId }` on success or a ready-to-return `Response` on failure. */
-export async function requireFinancialAccess(): Promise<{ userId: string } | Response> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role, department")
-    .eq("id", user.id)
-    .single();
-
-  if (!hasFinancialAccess(profile)) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  return { userId: user.id };
 }

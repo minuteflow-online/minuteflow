@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { requireFinancialAccess as verifyAdmin } from "@/lib/financialAccess";
+import { requireFinancialAccess as verifyAdmin } from "@/lib/financialAccessServer";
 
 export const dynamic = "force-dynamic";
 
