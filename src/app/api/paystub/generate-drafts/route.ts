@@ -42,7 +42,7 @@ async function handle(request: NextRequest) {
 
   const { data: settings } = await admin
     .from("organization_settings")
-    .select("timezone, billing_email, org_name")
+    .select("timezone, billing_email, notification_email, org_name")
     .limit(1)
     .single();
   const timeZone = settings?.timezone || "UTC";
@@ -72,7 +72,7 @@ async function handle(request: NextRequest) {
   const qsTo = url.searchParams.get("to");
   const notifyEmail = qsTo && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(qsTo)
     ? qsTo
-    : (settings?.billing_email || null);
+    : (settings?.notification_email || settings?.billing_email || null);
 
   const result = await runPaystubDraftGeneration(admin, {
     periodStart,

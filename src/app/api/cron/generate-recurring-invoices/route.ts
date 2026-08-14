@@ -150,11 +150,11 @@ async function handleCron(request: NextRequest) {
 
   const { data: settings } = await supabase
     .from("organization_settings")
-    .select("timezone, billing_email, org_name")
+    .select("timezone, billing_email, notification_email, org_name")
     .limit(1)
     .single();
   const timeZone = settings?.timezone || "UTC";
-  const notifyEmail = settings?.billing_email || null;
+  const notifyEmail = settings?.notification_email || settings?.billing_email || null;
 
   const now = new Date();
   const { year, month, day } = getTimezoneParts(now, timeZone);
