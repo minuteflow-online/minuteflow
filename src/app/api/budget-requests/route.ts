@@ -5,6 +5,9 @@ export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+// Reuse the existing Telegram bot + admin group (already configured in prod).
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_GROUP_CHAT_ID = process.env.TELEGRAM_GROUP_CHAT_ID;
 
 // Any authenticated user is let through; the caller branches on `role`.
 async function requireAuthed() {
@@ -23,9 +26,9 @@ function makeAdminClient() {
   });
 }
 
-// Best-effort email to every admin/manager when a VA submits a budget request,
-// with a link to the approval page. Never throws — a mail failure must not fail
-// the request itself.
+// Best-effort email (to every admin/manager) + Telegram alert (to the admin
+// group) when a VA submits a budget request, with a link to the approval page.
+// Never throws — a notification failure must not fail the request itself.
 async function notifyAdminsOfRequest(
   admin: ReturnType<typeof makeAdminClient>,
   vaId: string,
@@ -35,37 +38,53 @@ async function notifyAdminsOfRequest(
   reason: string | null
 ) {
   const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return;
+  const telegramOn = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_GROUP_CHAT_ID);
+  if (!resendKey && !telegramOn) return;
   try {
     const { data: va } = await admin.from("profiles").select("full_name, username").eq("id", vaId).single();
     const vaName = va?.full_name || va?.username || "A VA";
-
-    const { data: admins } = await admin.from("profiles").select("id").in("role", ["admin", "manager"]);
-    const emails: string[] = [];
-    for (const a of (admins ?? []) as { id: string }[]) {
-      const { data: authData } = await admin.auth.admin.getUserById(a.id);
-      if (authData?.user?.email) emails.push(authData.user.email);
-    }
-    if (emails.length === 0) return;
-
     const periodWord = period === "day" ? "daily" : period === "week" ? "weekly" : "monthly";
     const amountStr = unit === "dollars" ? `$${amount.toFixed(2)}` : `${amount}h`;
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: "Toni Colina <noreply@minuteflow.click>",
-        to: emails,
-        subject: `🔔 Budget request: ${vaName} needs ${amountStr} more (${periodWord})`,
-        html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
-          <h2 style="color:#c2694f">🔔 Budget increase request</h2>
-          <p><strong>${vaName}</strong> requested <strong>${amountStr}</strong> more for their <strong>${periodWord}</strong> budget.</p>
-          ${reason ? `<p style="background:#f3ede4;padding:10px 12px;border-radius:8px"><em>Reason:</em> ${reason}</p>` : ""}
-          <p style="margin-top:18px"><a href="https://minuteflow.click/admin" style="background:#6b8f71;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Review &amp; approve</a></p>
-          <p style="color:#b5a898;font-size:12px">Admin → VA Requests → Budget Requests</p>
-        </div>`,
-      }),
-    });
+
+    // Email — one message to every admin/manager.
+    if (resendKey) {
+      const { data: admins } = await admin.from("profiles").select("id").in("role", ["admin", "manager"]);
+      const emails: string[] = [];
+      for (const a of (admins ?? []) as { id: string }[]) {
+        const { data: authData } = await admin.auth.admin.getUserById(a.id);
+        if (authData?.user?.email) emails.push(authData.user.email);
+      }
+      if (emails.length > 0) {
+        await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: "Toni Colina <noreply@minuteflow.click>",
+            to: emails,
+            subject: `🔔 Budget request: ${vaName} needs ${amountStr} more (${periodWord})`,
+            html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
+              <h2 style="color:#c2694f">🔔 Budget increase request</h2>
+              <p><strong>${vaName}</strong> requested <strong>${amountStr}</strong> more for their <strong>${periodWord}</strong> budget.</p>
+              ${reason ? `<p style="background:#f3ede4;padding:10px 12px;border-radius:8px"><em>Reason:</em> ${reason}</p>` : ""}
+              <p style="margin-top:18px"><a href="https://minuteflow.click/admin" style="background:#6b8f71;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Review &amp; approve</a></p>
+              <p style="color:#b5a898;font-size:12px">Admin → VA Requests → Budget Requests</p>
+            </div>`,
+          }),
+        });
+      }
+    }
+
+    // Telegram — to the shared admin group (same bot the extension uses).
+    if (telegramOn) {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_GROUP_CHAT_ID,
+          text: `🔔 Budget request — ${vaName} needs ${amountStr} more (${periodWord})${reason ? `\nReason: ${reason}` : ""}\n\nApprove: https://minuteflow.click/admin`,
+        }),
+      });
+    }
   } catch (e) {
     console.error("budget-request notify error:", e);
   }
