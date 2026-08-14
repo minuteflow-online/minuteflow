@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -29,13 +30,13 @@ export async function POST(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Admin role check — only admins may overwrite Square credentials
+  // Financial access check — only Founder/Accounting may overwrite Square credentials
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") {
+  if (!hasFinancialAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

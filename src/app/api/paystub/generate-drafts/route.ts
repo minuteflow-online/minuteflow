@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
 import { runPaystubDraftGeneration } from "@/lib/paystubGeneration";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -31,8 +32,8 @@ async function handle(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const { data: caller } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  if (caller?.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+  const { data: caller } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
+  if (!hasFinancialAccess(caller)) return Response.json({ error: "Forbidden" }, { status: 403 });
 
   const admin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

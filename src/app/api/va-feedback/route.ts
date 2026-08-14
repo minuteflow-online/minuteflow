@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,7 @@ export async function GET() {
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (profile?.role !== "admin") {
+  if (!hasBroadAdminAccess(profile)) {
     query = query.eq("user_id", user.id);
   }
 
@@ -27,7 +28,7 @@ export async function GET() {
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   // Enrich with names if admin
-  if (profile?.role === "admin" && data && data.length > 0) {
+  if (hasBroadAdminAccess(profile) && data && data.length > 0) {
     const { data: profiles } = await supabase
       .from("profiles")
       .select("id, full_name");
@@ -81,10 +82,10 @@ export async function PATCH(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+  if (!hasBroadAdminAccess(profile)) return Response.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");

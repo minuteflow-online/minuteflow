@@ -14,6 +14,7 @@ import {
   getMonthBoundsInTimezone,
   formatDateLocalTZ,
 } from "@/lib/utils";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 /* ── Types ────────────────────────────────────────────────── */
 
@@ -532,8 +533,9 @@ export default function TeamPage() {
     return null;
   }
 
-  // Only a true "admin" sees pay rates / payable figures — IT staff never do.
-  const isAdmin = role === "admin";
+  // Only Founder/Accounting see pay rates / payable figures — everyone else
+  // (including plain admins/managers/IT) never does. See financialAccess.ts.
+  const isAdmin = hasFinancialAccess({ department });
 
   // Dynamic labels based on date range
   const periodSuffix = isToday ? "Today" : periodLabel;

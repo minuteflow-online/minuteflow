@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { hasAdminPermission } from "@/lib/adminPermissions";
 
 export const dynamic = "force-dynamic";
 
@@ -75,7 +76,7 @@ export async function GET(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
@@ -184,12 +185,15 @@ export async function GET(request: Request) {
 
   const isAdminOrManager =
     profile?.role === "admin" || profile?.role === "manager";
+  // Permission-granted plain VAs get the same task-management access as an
+  // admin/manager here, without touching role or RLS — see adminPermissions.ts.
+  const isPermitted = isAdminOrManager || hasAdminPermission(profile, "task_management");
 
   // VA fetching subtasks for a specific project: return tasks in admin-compatible format
   // so VAProjectsTab gets the same structure as admin's ProjectsManager.
   // The default VA path queries assigned_task_assignees (a different structure) and
   // ignores projectIdParam entirely — this special case bypasses that.
-  if (!isAdminOrManager && !selfOnly && projectIdParam) {
+  if (!isPermitted && !selfOnly && projectIdParam) {
     const { data, error } = await serviceRoleClient
       .from("assigned_tasks")
       .select(taskSelect)
@@ -204,7 +208,7 @@ export async function GET(request: Request) {
   const vaSelectString = `id, va_id, status, log_id, notes, accuracy_score, assigned_at, updated_at,
      assigned_tasks(id, account, project, project_id, parent_task_id, category, recurring_template_id, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, review_required, revision_count, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name), task_todos(id, text, sort_order))`;
 
-  if (isAdminOrManager && viewAsVaParam) {
+  if (isPermitted && viewAsVaParam) {
     // Admin viewing a specific VA's task list — bypass RLS with serviceRoleClient
     // so we see exactly what that VA sees (no collaborative tasks included).
     let assigneeQuery = serviceRoleClient
@@ -265,8 +269,12 @@ export async function GET(request: Request) {
     return Response.json({ tasks: vaFiltered });
   }
 
-  if (isAdminOrManager && !selfOnly) {
-    let query = supabase
+  if (isPermitted && !selfOnly) {
+    // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
+    // RLS check (role stays "va"), so use the service-role client here once
+    // the app-layer permission check above has already cleared them. This
+    // is a no-op behavior change for real admins/managers.
+    let query = serviceRoleClient
       .from("assigned_tasks")
       .select(taskSelect)
       .order("created_at", { ascending: false });
@@ -430,15 +438,16 @@ export async function POST(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
   const isAdminOrManagerPost =
     profile?.role === "admin" || profile?.role === "manager";
   const isVaPost = profile?.role === "va";
+  const isPermittedPost = isAdminOrManagerPost || hasAdminPermission(profile, "task_management");
 
-  // VAs can only self-assign; admins/managers can assign to anyone
+  // VAs can only self-assign; admins/managers (and permission-granted VAs) can assign to anyone
   if (!isAdminOrManagerPost && !isVaPost) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -494,8 +503,9 @@ export async function POST(request: Request) {
     initial_status?: AssignedTaskStatus;
   };
 
-  // VAs always self-assign regardless of what va_ids was sent
-  const va_ids: string[] = isVaPost ? [user.id] : (rawVaIds ?? []);
+  // Plain VAs always self-assign regardless of what va_ids was sent;
+  // permission-granted VAs (and admins/managers) may assign to anyone.
+  const va_ids: string[] = isPermittedPost ? (rawVaIds ?? []) : [user.id];
 
   if (!task_name?.trim()) {
     return Response.json({ error: "task_name is required" }, { status: 400 });

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { hasAdminPermission } from "@/lib/adminPermissions";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -8,8 +9,14 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-async function canAccessTodos(supabase: Awaited<ReturnType<typeof createClient>>, taskId: string, userId: string, role?: string | null) {
-  if (role === "admin" || role === "manager") return true;
+type CallerProfile = { role?: string | null; admin_permissions?: string[] | null } | null;
+
+function isAdminEquivalent(profile: CallerProfile) {
+  return profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management");
+}
+
+async function canAccessTodos(supabase: Awaited<ReturnType<typeof createClient>>, taskId: string, userId: string, profile: CallerProfile) {
+  if (isAdminEquivalent(profile)) return true;
 
   const { data, error } = await supabase
     .from("assigned_task_assignees")
@@ -28,7 +35,8 @@ async function canAccessTodos(supabase: Awaited<ReturnType<typeof createClient>>
 /**
  * GET /api/assigned-tasks/[id]/todos
  * Returns all to-do items for a task, ordered by sort_order. Admin/manager
- * can view any task; VAs can view tasks assigned to them.
+ * (and permission-granted VAs, see adminPermissions.ts) can view any task;
+ * VAs can view tasks assigned to them.
  */
 export async function GET(_request: Request, { params }: RouteContext) {
   const supabase = await createClient();
@@ -38,14 +46,14 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
   const { id } = await params;
 
   try {
-    const allowed = await canAccessTodos(supabase, id, user.id, profile?.role ?? null);
+    const allowed = await canAccessTodos(supabase, id, user.id, profile);
     if (!allowed) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
@@ -53,7 +61,14 @@ export async function GET(_request: Request, { params }: RouteContext) {
     return Response.json({ error: error instanceof Error ? error.message : "Unable to verify access" }, { status: 500 });
   }
 
-  const { data, error } = await supabase
+  // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
+  // RLS check (role stays "va"), so read via the service-role client once
+  // the app-layer check above has already cleared the caller.
+  const readClient = isAdminEquivalent(profile)
+    ? createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
+    : supabase;
+
+  const { data, error } = await readClient
     .from("task_todos")
     .select("id, assigned_task_id, text, sort_order, created_at, created_by")
     .eq("assigned_task_id", id)
@@ -68,14 +83,14 @@ export async function GET(_request: Request, { params }: RouteContext) {
   // show a "played before" state.
   let playedLabels = new Set<string>();
   if (todos.length > 0) {
-    const { data: taskRow } = await supabase
+    const { data: taskRow } = await readClient
       .from("assigned_tasks")
       .select("task_name")
       .eq("id", id)
       .single();
 
     if (taskRow?.task_name) {
-      const { data: logs } = await supabase
+      const { data: logs } = await readClient
         .from("time_logs")
         .select("todo_label")
         .eq("user_id", user.id)
@@ -94,8 +109,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
  * POST /api/assigned-tasks/[id]/todos
  * Body: { text: string }
  * Adds a new to-do item at the end of the task's list (sort_order = current
- * max + 1). Admin/manager can add to any task; VAs can add to tasks
- * assigned to them.
+ * max + 1). Admin/manager (and permission-granted VAs) can add to any task;
+ * VAs can add to tasks assigned to them.
  */
 export async function POST(request: Request, { params }: RouteContext) {
   const supabase = await createClient();
@@ -105,14 +120,14 @@ export async function POST(request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
   const { id } = await params;
 
   try {
-    const allowed = await canAccessTodos(supabase, id, user.id, profile?.role ?? null);
+    const allowed = await canAccessTodos(supabase, id, user.id, profile);
     if (!allowed) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }

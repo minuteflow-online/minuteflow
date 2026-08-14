@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -18,13 +19,13 @@ export async function GET(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Admin only
+  // Financial access only (Founder/Accounting)
   const { data: callerProfile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (!callerProfile || callerProfile.role !== "admin") {
+  if (!hasFinancialAccess(callerProfile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

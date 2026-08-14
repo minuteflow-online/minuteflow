@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { randomBytes } from "crypto";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -25,11 +26,11 @@ async function verifyAdmin(): Promise<{ userId: string } | Response> {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
 
-  if (!profile || profile.role !== "admin") {
+  if (!hasBroadAdminAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
   return { userId: user.id };

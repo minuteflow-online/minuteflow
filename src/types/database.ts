@@ -51,6 +51,10 @@ export interface Profile {
   daily_budget_limit: number | null;
   weekly_budget_limit: number | null;
   monthly_budget_limit: number | null;
+  // Granular admin-panel access grants for a plain "va" role account — never
+  // changes `role`, never used for Financials/Invoices/Paystubs (those stay
+  // hard-locked to role === "admin"). See src/lib/adminPermissions.ts.
+  admin_permissions: string[];
 }
 
 export interface BudgetRequest {

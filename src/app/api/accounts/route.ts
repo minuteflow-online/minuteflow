@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasAccountsClientsAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -26,16 +27,15 @@ export async function GET() {
     .from("account_client_map")
     .select("account_id, client_id, clients(id, name)");
 
-  // Billing rates are admin-only — strip them for everyone else.
+  // Billing rates are Manager/Founder/Accounting only — strip them for everyone else.
   const { data: callerProfile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  const sanitizedAccounts =
-    callerProfile?.role === "admin"
-      ? accounts
-      : (accounts ?? []).map((a) => ({ ...a, billing_rate: null }));
+  const sanitizedAccounts = hasAccountsClientsAccess(callerProfile)
+    ? accounts
+    : (accounts ?? []).map((a) => ({ ...a, billing_rate: null }));
 
   return Response.json({ accounts: sanitizedAccounts, mappings: mappings ?? [] });
 }
@@ -82,10 +82,10 @@ export async function PATCH(request: Request) {
 
   const { data: callerProfile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  const isFullAdmin = callerProfile?.role === "admin";
+  const isFullAdmin = hasAccountsClientsAccess(callerProfile);
 
   const body = await request.json();
   const { id, name, active, billing_rate, linkClientId, unlinkClientId } = body;

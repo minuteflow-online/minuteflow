@@ -5,6 +5,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -73,8 +74,8 @@ export async function POST(request: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-  if (!profile || profile.role !== "admin") {
+  const { data: profile } = await supabase.from("profiles").select("role, department").eq("id", user.id).single();
+  if (!hasBroadAdminAccess(profile)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 

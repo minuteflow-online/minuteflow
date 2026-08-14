@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 // /admin/paystub-review/[id] — review an auto-generated paystub DRAFT, see the
 // daily breakdown, then approve (which sends the VA their paystub via the
-// existing /api/paystub/send). Protected by the (admin) layout guard.
+// existing /api/paystub/send). The (admin) route group's layout guard now
+// also admits non-financial admins/managers and permission-granted VAs, so
+// this page checks financial access itself (Founder/Accounting only) rather
+// than relying solely on that broader guard.
 
 interface SnapshotRow {
   id: string;
@@ -48,9 +52,11 @@ function readDay(v: number | { ms: number; rate: number }, fallbackRate: number)
 
 export default function PaystubReviewPage() {
   const params = useParams();
+  const router = useRouter();
   const id = String(params.id);
   const supabase = createClient();
 
+  const [accessChecked, setAccessChecked] = useState(false);
   const [snap, setSnap] = useState<SnapshotRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [showDays, setShowDays] = useState(true);
@@ -67,9 +73,22 @@ export default function PaystubReviewPage() {
     setLoading(false);
   }, [id, supabase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { router.replace("/login"); return; }
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role, department")
+        .eq("id", user.id)
+        .single();
+      if (!hasFinancialAccess(profile)) { router.replace("/admin"); return; }
+      setAccessChecked(true);
+      load();
+    })();
+  }, [router, supabase, load]);
 
-  if (loading) return <div className="p-8 text-sm text-bark">Loading paystub…</div>;
+  if (!accessChecked || loading) return <div className="p-8 text-sm text-bark">Loading paystub…</div>;
   if (!snap) return <div className="p-8 text-sm text-terracotta">Paystub not found.</div>;
 
   const rate = Number(snap.pay_rate) || 0;

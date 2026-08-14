@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -69,10 +70,10 @@ export async function POST(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") {
+  if (!hasBroadAdminAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -217,11 +218,11 @@ export async function PATCH(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
 
-  const isAdmin = profile?.role === "admin";
+  const isAdmin = hasBroadAdminAccess(profile);
 
   const body = await request.json();
   const { id, billing_type, rate, assignment_type, status, instructions, va_id: new_va_id, quantity_claimed, archived_by_va } = body;
@@ -293,11 +294,11 @@ export async function DELETE(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
 
-  const isAdmin = profile?.role === "admin";
+  const isAdmin = hasBroadAdminAccess(profile);
 
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");

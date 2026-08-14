@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -10,11 +11,11 @@ export async function GET() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
 
-  const isAdmin = profile?.role === "admin";
+  const isAdmin = hasBroadAdminAccess(profile);
 
   let query = supabase
     .from("bug_reports")
@@ -75,11 +76,11 @@ export async function PATCH(request: NextRequest) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
 
-  if (profile?.role !== "admin") {
+  if (!hasBroadAdminAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

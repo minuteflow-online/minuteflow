@@ -1,8 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 import type { FixedPayTaskAttachment } from "@/types/database";
+import { hasAdminPermission } from "@/lib/adminPermissions";
 
 export const dynamic = "force-dynamic";
 
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const ATTACHMENT_SELECT = "id, filename, storage_path, file_size, mime_type, uploaded_by, uploaded_at";
 
 async function requireAdminOrManager() {
@@ -16,7 +20,7 @@ async function requireAdminOrManager() {
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
@@ -24,11 +28,23 @@ async function requireAdminOrManager() {
     return { error: Response.json({ error: error.message }, { status: 500 }) as Response };
   }
 
-  if (profile?.role !== "admin" && profile?.role !== "manager") {
+  if (
+    profile?.role !== "admin" &&
+    profile?.role !== "manager" &&
+    !hasAdminPermission(profile, "task_management")
+  ) {
     return { error: Response.json({ error: "Forbidden" }, { status: 403 }) as Response };
   }
 
-  return { supabase, userId: user.id };
+  // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
+  // RLS check (role stays "va"), so every operation below uses the
+  // service-role client once the app-layer check above has already cleared
+  // the caller. No-op behavior change for real admins/managers.
+  const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  return { supabase: admin, userId: user.id };
 }
 
 type RouteContext = { params: Promise<{ id: string }> };

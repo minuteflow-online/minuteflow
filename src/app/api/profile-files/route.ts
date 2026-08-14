@@ -4,6 +4,7 @@ import { google } from "googleapis";
 import { Readable } from "stream";
 import { NextRequest } from "next/server";
 import { buildGoogleAuthClient, refreshGoogleToken } from "@/lib/google-token";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
 
     const { data: callerProfile } = await serverSupabase
       .from("profiles")
-      .select("role")
+      .select("role, department")
       .eq("id", user.id)
       .single();
 
@@ -109,7 +110,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Authz — caller must be the profile owner or an admin
-    if (!callerProfile || (callerProfile.role !== "admin" && user.id !== userId)) {
+    if (!hasBroadAdminAccess(callerProfile) && user.id !== userId) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
 

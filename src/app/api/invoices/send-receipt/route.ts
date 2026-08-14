@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createAuthClient } from "@/lib/supabase/server";
+import { hasFinancialAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -19,10 +20,10 @@ export async function POST(request: Request) {
   }
   const { data: profile } = await authClient
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") {
+  if (!hasFinancialAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

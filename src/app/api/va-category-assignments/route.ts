@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -56,10 +57,10 @@ export async function POST(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") {
+  if (!hasBroadAdminAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -118,10 +119,10 @@ export async function DELETE(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") {
+  if (!hasBroadAdminAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

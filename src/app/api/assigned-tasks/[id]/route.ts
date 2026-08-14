@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { hasAdminPermission } from "@/lib/adminPermissions";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -39,7 +40,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
@@ -53,7 +54,8 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   if (error || !task) return Response.json({ error: "Task not found" }, { status: 404 });
 
-  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
+  const isAdminOrManager =
+    profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management");
   if (!isAdminOrManager) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const assignees = ((task as any).assigned_task_assignees ?? []) as Array<{ va_id: string }>;
@@ -80,18 +82,30 @@ export async function PUT(request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
-  if (profile?.role !== "admin" && profile?.role !== "manager") {
+  const isPutPermitted =
+    profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management");
+  if (!isPutPermitted) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
+  // RLS check (role stays "va"), so the writes below use the service-role
+  // client once the app-layer permission check above has already cleared
+  // the caller. No-op behavior change for real admins/managers.
+  const adminSupabase = createAdminClient(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
 
   const { id } = await params;
 
   // Confirm the task exists
-  const { data: existing, error: fetchError } = await supabase
+  const { data: existing, error: fetchError } = await adminSupabase
     .from("assigned_tasks")
     .select("id")
     .eq("id", id)
@@ -151,7 +165,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (project_id !== undefined) updatePayload.project_id = project_id;
   if (parent_task_id !== undefined) updatePayload.parent_task_id = parent_task_id;
 
-  const { data: updatedTask, error: updateError } = await supabase
+  const { data: updatedTask, error: updateError } = await adminSupabase
     .from("assigned_tasks")
     .update(updatePayload)
     .eq("id", id)
@@ -163,7 +177,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
 
   // Sync task_detail → client_memo on linked time_logs
   if (task_detail !== undefined) {
-    const { data: assigneeRows } = await supabase
+    const { data: assigneeRows } = await adminSupabase
       .from("assigned_task_assignees")
       .select("log_id")
       .eq("assigned_task_id", id);
@@ -173,7 +187,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
       .filter((lid): lid is number => typeof lid === "number");
 
     if (logIds.length > 0) {
-      await supabase
+      await adminSupabase
         .from("time_logs")
         .update({ client_memo: task_detail || null })
         .in("id", logIds);
@@ -183,7 +197,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   // Handle va_ids reconciliation if provided
   if (Array.isArray(va_ids)) {
     // Fetch current assignees
-    const { data: currentAssignees, error: currentError } = await supabase
+    const { data: currentAssignees, error: currentError } = await adminSupabase
       .from("assigned_task_assignees")
       .select("id, va_id")
       .eq("assigned_task_id", id);
@@ -200,7 +214,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
       .map((a) => a.id as string);
 
     if (toDelete.length > 0) {
-      const { error: deleteError } = await supabase
+      const { error: deleteError } = await adminSupabase
         .from("assigned_task_assignees")
         .delete()
         .in("id", toDelete);
@@ -221,7 +235,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
         status: "pending" as AssignedTaskStatus,
       }));
 
-      const { error: insertError } = await supabase
+      const { error: insertError } = await adminSupabase
         .from("assigned_task_assignees")
         .insert(newRows);
 
@@ -233,7 +247,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     const remainingCount =
       (currentVaIds.filter((v) => incomingVaIds.includes(v)).length) + toInsert.length;
     if (remainingCount === 0) {
-      await supabase
+      await adminSupabase
         .from("assigned_tasks")
         .update({ status: "unassigned", updated_at: new Date().toISOString() })
         .eq("id", id);
@@ -241,7 +255,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   // Return updated task with current assignees
-  const { data: finalAssignees, error: finalError } = await supabase
+  const { data: finalAssignees, error: finalError } = await adminSupabase
     .from("assigned_task_assignees")
     .select("id, va_id, status, log_id, notes, assigned_at, updated_at, instructions, instructions_locked")
     .eq("assigned_task_id", id);
@@ -267,17 +281,28 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
-  if (profile?.role !== "admin" && profile?.role !== "manager") {
+  const isDeletePermitted =
+    profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management");
+  if (!isDeletePermitted) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
+  // RLS check (role stays "va"), so delete via the service-role client once
+  // the app-layer permission check above has already cleared the caller.
+  const adminSupabase = createAdminClient(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
   const { id } = await params;
 
-  const { error } = await supabase
+  const { error } = await adminSupabase
     .from("assigned_tasks")
     .delete()
     .eq("id", id);
@@ -305,11 +330,15 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, admin_permissions")
     .eq("id", user.id)
     .single();
 
-  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
+  // Every downstream check in this handler reuses this one const, so
+  // permission-granted plain VAs get admin/manager-equivalent access here
+  // just by broadening this single definition — see adminPermissions.ts.
+  const isAdminOrManager =
+    profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management");
   const adminSupabase = createAdminClient(
     SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY,
@@ -761,7 +790,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (deleted_at !== undefined) updatePayload.deleted_at = deleted_at;
     if (review_required !== undefined) updatePayload.review_required = Boolean(review_required);
 
-    const { error: taskError } = await supabase
+    // Only reachable when isAdminOrManager is true (see the guard above), so
+    // the service-role client is safe here — and necessary, since a
+    // permission-granted plain VA wouldn't pass RLS on the session client.
+    const { error: taskError } = await adminSupabase
       .from("assigned_tasks")
       .update(updatePayload)
       .eq("id", id);
@@ -772,7 +804,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
     // Sync task_detail → client_memo on linked time_logs
     if (task_detail !== undefined) {
-      const { data: assigneeRows } = await supabase
+      const { data: assigneeRows } = await adminSupabase
         .from("assigned_task_assignees")
         .select("log_id")
         .eq("assigned_task_id", id);
@@ -782,7 +814,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
         .filter((lid): lid is number => typeof lid === "number");
 
       if (logIds.length > 0) {
-        await supabase
+        await adminSupabase
           .from("time_logs")
           .update({ client_memo: task_detail || null })
           .in("id", logIds);

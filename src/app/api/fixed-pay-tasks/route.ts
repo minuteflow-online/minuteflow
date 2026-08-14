@@ -1,6 +1,7 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
+import { hasAdminPermission } from "@/lib/adminPermissions";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ async function getAuthedProfile() {
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("role, position, pay_rate_type, can_see_available_tasks")
+    .select("role, position, pay_rate_type, can_see_available_tasks, admin_permissions")
     .eq("id", user.id)
     .single();
 
@@ -41,6 +42,8 @@ async function getAuthedProfile() {
     position: profile?.position ?? null,
     payRateType: profile?.pay_rate_type ?? null,
     canSeeAvailableTasks: Boolean(profile?.can_see_available_tasks),
+    isPermitted:
+      profile?.role === "admin" || profile?.role === "manager" || hasAdminPermission(profile, "task_management"),
   };
 }
 
@@ -113,12 +116,17 @@ export async function GET(request: Request) {
   const auth = await getAuthedProfile();
   if ("error" in auth) return auth.error;
 
-  const { supabase, userId, role } = auth;
-  const isAdminOrManager = role === "admin" || role === "manager";
+  const { supabase, userId, isPermitted } = auth;
   const { searchParams } = new URL(request.url);
   const view = searchParams.get("view");
 
-  const { data, error } = await supabase
+  // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
+  // RLS check (role stays "va"), so read via the service-role client once
+  // the app-layer check above has already cleared the caller. No-op for
+  // real admins/managers.
+  const readClient = isPermitted ? makeAdminClient() : supabase;
+
+  const { data, error } = await readClient
     .from("fixed_pay_tasks")
     .select(TASK_SELECT)
     .order("created_at", { ascending: false });
@@ -127,9 +135,9 @@ export async function GET(request: Request) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = await hydrateTaskProfiles(supabase, (data ?? []) as unknown as FixedPayTaskWithClaimer[]);
+  const rows = await hydrateTaskProfiles(readClient, (data ?? []) as unknown as FixedPayTaskWithClaimer[]);
 
-  if (!isAdminOrManager) {
+  if (!isPermitted) {
     const visibleRows = rows.filter((task) => matchesTaskView(task, "active"));
     const unclaimed = visibleRows.filter((task) => !task.claimed_by);
     const mine = visibleRows.filter((task) => task.claimed_by === userId);
@@ -163,8 +171,7 @@ export async function POST(request: Request) {
   const auth = await getAuthedProfile();
   if ("error" in auth) return auth.error;
 
-  const { role, userId, position, payRateType, canSeeAvailableTasks } = auth;
-  const isAdminOrManager = role === "admin" || role === "manager";
+  const { role, userId, position, payRateType, canSeeAvailableTasks, isPermitted: isAdminOrManager } = auth;
   // VAs who see the fixed-pay pool may create tasks into it: per-task/fixed-pay
   // VAs, or hourly VAs with the hybrid "Avail. Tasks" toggle on.
   const isEligibleVa =
