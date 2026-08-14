@@ -443,12 +443,26 @@ function RequestsTab({
       payload.end_time = null;
     }
 
-    const { error } = await supabase.from("va_requests").insert(payload);
+    const { data: inserted, error } = await supabase
+      .from("va_requests")
+      .insert(payload)
+      .select("id")
+      .single();
     setSubmitting(false);
 
     if (error) {
       setSubmitMsg({ type: "err", text: error.message });
       return;
+    }
+
+    // Alert the admins by email (one-tap approve/decline/propose links).
+    // Best-effort — never block or fail the submission on a notify hiccup.
+    if (inserted?.id) {
+      void fetch("/api/va-requests/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: inserted.id }),
+      }).catch(() => {});
     }
 
     // Reset form

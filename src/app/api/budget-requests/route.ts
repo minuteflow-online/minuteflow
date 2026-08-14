@@ -1,5 +1,6 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { makeApprovalToken } from "@/lib/approvalToken";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,7 @@ function makeAdminClient() {
 // Never throws — a notification failure must not fail the request itself.
 async function notifyAdminsOfRequest(
   admin: ReturnType<typeof makeAdminClient>,
+  requestId: number,
   vaId: string,
   amount: number,
   unit: string,
@@ -57,6 +59,8 @@ async function notifyAdminsOfRequest(
         if (authData?.user?.email) emails.push(authData.user.email);
       }
       if (emails.length > 0) {
+        const approveUrl = `https://minuteflow.click/api/budget-requests/action?id=${requestId}&do=approve&t=${makeApprovalToken("budget", requestId, "approve")}`;
+        const declineUrl = `https://minuteflow.click/api/budget-requests/action?id=${requestId}&do=decline&t=${makeApprovalToken("budget", requestId, "decline")}`;
         await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
@@ -68,8 +72,11 @@ async function notifyAdminsOfRequest(
               <h2 style="color:#c2694f">🔔 Budget increase request</h2>
               <p><strong>${vaName}</strong> requested <strong>${amountStr}</strong> more for their <strong>${periodWord}</strong> budget.</p>
               ${reason ? `<p style="background:#f3ede4;padding:10px 12px;border-radius:8px"><em>Reason:</em> ${reason}</p>` : ""}
-              <p style="margin-top:18px"><a href="https://minuteflow.click/admin" style="background:#6b8f71;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Review &amp; approve</a></p>
-              <p style="color:#b5a898;font-size:12px">Admin → VA Requests → Budget Requests</p>
+              <div style="margin:18px 0">
+                <a href="${approveUrl}" style="display:inline-block;background:#6b8f71;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600;margin:4px 6px 4px 0">✓ Approve</a>
+                <a href="${declineUrl}" style="display:inline-block;background:#c2694f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600;margin:4px 0">✋ Decline</a>
+              </div>
+              <p style="color:#b5a898;font-size:12px">Or review in Admin → VA Requests → Budget Requests</p>
             </div>`,
           }),
         });
@@ -178,7 +185,7 @@ export async function POST(request: Request) {
   // A VA request needs admin sign-off → notify them. A direct grant is already
   // approved, so no notification.
   if (!isDirectGrant) {
-    await notifyAdminsOfRequest(admin, auth.userId, amount, unit, period, reason);
+    await notifyAdminsOfRequest(admin, data.id, auth.userId, amount, unit, period, reason);
   }
 
   return Response.json({ request: data });
