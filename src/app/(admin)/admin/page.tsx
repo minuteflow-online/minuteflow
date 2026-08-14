@@ -33,6 +33,7 @@ import {
   getAvatarColor,
   getTodayBoundsInTimezone,
   getTimezoneAbbr,
+  displayRole,
 } from "@/lib/utils";
 import ProjectsTasksTab from "@/components/ProjectsTasksTab";
 import FinancialSummaryTab from "@/components/FinancialSummaryTab";
@@ -3107,7 +3108,7 @@ function TeamManagementTab({
                         onClick={() => startEditing(p.id, "role", p.role)}
                         className="cursor-pointer rounded-full px-2 py-0.5 text-[10px] font-semibold bg-parchment text-bark hover:bg-sand transition-colors"
                       >
-                        {p.role}
+                        {displayRole(p.role, p.department)}
                       </button>
                     )}
                   </td>
@@ -3387,7 +3388,7 @@ function TeamManagementTab({
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Role</span>
-                              <p className="mt-0.5 text-espresso font-medium capitalize">{p.role}</p>
+                              <p className="mt-0.5 text-espresso font-medium capitalize">{displayRole(p.role, p.department)}</p>
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Joined</span>

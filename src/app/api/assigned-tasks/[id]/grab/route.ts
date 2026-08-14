@@ -29,11 +29,17 @@ export async function POST(_request: Request, { params }: RouteContext) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, department")
     .eq("id", user.id)
     .single();
 
-  if (!profile || (profile.role !== "va" && profile.role !== "admin")) {
+  // "manager" role is only ever granted alongside department "IT" (see
+  // "Add IT-department admin access with financials/rates locked out") for
+  // staff who both administer AND do task work — same carve-out as
+  // isAdminOrManager elsewhere, scoped to IT so a future non-working manager
+  // role wouldn't accidentally inherit task-claiming rights.
+  const canGrab = profile && (profile.role === "va" || profile.role === "admin" || (profile.role === "manager" && profile.department === "IT"));
+  if (!canGrab) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

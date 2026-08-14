@@ -29,7 +29,7 @@ const allNavItems: NavItem[] = [
   { label: "Portal", href: "/portal" },
 ];
 
-import { getTimezoneAbbr } from "@/lib/utils";
+import { getTimezoneAbbr, displayRole } from "@/lib/utils";
 import type { UserRole } from "@/types/database";
 
 type TopNavProps = {
@@ -427,7 +427,7 @@ export default function TopNav({ user }: TopNavProps) {
                 </p>
                 {user.role && (
                   <p className="text-[10px] text-bark leading-tight">
-                    {user.role}
+                    {displayRole(user.role, user.department)}
                   </p>
                 )}
               </div>
