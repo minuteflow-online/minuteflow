@@ -5,9 +5,11 @@ import type { FixedPayTaskAttachment, FixedPayTaskWithClaimer, Profile } from "@
 import { createClient } from "@/lib/supabase/client";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
+import ToolbarFilterDropdown from "@/components/table/ToolbarFilterDropdown";
 import TableRowDetailPanel from "@/components/table/TableRowDetailPanel";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
+import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import Section from "@/components/ui/Section";
 
 const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
@@ -46,6 +48,20 @@ type PanelMode = "create" | "edit" | null;
 type ActiveFilter = "all" | "active" | "inactive" | "archived" | "trash";
 
 type ProfileSummary = Pick<Profile, "id" | "full_name" | "username">;
+
+type StoredFixedPayFilters = {
+  activeFilter?: ActiveFilter;
+  filterTaskNames?: string[];
+  filterAccounts?: string[];
+  filterCategories?: string[];
+  filterStatuses?: FixedPayTaskWithClaimer["status"][];
+  filterClaimedBy?: string[];
+  filterAssignedBy?: string[];
+  filterProjects?: string[];
+  filterRates?: number[];
+  filterStartDates?: string[];
+  filterDueDates?: string[];
+};
 
 
 function formatRate(rate: number | string | null | undefined) {
@@ -90,6 +106,7 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "rate", label: "Rate", defaultWidth: 90 },
   { key: "start_date", label: "Start Date", defaultWidth: 110 },
   { key: "due_date", label: "Due Date", defaultWidth: 110 },
+  { key: "assigned_by", label: "Assigned By", defaultWidth: 130 },
   { key: "claimed_by", label: "Claimed By", defaultWidth: 150 },
   { key: "created", label: "Created", defaultWidth: 150 },
   { key: "active", label: "Active", defaultWidth: 90 },
@@ -105,6 +122,8 @@ export default function FixedPayTasksTab() {
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterStatuses, setFilterStatuses] = useState<FixedPayTaskWithClaimer["status"][]>([]);
   const [filterClaimedBy, setFilterClaimedBy] = useState<string[]>([]);
+  const [filterAssignedBy, setFilterAssignedBy] = useState<string[]>([]);
+  const [filterProjects, setFilterProjects] = useState<string[]>([]);
   const [filterRates, setFilterRates] = useState<number[]>([]);
   const [filterStartDates, setFilterStartDates] = useState<string[]>([]);
   const [filterDueDates, setFilterDueDates] = useState<string[]>([]);
@@ -140,6 +159,43 @@ export default function FixedPayTasksTab() {
     currentUserId,
     TABLE_COLUMNS
   );
+
+  // Remember the filter selections across visits — same pattern as Timelog's
+  // useFilterPrefs (localStorage instant, /api/table-prefs durable).
+  const { ready: filterPrefsReady, stored: storedFilters, persist: persistFilters } = useFilterPrefs<StoredFixedPayFilters>(
+    "fixed-pay-tasks-admin",
+    currentUserId
+  );
+  const filterPrefsAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!filterPrefsReady || filterPrefsAppliedRef.current) return;
+    filterPrefsAppliedRef.current = true;
+    if (storedFilters) {
+      if (storedFilters.activeFilter !== undefined) setActiveFilter(storedFilters.activeFilter);
+      if (storedFilters.filterTaskNames !== undefined) setFilterTaskNames(storedFilters.filterTaskNames);
+      if (storedFilters.filterAccounts !== undefined) setFilterAccounts(storedFilters.filterAccounts);
+      if (storedFilters.filterCategories !== undefined) setFilterCategories(storedFilters.filterCategories);
+      if (storedFilters.filterStatuses !== undefined) setFilterStatuses(storedFilters.filterStatuses);
+      if (storedFilters.filterClaimedBy !== undefined) setFilterClaimedBy(storedFilters.filterClaimedBy);
+      if (storedFilters.filterAssignedBy !== undefined) setFilterAssignedBy(storedFilters.filterAssignedBy);
+      if (storedFilters.filterProjects !== undefined) setFilterProjects(storedFilters.filterProjects);
+      if (storedFilters.filterRates !== undefined) setFilterRates(storedFilters.filterRates);
+      if (storedFilters.filterStartDates !== undefined) setFilterStartDates(storedFilters.filterStartDates);
+      if (storedFilters.filterDueDates !== undefined) setFilterDueDates(storedFilters.filterDueDates);
+    }
+  }, [filterPrefsReady, storedFilters]);
+
+  useEffect(() => {
+    if (!filterPrefsReady || !filterPrefsAppliedRef.current) return;
+    persistFilters({
+      activeFilter, filterTaskNames, filterAccounts, filterCategories, filterStatuses,
+      filterClaimedBy, filterAssignedBy, filterProjects, filterRates, filterStartDates, filterDueDates,
+    });
+  }, [
+    filterPrefsReady, activeFilter, filterTaskNames, filterAccounts, filterCategories, filterStatuses,
+    filterClaimedBy, filterAssignedBy, filterProjects, filterRates, filterStartDates, filterDueDates, persistFilters,
+  ]);
 
   const fetchTasks = useCallback(async (view: ActiveFilter = activeFilter) => {
     setLoading(true);
@@ -247,6 +303,18 @@ export default function FixedPayTasksTab() {
     [filterBaseTasks]
   );
 
+  const assignedByFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(filterBaseTasks.map((task) => task.assigned_by_profile?.full_name || task.assigned_by_profile?.username || "").filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b)),
+    [filterBaseTasks]
+  );
+  const projectFilterOptions = useMemo(
+    () => Array.from(new Set(filterBaseTasks.map((task) => task.projects?.name ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [filterBaseTasks]
+  );
+
   const rateFilterOptions = useMemo(
     () =>
       Array.from(new Set(filterBaseTasks.map((task) => Number(task.rate)).filter((rate) => Number.isFinite(rate)))).sort((a, b) => a - b),
@@ -268,9 +336,14 @@ export default function FixedPayTasksTab() {
       if (filterRates.length > 0 && !filterRates.includes(Number(task.rate))) return false;
       if (filterStartDates.length > 0 && !filterStartDates.includes(task.start_date ?? "")) return false;
       if (filterDueDates.length > 0 && !filterDueDates.includes(task.due_date ?? "")) return false;
+      if (filterAssignedBy.length > 0) {
+        const assignedByName = task.assigned_by_profile?.full_name || task.assigned_by_profile?.username || "";
+        if (!filterAssignedBy.includes(assignedByName)) return false;
+      }
+      if (filterProjects.length > 0 && !filterProjects.includes(task.projects?.name ?? "")) return false;
       return true;
     });
-  }, [filterBaseTasks, filterClaimedBy, filterRates, filterStartDates, filterDueDates]);
+  }, [filterBaseTasks, filterClaimedBy, filterRates, filterStartDates, filterDueDates, filterAssignedBy, filterProjects]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const allVisibleSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
@@ -678,7 +751,7 @@ export default function FixedPayTasksTab() {
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
             <div className="flex items-center gap-2">
-              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterClaimedBy.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || activeFilter !== "all") && (
+              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterClaimedBy.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || activeFilter !== "all") && (
                 <button
                   type="button"
                   onClick={() => {
@@ -688,6 +761,8 @@ export default function FixedPayTasksTab() {
                     setFilterCategories([]);
                     setFilterStatuses([]);
                     setFilterClaimedBy([]);
+                    setFilterAssignedBy([]);
+                    setFilterProjects([]);
                     setFilterRates([]);
                     setFilterStartDates([]);
                     setFilterDueDates([]);
@@ -697,6 +772,7 @@ export default function FixedPayTasksTab() {
                   Clear all filters
                 </button>
               )}
+              <ToolbarFilterDropdown label="Project" options={projectFilterOptions} selected={filterProjects} onChange={setFilterProjects} />
               <ColumnVisibilityPicker columns={TABLE_COLUMNS} hidden={hiddenColumns} onToggle={toggleColumnVisible} />
             </div>
           </div>
@@ -856,6 +932,16 @@ export default function FixedPayTasksTab() {
                         filterOptions={dueDateFilterOptions.map((v) => ({ value: v, label: formatDateOnly(v) }))}
                         selected={filterDueDates}
                         onFilterChange={setFilterDueDates}
+                      />
+                    )}
+                    {!hiddenColumns.has("assigned_by") && (
+                      <ColumnHeader
+                        label="Assigned By"
+                        width={columnWidths.assigned_by}
+                        onResize={(w) => setColumnWidth("assigned_by", w)}
+                        filterOptions={assignedByFilterOptions.map((name) => ({ value: name, label: name }))}
+                        selected={filterAssignedBy}
+                        onFilterChange={setFilterAssignedBy}
                       />
                     )}
                     {!hiddenColumns.has("claimed_by") && (
