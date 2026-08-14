@@ -1,0 +1,17 @@
+{
+  "name": "minuteflow-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MinuteFlow desktop app shell (Electron). Step 1 only: login with the same Supabase account as the web app, then show a placeholder logged-in screen.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.99.3"
+  },
+  "devDependencies": {
+    "electron": "^43.3.0"
+  }
+}

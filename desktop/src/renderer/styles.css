@@ -1,0 +1,956 @@
+/* MinuteFlow desktop shell — reuses the web app's color palette
+   (see AGENTS.md "MinuteFlow Color Palette") for visual consistency. */
+
+:root {
+  --cream: #faf7f2;
+  --parchment: #f3ede4;
+  --sand: #e8dfd3;
+  --clay: #d4c8b8;
+  --stone: #b5a898;
+  --bark: #8b7b6b;
+  --walnut: #6b5b4b;
+  --espresso: #3d3229;
+  --ink: #2a221a;
+  --white: #fffdf9;
+  --terracotta: #c2694f;
+  --terracotta-soft: #f0ddd5;
+  --sage: #6b8f71;
+  --sage-soft: #dce8dd;
+  --amber: #b8860b;
+  --amber-soft: #f5ecd0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--cream);
+  color: var(--espresso);
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card {
+  width: 320px;
+  background: var(--white);
+  border: 1px solid var(--sand);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.brand {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--espresso);
+  margin: 0 0 2px;
+}
+
+.subtitle {
+  font-size: 11px;
+  color: var(--stone);
+  margin: 0 0 20px;
+}
+
+.field {
+  margin-bottom: 12px;
+}
+
+label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--walnut);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+}
+
+input[type="email"],
+input[type="password"] {
+  width: 100%;
+  border: 1px solid var(--sand);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--espresso);
+  background: var(--white);
+  outline: none;
+}
+
+input[type="email"]:focus,
+input[type="password"]:focus {
+  border-color: var(--sage);
+}
+
+button.primary {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--sage);
+  color: var(--white);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #5f7f65;
+}
+
+button.primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.secondary {
+  padding: 7px 12px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(181, 168, 152, 0.15);
+  color: var(--bark);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.secondary:hover {
+  background: rgba(181, 168, 152, 0.28);
+}
+
+.error {
+  min-height: 14px;
+  font-size: 11px;
+  color: var(--terracotta);
+  margin: -4px 0 12px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sage);
+}
+
+.status-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sage);
+}
+
+.user-email {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--espresso);
+  margin: 8px 0 2px;
+}
+
+.user-name {
+  font-size: 12px;
+  color: var(--stone);
+  margin: 0 0 20px;
+}
+
+.note {
+  font-size: 11px;
+  color: var(--stone);
+  background: var(--parchment);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  line-height: 1.4;
+}
+
+/* ─── App shell: top bar + two-panel layout + status bar (spec 1d) ─── */
+/* Sized with vw/vh so it fills the window regardless of `body`'s own
+   align/justify-center rule (kept as-is above for login.html's small
+   centered card — this element just doesn't need that centering to matter,
+   since it already occupies the full viewport). */
+
+.app-shell {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--cream);
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--sand);
+  background: var(--white);
+  flex-shrink: 0;
+}
+
+.top-bar .user-email {
+  font-size: 12px;
+  margin: 0;
+}
+
+.top-bar-spacer {
+  flex: 1;
+}
+
+#error-banner {
+  margin: 8px 16px 0;
+}
+
+.error-banner {
+  font-size: 11px;
+  color: var(--terracotta);
+  background: var(--terracotta-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0 12px;
+  line-height: 1.4;
+}
+
+.panels {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.left-panel {
+  width: 280px;
+  flex-shrink: 0;
+  min-height: 0;
+  border-right: 1px solid var(--sand);
+  background: var(--white);
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.right-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--sand);
+  background: var(--white);
+  font-size: 10px;
+  color: var(--stone);
+  flex-shrink: 0;
+}
+
+.status-bar .link-btn {
+  font-size: 10px;
+}
+
+.status-bar-spacer {
+  flex: 1;
+}
+
+.section-card {
+  border: 1px solid var(--sand);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 12px;
+}
+
+.section-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--sage);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.muted {
+  font-size: 11px;
+  color: var(--stone);
+  margin: 4px 0;
+}
+
+.badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* Every status color reuses an existing palette token — no new colors added
+   for this layout change, per spec 1d's style note. */
+.badge-pending,
+.badge-unassigned {
+  background: rgba(181, 168, 152, 0.15);
+  color: var(--bark);
+}
+
+.badge-on_queue {
+  background: rgba(181, 168, 152, 0.15);
+  color: var(--bark);
+}
+
+.badge-in_progress {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.badge-submitted,
+.badge-reviewing {
+  background: rgba(107, 91, 75, 0.12);
+  color: var(--walnut);
+}
+
+.badge-revision_needed {
+  background: var(--terracotta-soft);
+  color: var(--terracotta);
+}
+
+.badge-approved,
+.badge-completed,
+.badge-paid {
+  background: var(--sage-soft);
+  color: var(--sage);
+}
+
+.badge-cancelled {
+  background: var(--terracotta-soft);
+  color: var(--terracotta);
+}
+
+/* ─── Left panel: timer, Play, Clock In/Out, stats, account tree ─── */
+
+.timer-block {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.timer-big {
+  font-size: 40px;
+  font-weight: 700;
+  color: var(--espresso);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.active-task-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--espresso);
+  margin: 6px 0 2px;
+}
+
+.active-task-meta {
+  font-size: 11px;
+  color: var(--walnut);
+  margin: 0;
+  min-height: 14px;
+}
+
+.play-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: none;
+  background: var(--sage);
+  color: var(--white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 4px auto 14px;
+  cursor: pointer;
+}
+
+.play-btn:hover:not(:disabled) {
+  background: #5f7f65;
+}
+
+.play-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.session-inline {
+  margin-bottom: 14px;
+}
+
+.no-active-card {
+  background: var(--parchment);
+}
+
+.no-active-text {
+  font-size: 11px;
+  color: var(--stone);
+  margin: 0;
+}
+
+.stats-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--parchment);
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+
+.stats-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--walnut);
+}
+
+.stats-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--espresso);
+}
+
+.left-search-field {
+  margin-bottom: 10px;
+}
+
+.account-tree {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.tree-account-row,
+.tree-project-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--espresso);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tree-account-row {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tree-caret {
+  color: var(--bark);
+  font-size: 10px;
+  width: 10px;
+  flex-shrink: 0;
+}
+
+.tree-project-row {
+  padding-left: 26px;
+  color: var(--walnut);
+}
+
+.tree-account-row:hover,
+.tree-project-row:hover {
+  background: var(--parchment);
+}
+
+.tree-row-active {
+  background: var(--sage-soft);
+  color: var(--sage);
+}
+
+.tree-empty {
+  padding-left: 26px;
+  margin: 2px 0;
+}
+
+/* ─── Right panel: header, filters, log-task toggle, table, detail panel ─── */
+
+.right-header {
+  margin-bottom: 10px;
+}
+
+.right-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--espresso);
+}
+
+.right-subtitle {
+  font-size: 11px;
+  color: var(--stone);
+  margin: 2px 0 0;
+}
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.filter-row select {
+  width: auto;
+  min-width: 130px;
+}
+
+.task-search-input {
+  width: auto;
+  flex: 1;
+  min-width: 140px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--sand);
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+
+.task-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.task-table thead th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--walnut);
+  background: var(--parchment);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--sand);
+  white-space: nowrap;
+}
+
+.task-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--parchment);
+  color: var(--espresso);
+}
+
+.task-table tbody tr.task-row {
+  cursor: pointer;
+}
+
+.task-table tbody tr.task-row:hover {
+  background: var(--cream);
+}
+
+.task-row-selected {
+  background: var(--sage-soft) !important;
+}
+
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--sand);
+  background: var(--white);
+  color: var(--sage);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.icon-btn:hover:not(:disabled) {
+  border-color: var(--sage);
+}
+
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.is-starting {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.detail-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.detail-task-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--espresso);
+  margin: 2px 0 2px;
+}
+
+.detail-meta {
+  font-size: 11px;
+  color: var(--walnut);
+  margin: 0 0 4px;
+}
+
+.detail-updated {
+  font-size: 10px;
+  color: var(--stone);
+  margin: 0 0 10px;
+}
+
+.detail-notes {
+  font-size: 12px;
+  color: var(--espresso);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  margin: 0 0 12px;
+}
+
+.detail-actions button {
+  width: auto;
+  margin-top: 0;
+  padding: 7px 16px;
+}
+
+/* ─── To-dos (detail panel, spec 1e) ─── */
+
+.todo-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--espresso);
+  padding: 4px 8px;
+  background: var(--parchment);
+  border-radius: 6px;
+}
+
+.todo-item-label {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--walnut);
+}
+
+.todo-add-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.todo-add-row input {
+  flex: 1;
+}
+
+.todo-add-row button {
+  width: auto;
+  flex-shrink: 0;
+}
+
+/* ─── Generic form controls (Log a Task form + close-task modal) ─── */
+
+input[type="text"],
+select,
+textarea {
+  width: 100%;
+  border: 1px solid var(--sand);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--espresso);
+  background: var(--white);
+  outline: none;
+}
+
+input[type="text"]:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--sage);
+}
+
+select:disabled {
+  opacity: 0.6;
+  background: var(--parchment);
+}
+
+textarea {
+  resize: none;
+}
+
+.req {
+  color: var(--terracotta);
+}
+
+.optional {
+  color: var(--stone);
+  font-weight: 400;
+  text-transform: none;
+}
+
+.word-count {
+  font-size: 10px;
+  color: var(--stone);
+  margin: 3px 0 0;
+}
+
+.clockout-btn {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* ─── Category pills ─── */
+
+.pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pill {
+  border: 1px solid var(--sand);
+  background: var(--white);
+  color: var(--bark);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.pill:hover {
+  border-color: var(--terracotta);
+  color: var(--terracotta);
+}
+
+.pill-active {
+  background: var(--terracotta);
+  border-color: var(--terracotta);
+  color: var(--white);
+}
+
+.pill-active:hover {
+  color: var(--white);
+}
+
+/* ─── Close-task modal (shared: task switch + Clock Out) ─── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 16px;
+}
+
+/* `display: flex` must only apply while the element is actually shown — a
+   plain `.modal-overlay { display: flex }` is a normal author rule, and
+   normal author rules always beat the browser's normal `[hidden] { display:
+   none }` user-agent rule regardless of specificity, which made the modal
+   render on top of the page from page load, before it was ever opened. */
+.modal-overlay:not([hidden]) {
+  display: flex;
+}
+
+.modal {
+  width: 100%;
+  max-width: 360px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  background: var(--white);
+  border: 1px solid var(--sand);
+  border-radius: 12px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--parchment);
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--espresso);
+}
+
+.modal-x {
+  border: none;
+  background: none;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--bark);
+  cursor: pointer;
+  padding: 0;
+}
+
+.modal-x:hover {
+  color: var(--terracotta);
+}
+
+.modal-body {
+  padding: 16px;
+}
+
+.modal-active-name {
+  font-size: 11px;
+  color: var(--walnut);
+  background: var(--amber-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 0 0 12px;
+}
+
+.field-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--walnut);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin: 10px 0 6px;
+}
+
+.field-label:first-of-type {
+  margin-top: 0;
+}
+
+.modal-body textarea {
+  margin-bottom: 4px;
+}
+
+.status-group,
+.mood-group,
+.star-group {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.status-group button,
+.mood-group button,
+.star-group button {
+  flex: 1;
+  border: 1px solid var(--sand);
+  background: var(--white);
+  color: var(--bark);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.status-group button:hover,
+.mood-group button:hover,
+.star-group button:hover {
+  border-color: var(--terracotta);
+}
+
+/* Selectors below are deliberately `.status-group button.status-btn-active`
+   (class + element + class) rather than `.status-btn-active` alone — the
+   base rule above (`.status-group button`) is class+element too, so a bare
+   `.status-btn-active` class selector was LESS specific than it and lost the
+   cascade for any property not marked `!important`. That previously left
+   `background` on the base rule's white while `color`/`border-color` (which
+   had `!important`) switched to white text — invisible white-on-white
+   labels. Matching or exceeding the base rule's specificity here fixes all
+   three properties consistently, with no `!important` needed. */
+
+.status-group button.status-btn-active {
+  background: var(--terracotta);
+  border-color: var(--terracotta);
+  color: var(--white);
+}
+
+.mood-group button.mood-btn-active {
+  background: var(--sage);
+  border-color: var(--sage);
+  color: var(--white);
+}
+
+.star-group button {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--stone);
+}
+
+.star-group button.star-btn-active {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--white);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.modal-actions button {
+  flex: 1;
+  width: auto;
+  margin-top: 0;
+}

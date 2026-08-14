@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>MinuteFlow</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <!-- ─── Top bar ─── -->
+      <div class="top-bar">
+        <div class="status-row">
+          <span class="status-dot"></span>
+          <span class="status-label">Logged In</span>
+        </div>
+        <p class="user-email" id="user-email">—</p>
+        <div class="top-bar-spacer"></div>
+        <button id="logout-btn" class="secondary" type="button">Log Out</button>
+      </div>
+
+      <p id="error-banner" class="error-banner" hidden></p>
+
+      <div class="panels">
+        <!-- ═══════════════════════ LEFT PANEL ═══════════════════════ -->
+        <div class="left-panel">
+          <div class="timer-block">
+            <p class="timer-big" id="timer">00:00:00</p>
+            <p class="active-task-name" id="active-task-name">No active task</p>
+            <p class="active-task-meta" id="active-task-meta"></p>
+          </div>
+
+          <button id="play-btn" class="play-btn" type="button" title="Select a task on the right, then start it" disabled>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
+          </button>
+
+          <!-- Clock In / Clock Out — same ids/logic as before, just relocated -->
+          <div id="clockin-card" class="section-card no-active-card session-inline" hidden>
+            <p class="no-active-text">You're not clocked in.</p>
+            <button id="clockin-btn" class="primary" type="button">Clock In</button>
+          </div>
+          <div id="active-card" class="session-inline" hidden>
+            <button id="clockout-btn" class="secondary clockout-btn" type="button">Clock Out</button>
+          </div>
+
+          <div class="stats-row">
+            <span class="stats-label">Today</span>
+            <span class="stats-value" id="today-total">0:00</span>
+          </div>
+
+          <div class="field left-search-field">
+            <input id="left-search" type="text" placeholder="Search accounts / projects..." />
+          </div>
+
+          <div id="account-tree" class="account-tree">
+            <p class="muted">Loading…</p>
+          </div>
+        </div>
+
+        <!-- ═══════════════════════ RIGHT PANEL ═══════════════════════ -->
+        <div class="right-panel">
+          <div class="right-header">
+            <h2>Tasks</h2>
+            <p class="right-subtitle" id="right-subtitle">All accounts</p>
+          </div>
+
+          <div class="filter-row">
+            <select id="category-filter">
+              <option value="">All Categories</option>
+            </select>
+            <input id="task-search" type="text" placeholder="Search tasks..." class="task-search-input" />
+          </div>
+
+          <div class="table-wrap">
+            <table class="task-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Status</th>
+                  <th>Category</th>
+                  <th>Date</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="task-table-body">
+                <tr><td colspan="5" class="muted">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div id="detail-panel" class="section-card detail-panel" hidden>
+            <div class="detail-panel-header">
+              <p class="section-label">Task Details</p>
+              <button id="detail-close-btn" class="modal-x" type="button">&times;</button>
+            </div>
+            <p class="detail-task-name" id="detail-task-name"></p>
+            <p class="detail-meta" id="detail-meta"></p>
+            <p class="detail-updated" id="detail-updated"></p>
+            <p class="field-label">Notes</p>
+            <p class="detail-notes" id="detail-notes"></p>
+
+            <p class="field-label">To-Dos</p>
+            <ul id="detail-todo-list" class="todo-list"></ul>
+            <div class="todo-add-row">
+              <input id="detail-todo-input" type="text" placeholder="Add a to-do for this task..." />
+              <button id="detail-todo-add-btn" class="secondary" type="button">Add</button>
+            </div>
+            <p id="detail-todo-error" class="error-banner" hidden></p>
+
+            <div class="detail-actions">
+              <button id="detail-complete-btn" class="primary" type="button">Complete</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── Bottom status bar ─── -->
+      <div class="status-bar">
+        <span id="status-bar-updated">Not loaded yet</span>
+        <button id="refresh-btn" class="link-btn" type="button">Refresh</button>
+        <span class="status-bar-spacer"></span>
+        <span id="status-bar-count">—</span>
+      </div>
+    </div>
+
+    <!-- ─── Shared close-task confirm dialog (switch task / clock out) — unchanged ─── -->
+    <div id="close-task-modal" class="modal-overlay" hidden>
+      <div class="modal">
+        <div class="modal-header">
+          <h3 id="close-task-modal-title">Close Current Task</h3>
+          <button id="close-task-cancel-x" class="modal-x" type="button">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-active-name" id="close-task-modal-active-name"></p>
+
+          <p class="field-label">Task Status <span class="req">*</span></p>
+          <div id="close-task-status-group" class="status-group">
+            <button data-status="In Progress" type="button">In Progress</button>
+            <button data-status="Completed" type="button">Completed</button>
+            <button data-status="On Hold" type="button">On Hold</button>
+          </div>
+
+          <p class="field-label">Client Memo <span class="optional">(at least one memo required)</span></p>
+          <textarea id="close-task-client-memo" rows="2" placeholder="Notes visible to the client..."></textarea>
+
+          <p class="field-label">Internal Memo</p>
+          <textarea id="close-task-internal-memo" rows="2" placeholder="Internal notes (not visible to client)..."></textarea>
+
+          <div id="close-task-mood-section">
+            <p class="field-label">How was your day? <span class="optional">(optional)</span></p>
+            <div class="mood-group">
+              <button data-mood="bad" type="button">😞<br />Not great</button>
+              <button data-mood="neutral" type="button">😐<br />Okay</button>
+              <button data-mood="good" type="button">😊<br />Great</button>
+            </div>
+          </div>
+
+          <div id="close-task-rating-section">
+            <p class="field-label">Day Rating <span class="optional">(optional)</span></p>
+            <div class="star-group">
+              <button data-star="1" type="button">★</button>
+              <button data-star="2" type="button">★</button>
+              <button data-star="3" type="button">★</button>
+              <button data-star="4" type="button">★</button>
+              <button data-star="5" type="button">★</button>
+            </div>
+            <div id="close-task-rating-note-wrap" hidden>
+              <textarea id="close-task-rating-note" rows="2" placeholder="Explain your day rating (at least 5 words)..."></textarea>
+            </div>
+          </div>
+
+          <p id="close-task-modal-error" class="error-banner" hidden></p>
+
+          <div class="modal-actions">
+            <button id="close-task-cancel-btn" class="secondary" type="button">Cancel</button>
+            <button id="close-task-confirm-btn" class="primary" type="button" disabled>Close &amp; Start New Task</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="formUtils.js"></script>
+    <script src="closeTaskModal.js"></script>
+    <script src="dashboard.js"></script>
+  </body>
+</html>

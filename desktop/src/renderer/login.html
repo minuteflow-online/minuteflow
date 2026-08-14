@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>MinuteFlow — Log In</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="card">
+      <p class="brand">MinuteFlow</p>
+      <p class="subtitle">Log in with your MinuteFlow account</p>
+
+      <form id="login-form">
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" required />
+        </div>
+        <p id="error" class="error"></p>
+        <button id="submit-btn" class="primary" type="submit">Log In</button>
+      </form>
+    </div>
+    <script src="login.js"></script>
+  </body>
+</html>
