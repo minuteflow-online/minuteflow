@@ -155,12 +155,6 @@ export async function runRecurringInvoiceGeneration(
     if (isHourly) {
       const rate = Number(source.rate_amount) || 0;
 
-      let clientName: string | null = null;
-      if (source.client_id != null) {
-        const { data: client } = await supabase.from("clients").select("name").eq("id", source.client_id).single();
-        clientName = client?.name ?? null;
-      }
-
       const { data: activeInv } = await supabase
         .from("invoices")
         .select("id")
@@ -183,8 +177,15 @@ export async function runRecurringInvoiceGeneration(
         .gte("start_time", new Date(periodStart).toISOString())
         .lte("start_time", new Date(periodEnd + "T23:59:59").toISOString())
         .order("start_time", { ascending: true });
-      if (clientName) q = q.eq("client_name", clientName);
-      else if (source.account_name) q = q.eq("account", source.account_name);
+      // Prefer the account when one is set (bill the whole account); otherwise
+      // fall back to the linked client's total. Matches how the invoice was
+      // created: "by account" sets account_name, "by client" leaves it null.
+      if (source.account_name) {
+        q = q.eq("account", source.account_name);
+      } else if (source.client_id != null) {
+        const { data: client } = await supabase.from("clients").select("name").eq("id", source.client_id).single();
+        if (client?.name) q = q.eq("client_name", client.name);
+      }
 
       const { data: logs } = await q;
       const avail = ((logs ?? []) as TimeLogRow[]).filter((l) => !usedLogIds.has(l.id));
