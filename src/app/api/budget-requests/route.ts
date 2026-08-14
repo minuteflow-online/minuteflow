@@ -34,7 +34,7 @@ export async function GET() {
 
   let query = admin
     .from("budget_requests")
-    .select("id, va_id, amount, unit, reason, status, reviewed_by, review_notes, created_at, reviewed_at")
+    .select("id, va_id, amount, unit, reason, status, reviewed_by, review_notes, created_at, reviewed_at, period")
     .order("created_at", { ascending: false });
   if (!isAdminOrManager) query = query.eq("va_id", auth.userId);
 
@@ -72,6 +72,8 @@ export async function POST(request: Request) {
   const unit = String(body.unit ?? "");
   const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
   const targetVaId = typeof body.va_id === "string" && body.va_id.trim() ? body.va_id.trim() : null;
+  // Which budget the increase applies to — a temporary bump to that one period.
+  const period = ["day", "week", "month"].includes(String(body.period)) ? String(body.period) : "day";
 
   if (!Number.isFinite(amount) || amount <= 0) {
     return Response.json({ error: "A positive amount is required." }, { status: 400 });
@@ -94,11 +96,12 @@ export async function POST(request: Request) {
       amount,
       unit,
       reason,
+      period,
       status: isDirectGrant ? "approved" : "pending",
       reviewed_by: isDirectGrant ? auth.userId : null,
       reviewed_at: isDirectGrant ? now : null,
     })
-    .select("id, va_id, amount, unit, reason, status, reviewed_by, review_notes, created_at, reviewed_at")
+    .select("id, va_id, amount, unit, reason, status, reviewed_by, review_notes, created_at, reviewed_at, period")
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
