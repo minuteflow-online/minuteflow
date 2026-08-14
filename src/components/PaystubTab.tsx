@@ -257,6 +257,8 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     setDraftsLoading(false);
   }, []);
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
+  // Set when "Edit" on a draft pre-fills the generator, to auto-run Calculate.
+  const [pendingCalc, setPendingCalc] = useState(false);
 
   // Editable payment fields (post-send, in expanded history row)
   const [editInputs, setEditInputs] = useState<Record<string, {
@@ -341,6 +343,23 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     }
   }, [selectedUserId, preset, customStart, customEnd, orgTimezone]);
 
+  // "Edit" on a draft → pre-fill the generator with that VA + period, then
+  // auto-calculate so the full form (line items, fee, custom amount) is ready.
+  const editInGenerator = (d: { user_id: string; period_start: string; period_end: string }) => {
+    setSelectedUserId(d.user_id);
+    setPreset("custom");
+    setCustomStart(d.period_start);
+    setCustomEnd(d.period_end);
+    setPendingCalc(true);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  useEffect(() => {
+    if (pendingCalc && selectedUserId && customStart && customEnd) {
+      setPendingCalc(false);
+      handleCalculate();
+    }
+  }, [pendingCalc, selectedUserId, customStart, customEnd, handleCalculate]);
+
   const lineItemAmount = (item: { rate: string; quantity: string }) =>
     (parseFloat(item.rate) || 0) * (parseFloat(item.quantity) || 0);
 
@@ -402,6 +421,15 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       if (!res.ok) throw new Error(data.error || "Failed to send.");
       setSent(true);
       fetchHistory(selectedUserId);
+      // If this was sent from a draft, remove the lingering draft snapshot so it
+      // drops off the Paystub Drafts list.
+      try {
+        const sb = createClient();
+        await sb.from("paystub_snapshots").delete()
+          .eq("status", "draft").eq("user_id", selectedUserId)
+          .eq("period_start", range.start).eq("period_end", range.end);
+        loadDrafts();
+      } catch { /* non-fatal */ }
       // Show warnings for partial failures
       if (data.paymentError && data.emailError) {
         setPaymentWarning(`Both payment recording and email failed. Please log this payment manually in the Financial page.`);
@@ -415,7 +443,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, companyName, customLineItems, lineItemsTotal, fee]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, companyName, customLineItems, lineItemsTotal, fee, loadDrafts]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -1144,8 +1172,14 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     <td className="px-3 py-3 text-bark">{d.pay_period_label || `${d.period_start} → ${d.period_end}`}</td>
                     <td className="px-3 py-3 text-right text-bark">{(Number(d.total_hours_ms) / 3_600_000).toFixed(2)} hrs</td>
                     <td className="px-3 py-3 text-right font-semibold text-espresso">{Number(d.gross_pay).toLocaleString("en-US", { style: "currency", currency: "USD" })}</td>
-                    <td className="px-3 py-3 text-right">
-                      <a href={`/admin/paystub-review/${d.id}`} className="inline-block rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white hover:bg-terracotta/90 transition-colors">Review &amp; Send →</a>
+                    <td className="px-3 py-3 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => editInGenerator(d)}
+                        className="inline-block rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white hover:bg-terracotta/90 transition-colors"
+                        title="Open in the generator above to review, add line items / fees / advances, then send"
+                      >
+                        Edit &amp; Send →
+                      </button>
                     </td>
                   </tr>
                 ))}
