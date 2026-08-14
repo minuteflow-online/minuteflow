@@ -5,9 +5,10 @@ export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-// Reuse the existing Telegram bot + admin group (already configured in prod).
+// Financial alerts go to a DEDICATED private chat (TELEGRAM_BUDGET_CHAT_ID) —
+// never the shared team group, which includes non-financial managers (e.g. IT).
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_GROUP_CHAT_ID = process.env.TELEGRAM_GROUP_CHAT_ID;
+const TELEGRAM_BUDGET_CHAT_ID = process.env.TELEGRAM_BUDGET_CHAT_ID;
 
 // Any authenticated user is let through; the caller branches on `role`.
 async function requireAuthed() {
@@ -38,7 +39,7 @@ async function notifyAdminsOfRequest(
   reason: string | null
 ) {
   const resendKey = process.env.RESEND_API_KEY;
-  const telegramOn = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_GROUP_CHAT_ID);
+  const telegramOn = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_BUDGET_CHAT_ID);
   if (!resendKey && !telegramOn) return;
   try {
     const { data: va } = await admin.from("profiles").select("full_name, username").eq("id", vaId).single();
@@ -46,9 +47,10 @@ async function notifyAdminsOfRequest(
     const periodWord = period === "day" ? "daily" : period === "week" ? "weekly" : "monthly";
     const amountStr = unit === "dollars" ? `$${amount.toFixed(2)}` : `${amount}h`;
 
-    // Email — one message to every admin/manager.
+    // Email — to admins only. Managers (e.g. IT) are blocked from financials,
+    // so they must NOT receive budget alerts.
     if (resendKey) {
-      const { data: admins } = await admin.from("profiles").select("id").in("role", ["admin", "manager"]);
+      const { data: admins } = await admin.from("profiles").select("id").eq("role", "admin");
       const emails: string[] = [];
       for (const a of (admins ?? []) as { id: string }[]) {
         const { data: authData } = await admin.auth.admin.getUserById(a.id);
@@ -80,7 +82,7 @@ async function notifyAdminsOfRequest(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          chat_id: TELEGRAM_GROUP_CHAT_ID,
+          chat_id: TELEGRAM_BUDGET_CHAT_ID,
           text: `🔔 Budget request — ${vaName} needs ${amountStr} more (${periodWord})${reason ? `\nReason: ${reason}` : ""}\n\nApprove: https://minuteflow.click/admin`,
         }),
       });
