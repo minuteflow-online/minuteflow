@@ -7,14 +7,61 @@ see "What's actually left to build" below before starting anything.
 | Part | Status | Notes |
 |------|--------|-------|
 | A — Nested Objectives | ✅ **Done** | Confirmed working live: "+" on an Objective creates a child with "Nested under: X (make top-level)" shown in the form. No build work needed. |
-| B — Cards | ⚠️ **Mostly done, one open question** | A rich subtask list already exists per Objective (status badge, task name, VA, account, due date, billing type, Edit button, plus an Add Subtask form with Basics/Schedule/Details/Assignment/Attachments sections). Functionally this already covers "cards attached to an objective, clickable." Open question: does boss want this list restyled into a Basecamp-style kanban card grid (columns like Scheduled/Recorded/Editing/Approved/Done), or is the existing list acceptable? **Show her the screenshots before doing any visual rework** — don't rebuild this speculatively. |
+| B — Cards | 🔧 **Confirmed: build kanban grid** | Boss confirmed she wants the existing subtask list restyled into a Basecamp-style kanban card grid (columns like the "Scheduled / Recorded / Editing / Approved / Done" example from her Basecamp reference). This is now a real, scoped build task — see "Part B build plan" below. |
 | C — "Where they are" (VA progress) | ❌ **Confirmed missing — this is the real build task** | Boss explicitly confirmed she wants this: a way to see, per VA, their progress on an Objective. This is the actual scoped work below. |
 
-## What's actually left to build: Part C only
+## Part B build plan — Kanban card grid for Subtasks
+
+### Goal
+Replace (or add as a view toggle — TBD, see open question) the current flat subtask
+list with a kanban-style board: columns by status, each subtask shown as a clickable
+card within its status column.
+
+### What already exists to build on
+- The subtask data itself: `subtasks` array already fetched per selected Objective in
+  `VAProjectsTab.tsx`, each with `status`, task name, assignee, account, due date, etc.
+  No new data-fetching needed — this is a rendering change.
+- `AssignedTaskStatus` enum (`unassigned | pending | on_queue | in_progress | submitted
+  | reviewing | revision_needed | approved | completed | paid | cancelled`) — this is
+  more granular than Basecamp's 5-column example. Don't invent new statuses; the
+  columns should map to this existing enum. Decide column grouping before building —
+  e.g. does `reviewing` and `revision_needed` each get their own column, or get grouped
+  together? This affects layout — confirm with boss/Neil, don't guess silently.
+- Existing status badge colors (documented in `AGENTS.md`'s design system section) —
+  reuse these exact colors for consistency, don't invent a new column-color scheme.
+- The existing **Edit** button behavior on each subtask row — clicking a card should
+  open the same edit flow (`TaskEditor`), just triggered from a card instead of a list
+  row.
+
+### Open questions before building
+- [ ] Should the kanban grid **replace** the current list entirely, or be a **toggle**
+      (list view / board view) so existing users aren't surprised by a sudden layout
+      change? Cheaper to ask now than to rebuild after.
+- [ ] Column grouping: one column per `AssignedTaskStatus` value (11 columns — likely
+      too many/cramped), or grouped into fewer buckets (e.g. Basecamp-style ~5)? If
+      grouped, which statuses combine into which column? Get boss's input — this is a
+      product decision, not a technical one.
+- [ ] Does drag-and-drop between columns need to work (i.e., dragging a card to
+      "Completed" changes its status), or is this read-only/click-to-edit only for v1?
+      Drag-and-drop is meaningfully more complex — confirm scope before starting.
+
+### Hard rules specific to this part
+- Do not change the underlying `AssignedTaskStatus` enum or how status transitions work
+  elsewhere in the app (Time Log, Dashboard, Reports all depend on these same values).
+  This is a display-only change.
+- Reuse `TaskEditor` for the click-to-edit flow — don't build a second edit UI.
+- No new npm dependencies for drag-and-drop unless explicitly confirmed as in-scope —
+  a simpler click-only version may be enough for v1.
+
+---
+
+## Part C — VA progress display (✅ done)
 
 Boss confirmed this is specifically what she wants added — a way for her to see VA
-progress on an Objective. Build this next; don't touch A or B unless her answer on the
-Part B visual question requires it.
+progress on an Objective. Built and committed on `feature/objective`
+(`VAProjectsTab.tsx`, commit `fb9c46c`) as the "Where They Are" card. Kept below for
+reference — no more work needed here except the repositioning follow-up noted in the
+status table update log (moving it above the edit form for immediate visibility).
 
 ### Requirements
 - For each VA assigned to an Objective, show their progress on that Objective's
