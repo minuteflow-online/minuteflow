@@ -519,8 +519,14 @@ export default function AdminPage() {
 
   // Defense in depth: if a restricted tab is somehow active (e.g. stale
   // state, or a typed-in ?tab= URL) for a role that shouldn't see it,
-  // bounce back to Overview.
+  // bounce back to Overview. Skipped while `loading` is true — on a hard
+  // refresh, currentUserProfile starts out null (profiles hasn't loaded
+  // yet), which makes isFullAdmin/hasBroadAccess false for EVERYONE for a
+  // moment, incorrectly bouncing a real Founder/broad-access account away
+  // from a tab they're actually allowed to see before their real profile
+  // has even loaded in.
   useEffect(() => {
+    if (loading) return;
     if (!isFullAdmin && ADMIN_ONLY_TABS.includes(activeTab)) {
       setActiveTab("overview");
       return;
@@ -532,7 +538,7 @@ export default function AdminPage() {
     if (restrictedTabs && !restrictedTabs.has(activeTab)) {
       setActiveTab("overview");
     }
-  }, [isFullAdmin, activeTab, restrictedTabs, canSeeAccountsClients, setActiveTab]);
+  }, [loading, isFullAdmin, activeTab, restrictedTabs, canSeeAccountsClients, setActiveTab]);
 
   // Screenshot viewer state
   const [selectedScreenshot, setSelectedScreenshot] = useState<TaskScreenshot | null>(null);

@@ -39,6 +39,9 @@ interface InvoiceRow {
   recurring_series_id: string | null;
   period_start: string | null;
   period_end: string | null;
+  payment_schedule: Array<{ label: string; amount_type: string; value: number; due_date?: string | null }> | null;
+  allow_custom_amount: boolean | null;
+  show_all_installments: boolean | null;
 }
 
 interface TimeLogRow {
@@ -144,6 +147,17 @@ export async function runRecurringInvoiceGeneration(
     const issueDate = `${year}-${pad2(month)}-${pad2(day)}`;
     const sendCode = makeSendCode();
 
+    // Carry a split-payment schedule forward, shifting each installment's due
+    // date to the same day-of-month in the issue month (e.g. the 12th & 25th).
+    const shiftedSchedule = Array.isArray(source.payment_schedule) && source.payment_schedule.length
+      ? source.payment_schedule.map((item) =>
+          item.due_date
+            ? { ...item, due_date: `${year}-${pad2(month)}-${item.due_date.slice(8, 10)}` }
+            : item
+        )
+      : null;
+    const scheduleDueDate = shiftedSchedule?.find((i) => i.due_date)?.due_date ?? null;
+
     let subtotal = 0;
     let totalHours = 0;
     let timelogItems: {
@@ -154,12 +168,6 @@ export async function runRecurringInvoiceGeneration(
 
     if (isHourly) {
       const rate = Number(source.rate_amount) || 0;
-
-      let clientName: string | null = null;
-      if (source.client_id != null) {
-        const { data: client } = await supabase.from("clients").select("name").eq("id", source.client_id).single();
-        clientName = client?.name ?? null;
-      }
 
       const { data: activeInv } = await supabase
         .from("invoices")
@@ -183,8 +191,15 @@ export async function runRecurringInvoiceGeneration(
         .gte("start_time", new Date(periodStart).toISOString())
         .lte("start_time", new Date(periodEnd + "T23:59:59").toISOString())
         .order("start_time", { ascending: true });
-      if (clientName) q = q.eq("client_name", clientName);
-      else if (source.account_name) q = q.eq("account", source.account_name);
+      // Prefer the account when one is set (bill the whole account); otherwise
+      // fall back to the linked client's total. Matches how the invoice was
+      // created: "by account" sets account_name, "by client" leaves it null.
+      if (source.account_name) {
+        q = q.eq("account", source.account_name);
+      } else if (source.client_id != null) {
+        const { data: client } = await supabase.from("clients").select("name").eq("id", source.client_id).single();
+        if (client?.name) q = q.eq("client_name", client.name);
+      }
 
       const { data: logs } = await q;
       const avail = ((logs ?? []) as TimeLogRow[]).filter((l) => !usedLogIds.has(l.id));
@@ -252,6 +267,10 @@ export async function runRecurringInvoiceGeneration(
         share_token: crypto.randomUUID(),
         period_start: periodStart,
         period_end: periodEnd,
+        payment_schedule: shiftedSchedule,
+        due_date: scheduleDueDate,
+        allow_custom_amount: source.allow_custom_amount ?? false,
+        show_all_installments: source.show_all_installments ?? false,
         is_recurring: false,
         recurring_series_id: seriesId,
       };

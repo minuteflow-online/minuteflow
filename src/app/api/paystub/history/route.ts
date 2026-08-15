@@ -45,6 +45,7 @@ export async function GET(request: Request) {
     .from("paystub_snapshots")
     .select("*")
     .eq("user_id", userId)
+    .neq("status", "draft") // history is SENT paystubs only — drafts live on the review/billing pages
     .order("sent_at", { ascending: false })
     .limit(limit);
 

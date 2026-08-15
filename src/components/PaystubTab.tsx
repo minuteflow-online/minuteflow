@@ -218,6 +218,12 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
   // Miscellaneous amount (added on top of Amount to Pay)
   const [miscAmount, setMiscAmount] = useState<string>("");
+  // Amount already sent this period (advance / split payment) — recorded as a
+  // prior payment (on its own date) so the paystub shows it as already paid and
+  // it lands in the right period in Financials.
+  const [advanceAmount, setAdvanceAmount] = useState<string>("");
+  const [advanceDate, setAdvanceDate] = useState<string>("");
+  const [advanceConfirmation, setAdvanceConfirmation] = useState<string>("");
 
   // Custom line items (label + rate × quantity) — added on top of Amount to Pay
   const [customLineItems, setCustomLineItems] = useState<{ label: string; rate: string; quantity: string }[]>([]);
@@ -240,6 +246,25 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   const [editingSnapId, setEditingSnapId] = useState<string | null>(null);
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [resendSuccessId, setResendSuccessId] = useState<string | null>(null);
+
+  // Pending auto-generated paystub drafts (awaiting review), across all VAs
+  const [drafts, setDrafts] = useState<Array<{ id: string; user_id: string; full_name: string; period_start: string; period_end: string; pay_period_label: string | null; total_hours_ms: number; gross_pay: number }>>([]);
+  const [draftsLoading, setDraftsLoading] = useState(true);
+  const loadDrafts = useCallback(async () => {
+    setDraftsLoading(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("paystub_snapshots")
+      .select("id, user_id, full_name, period_start, period_end, pay_period_label, total_hours_ms, gross_pay")
+      .eq("status", "draft")
+      .order("created_at", { ascending: false });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setDrafts((data ?? []) as any);
+    setDraftsLoading(false);
+  }, []);
+  useEffect(() => { loadDrafts(); }, [loadDrafts]);
+  // Set when "Edit" on a draft pre-fills the generator, to auto-run Calculate.
+  const [pendingCalc, setPendingCalc] = useState(false);
 
   // Editable payment fields (post-send, in expanded history row)
   const [editInputs, setEditInputs] = useState<Record<string, {
@@ -282,6 +307,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
 
     setCustomLineItems([]);
     setFee("");
+    setAdvanceAmount("");
+    setAdvanceDate("");
+    setAdvanceConfirmation("");
     setLoading(true);
     try {
       const res = await fetch("/api/paystub/send", {
@@ -324,6 +352,23 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     }
   }, [selectedUserId, preset, customStart, customEnd, orgTimezone]);
 
+  // "Edit" on a draft → pre-fill the generator with that VA + period, then
+  // auto-calculate so the full form (line items, fee, custom amount) is ready.
+  const editInGenerator = (d: { user_id: string; period_start: string; period_end: string }) => {
+    setSelectedUserId(d.user_id);
+    setPreset("custom");
+    setCustomStart(d.period_start);
+    setCustomEnd(d.period_end);
+    setPendingCalc(true);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  useEffect(() => {
+    if (pendingCalc && selectedUserId && customStart && customEnd) {
+      setPendingCalc(false);
+      handleCalculate();
+    }
+  }, [pendingCalc, selectedUserId, customStart, customEnd, handleCalculate]);
+
   const lineItemAmount = (item: { rate: string; quantity: string }) =>
     (parseFloat(item.rate) || 0) * (parseFloat(item.quantity) || 0);
 
@@ -351,6 +396,23 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     if (!range) return;
 
     try {
+      // Log an advance / previously-sent amount as a prior payment first, so the
+      // paystub shows it as already paid and the remaining settles correctly.
+      const advance = parseFloat(advanceAmount) || 0;
+      if (advance > 0) {
+        const sb = createClient();
+        await sb.from("va_payments").insert({
+          va_id: selectedUserId,
+          amount: advance,
+          payment_date: advanceDate || paymentDate,
+          payment_method: paymentMethod,
+          confirmation_number: advanceConfirmation.trim() || null,
+          period_start: range.start,
+          period_end: range.end,
+          notes: "Advance / previously sent",
+        });
+      }
+
       const res = await fetch("/api/paystub/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -385,6 +447,15 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       if (!res.ok) throw new Error(data.error || "Failed to send.");
       setSent(true);
       fetchHistory(selectedUserId);
+      // If this was sent from a draft, remove the lingering draft snapshot so it
+      // drops off the Paystub Drafts list.
+      try {
+        const sb = createClient();
+        await sb.from("paystub_snapshots").delete()
+          .eq("status", "draft").eq("user_id", selectedUserId)
+          .eq("period_start", range.start).eq("period_end", range.end);
+        loadDrafts();
+      } catch { /* non-fatal */ }
       // Show warnings for partial failures
       if (data.paymentError && data.emailError) {
         setPaymentWarning(`Both payment recording and email failed. Please log this payment manually in the Financial page.`);
@@ -398,7 +469,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
     } finally {
       setSending(false);
     }
-  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, companyName, customLineItems, lineItemsTotal, fee]);
+  }, [preview, selectedUserId, preset, customStart, customEnd, orgTimezone, paymentMethod, confirmationNumber, paymentDate, personalMessage, customAmount, miscAmount, advanceAmount, advanceDate, advanceConfirmation, companyName, customLineItems, lineItemsTotal, fee, loadDrafts]);
 
   const handleResend = useCallback(async (snap: PaystubSnapshot) => {
     setResendingId(snap.id);
@@ -920,6 +991,56 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                 </div>
               )}
 
+              {/* Already Sent (advance / split payment) — comes first, logically */}
+              <div className="px-5 py-4 border-t border-linen">
+                <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
+                  Already Sent <span className="normal-case font-normal text-bark/40">(advance / partial paid earlier — logged as a prior payment &amp; shown in Financials)</span>
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-bark/50">$</span>
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={advanceAmount}
+                      onChange={(e) => setAdvanceAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="flex-1 min-w-0 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                    />
+                  </div>
+                  <input
+                    type="date"
+                    value={advanceDate}
+                    onChange={(e) => setAdvanceDate(e.target.value)}
+                    title="Date the advance was sent"
+                    className="min-w-0 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  />
+                  <input
+                    type="text"
+                    value={advanceConfirmation}
+                    onChange={(e) => setAdvanceConfirmation(e.target.value)}
+                    placeholder="Confirmation #"
+                    title="Confirmation # of the advance"
+                    className="min-w-0 border border-linen rounded-lg px-3 py-2 text-sm font-semibold text-bark bg-white focus:outline-none focus:ring-2 focus:ring-terracotta/30"
+                  />
+                </div>
+                {advanceAmount !== "" && parseFloat(advanceAmount) > 0 && (() => {
+                  const gross = preview.totalGrossPay ?? preview.grossPay;
+                  const now = customAmount !== "" ? (parseFloat(customAmount) || 0) : gross;
+                  const adv = parseFloat(advanceAmount) || 0;
+                  const remaining = gross - adv - now;
+                  return (
+                    <div className="mt-2 rounded-lg bg-parchment border border-linen px-3 py-2 text-xs font-semibold text-bark space-y-1">
+                      <div className="flex justify-between"><span>Already sent (advance)</span><span>{formatCurrency(adv)}</span></div>
+                      <div className="flex justify-between"><span>Paying now</span><span>{formatCurrency(now)}</span></div>
+                      <div className="flex justify-between border-t border-bark/10 pt-1"><span>Remaining after this</span><span className={Math.abs(remaining) < 0.005 ? "text-sage" : "text-terracotta"}>{formatCurrency(remaining)}</span></div>
+                    </div>
+                  );
+                })()}
+                {advanceAmount !== "" && parseFloat(advanceAmount) > 0 && !advanceDate && (
+                  <p className="text-xs text-terracotta mt-1">Enter the date this advance was sent.</p>
+                )}
+              </div>
+
               {/* Editable Payment Amount */}
               <div className="px-5 py-4 border-t border-linen">
                 <label className="block text-xs font-semibold text-bark/60 uppercase tracking-wide mb-1.5">
@@ -1093,6 +1214,55 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Pending Paystub Drafts (auto-generated, awaiting review) */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-bark">Paystub Drafts</h3>
+            <p className="text-xs text-bark/50 mt-0.5">Auto-generated on the 1st &amp; 16th — waiting for your review. Click a row to review and send. VAs can&apos;t see these until you send.</p>
+          </div>
+          <button onClick={loadDrafts} className="text-xs text-bark/50 hover:text-bark transition-colors">↻ Refresh</button>
+        </div>
+        {draftsLoading ? (
+          <div className="text-xs text-bark/40 animate-pulse">Loading drafts…</div>
+        ) : drafts.length === 0 ? (
+          <div className="rounded-xl border border-sand bg-white p-6 text-center text-[13px] text-bark/50">No paystub drafts waiting for review.</div>
+        ) : (
+          <div className="rounded-xl border border-sand bg-white overflow-x-auto">
+            <table className="w-full text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
+                  <th className="px-4 py-3">Virtual Assistant</th>
+                  <th className="px-3 py-3">Pay Period</th>
+                  <th className="px-3 py-3 text-right">Hours</th>
+                  <th className="px-3 py-3 text-right">Gross Pay</th>
+                  <th className="px-3 py-3 text-right"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-parchment">
+                {drafts.map((d) => (
+                  <tr key={d.id} className="hover:bg-parchment/20 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-espresso">{d.full_name}</td>
+                    <td className="px-3 py-3 text-bark">{d.pay_period_label || `${d.period_start} → ${d.period_end}`}</td>
+                    <td className="px-3 py-3 text-right text-bark">{(Number(d.total_hours_ms) / 3_600_000).toFixed(2)} hrs</td>
+                    <td className="px-3 py-3 text-right font-semibold text-espresso">{Number(d.gross_pay).toLocaleString("en-US", { style: "currency", currency: "USD" })}</td>
+                    <td className="px-3 py-3 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => editInGenerator(d)}
+                        className="inline-block rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white hover:bg-terracotta/90 transition-colors"
+                        title="Open in the generator above to review, add line items / fees / advances, then send"
+                      >
+                        Edit &amp; Send →
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Paystub History */}

@@ -316,7 +316,9 @@ export async function POST(request: Request) {
     const paymentAccounts = (vaProfile.payment_accounts ?? {}) as Record<string, Record<string, string>>;
     const accountDetails = payment_method ? (paymentAccounts[payment_method] ?? null) : null;
 
-    const remainingBalance = totalGrossPay - paymentAmount;
+    // Remaining accounts for BOTH this payment and anything already sent this
+    // period (advances / split payments), so a fully-settled paystub reads $0.
+    const remainingBalance = totalGrossPay - paymentAmount - previousTotal;
 
     const html = buildPaystubEmail({
       vaName: vaProfile.full_name,
