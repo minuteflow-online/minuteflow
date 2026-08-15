@@ -731,6 +731,31 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           {/* Selected project detail */}
           {selectedProject && !showCreate && (
             <div className="space-y-4">
+              {/* Where They Are card */}
+              {vaProgress.length > 0 && (
+                <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
+                  <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Where They Are</h4>
+                  <div className="space-y-3">
+                    {vaProgress.map(({ vaId, name, total, completed }) => {
+                      const pct = Math.round((completed / total) * 100);
+                      return (
+                        <div key={vaId} className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[12px] font-semibold text-espresso truncate">{name}</span>
+                            <span className="text-[11px] text-stone shrink-0">
+                              {completed} of {total} completed · {pct}%
+                            </span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-parchment">
+                            <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Project edit card */}
               <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-4">
                 <div className="flex items-center justify-between gap-2">
@@ -893,31 +918,6 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   {savingEdit ? "Saving..." : "Save Changes"}
                 </button>
               </div>
-
-              {/* Where They Are card */}
-              {vaProgress.length > 0 && (
-                <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
-                  <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Where They Are</h4>
-                  <div className="space-y-3">
-                    {vaProgress.map(({ vaId, name, total, completed }) => {
-                      const pct = Math.round((completed / total) * 100);
-                      return (
-                        <div key={vaId} className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[12px] font-semibold text-espresso truncate">{name}</span>
-                            <span className="text-[11px] text-stone shrink-0">
-                              {completed} of {total} completed · {pct}%
-                            </span>
-                          </div>
-                          <div className="h-2 w-full overflow-hidden rounded-full bg-parchment">
-                            <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
 
               {/* Subtasks card */}
               <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
