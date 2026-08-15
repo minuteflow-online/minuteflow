@@ -88,6 +88,9 @@ function StatusBadge({ status }: { status: string }) {
 
 const KIND_LABEL: Record<ProjectKind, string> = { objective: "Objective", operation: "Operation" };
 
+// Statuses counted as "done" for the "Where They Are" completed/total figure.
+const DONE_STATUSES = new Set(["completed", "approved", "paid"]);
+
 export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin = false, kind }: VAProjectsTabProps) {
   const kindLabel = KIND_LABEL[kind];
   const [projects, setProjects] = useState<Project[]>([]);
@@ -440,6 +443,23 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setCreateLinkedObjectiveId("");
     setCreateError(null);
   };
+
+  // "Where they are" — per assigned VA, completed/total on the selected node's own
+  // subtasks. Scoped to this node only (not nested sub-objectives): each sub-objective
+  // is browsed as its own node with its own subtasks, so this already works per
+  // sub-objective without needing to roll up the whole tree.
+  const vaProgress = useMemo(() => {
+    return editVaIds
+      .map((vaId) => {
+        const profile = activeProfiles.find((p) => p.id === vaId);
+        const tasks = subtasks.filter(
+          (t) => t.status !== "cancelled" && (t.assigned_task_assignees ?? []).some((a) => a.va_id === vaId)
+        );
+        const completed = tasks.filter((t) => DONE_STATUSES.has(t.status)).length;
+        return { vaId, name: profile ? profileLabel(profile) : vaId, total: tasks.length, completed };
+      })
+      .filter((p) => p.total > 0);
+  }, [editVaIds, activeProfiles, subtasks]);
 
   const renderNode = (project: Project, depth: number) => {
     const children = childrenByParent.get(project.id) ?? [];
@@ -873,6 +893,31 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   {savingEdit ? "Saving..." : "Save Changes"}
                 </button>
               </div>
+
+              {/* Where They Are card */}
+              {vaProgress.length > 0 && (
+                <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
+                  <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Where They Are</h4>
+                  <div className="space-y-3">
+                    {vaProgress.map(({ vaId, name, total, completed }) => {
+                      const pct = Math.round((completed / total) * 100);
+                      return (
+                        <div key={vaId} className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[12px] font-semibold text-espresso truncate">{name}</span>
+                            <span className="text-[11px] text-stone shrink-0">
+                              {completed} of {total} completed · {pct}%
+                            </span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-parchment">
+                            <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Subtasks card */}
               <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
