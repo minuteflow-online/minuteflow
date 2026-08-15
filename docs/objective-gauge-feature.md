@@ -1,78 +1,86 @@
-# Feature: Per-VA Progress Gauge on Objectives
+# Feature: Objective Progress Gauge (Shared Meter with Per-VA Markers)
 
-## Context
-MinuteFlow is a **live, in-use production app**. This work must happen entirely on the
-`feature/objective` branch and must never modify `main` directly. Treat everything in
-this repo as working code that other people depend on right now — prefer adding new
-files over editing shared ones, and never touch anything outside the scope below.
+## ⚠️ Design correction — read before building
+An earlier version of this doc (and an earlier elicitation answer in this chat) assumed
+**separate small gauges, one per VA**. Boss clarified with a concrete Basecamp example
+this is wrong — see below. This version supersedes that assumption.
 
-## What we're building
-On the Productivity → Objective tab, each Objective currently shows a list of VAs with
-status badges (see `src/components/ObjectiveProgressView.tsx`). We're adding a small
-circular/semicircle "gauge" (like a speedometer needle) next to each VA, showing that
-VA's individual completion percentage on that Objective's subtasks.
+## What she actually wants (clarified via Basecamp screenshot example)
+Boss pointed to Basecamp's "Move the Needle" feature as a visual reference — **but
+explicitly wants it different in one key way**:
+- In Basecamp, the needle is **manually dragged** by a person self-reporting status
+  (On track / Some risk / Concerned).
+- She wants ours to be **automatic** — computed from real data (subtask completion),
+  not manually set by anyone.
+- **One big meter per Objective** (not one gauge per VA).
+- **Each VA assigned to the Objective shows up as their own marker/pin positioned along
+  that same shared arc**, based on their individual progress. Think multiple runners on
+  one race track, each at their own position — not separate tracks per runner, and not
+  a single averaged team needle either. Every VA's position is visible simultaneously
+  on the same gauge.
 
-- **Progress calculation (v1):** `completed / total subtasks * 100` for that VA's
-  subtasks under the Objective. Treat `completed`, `approved`, and `paid` statuses as
-  "done." Exclude `cancelled` tasks from both numerator and denominator.
-- **Layout:** one small gauge per VA (not one shared team gauge). This replaces or sits
-  alongside the existing per-VA status badges — your call on layout, but don't remove
-  the underlying status data, just present it better.
-- **Visual style:** semicircle arc gauge with a needle, similar to a car speedometer.
-  Must use the existing Tailwind CSS variables already defined in
-  `src/app/globals.css` (e.g. `--color-sage`, `--color-amber`, `--color-terracotta`,
-  `--color-sand`, `--color-espresso`) — do not introduce new hardcoded colors.
+## Priority note (unchanged)
+Still explicitly **last priority** per the original voicemail. Part C ("Where They Are"
+text/bar display, already built in `VAProjectsTab.tsx`) comes first and is done. This
+gauge is a visual layer on top of that same data — build it only when boss/Neil decide
+it's time, not before.
 
-## Hard rules — do not violate
-1. **Do not edit `src/components/ProductivityMeterWidget.tsx`.** That's an unrelated
-   existing feature (time-budget bar). Do not repurpose or rename it.
-2. **Do not touch Supabase schema, migrations, or RLS policies.** This feature reads
-   existing task/status data only — no new tables or columns needed for v1.
-3. **Do not modify task-assignment or subtask-creation logic** in
-   `src/components/VAProjectsTab.tsx`. You may only *read* the data it already
-   produces/fetches, not change how tasks are created, assigned, or scored.
-4. **Do not touch `main`.** All commits happen on `feature/objective`. Do not merge,
-   rebase onto, or push to `main` under any circumstance — that's a human decision.
-5. **Do not modify unrelated pages** (Dashboard, Time Log, Reports, Portal, Calendar,
-   Assignment, Operations tabs). Scope is strictly the Objective tab and the two new
-   files below.
-6. **No new npm dependencies** for the gauge — build it with plain SVG. This avoids
-   adding new attack surface / bundle weight for a simple visual.
+## Data layer — already built, reuse it
+`VAProjectsTab.tsx` already computes `vaProgress`, a memoized array of
+`{ vaId, name, total, completed }` per VA (per-node, not rolled up into nested
+sub-objectives — matches the earlier agreed decision). The percentage for each VA's pin
+position is simply `completed / total * 100`, already derivable from this same data
+(see how `pct` is computed inline in the existing "Where They Are" render loop —
+reuse that exact calculation, don't recompute differently).
+
+## Visual design
+- **Semicircle arc gauge** (like Basecamp's), SVG-based, no new dependencies.
+- **Track**: a single arc from 0% (left) to 100% (right), representing the Objective's
+  overall scale.
+- **Per-VA markers**: small dots/pins placed along the arc at each VA's own percentage
+  position. Each marker should be distinguishable per VA — consider a small avatar
+  initial or color-coded dot with a name label/tooltip, matching existing avatar-circle
+  patterns already used elsewhere in the app (e.g. the "NP" circle in the top nav).
+- **No single "needle"** in the traditional sense — since there's no single value to
+  point at (each VA has their own value). If boss also wants an overall
+  Objective-level aggregate indicator (e.g. average of all VAs, or % of all subtasks
+  done regardless of assignee) shown as a distinct needle *in addition to* the VA
+  markers, confirm this — don't assume it, it wasn't stated explicitly.
+- Color logic (reuse from earlier draft): red/terracotta under 50%, amber 50–99%, sage
+  at 100% — apply per-marker, based on that VA's own percentage.
+
+## Open question to confirm before building
+- [ ] Does she want an overall Objective-level indicator on the same gauge (e.g. "team
+      average" or "% of all subtasks done"), in addition to individual VA markers? Her
+      description focused entirely on individual VA positions ("like a race") — don't
+      add a team-average needle unless she confirms she wants one too.
+
+## Hard rules (unchanged from original)
+1. Do not edit `ProductivityMeterWidget.tsx` — unrelated existing feature.
+2. No Supabase schema changes — reads existing subtask/status data via `vaProgress`.
+3. Do not modify task-assignment or subtask-creation logic in `VAProjectsTab.tsx` —
+   only add a new gauge component that reads `vaProgress`, don't alter how it's computed.
+4. Do not touch `main`. Stay on `feature/objective` (or whatever branch is current).
+5. No new npm dependencies — plain SVG.
+6. Match existing color tokens from `AGENTS.md`'s design system reference.
 
 ## Files to create
 - `src/components/ObjectiveGauge.tsx` — new, isolated, presentational component.
-  - Props: `{ pct: number; label?: string; size?: "sm" | "md" }`
-  - Pure/dumb component: **no data fetching, no Supabase calls inside it.** Takes a
-    number 0–100 and renders the gauge. This makes it independently testable.
-  - Color logic: red/terracotta under 50%, amber 50–99%, sage at 100%.
-  - Should render cleanly at `size="sm"` (used per-VA in a row) — this is the primary
-    use case for v1.
+  - Props: `{ vaProgress: { vaId: string; name: string; total: number; completed: number }[] }`
+    (reuse the exact shape already produced in `VAProjectsTab.tsx` — no reshaping needed).
+  - Pure/dumb component: no data fetching inside it, just renders markers from the
+    array it's given.
 
-## Files to modify (minimally)
-- `src/components/ObjectiveProgressView.tsx`
-  - Where it already computes/loops over each VA's task counts, derive
-    `pct = completed / total * 100` (guard against divide-by-zero → show 0%).
-  - Render `<ObjectiveGauge pct={pct} label={va.name} size="sm" />` next to/above the
-    existing status badge row. Keep the existing badges — don't delete them, this is
-    additive.
-
-## Workflow — do this in order, and pause for review between steps
-1. Confirm you're on `feature/objective` (not `main`) before writing anything. If not,
-   stop and ask.
-2. Build `ObjectiveGauge.tsx` in isolation. Show me the component code and a brief
-   description of the SVG approach before wiring it into any real page.
-3. Wire it into `ObjectiveProgressView.tsx` with the minimal diff described above. Show
-   me the diff before committing.
-4. Run `npm run lint` and `npm run build` locally to confirm nothing else breaks.
-5. Commit with a clear message (e.g. `feat: add per-VA progress gauge to Objective view`).
-   Do not push to `origin` — I'll review and push myself.
-6. Stop. Do not open a PR, do not merge, do not touch `main`. Wait for my go-ahead.
+## Files to modify (once built)
+- `src/components/VAProjectsTab.tsx` — render `<ObjectiveGauge vaProgress={vaProgress} />`
+  near/instead of (TBD, confirm with Neil) the existing "Where They Are" bars — likely
+  the gauge becomes a visual replacement or companion to those bars, not a third
+  separate section. Decide placement when this work actually starts.
 
 ## Acceptance criteria
-- [ ] Gauge renders correctly for 0%, partial, and 100% completion.
+- [ ] Gauge renders one shared arc per Objective, with a marker per VA at their correct
+      position.
+- [ ] Markers update correctly as VA progress changes (0%, partial, 100%).
 - [ ] No visual/behavior change to any other tab or component.
-- [ ] `ProductivityMeterWidget.tsx` is untouched (check with `git diff main --stat`).
-- [ ] No new dependencies added to `package.json`.
+- [ ] No new dependencies added.
 - [ ] `npm run build` succeeds with no new errors/warnings.
-- [ ] Diff is limited to: `ObjectiveGauge.tsx` (new) and `ObjectiveProgressView.tsx`
-      (modified) — verify with `git status` before committing.
