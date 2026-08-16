@@ -910,29 +910,8 @@ export default function ReportsPage() {
           <p className="mt-0.5 text-[13px] text-bark">{periodLabel}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {/* Tab: Overview vs Progress */}
-          <div className="flex rounded-lg border border-sand overflow-hidden mr-1">
-            <button
-              onClick={() => setReportTab("overview")}
-              className={`px-4 py-2 text-[13px] font-semibold transition-all ${
-                reportTab === "overview"
-                  ? "bg-espresso text-white"
-                  : "bg-parchment text-walnut hover:bg-sand"
-              }`}
-            >
-              Overview
-            </button>
-            <button
-              onClick={() => setReportTab("progress")}
-              className={`px-4 py-2 text-[13px] font-semibold transition-all border-l border-sand ${
-                reportTab === "progress"
-                  ? "bg-espresso text-white"
-                  : "bg-parchment text-walnut hover:bg-sand"
-              }`}
-            >
-              Progress
-            </button>
-          </div>
+          {/* Overview vs Progress is now switched via the Monitoring sub-nav
+              (Report / Progress tabs) — see MonitoringSubNav.tsx. */}
           {/* VA Filter (admin/manager only) */}
           {hasBroadAdminAccess({ role }) && (
             <select
