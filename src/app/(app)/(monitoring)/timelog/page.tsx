@@ -10,6 +10,8 @@ import CorrectionRequestModal from "@/components/CorrectionRequestModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import CSVUploadModal from "@/components/CSVUploadModal";
 import TimeLogColumnFilter from "@/components/TimeLogColumnFilter";
+import RevisionBadge from "@/components/RevisionBadge";
+import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
 import {
   formatDuration,
   formatDurationShort,
@@ -173,6 +175,7 @@ function formatTimeOffLabel(entry: { start_time: string | null; end_time: string
 
 export default function TimeLogPage() {
   const [logs, setLogs] = useState<TimeLog[]>([]);
+  const revisionByLogId = useRevisionByLogId(logs);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("day");
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
@@ -259,6 +262,9 @@ export default function TimeLogPage() {
   const [department, setDepartment] = useState<string | null>(null);
   const isITStaff = department?.trim().toUpperCase() === "IT";
   const isAdminOrManager = hasBroadAdminAccess({ role }) || isITStaff;
+  // Coordinator sees every VA's time entries (rides on isAdminOrManager above)
+  // but is view-only here — no editing, creating, or CSV-uploading entries.
+  const canEditTimeLogs = isAdminOrManager && role !== "coordinator";
 
   /* ── Fetch current user & profiles ─────────────────────── */
 
@@ -1064,7 +1070,7 @@ export default function TimeLogPage() {
           >
             🗑 Trash
           </button>
-          {isAdminOrManager && (
+          {canEditTimeLogs && (
             <>
               <button
                 onClick={() => setShowCSVUpload(true)}
@@ -1164,7 +1170,10 @@ export default function TimeLogPage() {
                           {log.start_time ? new Date(log.start_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone }) : "—"}
                         </td>
                         <td className="px-4 py-3 text-bark">
-                          {log.duration_ms ? formatDuration(log.duration_ms) : "—"}
+                          <span className="inline-flex items-center gap-1">
+                            {log.duration_ms ? formatDuration(log.duration_ms) : "—"}
+                            <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-bark text-[11px]">
                           {log.deleted_at ? new Date(log.deleted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone }) : "—"}
@@ -1532,8 +1541,11 @@ export default function TimeLogPage() {
 
                           {/* Duration */}
                           <td className="px-3 py-2.5 text-right align-top whitespace-nowrap">
-                            <div className={`font-serif font-bold ${isLive ? "text-terracotta" : isBreak ? "text-amber" : "text-sage"}`}>
+                            <div className={`flex items-center justify-end gap-1 font-serif font-bold ${isLive ? "text-terracotta" : isBreak ? "text-amber" : "text-sage"}`}>
                               {isLive ? "live" : log.duration_ms > 0 ? formatDurationShort(log.duration_ms) : "0:00"}
+                              {/* Beside the time, so scanning durations shows
+                                  which minutes were revision work. */}
+                              <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
                             </div>
                             <div className="text-[10px] text-stone mt-0.5 tabular-nums">
                               {log.start_time ? formatTimeTZ(log.start_time, orgTimezone) : "—"}
@@ -1603,7 +1615,7 @@ export default function TimeLogPage() {
                           {/* Actions */}
                           <td className="px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-1">
-                              {isAdminOrManager && (
+                              {canEditTimeLogs && (
                                 <button
                                   onClick={() => setEditingLog(log)}
                                   className="w-[24px] h-[24px] rounded flex items-center justify-center text-stone hover:text-terracotta hover:bg-terracotta-soft transition-all"
