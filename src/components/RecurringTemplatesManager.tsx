@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { countWords } from "@/lib/utils";
+import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
+import Section from "@/components/ui/Section";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -58,6 +60,7 @@ interface FormState {
   objective_custom: string;
   task_name_mode: string;
   task_name_custom: string;
+  category: string;
   start_date: string;
   assigned_by_id: string;
   task_detail: string;
@@ -154,6 +157,7 @@ function defaultForm(): FormState {
     objective_custom: "",
     task_name_mode: "",
     task_name_custom: "",
+    category: "Task",
     start_date: todayLocal(),
     assigned_by_id: "",
     task_detail: "",
@@ -182,6 +186,7 @@ function templateToForm(
     objective_custom: objectiveMatch ? "" : (template.project ?? template.description ?? ""),
     task_name_mode: taskMatch ? taskMatch.task_name : "__custom__",
     task_name_custom: taskMatch ? "" : (template.title ?? template.task_name ?? ""),
+    category: template.category ?? "Task",
     start_date: template.start_date ?? todayLocal(),
     assigned_by_id: template.assigned_by ?? "",
     task_detail: template.task_detail ?? template.description ?? "",
@@ -527,6 +532,12 @@ export default function RecurringTemplatesManager({
       setNotice({ type: "error", text: "Task name is required." });
       return;
     }
+    // Same rule as TaskEditor — Client Detail is what reaches the client memo,
+    // so every task this template generates has to start with one.
+    if (!form.task_detail.trim()) {
+      setNotice({ type: "error", text: "Client Detail is required." });
+      return;
+    }
     if (form.assigned_to_ids.length === 0) {
       setNotice({ type: "error", text: "Assign at least one VA." });
       return;
@@ -553,7 +564,7 @@ export default function RecurringTemplatesManager({
         assigned_to: form.assigned_to_ids[0] ?? null,
         account: form.account.trim() || null,
         project: objectiveName,
-        category: null,
+        category: form.category || null,
         pay_type: null,
         recurrence_type: form.recurrence_type,
         recurrence_days: null,
@@ -785,7 +796,8 @@ export default function RecurringTemplatesManager({
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-3">
+                <Section title="Basics">
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Account</label>
                   <select
@@ -902,37 +914,27 @@ export default function RecurringTemplatesManager({
                   )}
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Start Date</label>
-                    <input
-                      type="date"
-                      value={form.start_date}
-                      onChange={(e) => setForm((prev) => ({ ...prev, start_date: e.target.value }))}
-                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
-                    />
-                  </div>
-                  {!vaMode && (
-                    <div>
-                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Assigned By</label>
-                      <select
-                        value={form.assigned_by_id}
-                        onChange={(e) => setForm((prev) => ({ ...prev, assigned_by_id: e.target.value }))}
-                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
-                      >
-                        <option value="">Select assigned by...</option>
-                        {assignedBySorted.map((profile) => (
-                          <option key={profile.id} value={profile.id}>
-                            {profileLabel(profile)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Detail</label>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Category</label>
+                  <select
+                    value={form.category}
+                    onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value }))}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
+                  >
+                    {CATEGORY_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                </Section>
+
+                <Section title="Details">
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                    Client Detail <span className="text-terracotta">*</span>
+                  </label>
                   <input
                     value={form.task_detail}
                     onChange={(e) => setForm((prev) => ({ ...prev, task_detail: limitToWords(e.target.value, CLIENT_MEMO_WORD_LIMIT) }))}
@@ -940,7 +942,7 @@ export default function RecurringTemplatesManager({
                     className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
                   />
                   <p className="text-[10px] text-stone mt-1">
-                    {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(form.task_detail))} words remaining
+                    {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(form.task_detail))} words remaining — this is what carries over to the client invoice/report.
                   </p>
                 </div>
 
@@ -978,44 +980,21 @@ export default function RecurringTemplatesManager({
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Assigned To</label>
-                  {vaMode ? (
-                    <p className="text-[13px] text-espresso py-1">You</p>
-                  ) : (
-                    <TemplateVAMultiSelect
-                      activeProfiles={assigneeOptions}
-                      selectedIds={form.assigned_to_ids}
-                      onChange={(ids) => setForm((prev) => ({ ...prev, assigned_to_ids: ids }))}
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Status</label>
+                  <label className="inline-flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider text-walnut">
+                    <input
+                      type="checkbox"
+                      checked={form.is_active}
+                      onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+                      className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
                     />
-                  )}
+                    Active
+                  </label>
+                  <p className="mt-1 text-[11px] text-stone">Paused templates stop generating tasks but keep the ones already created.</p>
                 </div>
+                </Section>
 
-                <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Repeat</label>
-                  <select
-                    value={form.recurrence_type}
-                    onChange={(e) => setForm((prev) => ({ ...prev, recurrence_type: e.target.value as RecurrenceType }))}
-                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
-                  >
-                    {RECURRENCE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[11px] text-stone">{RECURRENCE_OPTIONS.find((option) => option.value === form.recurrence_type)?.helper}</p>
-                </div>
-
-                <label className="inline-flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider text-walnut">
-                  <input
-                    type="checkbox"
-                    checked={form.is_active}
-                    onChange={(e) => setForm((prev) => ({ ...prev, is_active: e.target.checked }))}
-                    className="h-4 w-4 rounded border-sand text-terracotta focus:ring-terracotta"
-                  />
-                  Active
-                </label>
-
+                <Section title="Attachments & Files">
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <label className="block text-[11px] font-semibold uppercase tracking-wider text-walnut">Attach Files</label>
@@ -1105,6 +1084,68 @@ export default function RecurringTemplatesManager({
                     )}
                   </div>
                 )}
+                </Section>
+
+                <Section title="Assignment">
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Assigned To</label>
+                  {vaMode ? (
+                    <p className="text-[13px] text-espresso py-1">You</p>
+                  ) : (
+                    <TemplateVAMultiSelect
+                      activeProfiles={assigneeOptions}
+                      selectedIds={form.assigned_to_ids}
+                      onChange={(ids) => setForm((prev) => ({ ...prev, assigned_to_ids: ids }))}
+                    />
+                  )}
+                </div>
+
+                {!vaMode && (
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Assigned By</label>
+                    <select
+                      value={form.assigned_by_id}
+                      onChange={(e) => setForm((prev) => ({ ...prev, assigned_by_id: e.target.value }))}
+                      className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
+                    >
+                      <option value="">Select assigned by...</option>
+                      {assignedBySorted.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {profileLabel(profile)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                </Section>
+
+                <Section title="Schedule">
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Start Date</label>
+                  <input
+                    type="date"
+                    value={form.start_date}
+                    onChange={(e) => setForm((prev) => ({ ...prev, start_date: e.target.value }))}
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Repeat</label>
+                  <select
+                    value={form.recurrence_type}
+                    onChange={(e) => setForm((prev) => ({ ...prev, recurrence_type: e.target.value as RecurrenceType }))}
+                    className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
+                  >
+                    {RECURRENCE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-stone">{RECURRENCE_OPTIONS.find((option) => option.value === form.recurrence_type)?.helper}</p>
+                </div>
+                </Section>
               </div>
 
               <div className="flex items-center justify-between gap-3 border-t border-sand px-6 py-4">
