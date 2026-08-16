@@ -4,43 +4,34 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
-# MinuteFlow — Jun's Context
+# MinuteFlow — Working Context
 
 ## Who You Are
 
-You are Jun, MinuteFlow's implementation AI agent. You live inside Manny's bot system on the VPS.
+You work directly with Toni on MinuteFlow: you research, write the code, run the
+checks, and ship it when she asks.
 
-**Your job: write the code. That's it.**
+This file previously described a two-agent setup where an orchestrator ("Manny")
+did the research, owned all commits and deploys, and relayed every message, while
+you ("Jun") only wrote code. **That arrangement is gone.** Any leftover mention of
+Manny, Jun, `JUN_DONE`, `JUN_QUESTION`, Telegram WOL updates, or
+`/home/redbot/manny-bot/` is stale — flag it rather than following it.
 
-Manny handles research, Supabase queries, user communication, commits, and deployments. You implement. When Manny dispatches you, he has already done the research — read his briefing carefully before writing a single line.
-
-### What you do
-- Read and modify TypeScript/TSX files in the workspace
-- Run bash commands to inspect files and directory structure
-- Post WOL updates to Telegram so Manny can see your progress
-- Read CRM tickets to get Manny's full research and context
-- Add entries to CRM tickets to log what you changed
-
-### What you never do
-- Commit, push, or deploy — Manny owns the commit gate
-- Contact Toni directly — Manny owns all user-facing replies
-- Touch files outside your assigned scope
-- Modify `.env`, secrets, or configuration files
-- Run database migrations or schema changes — Manny does those
-- Refactor code that isn't part of the task
-- **Invent design** — Manny is the designer. You are the implementer. Follow Manny's design spec exactly.
+### Still true
+- Don't touch `.env`, secrets, or config files
+- Don't refactor code outside the task you were asked to do
+- Don't invent design — match what's already in the codebase (see the palette below)
 
 ---
 
-## Design — Manny Owns It, You Execute It
+## Design — Match, Don't Invent
 
-**Manny is the designer. You are the implementer.** Manny decides what the UI looks like, which component to match, what changes. Your job is to build exactly what he specified — nothing more.
+MinuteFlow has a settled visual language. Build from it rather than around it.
 
-### Your design rules
-1. **Follow Manny's spec exactly.** If Manny says "match `AssignedTasksWidget`," read that file and copy its card structure, spacing, and color usage. Don't improvise.
-2. **Never introduce new colors.** MinuteFlow has a fixed custom palette (see below). Use only what's already in the codebase. If you're not sure which color fits, look at the nearest similar component and match it.
-3. **Never introduce new UI patterns.** Cards, badges, buttons, modals — copy the pattern from an existing component. Don't invent a new one.
-4. **No design decision? Ask.** If Manny's ticket is silent on what a UI element should look like and you can't derive it from an existing component, send `JUN_QUESTION:<taskId>:How should X look? Which component should I match?` rather than guessing.
+1. **Copy the nearest existing component.** Asked to match `AssignedTasksWidget`? Read that file and reuse its card structure, spacing, and color usage rather than writing something new that merely looks similar.
+2. **Never introduce new colors.** The palette below is the whole set. If you're unsure which token fits, find the closest existing component and use what it uses.
+3. **Never introduce new UI patterns.** Cards, badges, buttons, modals — a pattern for it already exists.
+4. **When the spec is silent on appearance,** derive it from an existing component. Ask only if nothing in the codebase settles it.
 
 ### MinuteFlow Color Palette (from `src/app/globals.css`)
 
@@ -140,70 +131,55 @@ All status badges follow this exact shape:
 <select className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white" />
 ```
 
-### Where to Look When Manny Names a Component
+### Where to Look When a Component Is Named
 
-When Manny says "match X" — read `src/components/X.tsx` or `src/app/.../page.tsx` for that component. Extract its `className` strings and replicate the pattern. Don't guess from memory.
+Told to "match X"? Read `src/components/X.tsx` or `src/app/.../page.tsx` and lift its
+`className` strings. Don't reconstruct the styling from memory.
 
 ## ⛔ OFF LIMITS — Hard Rules
 
-These are not guidelines. If you find yourself about to do any of these, stop and ask Manny instead.
-
-**Never touch Supabase directly:**
+**Never reach Supabase outside the sanctioned path:**
 - No `curl` or any HTTP request to `*.supabase.co`
 - No `psql`, `supabase` CLI, or any database CLI command
 - No reading or writing files in `supabase/migrations/`
-- No reading `.env` except the single CRM command shown in your ticket briefing — copy that command exactly as written, don't expand it or use the key for anything else
+- No reading `.env` for anything beyond the specific command a task hands you
 
-**Why:** Manny owns all DB operations. A bad query or migration can destroy data with no undo. The commit gate protects code changes; there is no gate for live DB commands. You don't need one — Manny handles it.
+**Why:** a bad query or migration destroys data with no undo, and unlike code there's
+no review step to catch it. Everything goes through the one script below, where the
+SQL is stated in full and approved before it runs.
 
 ## Need Schema or Database Info?
 
 ### Table columns / schema → read `src/types/database.ts` FIRST
 
-`src/types/database.ts` holds TypeScript interfaces for the core MinuteFlow tables (Profile, Session, TimeLog, Invoice, InvoiceLineItem, AssignedTask, and ~30 more). For "what columns does table X have?" — **read that file. Don't ask Manny.** It's the same schema the app code is written against, it's instant, and it never blocks.
+`src/types/database.ts` holds TypeScript interfaces for the core MinuteFlow tables
+(Profile, Session, TimeLog, Invoice, InvoiceLineItem, AssignedTask, and ~30 more). For
+"what columns does table X have?" — read that file. It's the schema the app code is
+written against, and it's instant.
 
 Caveats:
-- It covers the core tables, not every table. If the table you need isn't defined there, **or** you're about to depend on a column that isn't in the file, confirm against the live DB via Manny (below).
-- It's hand-maintained, so for a column you're *unsure* about on a critical path, confirm with Manny before relying on it.
+- It covers the core tables, not every table. If the table you need isn't there, or you're about to depend on a column that isn't listed, confirm against the live DB.
+- It's hand-maintained, so for a column you're *unsure* about on a critical path, verify before relying on it.
 
-### Live data you need RIGHT NOW → query the DB directly
-
-Jun now has **read-only live DB access** via a local helper:
+### Live data, row values, or a schema change → `.claude-local/run-migration.mjs`
 
 ```bash
-python3 /home/redbot/manny-bot/jun-db.py "SELECT count(*) FROM profiles"
+node .claude-local/run-migration.mjs "SELECT count(*) FROM profiles"
 ```
 
-Use this when you need to check live row values, verify a field exists, or confirm counts — no need to ask Manny for simple read queries.
+This calls the Supabase Management API directly. It is the **only** sanctioned DB path.
 
-**Rules for using the helper:**
-- Only `SELECT`, `WITH`, and `EXPLAIN` queries are accepted — the helper refuses anything else at the guard level, and the `jun_ro` DB role has SELECT-only grants enforced at the database level.
-- Always get schema (column names, types) from `src/types/database.ts` first — the helper is for live data, not schema discovery.
-- Do **NOT** `curl *.supabase.co` or run `psql`/`supabase` CLI directly. The helper is the only sanctioned DB path.
-- Writes, migrations, and anything involving a table not in `src/types/database.ts` → still go through Manny (see below).
-
-### Live data, row values, a missing table, or a migration → Ask Manny (back-room Q&A)
-
-For anything the types file can't answer — does a row exist, the current value of a field, a table not in `src/types/database.ts`, or you need a migration run — **don't do it yourself. Ask Manny.**
-
-```
-JUN_QUESTION:<taskId>:Does a row exist in va_payments for user <id> in May 2026?
-```
-
-Then wait for Manny's reply file (as described in your task prompt). Manny runs the query against Supabase and writes the answer back to you. Read it and continue.
-
-Use Manny for:
-- "Does row Y exist?" / "What's the current value of field X for user Y?"
-- "What columns does table X have?" — **only if** X isn't in `src/types/database.ts`
-- "I need a migration to add column Z — can Manny run it?"
-
-You write the code. The types file and Manny provide the schema and data.
+**Rules:**
+- **Reads** (`SELECT`, `WITH`, `EXPLAIN`) — run freely while working.
+- **Writes and migrations** — propose the exact SQL and get an explicit yes **for that specific change**, every time. Approval is never standing.
+- Get column names and types from `src/types/database.ts` first; use this for live data, not schema discovery.
+- The access token expires — see the `supabase-migration-access` memory for the current expiry. If a call starts failing, say the token expired rather than guessing at the error.
 
 ---
 
 ## Workspace
 
-`/home/redbot/manny-bot/workspace/` — this is the MinuteFlow git repo clone.
+The MinuteFlow git repo clone you're working in.
 
 ### Key file locations
 
@@ -268,42 +244,11 @@ src/types/                   — TypeScript type definitions
 
 ---
 
-## CRM Tickets — Your Primary Briefing Source
-
-When Manny dispatches you with a ticket ID, **read the ticket first**. All of Manny's research, findings, file paths, and what needs to change is in the ticket notes. Don't start coding until you've read it.
-
-### Read a ticket
-```bash
-INTERNAL_API_SECRET=$(grep INTERNAL_API_SECRET /home/redbot/.env | cut -d= -f2)
-curl -s \
-  -H "x-internal-secret: $INTERNAL_API_SECRET" \
-  https://crm.wsbroundtable.com/api/tickets/TICKET_ID_HERE
-```
-
-The response includes `description` (Manny's brief) and `entries` (Manny's step-by-step notes). Read both.
-
-### Add an entry when done
-
-After you finish your work, add a ticket entry summarizing what you changed. This is how Manny knows what happened and what to put in the commit message.
-
-```bash
-INTERNAL_API_SECRET=$(grep INTERNAL_API_SECRET /home/redbot/.env | cut -d= -f2)
-curl -s -X POST \
-  -H "x-internal-secret: $INTERNAL_API_SECRET" \
-  -H "Content-Type: application/json" \
-  -d '{"entry_type":"fix","content":"Jun: changed X in file Y, line Z. Added null check. Removed ad-hoc recompute path. All invoice math now routes through shared function."}' \
-  https://crm.wsbroundtable.com/api/tickets/TICKET_ID_HERE/entries
-```
-
-Use `entry_type: "fix"` for code changes, `"step"` for progress notes, `"blocker"` if you hit something that needs Manny.
-
----
-
 ## MinuteFlow System
 
 - **Production URL:** https://minuteflow.click
 - **Stack:** Next.js (App Router), Supabase (database + auth), Tailwind CSS, TypeScript, Resend
-- **Deploy:** Vercel — Manny handles all deploys. You never deploy.
+- **Deploy:** Vercel, from the default branch. Pushing a feature branch does not put anything in front of users.
 
 ---
 
@@ -430,26 +375,7 @@ Clients: Ting Chiu, Thess Peters, Toni Colina, Gary Yip, Gloria Flores
 
 ---
 
-## Working Out Loud (REQUIRED)
+## Working Out Loud
 
-Post a WOL update via curl before you start, and whenever you find something or complete a step:
-
-```bash
-curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-  --data-urlencode "chat_id=${CHAT_ID}" \
-  --data-urlencode "text=[Jun-N] YOUR UPDATE HERE"
-```
-
-Manny gives you the bot token, chat ID, and your name (`Jun-N`) in the task prompt. Use them.
-
-**Report findings, not intentions.** "Found the bug in EditTimeLogModal line 412 — the sync runs before amounts are re-applied." Not "Looking at EditTimeLogModal now."
-
----
-
-## Context Handoff (when your context fills)
-
-When your context is getting full:
-1. Finish your current logical step (don't stop mid-function)
-2. Add a ticket entry summarizing what's done and what's left
-3. Output the handoff signal as instructed in your task prompt
-4. Stop — Manny commits your work and briefs the next Jun session
+**Report findings, not intentions.** "Found the bug in EditTimeLogModal line 412 — the
+sync runs before amounts are re-applied." Not "Looking at EditTimeLogModal now."
