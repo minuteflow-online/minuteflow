@@ -3310,21 +3310,21 @@ export default function DashboardPage() {
               ? `${todayStats.taskCount} task${todayStats.taskCount !== 1 ? "s" : ""} logged \u00B7 ${formatHoursMinutes(todayStats.totalMs)} tracked today`
               : "No tasks logged yet today"}
           </p>
-          {sessionState === "idle" && (
-            <p className="mt-1.5 text-[13px] italic text-stone">
-              &ldquo;Let Every Minute Count With Purpose&rdquo;
-            </p>
-          )}
         </div>
         {sessionState === "idle" && (
-          <button
-            onClick={clockIn}
-            disabled={sessionActionPending}
-            className="inline-flex shrink-0 items-center gap-1.5 px-5 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#5a8a60] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(107,143,113,0.25)] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
-            Clock In
-          </button>
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <button
+              onClick={clockIn}
+              disabled={sessionActionPending}
+              className="inline-flex items-center gap-1.5 px-5 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#5a8a60] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(107,143,113,0.25)] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
+              Clock In
+            </button>
+            <p className="text-[13px] italic text-stone">
+              &ldquo;Let Every Minute Count With Purpose&rdquo;
+            </p>
+          </div>
         )}
       </div>
 
