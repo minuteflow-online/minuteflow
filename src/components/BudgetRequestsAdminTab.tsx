@@ -15,6 +15,7 @@ type BudgetRequestRow = {
   review_notes: string | null;
   created_at: string;
   reviewed_at: string | null;
+  period: "day" | "week" | "month";
   va_name: string;
   reviewed_by_name: string | null;
 };
@@ -47,6 +48,7 @@ export default function BudgetRequestsAdminTab() {
   const [grantVaId, setGrantVaId] = useState("");
   const [grantAmount, setGrantAmount] = useState("");
   const [grantUnit, setGrantUnit] = useState<"hours" | "dollars">("hours");
+  const [grantPeriod, setGrantPeriod] = useState<"day" | "week" | "month">("day");
   const [grantReason, setGrantReason] = useState("");
   const [granting, setGranting] = useState(false);
 
@@ -91,7 +93,7 @@ export default function BudgetRequestsAdminTab() {
       const res = await fetch("/api/budget-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ va_id: grantVaId, amount, unit: grantUnit, reason: grantReason.trim() || null }),
+        body: JSON.stringify({ va_id: grantVaId, amount, unit: grantUnit, period: grantPeriod, reason: grantReason.trim() || null }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -107,7 +109,7 @@ export default function BudgetRequestsAdminTab() {
     } finally {
       setGranting(false);
     }
-  }, [grantVaId, grantAmount, grantUnit, grantReason, load]);
+  }, [grantVaId, grantAmount, grantUnit, grantPeriod, grantReason, load]);
 
   const act = useCallback(
     async (id: number, status: "approved" | "denied") => {
@@ -201,6 +203,15 @@ export default function BudgetRequestsAdminTab() {
               <option value="hours">Hours</option>
               <option value="dollars">Dollars</option>
             </select>
+            <select
+              value={grantPeriod}
+              onChange={(e) => setGrantPeriod(e.target.value as "day" | "week" | "month")}
+              className="rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+            >
+              <option value="day">Daily</option>
+              <option value="week">Weekly</option>
+              <option value="month">Monthly</option>
+            </select>
           </div>
           <input
             value={grantReason}
@@ -242,6 +253,9 @@ export default function BudgetRequestsAdminTab() {
                 <div>
                   <p className="text-[13px] font-semibold text-espresso">
                     {r.va_name} · <span className="text-terracotta">{formatAmount(r.amount, r.unit)}</span> more
+                    <span className="ml-1.5 rounded-full bg-slate-blue-soft px-1.5 py-[1px] align-middle text-[10px] font-semibold text-slate-blue">
+                      {r.period === "day" ? "Daily" : r.period === "week" ? "Weekly" : "Monthly"}
+                    </span>
                   </p>
                   <p className="text-[11px] text-stone">{formatDateTime(r.created_at)}</p>
                 </div>

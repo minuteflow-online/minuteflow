@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import type { TimeLog, Profile, TaskScreenshot } from "@/types/database";
 import EditTimeLogModal from "@/components/EditTimeLogModal";
 import CorrectionRequestModal from "@/components/CorrectionRequestModal";
@@ -190,6 +191,28 @@ export default function TimeLogPage() {
   // partial "short day" window. Used to flag days when a single VA is in view.
   const [timeOff, setTimeOff] = useState<Array<{ user_id: string; start_date: string; end_date: string; start_time: string | null; end_time: string | null }>>([]);
   const [offOnly, setOffOnly] = useState(false); // show only Time Off / Short Day days
+
+  // Persist the VA filter, off-only toggle, and view across visits (per user).
+  // Column-value filters are intentionally left out — they reset on date-range
+  // change by design (see below).
+  type StoredTimelogFilters = { selectedVA?: string; offOnly?: boolean; viewMode?: ViewMode };
+  const { ready: prefsReady, stored: storedFilters, persist: persistFilters } = useFilterPrefs<StoredTimelogFilters>("timelog", currentUserId || null);
+  const prefsAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!prefsReady || prefsAppliedRef.current) return;
+    prefsAppliedRef.current = true;
+    if (storedFilters) {
+      if (storedFilters.selectedVA !== undefined) setSelectedVA(storedFilters.selectedVA);
+      if (storedFilters.offOnly !== undefined) setOffOnly(storedFilters.offOnly);
+      if (storedFilters.viewMode !== undefined) setViewMode(storedFilters.viewMode);
+    }
+  }, [prefsReady, storedFilters]);
+
+  useEffect(() => {
+    if (!prefsReady || !prefsAppliedRef.current) return;
+    persistFilters({ selectedVA, offOnly, viewMode });
+  }, [prefsReady, selectedVA, offOnly, viewMode, persistFilters]);
 
   /* ── Modal state ────────────────────────────────────────── */
   const [editingLog, setEditingLog] = useState<TimeLog | null>(null);

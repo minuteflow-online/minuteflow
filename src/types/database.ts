@@ -68,6 +68,8 @@ export interface BudgetRequest {
   review_notes: string | null;
   created_at: string;
   reviewed_at: string | null;
+  // Which budget the temporary increase applies to.
+  period: 'day' | 'week' | 'month';
 }
 
 export interface PayRateHistory {

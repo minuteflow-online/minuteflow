@@ -51,6 +51,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
   const [showRequest, setShowRequest] = useState(false);
   const [requestAmount, setRequestAmount] = useState("");
   const [requestReason, setRequestReason] = useState("");
+  const [requestPeriod, setRequestPeriod] = useState<"day" | "week" | "month">("day");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -136,18 +137,32 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
   // otherwise an old approval would silently keep padding every future day's
   // budget forever instead of being a one-time exception for that day. Only
   // the daily period is request/grant-able; monthly is read-only.
-  const approvedTodayTotal = useMemo(() => {
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    return requests
-      .filter((r) => r.status === "approved" && r.reviewed_at && new Date(r.reviewed_at) >= todayStart)
-      .reduce((sum, r) => sum + Number(r.amount), 0);
+  // Temporary increases only count toward the period they were requested for,
+  // and only for the current day/week/month instance — an approval reviewed in a
+  // prior period no longer pads the current one.
+  const approvedExtras = useMemo(() => {
+    const dayStart = new Date(startOfTodayISO());
+    const weekStart = new Date(startOfWeekISO());
+    const monthStart = new Date(startOfMonthISO());
+    const sumFor = (p: "day" | "week" | "month", since: Date) =>
+      requests
+        .filter((r) => r.status === "approved" && r.period === p && r.reviewed_at && new Date(r.reviewed_at) >= since)
+        .reduce((sum, r) => sum + Number(r.amount), 0);
+    return { day: sumFor("day", dayStart), week: sumFor("week", weekStart), month: sumFor("month", monthStart) };
   }, [requests]);
 
   const dailyLimit = profile ? (budgetType === "output_based" ? profile.daily_budget_limit : shiftHoursFromProfile(profile)) : null;
-  const dailyStatus: BudgetStatus | null = computeBudgetStatus(dailyLimit, dailyUsed, unit, approvedTodayTotal);
-  const weeklyStatus: BudgetStatus | null = computeBudgetStatus(profile?.weekly_budget_limit ?? null, weeklyUsed, unit);
-  const monthlyStatus: BudgetStatus | null = computeBudgetStatus(profile?.monthly_budget_limit ?? null, monthlyUsed, unit);
+  const dailyStatus: BudgetStatus | null = computeBudgetStatus(dailyLimit, dailyUsed, unit, approvedExtras.day);
+  const weeklyStatus: BudgetStatus | null = computeBudgetStatus(profile?.weekly_budget_limit ?? null, weeklyUsed, unit, approvedExtras.week);
+  const monthlyStatus: BudgetStatus | null = computeBudgetStatus(profile?.monthly_budget_limit ?? null, monthlyUsed, unit, approvedExtras.month);
+
+  // A request can be offered whenever ANY period is at/over its limit — not just
+  // the daily one — so being over the weekly or monthly budget surfaces it too.
+  const anyOverOrWarn = Boolean(
+    (dailyStatus && (dailyStatus.warn || dailyStatus.over)) ||
+    (weeklyStatus && (weeklyStatus.warn || weeklyStatus.over)) ||
+    (monthlyStatus && (monthlyStatus.warn || monthlyStatus.over))
+  );
 
   const pendingRequest = requests.find((r) => r.status === "pending");
 
@@ -163,7 +178,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
       const res = await fetch("/api/budget-requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount, unit, reason: requestReason.trim() || null }),
+        body: JSON.stringify({ amount, unit, period: requestPeriod, reason: requestReason.trim() || null }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -178,7 +193,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
     } finally {
       setSubmitting(false);
     }
-  }, [requestAmount, requestReason, unit, load]);
+  }, [requestAmount, requestReason, requestPeriod, unit, load]);
 
   // No limits configured at all → nothing to show. In the standalone card
   // that means stay out of the way entirely; inside the tabbed container the
@@ -186,7 +201,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
   const hasAnyLimit = Boolean(dailyStatus || weeklyStatus || monthlyStatus);
   if (!loading && !hasAnyLimit && !bare) return null;
 
-  function PeriodSection({ label, status }: { label: string; status: BudgetStatus | null }) {
+  function PeriodSection({ label, status, approvedExtra = 0, approvedWhen }: { label: string; status: BudgetStatus | null; approvedExtra?: number; approvedWhen?: string }) {
     if (!status) {
       return (
         <div>
@@ -210,7 +225,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
           <span>{formatAmount(status.used, status.unit)} used</span>
           <span>
             {formatAmount(status.limit, status.unit)} limit
-            {label === "Daily Limit" && approvedTodayTotal > 0 ? ` (+${formatAmount(approvedTodayTotal, status.unit)} approved today)` : ""}
+            {approvedExtra > 0 ? ` (+${formatAmount(approvedExtra, status.unit)} ${approvedWhen})` : ""}
           </span>
         </div>
         {status.over ? (
@@ -230,18 +245,34 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
         <p className="text-[11px] text-stone">Loading…</p>
       ) : hasAnyLimit ? (
         <>
-          <PeriodSection label="Daily Limit" status={dailyStatus} />
+          <PeriodSection label="Daily Limit" status={dailyStatus} approvedExtra={approvedExtras.day} approvedWhen="approved today" />
           <div className="border-t border-parchment" />
-          <PeriodSection label="Weekly Limit" status={weeklyStatus} />
+          <PeriodSection label="Weekly Limit" status={weeklyStatus} approvedExtra={approvedExtras.week} approvedWhen="approved this week" />
           <div className="border-t border-parchment" />
-          <PeriodSection label="Monthly Budget" status={monthlyStatus} />
+          <PeriodSection label="Monthly Budget" status={monthlyStatus} approvedExtra={approvedExtras.month} approvedWhen="approved this month" />
 
-          {dailyStatus && (pendingRequest ? (
+          {(pendingRequest ? (
             <p className="rounded-lg bg-amber-soft/60 px-2.5 py-1.5 text-[11px] text-walnut">
-              Request for {formatAmount(pendingRequest.amount, pendingRequest.unit)} more is pending admin approval.
+              Request for {formatAmount(pendingRequest.amount, pendingRequest.unit)} more ({pendingRequest.period === "day" ? "today" : pendingRequest.period === "week" ? "this week" : "this month"}) is pending admin approval.
             </p>
           ) : showRequest ? (
             <div className="space-y-2 rounded-lg border border-sand bg-parchment/30 p-2.5">
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">Increase for</label>
+                <div className="inline-flex rounded-lg border border-sand bg-white p-0.5 text-[10px] font-semibold">
+                  {(["day", "week", "month"] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setRequestPeriod(p)}
+                      className={`rounded-md px-2.5 py-1 capitalize transition-colors ${requestPeriod === p ? "bg-terracotta-soft text-terracotta" : "text-stone hover:text-espresso"}`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-[10px] text-stone">Temporary — lifts only this {requestPeriod}&apos;s budget.</p>
+              </div>
               <div>
                 <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">Extra budget ({unit})</label>
                 <input
@@ -282,10 +313,14 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
               </div>
             </div>
           ) : (
-            (dailyStatus.warn || dailyStatus.over) && (
+            anyOverOrWarn && (
               <button
                 type="button"
-                onClick={() => setShowRequest(true)}
+                onClick={() => {
+                  const p = dailyStatus?.over || dailyStatus?.warn ? "day" : weeklyStatus?.over || weeklyStatus?.warn ? "week" : "month";
+                  setRequestPeriod(p);
+                  setShowRequest(true);
+                }}
                 className="w-full rounded-lg border border-terracotta/40 bg-terracotta-soft px-3 py-1.5 text-[11px] font-semibold text-terracotta hover:bg-terracotta-soft/70"
               >
                 Request more budget
