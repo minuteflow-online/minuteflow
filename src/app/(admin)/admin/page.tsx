@@ -3247,6 +3247,16 @@ function TeamManagementTab({
                         </button>
                         <button onClick={cancelEdit} className="text-bark hover:text-terracotta text-sm">&times;</button>
                       </div>
+                    ) : p.role === "founder" && p.id !== currentUserId ? (
+                      // A founder's role can only ever be changed by that same account
+                      // (enforced server-side too, see /api/users PATCH) — not even
+                      // another founder or full admin can touch it from here.
+                      <span
+                        title="Only this founder can change their own role"
+                        className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-parchment text-bark"
+                      >
+                        {displayRole(p.role, p.department)}
+                      </span>
                     ) : (
                       <button
                         onClick={() => startEditing(p.id, "role", p.role)}
