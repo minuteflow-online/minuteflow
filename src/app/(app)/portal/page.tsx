@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types/database";
 import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 import VAProfileTab from "@/components/VAProfileTab";
-import AvatarUpload from "@/components/AvatarUpload";
 import { normalizeByDateValue, type ByDateValue } from "@/lib/payroll";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { hasModerationAccess } from "@/lib/financialAccess";
@@ -2005,18 +2004,10 @@ export default function VaPortalPage() {
       <aside className="w-56 shrink-0 border-r border-sand bg-parchment">
         <div className="sticky top-14 pt-4 pb-6">
           {/* Portal header */}
-          <div className="px-4 pb-4 border-b border-sand mb-3">
+          <div className="px-4 pb-3 border-b border-sand mb-3">
             <p className="text-[11px] font-bold text-stone tracking-widest uppercase">Portal</p>
             {profile && (
-              <div className="mt-2 flex flex-col items-center gap-2 text-center">
-                <AvatarUpload
-                  avatarUrl={profile.avatar_url}
-                  fullName={profile.full_name}
-                  size={88}
-                  onUploaded={(url) => setProfile((prev) => (prev ? { ...prev, avatar_url: url } : prev))}
-                />
-                <p className="text-sm font-semibold text-espresso truncate max-w-full">{profile.full_name}</p>
-              </div>
+              <p className="text-xs font-medium text-espresso mt-0.5 truncate">{profile.full_name}</p>
             )}
           </div>
 
