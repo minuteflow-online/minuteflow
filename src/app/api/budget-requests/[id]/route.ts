@@ -1,5 +1,6 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const auth = await requireAuthed();
   if ("error" in auth) return auth.error;
 
-  const isAdminOrManager = auth.role === "admin" || auth.role === "manager";
+  const isAdminOrManager = hasBroadAdminAccess({ role: auth.role });
   if (!isAdminOrManager) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { TimeLog, Profile } from "@/types/database";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -93,7 +94,7 @@ export default function EditTimeLogModal({
 }: EditTimeLogModalProps) {
   const isCreate = !log;
   const isVA = currentUserRole === "va";
-  const isAdminOrManager = currentUserRole === "admin" || currentUserRole === "manager";
+  const isAdminOrManager = hasBroadAdminAccess({ role: currentUserRole });
 
   // ── Core form fields
   const [taskName, setTaskName] = useState(log?.task_name || "");

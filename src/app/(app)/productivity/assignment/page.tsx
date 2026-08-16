@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
@@ -652,7 +653,7 @@ export default function TaskListPage() {
   }, [supabase]);
 
   const isSubmittedView = activeView === "submitted";
-  const isAdmin = currentRole === "admin" || currentRole === "manager";
+  const isAdmin = hasBroadAdminAccess({ role: currentRole });
   const isPerTaskVa = currentPosition === "Per Task VA";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
