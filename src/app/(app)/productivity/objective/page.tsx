@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import VAProjectsTab from "@/components/VAProjectsTab";
 import type { UserRole } from "@/types/database";
 
@@ -42,6 +43,6 @@ export default function ProductivityObjectivePage() {
   }
 
   return (
-    <VAProjectsTab kind="objective" activeProfiles={teamMembers} currentUserId={userId} isAdmin={role === "admin"} />
+    <VAProjectsTab kind="objective" activeProfiles={teamMembers} currentUserId={userId} isAdmin={hasBroadAdminAccess({ role })} />
   );
 }

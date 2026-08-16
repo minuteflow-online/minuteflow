@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -40,7 +41,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     .select("log_id, va_id")
     .eq("assigned_task_id", taskId);
 
-  const isAdminOrManager = profile?.role === "admin" || profile?.role === "manager";
+  const isAdminOrManager = hasBroadAdminAccess(profile);
   if (!isAdminOrManager) {
     const isAssignee = (assigneeRows ?? []).some((a) => a.va_id === user.id);
     if (!isAssignee) return Response.json({ error: "Forbidden" }, { status: 403 });

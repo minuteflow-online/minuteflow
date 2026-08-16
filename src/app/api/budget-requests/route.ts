@@ -1,6 +1,7 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { makeApprovalToken } from "@/lib/approvalToken";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -106,7 +107,7 @@ export async function GET() {
   if ("error" in auth) return auth.error;
 
   const admin = makeAdminClient();
-  const isAdminOrManager = auth.role === "admin" || auth.role === "manager";
+  const isAdminOrManager = hasBroadAdminAccess({ role: auth.role });
 
   let query = admin
     .from("budget_requests")
@@ -141,7 +142,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const auth = await requireAuthed();
   if ("error" in auth) return auth.error;
-  const isAdminOrManager = auth.role === "admin" || auth.role === "manager";
+  const isAdminOrManager = hasBroadAdminAccess({ role: auth.role });
 
   const body = await request.json().catch(() => ({}));
   const amount = Number(body.amount);

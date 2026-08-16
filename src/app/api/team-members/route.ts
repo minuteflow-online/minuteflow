@@ -1,8 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
-/** GET: Return active admin + VA profiles for recipient selection */
+/** GET: Return active admin/broad-access + VA profiles for recipient selection */
 export async function GET() {
   const supabase = await createClient();
   const {
@@ -19,7 +20,7 @@ export async function GET() {
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   const filteredMembers = (members || []).filter(
-    (member) => member.role === "admin" || member.role === "va"
+    (member) => member.role === "va" || hasBroadAdminAccess(member)
   );
 
   return Response.json({ members: filteredMembers });

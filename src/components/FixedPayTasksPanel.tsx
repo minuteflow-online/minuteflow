@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
@@ -195,7 +196,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   // hourly/fixed-pay create toggle.
   const isPerTaskVa = currentPosition === "Per Task VA" || currentPayRateType === "per_task";
   const isEligibleVa = currentRole === "va" && (isPerTaskVa || canSeeAvailableTasks);
-  const isAdminOrManager = currentRole === "admin" || currentRole === "manager";
+  const isAdminOrManager = hasBroadAdminAccess({ role: currentRole });
   const canViewPage = isEligibleVa || isAdminOrManager;
   // Hybrid = labeled as an hourly VA (Part-time or Full-time position) with
   // the "Available Tasks" toggle on in Team management. Keyed on position,

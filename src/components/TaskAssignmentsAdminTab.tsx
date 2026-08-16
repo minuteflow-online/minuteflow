@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type {
   Profile,
   AssignedTaskWithAssignees,
@@ -441,7 +442,7 @@ export default function TaskAssignmentsAdminTab({
   const supabase = useMemo(() => createClient(), []);
   const activeProfiles = profiles.filter((p) => p.is_active !== false);
   const assignedByProfiles = activeProfiles.filter(
-    (p) => p.role === "admin" || p.position === "Full-time VA" || p.position === "Part-time VA"
+    (p) => hasBroadAdminAccess(p) || p.position === "Full-time VA" || p.position === "Part-time VA"
   );
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);

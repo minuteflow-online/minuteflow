@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import VAProjectsTab from "@/components/VAProjectsTab";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import type { RecurringTaskTemplate, UserRole } from "@/types/database";
@@ -113,7 +114,7 @@ export default function ProductivityOperationsPage() {
       </div>
 
       {view === "tree" ? (
-        <VAProjectsTab kind="operation" activeProfiles={teamMembers} currentUserId={userId} isAdmin={role === "admin"} />
+        <VAProjectsTab kind="operation" activeProfiles={teamMembers} currentUserId={userId} isAdmin={hasBroadAdminAccess({ role })} />
       ) : (
         <RecurringTemplatesManager
           templates={recurringTemplates}
