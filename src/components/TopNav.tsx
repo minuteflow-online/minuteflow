@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { signOut } from "@/app/actions/auth";
 import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
+import AvatarUpload from "@/components/AvatarUpload";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -91,15 +92,6 @@ function Clock() {
   );
 }
 
-function getInitials(name: string): string {
-  return name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
-
 function DoorIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
@@ -129,76 +121,6 @@ export default function TopNav({ user }: TopNavProps) {
   // Name-chip dropdown (Log out, upload photo)
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null | undefined>(user.avatar_url);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [avatarError, setAvatarError] = useState<string | null>(null);
-  const avatarInputRef = useRef<HTMLInputElement>(null);
-
-  // Avatar crop/zoom modal — opens on file select, uploads only after Save.
-  const CROP_VIEWPORT = 240;
-  const CROP_OUTPUT = 480;
-  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
-  const [cropZoom, setCropZoom] = useState(1);
-  const cropImgRef = useRef<HTMLImageElement>(null);
-
-  const handleAvatarFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-selecting the same file later
-    if (!file) return;
-    setAvatarError(null);
-    setCropZoom(1);
-    setCropImageSrc(URL.createObjectURL(file));
-  }, []);
-
-  const cancelCrop = useCallback(() => {
-    if (cropImageSrc) URL.revokeObjectURL(cropImageSrc);
-    setCropImageSrc(null);
-    setCropZoom(1);
-    setAvatarError(null);
-  }, [cropImageSrc]);
-
-  const saveCroppedAvatar = useCallback(async () => {
-    const img = cropImgRef.current;
-    if (!img) return;
-    setAvatarError(null);
-    setUploadingAvatar(true);
-    try {
-      const naturalW = img.naturalWidth;
-      const naturalH = img.naturalHeight;
-      const baseScale = Math.max(CROP_VIEWPORT / naturalW, CROP_VIEWPORT / naturalH);
-      const scale = baseScale * cropZoom * (CROP_OUTPUT / CROP_VIEWPORT);
-
-      const canvas = document.createElement("canvas");
-      canvas.width = CROP_OUTPUT;
-      canvas.height = CROP_OUTPUT;
-      const ctx = canvas.getContext("2d")!;
-      ctx.save();
-      ctx.translate(CROP_OUTPUT / 2, CROP_OUTPUT / 2);
-      ctx.scale(scale, scale);
-      ctx.drawImage(img, -naturalW / 2, -naturalH / 2, naturalW, naturalH);
-      ctx.restore();
-
-      const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-      if (!blob) {
-        setAvatarError("Couldn't process image");
-        return;
-      }
-
-      const form = new FormData();
-      form.append("file", blob, "avatar.png");
-      const res = await fetch("/api/upload-avatar", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) {
-        setAvatarError(data.error || "Upload failed");
-        return;
-      }
-      setAvatarUrl(data.avatar_url);
-      cancelCrop();
-    } catch {
-      setAvatarError("Upload failed");
-    } finally {
-      setUploadingAvatar(false);
-    }
-  }, [cropZoom, cancelCrop]);
 
   // Every top-level item is now visible to everyone — the one item that used
   // to be role-gated here (Team) moved under Monitoring's own sub-nav, which
@@ -510,24 +432,18 @@ export default function TopNav({ user }: TopNavProps) {
           <div className="flex items-center gap-4">
             <Clock />
 
-            <div className="relative">
+            <div className="relative flex items-center gap-2 rounded-full bg-parchment py-1 pl-1 pr-3">
+              <AvatarUpload
+                avatarUrl={avatarUrl}
+                fullName={user.full_name}
+                size={28}
+                onUploaded={setAvatarUrl}
+              />
               <button
                 type="button"
                 onClick={() => setShowUserMenu((o) => !o)}
-                className="flex cursor-pointer items-center gap-2 rounded-full bg-parchment px-3 py-1 transition-colors hover:bg-sand"
+                className="flex cursor-pointer items-center gap-1.5"
               >
-                {avatarUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={avatarUrl}
-                    alt=""
-                    className="h-7 w-7 shrink-0 rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-terracotta text-xs font-bold text-white">
-                    {getInitials(user.full_name)}
-                  </div>
-                )}
                 <div className="hidden sm:block text-left">
                   <p className="text-xs font-medium text-espresso leading-tight">
                     {user.full_name}
@@ -544,16 +460,7 @@ export default function TopNav({ user }: TopNavProps) {
               {showUserMenu && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
-                  <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl border border-sand bg-white py-1 shadow-lg">
-                    <button
-                      type="button"
-                      onClick={() => avatarInputRef.current?.click()}
-                      disabled={uploadingAvatar}
-                      className="flex w-full cursor-pointer items-center px-3 py-2 text-left text-[13px] text-espresso transition-colors hover:bg-parchment disabled:opacity-50"
-                    >
-                      {uploadingAvatar ? "Uploading…" : "Upload photo"}
-                    </button>
-                    <div className="my-1 border-t border-sand" />
+                  <div className="absolute right-0 top-full z-50 mt-1 w-40 rounded-xl border border-sand bg-white py-1 shadow-lg">
                     <button
                       type="button"
                       onClick={() => {
@@ -568,14 +475,6 @@ export default function TopNav({ user }: TopNavProps) {
                   </div>
                 </>
               )}
-
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                onChange={handleAvatarFileChange}
-                className="hidden"
-              />
             </div>
           </div>
         </div>
@@ -741,59 +640,6 @@ export default function TopNav({ user }: TopNavProps) {
                   {loggingOut ? "Closing & signing out..." : "Close Task & Sign Out"}
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ─── Avatar Crop/Zoom Modal ─── */}
-      {cropImageSrc && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-xs rounded-xl border border-sand bg-white p-5 text-center shadow-xl">
-            <h3 className="mb-3 font-serif text-base font-bold text-espresso">Adjust Photo</h3>
-            <div
-              className="mx-auto overflow-hidden rounded-full border border-sand bg-parchment"
-              style={{ width: CROP_VIEWPORT, height: CROP_VIEWPORT }}
-            >
-              <img
-                ref={cropImgRef}
-                src={cropImageSrc}
-                alt=""
-                className="h-full w-full object-cover"
-                style={{ transform: `scale(${cropZoom})`, transformOrigin: "center" }}
-              />
-            </div>
-            <div className="mt-4 flex items-center gap-2 px-2">
-              <span className="text-xs text-stone">−</span>
-              <input
-                type="range"
-                min={1}
-                max={3}
-                step={0.05}
-                value={cropZoom}
-                onChange={(e) => setCropZoom(parseFloat(e.target.value))}
-                className="w-full accent-terracotta"
-              />
-              <span className="text-xs text-stone">+</span>
-            </div>
-            {avatarError && <p className="mt-2 text-[11px] text-terracotta">{avatarError}</p>}
-            <div className="mt-4 flex gap-3">
-              <button
-                type="button"
-                onClick={cancelCrop}
-                disabled={uploadingAvatar}
-                className="flex-1 rounded-lg bg-parchment px-3 py-2 text-[13px] font-semibold text-walnut transition-colors hover:bg-sand disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={saveCroppedAvatar}
-                disabled={uploadingAvatar}
-                className="flex-1 rounded-lg bg-terracotta px-3 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:opacity-50"
-              >
-                {uploadingAvatar ? "Saving…" : "Save"}
-              </button>
             </div>
           </div>
         </div>

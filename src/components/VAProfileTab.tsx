@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, PaymentAccountDetails } from "@/types/database";
+import AvatarUpload from "@/components/AvatarUpload";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -206,6 +207,16 @@ function BasicInfoSection({
             Edit
           </button>
         )}
+      </div>
+
+      <div className="mb-4 flex items-center gap-3">
+        <AvatarUpload
+          avatarUrl={profile.avatar_url}
+          fullName={profile.full_name}
+          size={56}
+          onUploaded={(url) => onSaved({ ...profile, avatar_url: url })}
+        />
+        <p className="text-[11px] text-stone">Click your picture to change it</p>
       </div>
 
       {editing ? (
