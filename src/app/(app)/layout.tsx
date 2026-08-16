@@ -23,7 +23,7 @@ export default async function AppLayout({
   // Fetch role from profiles table
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, role, department, admin_permissions")
+    .select("full_name, role, department, admin_permissions, avatar_url")
     .eq("id", user.id)
     .single();
 
@@ -33,7 +33,7 @@ export default async function AppLayout({
 
   return (
     <>
-      <TopNav user={{ full_name: fullName, role, department: profile?.department, admin_permissions: profile?.admin_permissions }} />
+      <TopNav user={{ full_name: fullName, role, department: profile?.department, admin_permissions: profile?.admin_permissions, avatar_url: profile?.avatar_url }} />
       <ScreenCaptureProvider>
         <SceAlertBanner />
         <SessionProvider>
