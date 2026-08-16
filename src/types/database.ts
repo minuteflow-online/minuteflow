@@ -70,6 +70,11 @@ export interface Profile {
   // changes `role`, never used for Financials/Invoices/Paystubs (those stay
   // hard-locked to role === "admin"). See src/lib/adminPermissions.ts.
   admin_permissions: string[];
+  // Free-text label shown in Team Management's "Assignments" column — plain
+  // notes only, not tied to task_categories/va_category_assignments (that
+  // relational system is still used elsewhere, e.g. ProjectsTasksTab, for
+  // real task-claim eligibility).
+  assignments_label: string | null;
 }
 
 export interface BudgetRequest {

@@ -290,6 +290,7 @@ export async function PATCH(request: Request) {
     "requires_extension",
     "extension_popup_shown",
     "admin_permissions",
+    "assignments_label",
   ];
   for (const field of allowedFields) {
     if (field in updates) {

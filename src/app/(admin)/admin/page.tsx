@@ -2301,84 +2301,6 @@ function TeamManagementTab({
     setInviteSending(false);
   }, [inviteEmail, inviteEmploymentType, inviteRequiresExtension, inviteMessage]);
 
-  // VA category assignments
-  const [vaCatAssignments, setVaCatAssignments] = useState<
-    Array<{ id: number; va_id: string; category_id: number; task_categories: { category_name: string } | null }>
-  >([]);
-  const fetchCategoryAssignments = useCallback(() => {
-    fetch("/api/va-category-assignments")
-      .then((r) => r.json())
-      .then((d) => setVaCatAssignments(d.assignments ?? []))
-      .catch(() => {});
-  }, []);
-  useEffect(() => {
-    fetchCategoryAssignments();
-  }, [fetchCategoryAssignments]);
-
-  // Full task category catalog, for the Assignments editor
-  const [taskCategories, setTaskCategories] = useState<Array<{ id: number; category_name: string }>>([]);
-  useEffect(() => {
-    fetch("/api/task-categories")
-      .then((r) => r.json())
-      .then((d) => setTaskCategories(d.categories ?? []))
-      .catch(() => {});
-  }, []);
-
-  // Assignments cell editor — plain typeable text, comma-separated category
-  // names, matched (case-insensitive) against the real task_categories list.
-  const [editingAssignmentsFor, setEditingAssignmentsFor] = useState<string | null>(null);
-  const [assignmentText, setAssignmentText] = useState("");
-  const [savingCategoryAssignments, setSavingCategoryAssignments] = useState(false);
-
-  const startEditingAssignments = (userId: string) => {
-    const currentNames = vaCatAssignments
-      .filter((a) => a.va_id === userId && a.task_categories)
-      .map((a) => a.task_categories!.category_name);
-    setAssignmentText(currentNames.join(", "));
-    setEditingAssignmentsFor(userId);
-  };
-  const cancelEditingAssignments = () => {
-    setEditingAssignmentsFor(null);
-    setAssignmentText("");
-  };
-  // Typed names that don't match any real category — shown as a hint, save isn't blocked by them.
-  const unmatchedAssignmentNames = useMemo(() => {
-    const typed = assignmentText.split(",").map((s) => s.trim()).filter(Boolean);
-    const known = new Set(taskCategories.map((c) => c.category_name.toLowerCase()));
-    return typed.filter((name) => !known.has(name.toLowerCase()));
-  }, [assignmentText, taskCategories]);
-  const saveAssignments = async () => {
-    if (!editingAssignmentsFor) return;
-    const userId = editingAssignmentsFor;
-    setSavingCategoryAssignments(true);
-    try {
-      const typedNames = assignmentText.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-      const matchedIds = new Set(
-        taskCategories.filter((c) => typedNames.includes(c.category_name.toLowerCase())).map((c) => c.id)
-      );
-
-      const current = vaCatAssignments.filter((a) => a.va_id === userId);
-      const currentIds = new Set(current.map((a) => a.category_id));
-      const toAdd = [...matchedIds].filter((id) => !currentIds.has(id));
-      const toRemoveAssignmentIds = current.filter((a) => !matchedIds.has(a.category_id)).map((a) => a.id);
-
-      if (toAdd.length > 0) {
-        await fetch("/api/va-category-assignments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ va_id: userId, category_ids: toAdd }),
-        });
-      }
-      if (toRemoveAssignmentIds.length > 0) {
-        await fetch(`/api/va-category-assignments?ids=${toRemoveAssignmentIds.join(",")}`, { method: "DELETE" });
-      }
-      fetchCategoryAssignments();
-      cancelEditingAssignments();
-    } finally {
-      setSavingCategoryAssignments(false);
-    }
-  };
-
   // Department dropdown options: the defaults, plus anything already in use
   // on a real profile (e.g. a custom one typed in via "+ Add new department...")
   // so it keeps showing up as a pickable option from then on.
@@ -2413,9 +2335,6 @@ function TeamManagementTab({
       }
       return vals.sort((a, b) => a.localeCompare(b));
     };
-    const catNames = vaCatAssignments
-      .filter((a) => a.task_categories?.category_name)
-      .map((a) => a.task_categories!.category_name);
     return {
       name: u(profiles.map((p) => p.full_name)),
       status: ["Active", "Inactive"],
@@ -2425,10 +2344,10 @@ function TeamManagementTab({
       position: u(profiles.map((p) => p.position)),
       payRate: isFullAdmin ? u(profiles.map((p) => `$${(p.pay_rate || 0).toFixed(2)}`), true) : [],
       rateType: isFullAdmin ? u(profiles.map((p) => p.pay_rate_type || "hourly")) : [],
-      assignments: u([...new Set(catNames)]),
+      assignments: u(profiles.map((p) => p.assignments_label)),
       availTasks: ["On", "Off", "—"],
     };
-  }, [profiles, vaCatAssignments, isFullAdmin]);
+  }, [profiles, isFullAdmin]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -2484,12 +2403,6 @@ function TeamManagementTab({
     setJoinedStart("");
     setJoinedEnd("");
   }, []);
-
-  const getCategoryBadges = (userId: string) => {
-    return vaCatAssignments
-      .filter((a) => a.va_id === userId && a.task_categories)
-      .map((a) => a.task_categories!.category_name);
-  };
 
   const handleDeleteUser = async () => {
     if (!deleteTarget) return;
@@ -2777,12 +2690,7 @@ function TeamManagementTab({
     if (!check("position", p.position || "—")) return false;
     if (!check("payRate", `$${(p.pay_rate || 0).toFixed(2)}`)) return false;
     if (!check("rateType", p.pay_rate_type || "hourly")) return false;
-    if ("assignments" in colFilters) {
-      if (colFilters.assignments.length === 0) return false;
-      const cats = getCategoryBadges(p.id);
-      const catStrs = cats.length === 0 ? ["—"] : cats;
-      if (!catStrs.some((c) => colFilters.assignments.includes(c))) return false;
-    }
+    if (!check("assignments", p.assignments_label || "—")) return false;
     if ("availTasks" in colFilters) {
       const val = p.can_see_available_tasks ? "On" : "Off";
       if (!check("availTasks", val)) return false;
@@ -2794,7 +2702,7 @@ function TeamManagementTab({
       if (new Date(p.created_at) > new Date(joinedEnd + "T23:59:59.999")) return false;
     }
     return true;
-  }), [profiles, colFilters, joinedStart, joinedEnd, vaCatAssignments]);
+  }), [profiles, colFilters, joinedStart, joinedEnd]);
 
   return (
     <>
@@ -3340,49 +3248,30 @@ function TeamManagementTab({
                     )}
                   </td>
                   )}
-                  {/* Category Assignments — moved next to Role, click-to-edit plain-typed field */}
+                  {/* Assignments — free-text label, next to Role. Not tied to real
+                      task categories (see ProjectsTasksTab for that system). */}
                   {!hiddenColumns.has("assignments") && (
                   <td className="px-3 py-3 min-w-[160px]">
-                    {editingAssignmentsFor === p.id ? (
-                      <div className="w-48 space-y-1">
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={assignmentText}
-                            onChange={(e) => setAssignmentText(e.target.value)}
-                            placeholder="e.g. Message, Meeting"
-                            autoFocus
-                            className="w-full rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
-                            onKeyDown={(e) => { if (e.key === "Enter") saveAssignments(); if (e.key === "Escape") cancelEditingAssignments(); }}
-                          />
-                          <button onClick={saveAssignments} disabled={savingCategoryAssignments} className="text-sage text-[11px] font-bold shrink-0">
-                            {savingCategoryAssignments ? "..." : "OK"}
-                          </button>
-                          <button onClick={cancelEditingAssignments} className="text-bark hover:text-terracotta text-[11px] shrink-0">&times;</button>
-                        </div>
-                        {unmatchedAssignmentNames.length > 0 && (
-                          <p className="text-[9px] text-terracotta">No match: {unmatchedAssignmentNames.join(", ")}</p>
-                        )}
+                    {editingCell?.userId === p.id && editingCell.field === "assignments_label" ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          placeholder="Type anything..."
+                          autoFocus
+                          className="w-32 rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
+                          onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
+                        />
+                        <button onClick={saveEdit} disabled={savingEdit} className="text-sage text-sm font-bold">{savingEdit ? "..." : "OK"}</button>
+                        <button onClick={cancelEdit} className="text-bark hover:text-terracotta text-sm">&times;</button>
                       </div>
                     ) : (
                       <button
-                        type="button"
-                        onClick={() => startEditingAssignments(p.id)}
-                        className="cursor-pointer text-left hover:bg-parchment rounded px-1 -mx-1 py-0.5 transition-colors"
+                        onClick={() => startEditing(p.id, "assignments_label", p.assignments_label || "")}
+                        className="cursor-pointer text-left text-bark hover:text-terracotta transition-colors"
                       >
-                        {(() => {
-                          const cats = getCategoryBadges(p.id);
-                          if (cats.length === 0) return <span className="text-[10px] text-stone">&mdash;</span>;
-                          return (
-                            <div className="flex flex-wrap gap-0.5">
-                              {cats.map((c, i) => (
-                                <span key={i} className="inline-block bg-parchment text-bark px-1.5 py-0.5 rounded-full text-[9px] font-semibold">
-                                  {c}
-                                </span>
-                              ))}
-                            </div>
-                          );
-                        })()}
+                        {p.assignments_label || "—"}
                       </button>
                     )}
                   </td>
