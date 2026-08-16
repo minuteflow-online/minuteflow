@@ -209,62 +209,65 @@ function BasicInfoSection({
         )}
       </div>
 
-      <div className="mb-4 flex items-center gap-3">
-        <AvatarUpload
-          avatarUrl={profile.avatar_url}
-          fullName={profile.full_name}
-          size={56}
-          onUploaded={(url) => onSaved({ ...profile, avatar_url: url })}
-        />
-        <p className="text-[11px] text-stone">Click your picture to change it</p>
-      </div>
+      <div className="flex items-start gap-3">
+        <div className="shrink-0">
+          <AvatarUpload
+            avatarUrl={profile.avatar_url}
+            fullName={profile.full_name}
+            size={80}
+            onUploaded={(url) => onSaved({ ...profile, avatar_url: url })}
+          />
+        </div>
 
-      {editing ? (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {fields.map(({ label, key }) => (
-              <div key={key}>
-                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">{label}</p>
-                <input
-                  type="text"
-                  value={form[key]}
-                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
-                />
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {fields.map(({ label, key }) => (
+                  <div key={key}>
+                    <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">{label}</p>
+                    <input
+                      type="text"
+                      value={form[key]}
+                      onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                    />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <div className="flex items-center gap-3 pt-1">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            <button
-              onClick={() => setEditing(false)}
-              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
-            >
-              Cancel
-            </button>
-            {saveMsg && (
-              <p className={`text-xs font-medium ${saveMsg.type === "ok" ? "text-sage" : "text-terracotta"}`}>
-                {saveMsg.text}
-              </p>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {fields.map(({ label, key }) => (
-            <div key={key}>
-              <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">{label}</p>
-              <p className="text-[13px] text-espresso mt-0.5">{form[key] || "—"}</p>
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => setEditing(false)}
+                  className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+                >
+                  Cancel
+                </button>
+                {saveMsg && (
+                  <p className={`text-xs font-medium ${saveMsg.type === "ok" ? "text-sage" : "text-terracotta"}`}>
+                    {saveMsg.text}
+                  </p>
+                )}
+              </div>
             </div>
-          ))}
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {fields.map(({ label, key }) => (
+                <div key={key}>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">{label}</p>
+                  <p className="text-[13px] text-espresso mt-0.5">{form[key] || "—"}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
