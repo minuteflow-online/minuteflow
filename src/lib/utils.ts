@@ -61,9 +61,20 @@ export function getAvatarColor(seed: string): string {
  * this shows "IT Admin" instead wherever role + department are both known.
  * The database column itself is untouched; this is display-only.
  */
+const ROLE_LABELS: Record<string, string> = {
+  va: "Staff",
+  admin: "Admin",
+  manager: "Manager",
+  coordinator: "Coordinator",
+  specialist: "Specialist",
+  ceo: "CEO",
+  founder: "Founder",
+};
+
 export function displayRole(role: string | null | undefined, department?: string | null): string {
   if (role === "manager" && department?.trim().toUpperCase() === "IT") return "IT Admin";
-  return role ?? "";
+  if (!role) return "";
+  return ROLE_LABELS[role] ?? role;
 }
 
 /** Format a date to time display in a specific timezone (e.g. "3:45 PM") */

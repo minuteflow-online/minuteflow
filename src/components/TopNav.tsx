@@ -31,6 +31,7 @@ const allNavItems: NavItem[] = [
 
 import { getTimezoneAbbr, displayRole } from "@/lib/utils";
 import type { UserRole } from "@/types/database";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 type TopNavProps = {
   user: {
@@ -434,7 +435,7 @@ export default function TopNav({ user }: TopNavProps) {
               </div>
             </div>
 
-            {(user.role === "admin" || user.department?.trim().toUpperCase() === "IT" || (user.admin_permissions?.length ?? 0) > 0) && (
+            {(hasBroadAdminAccess(user) || (user.admin_permissions?.length ?? 0) > 0) && (
               <Link
                 href="/admin"
                 className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso"

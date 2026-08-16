@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'manager' | 'va';
+export type UserRole = 'admin' | 'manager' | 'va' | 'coordinator' | 'specialist' | 'ceo' | 'founder';
 
 export const VA_POSITION_OPTIONS = [
   "Full-time VA",

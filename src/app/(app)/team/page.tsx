@@ -533,9 +533,9 @@ export default function TeamPage() {
     return null;
   }
 
-  // Only Founder/Accounting see pay rates / payable figures — everyone else
-  // (including plain admins/managers/IT) never does. See financialAccess.ts.
-  const isAdmin = hasFinancialAccess({ department });
+  // Only Founder/CEO (or a Specialist in Accounting) see pay rates / payable
+  // figures — everyone else never does. See financialAccess.ts.
+  const isAdmin = hasFinancialAccess({ role, department });
 
   // Dynamic labels based on date range
   const periodSuffix = isToday ? "Today" : periodLabel;
