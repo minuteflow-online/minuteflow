@@ -46,3 +46,15 @@ export function hasModerationAccess(
   if (hasFinancialAccess(profile)) return true;
   return profile?.role === "admin" || profile?.role === "manager";
 }
+
+// Changing anyone's role (Team Management's Role field, or setting a role
+// other than Staff when creating a new user) is restricted to CEO and
+// Founder specifically — narrower than hasFinancialAccess, which also
+// admits an Accounting-department Specialist for financial visibility but
+// not role-granting. A founder's own role is further restricted server-side
+// to only be changeable by that same account (see /api/users PATCH).
+export function canGrantRoles(
+  profile?: { role?: string | null } | null
+): boolean {
+  return profile?.role === "ceo" || profile?.role === "founder";
+}

@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { hasBroadAdminAccess, hasFinancialAccess } from "@/lib/financialAccess";
+import { hasBroadAdminAccess, hasFinancialAccess, canGrantRoles } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -47,11 +47,12 @@ export async function POST(request: Request) {
     );
   }
 
-  // Only full admins may grant the admin role or set pay rates.
+  // Only CEO/Founder may set a role other than the Staff default; only full
+  // admins (Founder/CEO/Accounting) may set pay rates.
+  if (role && role !== "va" && !canGrantRoles({ role: authResult.role })) {
+    return Response.json({ error: "Only CEO or Founder can set a role other than Staff" }, { status: 403 });
+  }
   if (!isFullAdmin) {
-    if (role === "admin") {
-      return Response.json({ error: "Only admins can grant the admin role" }, { status: 403 });
-    }
     pay_rate = 0;
     pay_rate_type = "hourly";
   }
@@ -166,17 +167,20 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const { user_id, action, email, ...updates } = body;
 
-  // Only financial-access accounts (Founder/Accounting) may see/change pay
-  // rates, grant the admin role, or grant admin_permissions bundles (see
-  // adminPermissions.ts) — everyone else with broad access (admin, manager,
-  // IT, Project Coordinator) can't self-escalate or escalate anyone else.
+  // Only financial-access accounts (Founder/CEO/Accounting) may see/change
+  // pay rates or grant admin_permissions bundles (see adminPermissions.ts)
+  // — everyone else with broad access (admin, manager, IT, Project
+  // Coordinator) can't self-escalate or escalate anyone else. Changing a
+  // role at all is further restricted to CEO/Founder specifically (see
+  // canGrantRoles in financialAccess.ts) — an Accounting Specialist gets
+  // financial visibility but not role-granting.
   if (!isFullAdmin) {
     delete updates.pay_rate;
     delete updates.pay_rate_type;
     delete updates.admin_permissions;
-    if (updates.role === "admin") {
-      return Response.json({ error: "Only admins can grant the admin role" }, { status: 403 });
-    }
+  }
+  if ("role" in updates && !canGrantRoles({ role: authResult.role })) {
+    return Response.json({ error: "Only CEO or Founder can change roles" }, { status: 403 });
   }
 
   // ── Send Password Reset Link ──────────────────────────────────────────────

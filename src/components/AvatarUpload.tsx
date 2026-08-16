@@ -12,6 +12,8 @@ type Props = {
   /** Diameter in px of the avatar circle shown outside the modal (e.g. in a nav chip or sidebar). */
   size?: number;
   className?: string;
+  /** Show a "Change photo" caption below the circle — for a standalone profile card, not a cramped nav chip. */
+  hint?: boolean;
   onUploaded: (url: string) => void;
 };
 
@@ -24,8 +26,21 @@ function getInitials(name: string): string {
     .slice(0, 2);
 }
 
+function CameraIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M4 8a2 2 0 0 1 2-2h1.5l1-1.5h7l1 1.5H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </svg>
+  );
+}
+
 /** Avatar circle + click-to-upload, with a drag-to-reposition + zoom crop modal. */
-export default function AvatarUpload({ avatarUrl, fullName, size = 32, className = "", onUploaded }: Props) {
+export default function AvatarUpload({ avatarUrl, fullName, size = 32, className = "", hint = false, onUploaded }: Props) {
+  // Skip the badge on small nav-chip-sized avatars — there's no room for it
+  // to read as anything but clutter; the tooltip carries discoverability there.
+  const showBadge = size >= 40;
+  const badgeSize = Math.round(size * 0.34);
   const inputRef = useRef<HTMLInputElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
 
@@ -125,25 +140,36 @@ export default function AvatarUpload({ avatarUrl, fullName, size = 32, className
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        className={`shrink-0 rounded-full ${className}`}
-        style={{ width: size, height: size }}
-        title="Upload photo"
-      >
-        {avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />
-        ) : (
-          <div
-            className="flex h-full w-full items-center justify-center rounded-full bg-terracotta font-bold text-white"
-            style={{ fontSize: size * 0.4 }}
-          >
-            {getInitials(fullName)}
-          </div>
-        )}
-      </button>
+      <div className="inline-flex flex-col items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className={`relative shrink-0 rounded-full ${className}`}
+          style={{ width: size, height: size }}
+          title="Upload photo"
+        >
+          {avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />
+          ) : (
+            <div
+              className="flex h-full w-full items-center justify-center rounded-full bg-terracotta font-bold text-white"
+              style={{ fontSize: size * 0.4 }}
+            >
+              {getInitials(fullName)}
+            </div>
+          )}
+          {showBadge && (
+            <span
+              className="absolute bottom-0 right-0 flex items-center justify-center rounded-full bg-terracotta text-white ring-2 ring-white"
+              style={{ width: badgeSize, height: badgeSize }}
+            >
+              <CameraIcon className="h-[60%] w-[60%]" />
+            </span>
+          )}
+        </button>
+        {hint && <p className="text-[10px] font-semibold text-stone">Click to change photo</p>}
+      </div>
       <input
         ref={inputRef}
         type="file"
