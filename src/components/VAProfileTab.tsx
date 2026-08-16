@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, PaymentAccountDetails } from "@/types/database";
 import AvatarUpload from "@/components/AvatarUpload";
+import { displayRole } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -149,7 +150,6 @@ function BasicInfoSection({
     full_name: profile.full_name || "",
     username: profile.username || "",
     department: profile.department || "",
-    position: profile.position || "",
   });
 
   useEffect(() => {
@@ -157,7 +157,6 @@ function BasicInfoSection({
       full_name: profile.full_name || "",
       username: profile.username || "",
       department: profile.department || "",
-      position: profile.position || "",
     });
   }, [profile]);
 
@@ -170,7 +169,6 @@ function BasicInfoSection({
         full_name: form.full_name.trim(),
         username: form.username.trim(),
         department: form.department.trim() || null,
-        position: form.position.trim() || null,
       })
       .eq("id", profile.id)
       .select()
@@ -188,11 +186,13 @@ function BasicInfoSection({
     setEditing(false);
   };
 
+  // Full Name, Username, Department are self-editable here. Role and
+  // Assignment are set in Team Management (admin-only) and shown read-only —
+  // a VA can't grant themselves a role or rewrite their own assignment note.
   const fields: { label: string; key: keyof typeof form }[] = [
     { label: "Full Name", key: "full_name" },
     { label: "Username", key: "username" },
     { label: "Department", key: "department" },
-    { label: "Position", key: "position" },
   ];
 
   return (
@@ -209,12 +209,12 @@ function BasicInfoSection({
         )}
       </div>
 
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-6">
         <div className="shrink-0">
           <AvatarUpload
             avatarUrl={profile.avatar_url}
             fullName={profile.full_name}
-            size={80}
+            size={96}
             onUploaded={(url) => onSaved({ ...profile, avatar_url: url })}
           />
         </div>
@@ -222,7 +222,7 @@ function BasicInfoSection({
         <div className="min-w-0 flex-1">
           {editing ? (
             <div className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 max-w-sm">
                 {fields.map(({ label, key }) => (
                   <div key={key}>
                     <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">{label}</p>
@@ -234,6 +234,14 @@ function BasicInfoSection({
                     />
                   </div>
                 ))}
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Role</p>
+                  <p className="text-[13px] text-espresso mt-1.5">{displayRole(profile.role, profile.department) || "—"}</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Assignment</p>
+                <p className="text-[13px] text-espresso">{profile.assignments_label || "—"}</p>
               </div>
               <div className="flex items-center gap-3 pt-1">
                 <button
@@ -257,13 +265,23 @@ function BasicInfoSection({
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {fields.map(({ label, key }) => (
-                <div key={key}>
-                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">{label}</p>
-                  <p className="text-[13px] text-espresso mt-0.5">{form[key] || "—"}</p>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 max-w-sm">
+                {fields.map(({ label, key }) => (
+                  <div key={key}>
+                    <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">{label}</p>
+                    <p className="text-[13px] text-espresso mt-0.5">{form[key] || "—"}</p>
+                  </div>
+                ))}
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Role</p>
+                  <p className="text-[13px] text-espresso mt-0.5">{displayRole(profile.role, profile.department) || "—"}</p>
                 </div>
-              ))}
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Assignment</p>
+                <p className="text-[13px] text-espresso mt-0.5">{profile.assignments_label || "—"}</p>
+              </div>
             </div>
           )}
         </div>
