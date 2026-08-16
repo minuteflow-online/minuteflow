@@ -18,6 +18,7 @@ import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone, countWords } from "@/lib/utils";
+import { fetchScreenshotsForLogs, groupScreenshotsByLog } from "@/lib/screenshots";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import { todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
@@ -166,6 +167,12 @@ export default function DashboardPage() {
   const [screenshots, setScreenshots] = useState<
     Record<number, TaskScreenshot[]>
   >({});
+  // Mirror of timeLogs for the screenshot poller, which scopes its fetch to the
+  // logs currently on screen without restarting the interval on every log change.
+  const timeLogsRef = useRef<TimeLog[]>([]);
+  useEffect(() => {
+    timeLogsRef.current = timeLogs;
+  }, [timeLogs]);
 
   // Role
   const [role, setRole] = useState<UserRole>("va");
@@ -444,7 +451,7 @@ export default function DashboardPage() {
       setLoading(true);
       try {
 
-      const [profileRes, sessionRes, allProfilesRes, allSessionsRes, logsRes, ssRes, orgSettingsRes] =
+      const [profileRes, sessionRes, allProfilesRes, allSessionsRes, logsRes, orgSettingsRes] =
         await Promise.all([
           supabase.from("profiles").select("*").eq("id", userId!).single(),
           supabase.from("sessions").select("*").eq("user_id", userId!).maybeSingle(),
@@ -455,7 +462,6 @@ export default function DashboardPage() {
             .select("*")
             .gte("start_time", activityLogFloorIso())
             .order("start_time", { ascending: false }),
-          supabase.from("task_screenshots").select("*"),
           supabase.from("organization_settings").select("timezone").limit(1).single(),
         ]);
 
@@ -510,16 +516,16 @@ export default function DashboardPage() {
       // Gap-fill detection removed: clocking in means time is always running.
       // There is no untracked gap for a clocked-in VA regardless of active task state.
 
-      // Screenshots grouped by log_id
-      if (ssRes.data) {
-        const grouped: Record<number, TaskScreenshot[]> = {};
-        (ssRes.data as TaskScreenshot[]).forEach((ss) => {
-          if (ss.log_id) {
-            if (!grouped[ss.log_id]) grouped[ss.log_id] = [];
-            grouped[ss.log_id].push(ss);
-          }
-        });
-        setScreenshots(grouped);
+      // Screenshots for the logs actually on screen, grouped by log_id. Scoped to
+      // those logs rather than fetched table-wide: an unscoped select returns the
+      // oldest 1000 rows a viewer is allowed to see, which for a VA with thousands
+      // of stored shots meant today's never arrived (see src/lib/screenshots.ts).
+      if (logsRes.data) {
+        const shots = await fetchScreenshotsForLogs(
+          supabase,
+          (logsRes.data as TimeLog[]).map((l) => l.id)
+        );
+        setScreenshots(groupScreenshotsByLog(shots));
       }
 
       // After load: recover any pending capture requests missed during page refresh.
@@ -604,24 +610,19 @@ export default function DashboardPage() {
   }, [loading, sessionState, activeTask, screenShareActive, notifyVA]);
 
   // ─── Screenshot polling (refresh counts every 15s) ───────
+  // Runs for VAs too — they see their own shots in the Activity Log, and skipping
+  // the refresh for them meant a shot taken after page load never appeared.
   useEffect(() => {
-    if (!userId || role === "va") return;
+    if (!userId) return;
     const interval = setInterval(async () => {
-      const { data } = await supabase.from("task_screenshots").select("*");
-      if (data) {
-        const grouped: Record<number, TaskScreenshot[]> = {};
-        (data as TaskScreenshot[]).forEach((ss) => {
-          if (ss.log_id) {
-            if (!grouped[ss.log_id]) grouped[ss.log_id] = [];
-            grouped[ss.log_id].push(ss);
-          }
-        });
-        setScreenshots(grouped);
-      }
+      const logIds = timeLogsRef.current.map((l) => l.id);
+      if (logIds.length === 0) return;
+      const shots = await fetchScreenshotsForLogs(supabase, logIds);
+      setScreenshots(groupScreenshotsByLog(shots));
     }, 15000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, role]);
+  }, [userId]);
 
   // ─── In-app message polling ──────────────────────────────
   useEffect(() => {

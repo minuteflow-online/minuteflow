@@ -36,6 +36,7 @@ import {
   getTodayBoundsInTimezone,
   getTimezoneAbbr,
   displayRole,
+  screenshotCaptureTime,
 } from "@/lib/utils";
 import ProjectsTasksTab from "@/components/ProjectsTasksTab";
 import FinancialSummaryTab from "@/components/FinancialSummaryTab";
@@ -102,6 +103,17 @@ function screenshotTypeLabel(type: string | null): string {
   return labels[type] || type;
 }
 
+/** Time-of-day with seconds — screenshots land seconds apart, so minutes alone blur them together. */
+function formatCaptureTime(iso: string, timezone?: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+    ...(timezone ? { timeZone: timezone } : {}),
+  });
+}
+
 function screenshotTypeBadge(type: string | null): { bg: string; text: string } {
   if (!type) return { bg: "bg-parchment", text: "text-bark" };
   const styles: Record<string, { bg: string; text: string }> = {
@@ -113,6 +125,29 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
   };
   return styles[type] || { bg: "bg-parchment", text: "text-bark" };
 }
+
+/* ── Screenshot Grouping ─────────────────────────────────── */
+
+/**
+ * A screenshot carrying the moment it was taken. `captureTime` comes from the Drive
+ * filename, which is stamped once at upload and never rewritten; `created_at` is only
+ * the fallback for the handful of rows whose filename predates that convention.
+ */
+type CapturedScreenshot = TaskScreenshot & { captureTime: string; captureFromFilename: boolean };
+
+/**
+ * One task's screenshots — the unit the Screenshots tab renders. The tab is a flat
+ * list of these, newest task first; whose task it is and which day it ran are shown
+ * on the card itself, since a time log belongs to exactly one VA on one day.
+ */
+type ScreenshotTaskGroup = {
+  key: string;
+  userId: string;
+  log: TimeLog | null;
+  taskName: string;
+  dateLabel: string;
+  shots: CapturedScreenshot[];
+};
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
@@ -557,6 +592,9 @@ export default function AdminPage() {
   const [screenshotCustomStart, setScreenshotCustomStart] = useState<string>("");
   const [screenshotCustomEnd, setScreenshotCustomEnd] = useState<string>("");
   const [loadingUrls, setLoadingUrls] = useState(false);
+  // Logs behind screenshots that fall outside the recent-logs window (see screenshotLogMap)
+  const [screenshotLogs, setScreenshotLogs] = useState<Record<number, TimeLog>>({});
+  const requestedLogIdsRef = useRef<Set<number>>(new Set());
 
   // Message state
   const [messageTarget, setMessageTarget] = useState<string | null>(null);
@@ -797,6 +835,52 @@ export default function AdminPage() {
     return map;
   }, [allLogs]);
 
+  /*
+   * Time logs the loaded screenshots point at. `allLogs` only holds the 500 most
+   * recent logs org-wide, so grouping older screenshots by task needs their logs
+   * fetched explicitly — otherwise a month-old day collapses into unnamed tasks.
+   */
+  useEffect(() => {
+    async function loadScreenshotLogs() {
+      const referenced = Array.from(
+        new Set(allScreenshots.map((s) => s.log_id).filter((id): id is number => id !== null))
+      );
+      const missing = referenced.filter(
+        (id) => !logMap.has(id) && !requestedLogIdsRef.current.has(id)
+      );
+      if (missing.length === 0) return;
+      // Marked before the request so a deleted log (which never comes back) can't
+      // put this effect into a permanent refetch loop.
+      missing.forEach((id) => requestedLogIdsRef.current.add(id));
+
+      const supabase = createClient();
+      const fetched: TimeLog[] = [];
+      for (let i = 0; i < missing.length; i += 100) {
+        const { data } = await supabase
+          .from("time_logs")
+          .select("*")
+          .in("id", missing.slice(i, i + 100));
+        if (data) fetched.push(...(data as TimeLog[]));
+      }
+      if (fetched.length === 0) return;
+
+      setScreenshotLogs((prev) => {
+        const next = { ...prev };
+        fetched.forEach((l) => {
+          next[l.id] = l;
+        });
+        return next;
+      });
+    }
+    loadScreenshotLogs();
+  }, [allScreenshots, logMap]);
+
+  const screenshotLogMap = useMemo(() => {
+    const map = new Map(logMap);
+    Object.values(screenshotLogs).forEach((l) => map.set(l.id, l));
+    return map;
+  }, [logMap, screenshotLogs]);
+
   const monitorMembers = useMemo(() => {
     return profiles.filter((p) => p.is_active !== false).map((profile) => {
       const session = sessions.find((s) => s.user_id === profile.id) ?? null;
@@ -882,23 +966,62 @@ export default function AdminPage() {
     return filtered;
   }, [allScreenshots, screenshotFilter]);
 
-  const groupedScreenshots = useMemo(() => {
-    const groups: Record<string, Record<string, TaskScreenshot[]>> = {};
-    filteredScreenshots.forEach((ss) => {
-      const dateKey = new Date(ss.created_at).toLocaleDateString("en-US", {
+  /**
+   * One entry per task, newest task first — no day or VA nesting above it. A time
+   * log already pins down both the VA and the day, so those ride on the card.
+   * Shots run oldest-first inside a task, so a task reads as the sequence of work
+   * it was.
+   *
+   * `orderedScreenshots` is the same set flattened in exactly the rendered order,
+   * so the lightbox arrows walk the grid the way it looks on screen.
+   */
+  const { screenshotTasks, orderedScreenshots } = useMemo(() => {
+    const withCapture: CapturedScreenshot[] = filteredScreenshots.map((ss) => {
+      const fromFilename = screenshotCaptureTime(ss.filename);
+      return {
+        ...ss,
+        captureTime: fromFilename ?? ss.created_at,
+        captureFromFilename: fromFilename !== null,
+      };
+    });
+
+    const byTask = new Map<string, ScreenshotTaskGroup>();
+    withCapture.forEach((ss) => {
+      const dateLabel = new Date(ss.captureTime).toLocaleDateString("en-US", {
         weekday: "long",
         month: "long",
         day: "numeric",
         year: "numeric",
         timeZone: orgTimezone,
       });
-      if (!groups[dateKey]) groups[dateKey] = {};
-      const userId = ss.user_id;
-      if (!groups[dateKey][userId]) groups[dateKey][userId] = [];
-      groups[dateKey][userId].push(ss);
+      // Shots with no log can't be attributed to a task, so they collect per VA
+      // per day rather than merging into one meaningless pile.
+      const key = ss.log_id ? `log-${ss.log_id}` : `untasked-${ss.user_id}-${dateLabel}`;
+
+      if (!byTask.has(key)) {
+        const log = ss.log_id ? screenshotLogMap.get(ss.log_id) ?? null : null;
+        byTask.set(key, {
+          key,
+          userId: ss.user_id,
+          log,
+          taskName: log?.task_name || (ss.log_id ? `Task #${ss.log_id}` : "Not linked to a task"),
+          dateLabel,
+          shots: [],
+        });
+      }
+      byTask.get(key)!.shots.push(ss);
     });
-    return groups;
-  }, [filteredScreenshots, orgTimezone]);
+
+    const tasks = Array.from(byTask.values());
+    tasks.forEach((t) =>
+      t.shots.sort((a, b) => new Date(a.captureTime).getTime() - new Date(b.captureTime).getTime())
+    );
+    const latest = (t: ScreenshotTaskGroup) =>
+      new Date(t.shots[t.shots.length - 1].captureTime).getTime();
+    tasks.sort((a, b) => latest(b) - latest(a));
+
+    return { screenshotTasks: tasks, orderedScreenshots: tasks.flatMap((t) => t.shots) };
+  }, [filteredScreenshots, screenshotLogMap, orgTimezone]);
 
   const activityEvents = useMemo(() => {
     const events: {
@@ -1562,9 +1685,8 @@ export default function AdminPage() {
             <ScreenshotsTab
               profiles={profiles}
               profileMap={profileMap}
-              logMap={logMap}
-              filteredScreenshots={filteredScreenshots}
-              groupedScreenshots={groupedScreenshots}
+              screenshotTasks={screenshotTasks}
+              totalScreenshots={filteredScreenshots.length}
               screenshotFilter={screenshotFilter}
               setScreenshotFilter={setScreenshotFilter}
               screenshotDateFilter={screenshotDateFilter}
@@ -1705,16 +1827,16 @@ export default function AdminPage() {
           screenshot={selectedScreenshot}
           url={screenshotUrls[selectedScreenshot.id] || null}
           profile={profileMap.get(selectedScreenshot.user_id) || null}
-          log={selectedScreenshot.log_id ? logMap.get(selectedScreenshot.log_id) || null : null}
+          log={selectedScreenshot.log_id ? screenshotLogMap.get(selectedScreenshot.log_id) || null : null}
           timezone={orgTimezone}
           onClose={() => setSelectedScreenshot(null)}
           onPrev={() => {
-            const idx = filteredScreenshots.findIndex((s) => s.id === selectedScreenshot.id);
-            if (idx > 0) setSelectedScreenshot(filteredScreenshots[idx - 1]);
+            const idx = orderedScreenshots.findIndex((s) => s.id === selectedScreenshot.id);
+            if (idx > 0) setSelectedScreenshot(orderedScreenshots[idx - 1]);
           }}
           onNext={() => {
-            const idx = filteredScreenshots.findIndex((s) => s.id === selectedScreenshot.id);
-            if (idx < filteredScreenshots.length - 1) setSelectedScreenshot(filteredScreenshots[idx + 1]);
+            const idx = orderedScreenshots.findIndex((s) => s.id === selectedScreenshot.id);
+            if (idx < orderedScreenshots.length - 1) setSelectedScreenshot(orderedScreenshots[idx + 1]);
           }}
         />
       )}
@@ -1984,9 +2106,8 @@ function OverviewTab({
 function ScreenshotsTab({
   profiles,
   profileMap,
-  logMap,
-  filteredScreenshots,
-  groupedScreenshots,
+  screenshotTasks,
+  totalScreenshots,
   screenshotFilter,
   setScreenshotFilter,
   screenshotDateFilter,
@@ -2002,9 +2123,8 @@ function ScreenshotsTab({
 }: {
   profiles: Profile[];
   profileMap: Map<string, Profile>;
-  logMap: Map<number, TimeLog>;
-  filteredScreenshots: TaskScreenshot[];
-  groupedScreenshots: Record<string, Record<string, TaskScreenshot[]>>;
+  screenshotTasks: ScreenshotTaskGroup[];
+  totalScreenshots: number;
   screenshotFilter: string;
   setScreenshotFilter: (v: string) => void;
   screenshotDateFilter: string;
@@ -2062,20 +2182,20 @@ function ScreenshotsTab({
             </>
           )}
           <span className="ml-2 text-[11px] text-bark">
-            {filteredScreenshots.length} screenshots
+            {totalScreenshots} screenshots
           </span>
         </div>
       </div>
 
       <div className="p-5">
-        {loadingUrls && filteredScreenshots.length > 0 && (
+        {loadingUrls && totalScreenshots > 0 && (
           <div className="mb-4 flex items-center gap-2 rounded-lg bg-parchment px-4 py-2.5 text-xs text-bark">
             <div className="h-3 w-3 animate-spin rounded-full border-2 border-terracotta border-t-transparent" />
             Loading screenshot previews...
           </div>
         )}
 
-        {filteredScreenshots.length === 0 ? (
+        {totalScreenshots === 0 ? (
           <div className="py-12 text-center">
             <div className="text-4xl mb-3 text-stone">No screenshots</div>
             <p className="text-sm text-bark">
@@ -2083,81 +2203,136 @@ function ScreenshotsTab({
             </p>
           </div>
         ) : (
-          Object.entries(groupedScreenshots).map(([date, userGroups]) => (
-            <div key={date} className="mb-8 last:mb-0">
-              <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-bark">
-                {date}
-              </h3>
-              {Object.entries(userGroups).map(([userId, screenshots]) => {
-                const profile = profileMap.get(userId);
-                if (!profile) return null;
-                return (
-                  <div key={userId} className="mb-5 last:mb-0">
-                    <div className="mb-2 flex items-center gap-2">
-                      <div
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white"
-                        style={{ backgroundColor: getAvatarColor(profile.id) }}
-                      >
-                        {getInitials(profile.full_name)}
-                      </div>
-                      <span className="text-[13px] font-semibold text-espresso">
-                        {profile.full_name}
-                      </span>
-                      <span className="text-[11px] text-bark">
-                        {screenshots.length} screenshot{screenshots.length !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                      {screenshots.map((ss) => {
-                        const log = ss.log_id ? logMap.get(ss.log_id) : null;
-                        const url = screenshotUrls[ss.id];
-                        const badge = screenshotTypeBadge(ss.screenshot_type);
-
-                        return (
-                          <button
-                            key={ss.id}
-                            onClick={() => setSelectedScreenshot(ss)}
-                            className="group relative cursor-pointer overflow-hidden rounded-lg border border-sand bg-parchment transition-all hover:border-terracotta hover:shadow-md"
-                          >
-                            <div className="relative aspect-video w-full overflow-hidden bg-sand">
-                              {url ? (
-                                <img
-                                  src={url}
-                                  alt={`Screenshot by ${profile.full_name}`}
-                                  className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                                />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center text-xs text-stone">
-                                  Loading...
-                                </div>
-                              )}
-                              <span
-                                className={`absolute top-1.5 left-1.5 rounded px-1.5 py-0.5 text-[9px] font-semibold ${badge.bg} ${badge.text}`}
-                              >
-                                {screenshotTypeLabel(ss.screenshot_type)}
-                              </span>
-                            </div>
-                            <div className="px-2.5 py-2">
-                              {log && (
-                                <div className="truncate text-[11px] font-medium text-espresso">
-                                  {log.task_name}
-                                </div>
-                              )}
-                              <div className="text-[10px] text-stone">
-                                {formatTimeShort(ss.created_at, orgTimezone)}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ))
+          /* One card per task, newest task first — screenshots inside run oldest to newest */
+          <div className="space-y-3">
+            {screenshotTasks.map((group) => (
+              <TaskScreenshotCard
+                key={group.key}
+                group={group}
+                profile={profileMap.get(group.userId) || null}
+                screenshotUrls={screenshotUrls}
+                setSelectedScreenshot={setSelectedScreenshot}
+                orgTimezone={orgTimezone}
+              />
+            ))}
+          </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ── One task's screenshots ────────────────────────────────── */
+
+// Capture runs can pile hundreds of shots onto a single task, so a card shows a
+// first page and expands on request rather than mounting every thumbnail at once.
+const SHOTS_PER_TASK_PREVIEW = 12;
+
+function TaskScreenshotCard({
+  group,
+  profile,
+  screenshotUrls,
+  setSelectedScreenshot,
+  orgTimezone,
+}: {
+  group: ScreenshotTaskGroup;
+  profile: Profile | null;
+  screenshotUrls: Record<number, string>;
+  setSelectedScreenshot: (ss: TaskScreenshot) => void;
+  orgTimezone: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hidden = group.shots.length - SHOTS_PER_TASK_PREVIEW;
+  const visible = expanded ? group.shots : group.shots.slice(0, SHOTS_PER_TASK_PREVIEW);
+  const first = group.shots[0];
+  const last = group.shots[group.shots.length - 1];
+  const vaName = profile?.full_name || "Unknown";
+
+  return (
+    <div className="rounded-xl border border-sand bg-cream p-3">
+      {/* Task first — the VA and day it belongs to sit under it */}
+      <div className="mb-2.5">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-[13px] font-semibold text-espresso">{group.taskName}</span>
+          {group.log?.account && <span className="text-[10px] text-bark">{group.log.account}</span>}
+          {group.log?.category && (
+            <span className="rounded-full border border-sand bg-white px-2 py-[1px] text-[9px] font-semibold text-bark">
+              {group.log.category}
+            </span>
+          )}
+          <span className="ml-auto text-[10px] text-stone">
+            {formatCaptureTime(first.captureTime, orgTimezone)}
+            {group.shots.length > 1 && ` – ${formatCaptureTime(last.captureTime, orgTimezone)}`}
+            {" · "}
+            {group.shots.length} shot{group.shots.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        <div className="mt-1.5 flex items-center gap-2">
+          {profile && (
+            <div
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-white"
+              style={{ backgroundColor: getAvatarColor(profile.id) }}
+            >
+              {getInitials(profile.full_name)}
+            </div>
+          )}
+          <span className="text-[11px] font-medium text-walnut">{vaName}</span>
+          <span className="text-[10px] text-stone">{group.dateLabel}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        {visible.map((ss) => {
+          const url = screenshotUrls[ss.id];
+          const badge = screenshotTypeBadge(ss.screenshot_type);
+
+          return (
+            <button
+              key={ss.id}
+              onClick={() => setSelectedScreenshot(ss)}
+              className="group relative cursor-pointer overflow-hidden rounded-lg border border-sand bg-parchment transition-all hover:border-terracotta hover:shadow-md"
+              title={ss.filename}
+            >
+              <div className="relative aspect-video w-full overflow-hidden bg-sand">
+                {url ? (
+                  <img
+                    src={url}
+                    alt={`Screenshot by ${vaName}`}
+                    loading="lazy"
+                    className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-xs text-stone">
+                    Loading...
+                  </div>
+                )}
+                <span
+                  className={`absolute top-1.5 left-1.5 rounded px-1.5 py-0.5 text-[9px] font-semibold ${badge.bg} ${badge.text}`}
+                >
+                  {screenshotTypeLabel(ss.screenshot_type)}
+                </span>
+              </div>
+              <div className="px-2.5 py-2 text-left">
+                <div className="text-[11px] font-medium text-espresso">
+                  {formatCaptureTime(ss.captureTime, orgTimezone)}
+                </div>
+                <div className="text-[10px] text-stone">
+                  {ss.captureFromFilename ? "taken" : "uploaded"}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {hidden > 0 && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-3 rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20"
+        >
+          {expanded ? "Show fewer" : `Show all ${group.shots.length}`}
+        </button>
+      )}
     </div>
   );
 }
@@ -6853,6 +7028,10 @@ function ScreenshotLightbox({
   }, [onClose, onPrev, onNext]);
 
   const badge = screenshotTypeBadge(screenshot.screenshot_type);
+  // Filename time is when the shot was taken; created_at is when the row landed,
+  // a few seconds later. Show the former, keep the latter on hover for support.
+  const capturedFromFilename = screenshotCaptureTime(screenshot.filename);
+  const capturedAt = capturedFromFilename ?? screenshot.created_at;
 
   return (
     <div
@@ -6887,8 +7066,15 @@ function ScreenshotLightbox({
             </span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-[11px] text-stone">
-              {formatDateShort(screenshot.created_at, timezone)} at {formatTimeShort(screenshot.created_at, timezone)}
+            <span
+              className="text-[11px] text-stone"
+              title={`Uploaded ${formatDateShort(screenshot.created_at, timezone)} at ${formatTimeShort(
+                screenshot.created_at,
+                timezone
+              )} · ${screenshot.filename}`}
+            >
+              {capturedFromFilename ? "Taken" : "Uploaded"} {formatDateShort(capturedAt, timezone)} at{" "}
+              {formatCaptureTime(capturedAt, timezone)}
             </span>
             <button
               onClick={onClose}

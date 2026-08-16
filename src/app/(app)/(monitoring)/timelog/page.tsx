@@ -20,6 +20,7 @@ import {
   getTimezoneAbbr,
   getDayBoundsInTimezone,
   getMonthBoundsForDate,
+  screenshotCaptureTime,
 } from "@/lib/utils";
 
 /* ── Types ────────────────────────────────────────────────── */
