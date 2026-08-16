@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { Profile, TimeLog, UserRole } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 import { fetchScreenshotOwnersInRange, type ScreenshotOwnerRow } from "@/lib/screenshots";
 import {
   formatDuration,
@@ -53,6 +54,48 @@ type TaskSummaryItem = {
   count: number;
 };
 
+/* Rows pulled straight from task_submissions / assigned_tasks — only the
+   columns this report reads, not the full table shape. */
+type SubmissionRow = {
+  id: number;
+  assigned_task_id: number | null;
+  user_id: string;
+  created_at: string;
+};
+
+type AssignedTaskRow = {
+  id: number;
+  task_name: string;
+  account: string | null;
+  due_date: string | null;
+  due_time: string | null;
+  revision_count: number | null;
+};
+
+/* One submitted task inside an account's drill-down. A task resubmitted after a
+   revision produces several task_submissions rows; those collapse into a single
+   item here (submissionCount holds the tally) so its logged time isn't counted
+   once per round. */
+type SubmittedTaskItem = {
+  assignedTaskId: number;
+  taskName: string;
+  vaName: string;
+  lastSubmittedAt: string;
+  submissionCount: number;
+  revisionCount: number;
+  overdue: boolean;
+  /* Time matched from time_logs by task name + account + VA — see
+     submissionsByAccount for why this can come back zero. */
+  totalMs: number;
+  matched: boolean;
+};
+
+type AccountBreakdown = {
+  account: string;
+  totalMs: number;
+  submissions: SubmittedTaskItem[];
+};
+
 type CategoryTrend = {
   name: string;
   currentMs: number;
@@ -93,6 +136,40 @@ type VAProgress = {
   screenshotCount: number;
 };
 
+/**
+ * Was a submission late?
+ *
+ * due_date/due_time are wall-clock values with no zone attached, so the
+ * submission timestamp is rendered into the org's timezone and the two are
+ * compared as strings in the same "YYYY-MM-DDTHH:MM:SS" shape. A task with no
+ * due date is never overdue; a due date with no time is due end of that day.
+ */
+function isPastDue(
+  task: Pick<AssignedTaskRow, "due_date" | "due_time">,
+  submittedAtISO: string,
+  timezone: string
+): boolean {
+  if (!task.due_date) return false;
+  const due = `${task.due_date}T${task.due_time ?? "23:59:59"}`;
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(submittedAtISO));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  // Intl renders midnight as hour "24" in some zones; normalize it back to 00.
+  const hour = String(Number(get("hour")) % 24).padStart(2, "0");
+  const submitted = `${get("year")}-${get("month")}-${get("day")}T${hour}:${get("minute")}:${get("second")}`;
+
+  return submitted > due;
+}
+
 /* ── Page Component ───────────────────────────────────────── */
 
 export default function ReportsPage() {
@@ -116,8 +193,10 @@ export default function ReportsPage() {
   const [orgTimezone, setOrgTimezone] = useState<string>("UTC");
   const [selectedAccount, setSelectedAccount] = useState<string>("all");
   const [selectedClient, setSelectedClient] = useState<string>("all");
-  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
-  const [tasksCollapsed, setTasksCollapsed] = useState(false);
+  const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
+  const [assignedTasks, setAssignedTasks] = useState<AssignedTaskRow[]>([]);
+  const [summaryTab, setSummaryTab] = useState<"account" | "project" | "task" | "team">("account");
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
   const [reportTab, setReportTab] = useUrlTab<"overview" | "progress">("tab", "overview", ["overview", "progress"]);
   const [compLogs, setCompLogs] = useState<TimeLog[]>([]);
 
@@ -263,7 +342,7 @@ export default function ReportsPage() {
         setRole(userRole);
       }
 
-      const [logsRes, profilesRes, screenshotRows] = await Promise.all([
+      const [logsRes, profilesRes, screenshotRows, submissionsRes] = await Promise.all([
         supabase
           .from("time_logs")
           .select("*")
@@ -274,11 +353,36 @@ export default function ReportsPage() {
         // Paged: a single request stops at 1000 rows, which a week of team
         // captures clears easily — the screenshot counts came out short.
         fetchScreenshotOwnersInRange(supabase, qStart, qEnd),
+        supabase
+          .from("task_submissions")
+          .select("id, assigned_task_id, user_id, created_at")
+          .eq("message_type", "submission")
+          .gte("created_at", qStart)
+          .lte("created_at", qEnd)
+          .order("created_at", { ascending: true }),
       ]);
 
       setLogs((logsRes.data ?? []) as TimeLog[]);
       setProfiles((profilesRes.data ?? []) as Profile[]);
       setScreenshots(screenshotRows);
+
+      // Parent tasks carry the account, due date, and revision tally the
+      // drill-down needs; fetched by id so the query stays scoped to the
+      // submissions actually in range.
+      const subRows = (submissionsRes.data ?? []) as SubmissionRow[];
+      setSubmissions(subRows);
+      const taskIds = Array.from(
+        new Set(subRows.map((s) => s.assigned_task_id).filter((id): id is number => id != null))
+      );
+      if (taskIds.length > 0) {
+        const { data: taskRows } = await supabase
+          .from("assigned_tasks")
+          .select("id, task_name, account, due_date, due_time, revision_count")
+          .in("id", taskIds);
+        setAssignedTasks((taskRows ?? []) as AssignedTaskRow[]);
+      } else {
+        setAssignedTasks([]);
+      }
     } catch (err) {
       console.error("Reports fetch error:", err);
       // Ensure we still show the page (with empty data) rather than stuck loading
@@ -680,6 +784,127 @@ export default function ReportsPage() {
     () => Math.max(...accountHours.map((a) => a.totalMs), 1),
     [accountHours]
   );
+
+  /* ── Submissions, itemized under their account ───────────── */
+  //
+  // time_logs carries no assigned_task_id, so a submitted task's logged time is
+  // matched by task name + account + the VA who submitted it. That covers the
+  // normal flow (playing an assigned task copies its name onto the log) but not
+  // a renamed or hand-entered task — those show as "no time matched" rather
+  // than as a wrong number.
+
+  const filteredSubmissions = useMemo(() => {
+    const taskById = new Map(assignedTasks.map((t) => [t.id, t]));
+    return submissions.filter((s) => {
+      if (selectedVA !== "all" && s.user_id !== selectedVA) return false;
+      if (selectedAccount !== "all") {
+        const task = s.assigned_task_id != null ? taskById.get(s.assigned_task_id) : undefined;
+        if (task?.account !== selectedAccount) return false;
+      }
+      return true;
+    });
+  }, [submissions, assignedTasks, selectedVA, selectedAccount]);
+
+  const submissionsByAccount = useMemo(() => {
+    const taskById = new Map(assignedTasks.map((t) => [t.id, t]));
+
+    // Logged ms keyed by "user|account|task name", built once so each submitted
+    // task is a map lookup rather than a scan of every log.
+    const loggedMs = new Map<string, number>();
+    const matchKey = (userId: string, account: string | null, taskName: string | null) =>
+      `${userId}|${(account ?? "").trim().toLowerCase()}|${(taskName ?? "").trim().toLowerCase()}`;
+    filteredLogs.forEach((l) => {
+      const key = matchKey(l.user_id, l.account, l.task_name);
+      loggedMs.set(key, (loggedMs.get(key) ?? 0) + (l.duration_ms || 0));
+    });
+
+    // Collapse repeat submissions of the same task into one item.
+    const byTask = new Map<number, SubmittedTaskItem>();
+    filteredSubmissions.forEach((s) => {
+      if (s.assigned_task_id == null) return;
+      const task = taskById.get(s.assigned_task_id);
+      if (!task) return;
+
+      const existing = byTask.get(task.id);
+      if (existing) {
+        existing.submissionCount += 1;
+        if (s.created_at > existing.lastSubmittedAt) {
+          existing.lastSubmittedAt = s.created_at;
+          existing.overdue = isPastDue(task, s.created_at, orgTimezone);
+        }
+        return;
+      }
+
+      const profile = profiles.find((p) => p.id === s.user_id);
+      const key = matchKey(s.user_id, task.account, task.task_name);
+      const ms = loggedMs.get(key);
+      byTask.set(task.id, {
+        assignedTaskId: task.id,
+        taskName: task.task_name,
+        vaName: profile?.full_name || profile?.username || "Unknown",
+        lastSubmittedAt: s.created_at,
+        submissionCount: 1,
+        revisionCount: task.revision_count ?? 0,
+        overdue: isPastDue(task, s.created_at, orgTimezone),
+        totalMs: ms ?? 0,
+        matched: ms != null,
+      });
+    });
+
+    const byAccount = new Map<string, SubmittedTaskItem[]>();
+    byTask.forEach((item) => {
+      const task = taskById.get(item.assignedTaskId);
+      const account = task?.account?.trim() || "No Account";
+      if (!byAccount.has(account)) byAccount.set(account, []);
+      byAccount.get(account)!.push(item);
+    });
+    byAccount.forEach((items) =>
+      items.sort((a, b) => b.lastSubmittedAt.localeCompare(a.lastSubmittedAt))
+    );
+    return byAccount;
+  }, [filteredSubmissions, assignedTasks, filteredLogs, profiles, orgTimezone]);
+
+  const accountBreakdown: AccountBreakdown[] = useMemo(
+    () =>
+      accountHours.map((a) => ({
+        account: a.account,
+        totalMs: a.totalMs,
+        submissions: submissionsByAccount.get(a.account) ?? [],
+      })),
+    [accountHours, submissionsByAccount]
+  );
+
+  /* ── Transition Time ─────────────────────────────────────── */
+  //
+  // The stretch between finishing one entry and starting the next: the wizard
+  // opens, and whatever time is left after the wizard was actually being filled
+  // in is time nobody is tracked against. Measured per VA per session date, so
+  // an overnight boundary never counts as a gap, and the wizard's own
+  // form_fill_ms is subtracted — that part is already reported as Wizard Time.
+
+  const transitionMs = useMemo(() => {
+    const byUserDay = new Map<string, TimeLog[]>();
+    filteredLogs.forEach((l) => {
+      if (!l.start_time || !l.end_time) return;
+      const key = `${l.user_id}|${l.session_date ?? l.start_time.slice(0, 10)}`;
+      if (!byUserDay.has(key)) byUserDay.set(key, []);
+      byUserDay.get(key)!.push(l);
+    });
+
+    let total = 0;
+    byUserDay.forEach((dayLogs) => {
+      const ordered = [...dayLogs].sort((a, b) => a.start_time.localeCompare(b.start_time));
+      for (let i = 0; i < ordered.length - 1; i++) {
+        const prev = ordered[i];
+        const next = ordered[i + 1];
+        const gap =
+          new Date(next.start_time).getTime() - new Date(prev.end_time!).getTime();
+        if (gap <= 0) continue; // overlapping or back-to-back entries
+        total += Math.max(0, gap - (prev.form_fill_ms || 0));
+      }
+    });
+    return total;
+  }, [filteredLogs]);
 
   /* ── By person ───────────────────────────────────────────── */
 
@@ -1369,12 +1594,13 @@ export default function ReportsPage() {
         </div>
       ) : (
         <>
-          {/* Summary — compact grouped layout */}
-          <div className="mb-6 grid gap-4 grid-cols-3">
-            {/* Time Overview */}
+          {/* Summary — Overview now carries entries + status, so this is two
+              columns rather than three, weighted toward Overview. */}
+          <div className="mb-6 grid gap-4 grid-cols-[3fr_2fr]">
+            {/* Overview — times, entry counts, and status in one card */}
             <div className="rounded-xl border border-sand bg-white px-5 py-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">Time Overview</div>
-              <div className="flex gap-6">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">Overview</div>
+              <div className="flex flex-wrap gap-x-6 gap-y-4">
                 <div>
                   <div className="font-serif text-xl font-bold text-espresso">{formatDuration(reportSummary.totalMs)}</div>
                   <div className="text-[10px] text-bark mt-0.5">Total Logged</div>
@@ -1387,6 +1613,51 @@ export default function ReportsPage() {
                   <div className="font-serif text-xl font-bold text-walnut">{formatDuration(reportSummary.wizardMs)}</div>
                   <div className="text-[10px] text-bark mt-0.5">Wizard Time</div>
                 </div>
+                {/* Report-only: deliberately not added to the Activity Log / Time Log
+                    bottom summary, which stays the tracked-time view. */}
+                <div>
+                  <div className="font-serif text-xl font-bold text-amber">{formatDuration(transitionMs)}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Transition Time</div>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-x-6 gap-y-4 border-t border-parchment pt-4">
+                <div>
+                  <div className="font-serif text-xl font-bold text-espresso">{reportSummary.entries}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Total Entries</div>
+                </div>
+                <div>
+                  <div className="font-serif text-xl font-bold text-sage">{reportSummary.hourlyCount}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Time-based</div>
+                </div>
+                <div>
+                  <div className="font-serif text-xl font-bold text-slate-blue">{reportSummary.fixedCount}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Output Based</div>
+                </div>
+                <div>
+                  <div className="font-serif text-xl font-bold text-clay-rose">{filteredSubmissions.length}</div>
+                  <div className="text-[10px] text-bark mt-0.5">Submissions</div>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-3 border-t border-parchment pt-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-terracotta"></span>
+                  <span className="text-[11px] font-semibold">{reportSummary.inProgressCount}</span>
+                  <span className="text-[10px] text-bark">In Progress</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-sage"></span>
+                  <span className="text-[11px] font-semibold">{reportSummary.completedCount}</span>
+                  <span className="text-[10px] text-bark">Completed</span>
+                </div>
+                {reportSummary.onHoldCount > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber"></span>
+                    <span className="text-[11px] font-semibold">{reportSummary.onHoldCount}</span>
+                    <span className="text-[10px] text-bark">On Hold</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1426,43 +1697,6 @@ export default function ReportsPage() {
               </div>
             </div>
 
-            {/* Task Types & Status */}
-            <div className="rounded-xl border border-sand bg-white px-5 py-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-bark mb-3">Entries &amp; Status</div>
-              <div className="flex gap-6 mb-3">
-                <div>
-                  <div className="font-serif text-xl font-bold text-espresso">{reportSummary.entries}</div>
-                  <div className="text-[10px] text-bark mt-0.5">Total Entries</div>
-                </div>
-                <div>
-                  <div className="font-serif text-xl font-bold text-sage">{reportSummary.hourlyCount}</div>
-                  <div className="text-[10px] text-bark mt-0.5">Time-based</div>
-                </div>
-                <div>
-                  <div className="font-serif text-xl font-bold text-slate-blue">{reportSummary.fixedCount}</div>
-                  <div className="text-[10px] text-bark mt-0.5">Output Based</div>
-                </div>
-              </div>
-              <div className="flex gap-3 pt-3 border-t border-parchment">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-terracotta"></span>
-                  <span className="text-[11px] font-semibold">{reportSummary.inProgressCount}</span>
-                  <span className="text-[10px] text-bark">In Progress</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-sage"></span>
-                  <span className="text-[11px] font-semibold">{reportSummary.completedCount}</span>
-                  <span className="text-[10px] text-bark">Completed</span>
-                </div>
-                {reportSummary.onHoldCount > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-amber"></span>
-                    <span className="text-[11px] font-semibold">{reportSummary.onHoldCount}</span>
-                    <span className="text-[10px] text-bark">On Hold</span>
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
 
           {/* Daily Hours Chart */}
@@ -1520,20 +1754,44 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {/* Hours by Account + Project & Task Summary */}
-          <div className="mb-6 grid gap-5 grid-cols-2">
-            {/* Hours by Account */}
-            <div className="rounded-xl border border-sand bg-white">
-              <div className="border-b border-parchment px-5 py-4">
-                <h3 className="text-sm font-bold text-espresso">
-                  Hours by Account
-                </h3>
+          {/* Breakdown — one tabbed box instead of Hours by Account, Project &
+              Task Summary, and Team Breakdown as three separate cards. */}
+          <div className="mb-6 rounded-xl border border-sand bg-white">
+            <div className="flex items-center justify-between border-b border-parchment px-5 py-3">
+              <div className="flex gap-1">
+                {([
+                  ["account", "By Account"],
+                  ["project", "By Project"],
+                  ["task", "By Task"],
+                  ["team", "Team Breakdown"],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setSummaryTab(key)}
+                    className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                      summaryTab === key
+                        ? "bg-sage text-white"
+                        : "bg-stone/10 text-stone hover:bg-stone/20"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
+              <div className="flex gap-4 text-[11px] text-bark">
+                <span><strong className="text-espresso">{projectSummary.length}</strong> projects</span>
+                <span><strong className="text-espresso">{taskSummary.reduce((sum, t) => sum + t.count, 0)}</strong> tasks completed</span>
+                <span><strong className="text-espresso">{filteredSubmissions.length}</strong> submissions</span>
+              </div>
+            </div>
+
+            {/* ── By Account ── rows expand to the submissions logged against them */}
+            {summaryTab === "account" && (
               <div className="px-5 py-4">
-                {accountHours.length === 0 ? (
+                {accountBreakdown.length === 0 ? (
                   <p className="text-[13px] text-bark">No data yet</p>
                 ) : (
-                  accountHours.map((item, i) => {
+                  accountBreakdown.map((item, i) => {
                     const barColors = [
                       "var(--color-terracotta)",
                       "var(--color-sage)",
@@ -1544,65 +1802,112 @@ export default function ReportsPage() {
                     ];
                     const barColor = barColors[i % barColors.length];
                     const pct = (item.totalMs / maxAccountMs) * 100;
+                    const isOpen = expandedAccounts.has(item.account);
+                    const overdueCount = item.submissions.filter((s) => s.overdue).length;
 
                     return (
-                      <div
-                        key={item.account}
-                        className="flex items-center gap-3.5 border-b border-parchment py-3 last:border-b-0"
-                      >
-                        <div className="flex-1 text-[13px] font-semibold text-espresso">
-                          {item.account}
-                        </div>
-                        <div className="flex-[2] h-2 overflow-hidden rounded bg-parchment">
-                          <div
-                            className="h-full rounded"
-                            style={{
-                              width: `${pct}%`,
-                              backgroundColor: barColor,
-                            }}
-                          />
-                        </div>
-                        <div className="w-[70px] text-right font-serif text-sm font-bold text-sage">
-                          {formatDuration(item.totalMs)}
-                        </div>
+                      <div key={item.account} className="border-b border-parchment last:border-b-0">
+                        <button
+                          onClick={() =>
+                            setExpandedAccounts((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(item.account)) next.delete(item.account);
+                              else next.add(item.account);
+                              return next;
+                            })
+                          }
+                          className="flex w-full items-center gap-3.5 py-3 text-left group"
+                        >
+                          <span className="w-3 shrink-0 text-[10px] text-bark group-hover:text-espresso transition-colors">
+                            {item.submissions.length > 0 ? (isOpen ? "▾" : "▸") : ""}
+                          </span>
+                          <div className="flex-1 text-[13px] font-semibold text-espresso">
+                            {item.account}
+                            {item.submissions.length > 0 && (
+                              <span className="ml-2 text-[11px] font-normal text-bark">
+                                {item.submissions.length} submitted
+                              </span>
+                            )}
+                            {overdueCount > 0 && (
+                              <span className="ml-2 text-[10px] font-semibold px-2 py-[2px] rounded-full bg-terracotta-soft text-terracotta border border-terracotta/20">
+                                {overdueCount} overdue
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex-[2] h-2 overflow-hidden rounded bg-parchment">
+                            <div
+                              className="h-full rounded"
+                              style={{ width: `${pct}%`, backgroundColor: barColor }}
+                            />
+                          </div>
+                          <div className="w-[70px] text-right font-serif text-sm font-bold text-sage">
+                            {formatDuration(item.totalMs)}
+                          </div>
+                        </button>
+
+                        {isOpen && item.submissions.length > 0 && (
+                          <div className="pb-3 pl-6">
+                            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1.5">
+                              Submitted Work
+                            </p>
+                            {item.submissions.map((sub) => (
+                              <div
+                                key={sub.assignedTaskId}
+                                className="flex flex-col gap-1.5 py-2.5 px-3 mb-1.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="text-[13px] font-semibold text-espresso leading-tight">
+                                    {sub.taskName}
+                                  </span>
+                                  <div className="flex shrink-0 items-center gap-1.5">
+                                    {sub.overdue && (
+                                      <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-terracotta-soft text-terracotta border border-terracotta/20">
+                                        Overdue
+                                      </span>
+                                    )}
+                                    {sub.revisionCount > 0 && (
+                                      <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+                                        {sub.revisionCount} revision{sub.revisionCount !== 1 ? "s" : ""}
+                                      </span>
+                                    )}
+                                    <span className="font-serif text-sm font-bold text-sage">
+                                      {sub.matched ? formatDuration(sub.totalMs) : "—"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="text-[11px] text-stone/80">
+                                  {sub.vaName}
+                                  {" · "}
+                                  {new Date(sub.lastSubmittedAt).toLocaleDateString("en-US", {
+                                    month: "short",
+                                    day: "numeric",
+                                    timeZone: orgTimezone,
+                                  })}
+                                  {sub.submissionCount > 1 && ` · ${sub.submissionCount} submissions`}
+                                  {!sub.matched && " · no time matched"}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })
                 )}
               </div>
-            </div>
+            )}
 
-            {/* Project & Task Summary */}
-            <div className="rounded-xl border border-sand bg-white">
-              <div className="border-b border-parchment px-5 py-4">
-                <h3 className="text-sm font-bold text-espresso">
-                  Project &amp; Task Summary
-                </h3>
-                <div className="mt-1 flex gap-4 text-[11px] text-bark">
-                  <span><strong className="text-espresso">{projectSummary.length}</strong> projects</span>
-                  <span><strong className="text-espresso">{taskSummary.reduce((sum, t) => sum + t.count, 0)}</strong> tasks completed</span>
-                </div>
-              </div>
+            {/* ── By Project / By Task ── */}
+            {(summaryTab === "project" || summaryTab === "task") && (
               <div className="px-5 py-4">
                 {projectSummary.length === 0 && taskSummary.length === 0 ? (
                   <p className="text-[13px] text-bark">No completed tasks yet</p>
                 ) : (
                   <>
                     {/* Projects section */}
-                    {projectSummary.length > 0 && (
+                    {summaryTab === "project" && projectSummary.length > 0 && (
                       <>
-                        <button
-                          onClick={() => setProjectsCollapsed((v) => !v)}
-                          className="flex w-full items-center justify-between mb-2 group"
-                        >
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-bark group-hover:text-espresso transition-colors">
-                            By Project
-                          </span>
-                          <span className="text-[10px] text-bark group-hover:text-espresso transition-colors">
-                            {projectsCollapsed ? "▸" : "▾"}
-                          </span>
-                        </button>
-                        {!projectsCollapsed && projectSummary.map((p) => (
+                        {projectSummary.map((p) => (
                           <div
                             key={p.name}
                             className="flex items-center gap-3 border-b border-parchment py-2.5 last:border-b-0"
@@ -1622,20 +1927,9 @@ export default function ReportsPage() {
                     )}
 
                     {/* Tasks section */}
-                    {taskSummary.length > 0 && (
+                    {summaryTab === "task" && taskSummary.length > 0 && (
                       <>
-                        <button
-                          onClick={() => setTasksCollapsed((v) => !v)}
-                          className={`flex w-full items-center justify-between mb-2 group ${projectSummary.length > 0 ? "mt-4" : ""}`}
-                        >
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-bark group-hover:text-espresso transition-colors">
-                            By Task
-                          </span>
-                          <span className="text-[10px] text-bark group-hover:text-espresso transition-colors">
-                            {tasksCollapsed ? "▸" : "▾"}
-                          </span>
-                        </button>
-                        {!tasksCollapsed && taskSummary.map((t) => (
+                        {taskSummary.map((t) => (
                           <div
                             key={t.name}
                             className="flex items-center gap-3 border-b border-parchment py-2.5 last:border-b-0"
@@ -1654,40 +1948,35 @@ export default function ReportsPage() {
                       </>
                     )}
 
-                    {/* Grand Total */}
+                    {/* Grand Total — totals the tab you're actually looking at */}
                     <div className="flex items-center gap-3 border-t-2 border-espresso pt-3 mt-3">
                       <div className="flex-1 text-[13px] font-bold text-espresso">
                         Grand Total
                       </div>
                       <div className="text-[11px] font-semibold text-bark mr-2">
-                        {taskSummary.reduce((sum, t) => sum + t.count, 0)} tasks
+                        {summaryTab === "project"
+                          ? `${projectSummary.reduce((sum, p) => sum + p.count, 0)} entries`
+                          : `${taskSummary.reduce((sum, t) => sum + t.count, 0)} tasks`}
                       </div>
                       <div className="w-[70px] text-right font-serif text-base font-bold text-espresso">
                         {formatDuration(
-                          taskSummary.reduce((sum, t) => sum + t.totalMs, 0)
+                          summaryTab === "project"
+                            ? projectSummary.reduce((sum, p) => sum + p.totalMs, 0)
+                            : taskSummary.reduce((sum, t) => sum + t.totalMs, 0)
                         )}
                       </div>
                     </div>
                   </>
                 )}
               </div>
-            </div>
-          </div>
+            )}
 
-          {/* VA Breakdown */}
-          {vaBreakdown.length > 0 && (
-            <div className="mb-6 rounded-xl border border-sand bg-white">
-              <div className="flex items-center justify-between border-b border-parchment px-5 py-4">
-                <h3 className="text-sm font-bold text-espresso">
-                  {selectedAccount !== "all"
-                    ? `Team — ${selectedAccount}`
-                    : selectedClient !== "all"
-                    ? `Team — ${selectedClient}`
-                    : "Team Breakdown"}
-                </h3>
-                <span className="text-[11px] text-bark">{vaBreakdown.length} member{vaBreakdown.length !== 1 ? "s" : ""}</span>
-              </div>
-              <div className="divide-y divide-parchment">
+            {/* ── Team Breakdown ── */}
+            {summaryTab === "team" && (
+              vaBreakdown.length === 0 ? (
+                <p className="px-5 py-4 text-[13px] text-bark">No team activity in this period</p>
+              ) : (
+                <div className="divide-y divide-parchment">
                 {vaBreakdown.map((va, i) => {
                   const name = va.profile?.full_name || va.profile?.username || "Unknown";
                   const initials = getInitials(name);
@@ -1710,7 +1999,7 @@ export default function ReportsPage() {
                         <div className="flex-1">
                           <div className="text-[13px] font-bold text-espresso">{name}</div>
                           {va.profile?.position && (
-                            <div className="text-[11px] text-bark">{va.profile.position}</div>
+                            <div className="text-[11px] text-bark">{normalizePosition(va.profile.position)}</div>
                           )}
                         </div>
                         <div className="text-right">
@@ -1743,9 +2032,10 @@ export default function ReportsPage() {
                     </div>
                   );
                 })}
-              </div>
-            </div>
-          )}
+                </div>
+              )
+            )}
+          </div>
 
           {/* Screenshot Count */}
           <div className="rounded-xl border border-sand bg-white px-5 py-4">
