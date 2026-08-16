@@ -25,7 +25,7 @@ export default async function AdminLayout({
   // has a DB check constraint limited to admin/manager/va.)
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, role, department, admin_permissions")
+    .select("full_name, role, department, admin_permissions, avatar_url")
     .eq("id", user.id)
     .single();
 
@@ -40,7 +40,7 @@ export default async function AdminLayout({
 
   return (
     <>
-      <TopNav user={{ full_name: fullName, role, department: profile.department, admin_permissions: profile.admin_permissions }} />
+      <TopNav user={{ full_name: fullName, role, department: profile.department, admin_permissions: profile.admin_permissions, avatar_url: profile.avatar_url }} />
       <main className="flex-1">{children}</main>
     </>
   );

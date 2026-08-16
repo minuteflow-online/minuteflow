@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { signOut } from "@/app/actions/auth";
 import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
@@ -40,6 +40,7 @@ type TopNavProps = {
     role: UserRole;
     department?: string | null;
     admin_permissions?: string[] | null;
+    avatar_url?: string | null;
   };
 };
 
@@ -99,6 +100,15 @@ function getInitials(name: string): string {
     .slice(0, 2);
 }
 
+function DoorIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+      <rect x="5" y="3" width="14" height="18" rx="1" />
+      <circle cx="15" cy="12" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export default function TopNav({ user }: TopNavProps) {
   const pathname = usePathname();
   const supabase = createClient();
@@ -115,6 +125,36 @@ export default function TopNav({ user }: TopNavProps) {
   const [showLogoutInternalMemo, setShowLogoutInternalMemo] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutMood, setLogoutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
+
+  // Name-chip dropdown (Log out, upload photo)
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null | undefined>(user.avatar_url);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  const handleAvatarFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    setAvatarError(null);
+    setUploadingAvatar(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/upload-avatar", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        setAvatarError(data.error || "Upload failed");
+        return;
+      }
+      setAvatarUrl(data.avatar_url);
+    } catch {
+      setAvatarError("Upload failed");
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }, []);
 
   // Every top-level item is now visible to everyone — the one item that used
   // to be role-gated here (Team) moved under Monitoring's own sub-nav, which
@@ -429,24 +469,79 @@ export default function TopNav({ user }: TopNavProps) {
             </button>
           </nav>
 
-          {/* Right: Clock, user chip */}
+          {/* Right: Clock, user chip (dropdown: upload photo, log out) */}
           <div className="flex items-center gap-4">
             <Clock />
 
-            <div className="flex items-center gap-2 rounded-full bg-parchment px-3 py-1">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-terracotta text-xs font-bold text-white">
-                {getInitials(user.full_name)}
-              </div>
-              <div className="hidden sm:block">
-                <p className="text-xs font-medium text-espresso leading-tight">
-                  {user.full_name}
-                </p>
-                {user.role && (
-                  <p className="text-[10px] text-bark leading-tight">
-                    {displayRole(user.role, user.department)}
-                  </p>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowUserMenu((o) => !o)}
+                className="flex cursor-pointer items-center gap-2 rounded-full bg-parchment px-3 py-1 transition-colors hover:bg-sand"
+              >
+                {avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={avatarUrl}
+                    alt=""
+                    className="h-7 w-7 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-terracotta text-xs font-bold text-white">
+                    {getInitials(user.full_name)}
+                  </div>
                 )}
-              </div>
+                <div className="hidden sm:block text-left">
+                  <p className="text-xs font-medium text-espresso leading-tight">
+                    {user.full_name}
+                  </p>
+                  {user.role && (
+                    <p className="text-[10px] text-bark leading-tight">
+                      {displayRole(user.role, user.department)}
+                    </p>
+                  )}
+                </div>
+                <DoorIcon className="h-3.5 w-3.5 shrink-0 text-bark" />
+              </button>
+
+              {showUserMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                  <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl border border-sand bg-white py-1 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => avatarInputRef.current?.click()}
+                      disabled={uploadingAvatar}
+                      className="flex w-full cursor-pointer items-center px-3 py-2 text-left text-[13px] text-espresso transition-colors hover:bg-parchment disabled:opacity-50"
+                    >
+                      {uploadingAvatar ? "Uploading…" : "Upload photo"}
+                    </button>
+                    {avatarError && (
+                      <p className="px-3 pb-1 text-[11px] text-terracotta">{avatarError}</p>
+                    )}
+                    <div className="my-1 border-t border-sand" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        handleLogoutClick();
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-[13px] text-espresso transition-colors hover:bg-parchment"
+                    >
+                      <DoorIcon className="h-4 w-4 text-bark" />
+                      Log out
+                    </button>
+                  </div>
+                </>
+              )}
+
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                onChange={handleAvatarFileChange}
+                className="hidden"
+              />
             </div>
           </div>
         </div>
