@@ -22,6 +22,7 @@ import {
   spanLabel,
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 import { useUrlTab } from "@/hooks/useUrlTab";
 
 type TeamMember = {
@@ -35,15 +36,16 @@ type TeamMember = {
 };
 
 // Same derivation as FixedPayTasksPanel's isHybrid/isPerTaskVa: position
-// "Part-time VA"/"Full-time VA" is the hourly-labeled default, "Per Task VA"
+// "Part Time"/"Full Time" is the hourly-labeled default, "Output Based"
 // (or pay_rate_type "per_task") is fixed-pay-only, and the "Available Tasks"
 // toggle in Team management is what actually makes an hourly-labeled VA
 // hybrid (able to pick up Output Based work too).
 function taskModesForMember(member: TeamMember | undefined): { canTimeBased: boolean; canOutputBased: boolean } {
   if (!member) return { canTimeBased: true, canOutputBased: false };
-  const isPerTaskVa = member.position === "Per Task VA" || member.pay_rate_type === "per_task";
+  const position = normalizePosition(member.position);
+  const isPerTaskVa = position === "Output Based" || member.pay_rate_type === "per_task";
   if (isPerTaskVa) return { canTimeBased: false, canOutputBased: true };
-  const isHybrid = (member.position === "Part-time VA" || member.position === "Full-time VA") && Boolean(member.can_see_available_tasks);
+  const isHybrid = ["Part Time", "Full Time"].includes(position ?? "") && Boolean(member.can_see_available_tasks);
   return { canTimeBased: true, canOutputBased: isHybrid };
 }
 

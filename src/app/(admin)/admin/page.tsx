@@ -8,6 +8,7 @@ import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import {
   VA_POSITION_OPTIONS,
   DEPARTMENT_OPTIONS,
+  normalizePosition,
   type Profile,
   type Session,
   type TimeLog,
@@ -2347,7 +2348,7 @@ function TeamManagementTab({
       username: u(profiles.map((p) => p.username)),
       role: u(profiles.map((p) => p.role)),
       department: u(profiles.map((p) => p.department)),
-      position: u(profiles.map((p) => p.position)),
+      position: u(profiles.map((p) => normalizePosition(p.position))),
       payRate: isFullAdmin ? u(profiles.map((p) => `$${(p.pay_rate || 0).toFixed(2)}`), true) : [],
       rateType: isFullAdmin ? u(profiles.map((p) => p.pay_rate_type || "hourly")) : [],
       assignments: u(profiles.map((p) => p.assignments_label)),
@@ -2693,7 +2694,7 @@ function TeamManagementTab({
     if (!check("username", p.username || "—")) return false;
     if (!check("role", p.role || "va")) return false;
     if (!check("department", p.department || "—")) return false;
-    if (!check("position", p.position || "—")) return false;
+    if (!check("position", normalizePosition(p.position) || "—")) return false;
     if (!check("payRate", `$${(p.pay_rate || 0).toFixed(2)}`)) return false;
     if (!check("rateType", p.pay_rate_type || "hourly")) return false;
     if (!check("assignments", p.assignments_label || "—")) return false;
@@ -3367,10 +3368,10 @@ function TeamManagementTab({
                       </div>
                     ) : (
                       <button
-                        onClick={() => startEditing(p.id, "position", p.position || "")}
+                        onClick={() => startEditing(p.id, "position", normalizePosition(p.position) || "")}
                         className="cursor-pointer text-bark hover:text-terracotta transition-colors"
                       >
-                        {p.position || "\u2014"}
+                        {normalizePosition(p.position) || "\u2014"}
                       </button>
                     )}
                   </td>
@@ -3570,7 +3571,7 @@ function TeamManagementTab({
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Position</span>
-                              <p className="mt-0.5 text-espresso font-medium">{p.position || "—"}</p>
+                              <p className="mt-0.5 text-espresso font-medium">{normalizePosition(p.position) || "—"}</p>
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Pay Rate</span>
@@ -3757,7 +3758,7 @@ function TeamManagementTab({
                             {va.full_name}
                           </div>
                           <div className="text-[10px] text-bark">
-                            {va.position || va.department || "VA"}
+                            {normalizePosition(va.position) || va.department || "VA"}
                           </div>
                         </div>
                       </label>

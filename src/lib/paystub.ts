@@ -4,6 +4,7 @@
 // this drives the DRAFT that Toni reviews.
 
 import { computeHourlyGross, type PayRateHistoryRow } from "@/lib/payroll";
+import { normalizePosition } from "@/types/database";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
 
@@ -37,7 +38,7 @@ export async function computePaystubData(
     .single();
   if (!vaProfile) return null;
 
-  const isFullTimeVa = vaProfile.position === "Full-time VA";
+  const isFullTimeVa = normalizePosition(vaProfile.position) === "Full Time";
   const payRate = Number(vaProfile.pay_rate) || 0;
 
   const { data: logs } = await admin

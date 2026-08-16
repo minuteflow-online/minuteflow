@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import Section from "@/components/ui/Section";
@@ -645,7 +646,7 @@ export default function TaskListPage() {
 
   const isSubmittedView = activeView === "submitted";
   const isAdmin = hasBroadAdminAccess({ role: currentRole });
-  const isPerTaskVa = currentPosition === "Per Task VA";
+  const isPerTaskVa = normalizePosition(currentPosition) === "Output Based";
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
 

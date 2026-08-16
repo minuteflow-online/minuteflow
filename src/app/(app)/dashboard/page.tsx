@@ -32,6 +32,7 @@ import type {
   Message,
   VAAssignedTask,
 } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 
 type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string };
 
@@ -3370,10 +3371,10 @@ export default function DashboardPage() {
       {(() => {
         // ─── VA Visibility Rules ───────────────────────────────────
         const isVa = role === "va";
-        const pos = profile?.position ?? "";
-        const isProjectBased = pos === "Project Based VA";
-        const isPerTask = pos === "Per Task VA";
-        const isHourly = !isProjectBased && !isPerTask; // Full-time, Part-time, null
+        const pos = normalizePosition(profile?.position) ?? "";
+        const isProjectBased = pos === "Project Based";
+        const isPerTask = pos === "Output Based";
+        const isHourly = !isProjectBased && !isPerTask; // Full Time, Part Time, null
         const canSeeAvailable = isVa && !!profile?.can_see_available_tasks;
         // "manager" role is only ever granted alongside department "IT" (IT-admin
         // accounts that also do task work, e.g. Neil) — this carve-out lets them

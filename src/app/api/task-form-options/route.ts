@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { normalizePosition } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
     .single();
 
   const isVA = profile?.role === "va";
-  const isProjectBasedVA = isVA && profile?.position === "Project Based VA";
+  const isProjectBasedVA = isVA && normalizePosition(profile?.position) === "Project Based";
 
   // If VA, fetch their assigned category IDs + project/task visibility data
   let assignedCategoryIds: Set<number> | null = null;

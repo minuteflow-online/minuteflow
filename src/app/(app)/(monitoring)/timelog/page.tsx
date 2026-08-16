@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import type { TimeLog, Profile, TaskScreenshot } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 import EditTimeLogModal from "@/components/EditTimeLogModal";
 import CorrectionRequestModal from "@/components/CorrectionRequestModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -697,9 +698,9 @@ export default function TimeLogPage() {
     const BREAK_EXCLUSION_DAY = "2026-07-06";
     logs.forEach((l) => {
       totalMs += l.duration_ms || 0;
-      // For Full-time VAs on/after July 6, breaks are never billable regardless of the flag
+      // For Full Time VAs on/after July 6, breaks are never billable regardless of the flag
       const logProfile = profiles.find((p) => p.id === l.user_id);
-      const isFullTimeVa = logProfile?.position === "Full-time VA";
+      const isFullTimeVa = normalizePosition(logProfile?.position) === "Full Time";
       const logDate = l.start_time ? l.start_time.slice(0, 10) : "";
       const breakExcluded = l.category === "Break" && isFullTimeVa && logDate >= BREAK_EXCLUSION_DAY;
       if (l.billable && !breakExcluded) billableMs += l.duration_ms || 0;
