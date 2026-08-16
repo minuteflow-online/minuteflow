@@ -1,17 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { hasBroadAdminAccess, hasFinancialAccess, canGrantRoles } from "@/lib/financialAccess";
+import { hasAdminPanelAccess, hasFinancialAccess, canGrantRoles } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-/** Verify the caller has broad admin access (admin, manager, IT, or Project
- * Coordinator — see financialAccess.ts). Broad access gets team-management
- * access but never pay rates, role escalation, or admin_permissions grants
- * — those are enforced field-by-field in each handler below, gated to
- * financial access (Founder/Accounting) specifically. */
+/** This is Team Management's backing API — only reachable from the admin
+ * panel, so it's gated to admin-panel access (Admin, Manager, Specialist, or
+ * Founder/CEO/Accounting), not the broader hasBroadAdminAccess tier.
+ * Coordinator gets broad Insights/Productivity visibility elsewhere but not
+ * this. Pay rates, role escalation, and admin_permissions grants are
+ * enforced field-by-field in each handler below, gated to financial access
+ * (Founder/CEO/Accounting) or role-granting (CEO/Founder) specifically. */
 async function verifyAdmin(): Promise<{ userId: string; role: string; isFinancialAccess: boolean } | Response> {
   const supabase = await createServerClient();
   const {
@@ -25,7 +27,7 @@ async function verifyAdmin(): Promise<{ userId: string; role: string; isFinancia
     .select("role, department")
     .eq("id", user.id)
     .single();
-  if (!profile || !hasBroadAdminAccess(profile)) {
+  if (!profile || !hasAdminPanelAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
   return { userId: user.id, role: profile.role, isFinancialAccess: hasFinancialAccess(profile) };

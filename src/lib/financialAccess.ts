@@ -26,6 +26,17 @@ export function hasBroadAdminAccess(
   );
 }
 
+// Reaching the /admin panel itself is narrower than hasBroadAdminAccess.
+// Coordinator gets everything hasBroadAdminAccess implies elsewhere (viewing
+// every VA in Insights/Productivity, editing time logs) but not the admin
+// panel's Team Management / Task Assignments / moderation surface.
+export function hasAdminPanelAccess(
+  profile?: { role?: string | null; department?: string | null } | null
+): boolean {
+  if (hasFinancialAccess(profile)) return true;
+  return profile?.role === "admin" || profile?.role === "manager" || profile?.role === "specialist";
+}
+
 // Accounts and Clients are billing-adjacent — Admin and Coordinator are
 // deliberately excluded even though they get the rest of the broad tier.
 // Manager, Specialist, CEO, and Founder see these two.
