@@ -10,6 +10,20 @@ export const VA_POSITION_OPTIONS = [
 
 export type VaPosition = typeof VA_POSITION_OPTIONS[number];
 
+// Department is purely descriptive (see src/lib/financialAccess.ts) — it grants
+// no access on its own. This is the default option list shown in the Team
+// Management dropdown; any department already in use on a profile (e.g. a
+// custom one typed in via "+ Add new department...") is merged in alongside
+// these at render time, so the list grows as new ones are added.
+export const DEPARTMENT_OPTIONS = [
+  "Accounting",
+  "IT",
+  "Project Management",
+  "Leadership",
+  "Marketing",
+  "Founder",
+] as const;
+
 export interface PaymentAccountDetails {
   gcash?: { number?: string; name?: string };
   bank_deposit?: { bank?: string; account?: string; name?: string };

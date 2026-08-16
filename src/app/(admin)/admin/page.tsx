@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import {
   VA_POSITION_OPTIONS,
+  DEPARTMENT_OPTIONS,
   type Profile,
   type Session,
   type TimeLog,
@@ -2228,12 +2229,14 @@ function TeamManagementTab({
   const [newFullName, setNewFullName] = useState("");
   const [newRole, setNewRole] = useState<string>("va");
   const [newDepartment, setNewDepartment] = useState("");
+  const [newDepartmentIsCustom, setNewDepartmentIsCustom] = useState(false);
   const [newPosition, setNewPosition] = useState("");
   const [newPayRate, setNewPayRate] = useState("");
   const [newPayRateType, setNewPayRateType] = useState("hourly");
 
   // Inline editing state
   const [editingCell, setEditingCell] = useState<{ userId: string; field: string } | null>(null);
+  const [editDepartmentIsCustom, setEditDepartmentIsCustom] = useState(false);
   const [rateModalUser, setRateModalUser] = useState<Profile | null>(null);
   const [editValue, setEditValue] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
@@ -2294,14 +2297,81 @@ function TeamManagementTab({
     setInviteSending(false);
   }, [inviteEmail, inviteEmploymentType, inviteRequiresExtension, inviteMessage]);
 
-  // VA category assignments (read-only summary)
-  const [vaCatAssignments, setVaCatAssignments] = useState<Array<{ va_id: string; task_categories: { category_name: string } | null }>>([]);
-  useEffect(() => {
+  // VA category assignments
+  const [vaCatAssignments, setVaCatAssignments] = useState<
+    Array<{ id: number; va_id: string; category_id: number; task_categories: { category_name: string } | null }>
+  >([]);
+  const fetchCategoryAssignments = useCallback(() => {
     fetch("/api/va-category-assignments")
       .then((r) => r.json())
       .then((d) => setVaCatAssignments(d.assignments ?? []))
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    fetchCategoryAssignments();
+  }, [fetchCategoryAssignments]);
+
+  // Full task category catalog, for the Assignments editor
+  const [taskCategories, setTaskCategories] = useState<Array<{ id: number; category_name: string }>>([]);
+  useEffect(() => {
+    fetch("/api/task-categories")
+      .then((r) => r.json())
+      .then((d) => setTaskCategories(d.categories ?? []))
+      .catch(() => {});
+  }, []);
+
+  // Assignments cell editor (click-to-open type-to-filter checklist)
+  const [editingAssignmentsFor, setEditingAssignmentsFor] = useState<string | null>(null);
+  const [assignmentSearch, setAssignmentSearch] = useState("");
+  const [assignmentSelected, setAssignmentSelected] = useState<Set<number>>(new Set());
+  const [savingCategoryAssignments, setSavingCategoryAssignments] = useState(false);
+
+  const startEditingAssignments = (userId: string) => {
+    const currentIds = vaCatAssignments.filter((a) => a.va_id === userId).map((a) => a.category_id);
+    setAssignmentSelected(new Set(currentIds));
+    setAssignmentSearch("");
+    setEditingAssignmentsFor(userId);
+  };
+  const cancelEditingAssignments = () => {
+    setEditingAssignmentsFor(null);
+    setAssignmentSearch("");
+    setAssignmentSelected(new Set());
+  };
+  const saveAssignments = async () => {
+    if (!editingAssignmentsFor) return;
+    const userId = editingAssignmentsFor;
+    setSavingCategoryAssignments(true);
+    try {
+      const current = vaCatAssignments.filter((a) => a.va_id === userId);
+      const currentIds = new Set(current.map((a) => a.category_id));
+      const toAdd = [...assignmentSelected].filter((id) => !currentIds.has(id));
+      const toRemoveAssignmentIds = current.filter((a) => !assignmentSelected.has(a.category_id)).map((a) => a.id);
+
+      if (toAdd.length > 0) {
+        await fetch("/api/va-category-assignments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ va_id: userId, category_ids: toAdd }),
+        });
+      }
+      if (toRemoveAssignmentIds.length > 0) {
+        await fetch(`/api/va-category-assignments?ids=${toRemoveAssignmentIds.join(",")}`, { method: "DELETE" });
+      }
+      fetchCategoryAssignments();
+      cancelEditingAssignments();
+    } finally {
+      setSavingCategoryAssignments(false);
+    }
+  };
+
+  // Department dropdown options: the defaults, plus anything already in use
+  // on a real profile (e.g. a custom one typed in via "+ Add new department...")
+  // so it keeps showing up as a pickable option from then on.
+  const departmentOptions = useMemo(() => {
+    const inUse = profiles.map((p) => p.department).filter((d): d is string => Boolean(d && d.trim()));
+    return Array.from(new Set([...DEPARTMENT_OPTIONS, ...inUse])).sort((a, b) => a.localeCompare(b));
+  }, [profiles]);
+
   // Email map: user_id -> email
   const [emailMap, setEmailMap] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -2638,6 +2708,7 @@ function TeamManagementTab({
   const startEditing = (userId: string, field: string, currentValue: string) => {
     setEditingCell({ userId, field });
     setEditValue(currentValue);
+    setEditDepartmentIsCustom(false);
   };
 
   const saveEdit = async () => {
@@ -2673,6 +2744,7 @@ function TeamManagementTab({
   const cancelEdit = () => {
     setEditingCell(null);
     setEditValue("");
+    setEditDepartmentIsCustom(false);
   };
 
   // Filtered profiles — per-column Excel-style filters
@@ -2743,11 +2815,11 @@ function TeamManagementTab({
               { key: "status", label: "Status" },
               { key: "username", label: "Username" },
               { key: "role", label: "Role" },
+              { key: "assignments", label: "Assignments" },
               { key: "department", label: "Department" },
               { key: "position", label: "Position" },
               { key: "payRate", label: "Pay Rate" },
               { key: "rateType", label: "Rate Type" },
-              { key: "assignments", label: "Assignments" },
               { key: "availTasks", label: "Avail. Tasks" },
               { key: "joined", label: "Joined" },
             ]}
@@ -2956,14 +3028,41 @@ function TeamManagementTab({
             </div>
             <div>
               <label className="block text-[11px] font-semibold text-walnut mb-1">Department</label>
-              <input
-                type="text"
-                value={newDepartment}
-                onChange={(e) => setNewDepartment(e.target.value)}
-                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
-                placeholder="Optional"
-              />
-              <p className="mt-1 text-[10px] text-stone">Setting this to &ldquo;IT&rdquo; grants admin-panel access without financials, invoices, paystubs, or pay rates.</p>
+              {newDepartmentIsCustom ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={newDepartment}
+                    onChange={(e) => setNewDepartment(e.target.value)}
+                    className="w-full rounded-lg border border-terracotta px-3 py-2 text-[13px] text-espresso outline-none"
+                    placeholder="New department name"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setNewDepartmentIsCustom(false); setNewDepartment(""); }}
+                    className="text-bark hover:text-terracotta text-sm px-1"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ) : (
+                <select
+                  value={newDepartment}
+                  onChange={(e) => {
+                    if (e.target.value === "__new__") { setNewDepartmentIsCustom(true); setNewDepartment(""); }
+                    else setNewDepartment(e.target.value);
+                  }}
+                  className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
+                >
+                  <option value="">Optional — none</option>
+                  {departmentOptions.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                  <option value="__new__">+ Add new department...</option>
+                </select>
+              )}
+              <p className="mt-1 text-[10px] text-stone">Descriptive only — access is controlled by Role, not Department.</p>
             </div>
             <div>
               <label className="block text-[11px] font-semibold text-walnut mb-1">Position</label>
@@ -3111,11 +3210,11 @@ function TeamManagementTab({
                   { col: "status", label: "Status", cls: "px-3 py-2.5 text-center" },
                   { col: "username", label: "Username", cls: "px-3 py-2.5" },
                   { col: "role", label: "Role", cls: "px-3 py-2.5" },
+                  { col: "assignments", label: "Assignments", cls: "px-3 py-2.5" },
                   { col: "department", label: "Department", cls: "px-3 py-2.5" },
                   { col: "position", label: "Position", cls: "px-3 py-2.5" },
                   { col: "payRate", label: "Pay Rate", cls: "px-3 py-2.5 text-right" },
                   { col: "rateType", label: "Rate Type", cls: "px-3 py-2.5" },
-                  { col: "assignments", label: "Assignments", cls: "px-3 py-2.5" },
                   { col: "availTasks", label: "Avail. Tasks", cls: "px-3 py-2.5 text-center" },
                   { col: "joined", label: "Joined", cls: "px-3 py-2.5" },
                 ] as { col: string; label: string; cls: string }[])
@@ -3226,18 +3325,104 @@ function TeamManagementTab({
                     )}
                   </td>
                   )}
+                  {/* Category Assignments — moved next to Role, click-to-edit type-to-filter checklist */}
+                  {!hiddenColumns.has("assignments") && (
+                  <td className="px-3 py-3 min-w-[160px]">
+                    {editingAssignmentsFor === p.id ? (
+                      <div className="w-44 rounded border border-terracotta bg-white p-1.5 space-y-1">
+                        <input
+                          type="text"
+                          value={assignmentSearch}
+                          onChange={(e) => setAssignmentSearch(e.target.value)}
+                          placeholder="Type to filter..."
+                          autoFocus
+                          className="w-full rounded border border-sand px-1.5 py-0.5 text-[11px] outline-none focus:border-terracotta"
+                        />
+                        <div className="max-h-32 overflow-y-auto space-y-0.5">
+                          {taskCategories
+                            .filter((c) => c.category_name.toLowerCase().includes(assignmentSearch.toLowerCase()))
+                            .map((c) => (
+                              <label key={c.id} className="flex items-center gap-1.5 text-[11px] text-espresso cursor-pointer hover:bg-parchment rounded px-1 py-0.5">
+                                <input
+                                  type="checkbox"
+                                  checked={assignmentSelected.has(c.id)}
+                                  onChange={(e) => {
+                                    setAssignmentSelected((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) next.add(c.id); else next.delete(c.id);
+                                      return next;
+                                    });
+                                  }}
+                                />
+                                {c.category_name}
+                              </label>
+                            ))}
+                          {taskCategories.length > 0 &&
+                            taskCategories.filter((c) => c.category_name.toLowerCase().includes(assignmentSearch.toLowerCase())).length === 0 && (
+                              <p className="text-[10px] text-stone px-1">No matches.</p>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-1 pt-0.5">
+                          <button onClick={saveAssignments} disabled={savingCategoryAssignments} className="text-sage text-[11px] font-bold">
+                            {savingCategoryAssignments ? "..." : "OK"}
+                          </button>
+                          <button onClick={cancelEditingAssignments} className="text-bark hover:text-terracotta text-[11px]">Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startEditingAssignments(p.id)}
+                        className="cursor-pointer text-left hover:bg-parchment rounded px-1 -mx-1 py-0.5 transition-colors"
+                      >
+                        {(() => {
+                          const cats = getCategoryBadges(p.id);
+                          if (cats.length === 0) return <span className="text-[10px] text-stone">&mdash;</span>;
+                          return (
+                            <div className="flex flex-wrap gap-0.5">
+                              {cats.map((c, i) => (
+                                <span key={i} className="inline-block bg-parchment text-bark px-1.5 py-0.5 rounded-full text-[9px] font-semibold">
+                                  {c}
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </button>
+                    )}
+                  </td>
+                  )}
                   {/* Department */}
                   {!hiddenColumns.has("department") && (
                   <td className="px-3 py-3">
                     {editingCell?.userId === p.id && editingCell.field === "department" ? (
                       <div className="flex items-center gap-1">
-                        <input
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          className="w-24 rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
-                          autoFocus
-                          onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
-                        />
+                        {editDepartmentIsCustom ? (
+                          <input
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            className="w-28 rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
+                            placeholder="New department"
+                            autoFocus
+                            onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
+                          />
+                        ) : (
+                          <select
+                            value={editValue}
+                            onChange={(e) => {
+                              if (e.target.value === "__new__") { setEditDepartmentIsCustom(true); setEditValue(""); }
+                              else setEditValue(e.target.value);
+                            }}
+                            className="rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
+                            autoFocus
+                          >
+                            <option value="">None</option>
+                            {departmentOptions.map((d) => (
+                              <option key={d} value={d}>{d}</option>
+                            ))}
+                            <option value="__new__">+ Add new...</option>
+                          </select>
+                        )}
                         <button onClick={saveEdit} disabled={savingEdit} className="text-sage text-sm font-bold">{savingEdit ? "..." : "OK"}</button>
                         <button onClick={cancelEdit} className="text-bark hover:text-terracotta text-sm">&times;</button>
                       </div>
@@ -3310,24 +3495,6 @@ function TeamManagementTab({
                     ) : (
                       <span title="Hidden" className="text-stone text-[11px]">🔒</span>
                     )}
-                  </td>
-                  )}
-                  {/* Category Assignments */}
-                  {!hiddenColumns.has("assignments") && (
-                  <td className="px-3 py-3">
-                    {(() => {
-                      const cats = getCategoryBadges(p.id);
-                      if (cats.length === 0) return <span className="text-[10px] text-stone">&mdash;</span>;
-                      return (
-                        <div className="flex flex-wrap gap-0.5">
-                          {cats.map((c, i) => (
-                            <span key={i} className="inline-block bg-parchment text-bark px-1.5 py-0.5 rounded-full text-[9px] font-semibold">
-                              {c}
-                            </span>
-                          ))}
-                        </div>
-                      );
-                    })()}
                   </td>
                   )}
                   {/* Available Tasks toggle */}
