@@ -7,6 +7,8 @@
 // monthly_budget_limit in hours for monthly). A null limit means no cap is
 // set for that VA/period.
 
+import { normalizePosition } from "@/types/database";
+
 export type ShiftProfile = {
   shift_hours: number | null;
   shift_start: string | null;
@@ -31,7 +33,7 @@ export type VaBudgetType = "time_based" | "output_based";
 
 /** Same per-task derivation used elsewhere (FixedPayTasksPanel, Calendar's taskModesForMember). */
 export function vaBudgetType(profile: { position?: string | null; pay_rate_type?: string | null }): VaBudgetType {
-  if (profile.position === "Per Task VA" || profile.pay_rate_type === "per_task") return "output_based";
+  if (normalizePosition(profile.position) === "Output Based" || profile.pay_rate_type === "per_task") return "output_based";
   return "time_based";
 }
 

@@ -1,6 +1,7 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 
 export const dynamic = "force-dynamic";
@@ -172,10 +173,11 @@ export async function POST(request: Request) {
   if ("error" in auth) return auth.error;
 
   const { role, userId, position, payRateType, canSeeAvailableTasks, isPermitted: isAdminOrManager } = auth;
-  // VAs who see the fixed-pay pool may create tasks into it: per-task/fixed-pay
+  // VAs who see the fixed-pay pool may create tasks into it: Output Based/fixed-pay
   // VAs, or hourly VAs with the hybrid "Avail. Tasks" toggle on.
   const isEligibleVa =
-    role === "va" && (position === "Per Task VA" || payRateType === "per_task" || canSeeAvailableTasks);
+    role === "va" &&
+    (normalizePosition(position) === "Output Based" || payRateType === "per_task" || canSeeAvailableTasks);
   if (!isAdminOrManager && !isEligibleVa) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }

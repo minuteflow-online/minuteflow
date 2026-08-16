@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { normalizePosition } from "@/types/database";
 
 /* ── Types ─────────────────────────────────────────────── */
 
@@ -165,8 +166,8 @@ export default function TaskManagementSection({ timezone = "UTC" }: { timezone?:
         if (a._isUnassigned && a.billing_type === "fixed") return true;
         if (a._isUnassigned) return false;
         if (a.billing_type === "fixed") return true;
-        // Hourly tasks: only show if VA's position is "Project Based VA"
-        if (a.billing_type === "hourly" && a.profiles?.position?.toLowerCase() === "project based va") return true;
+        // Hourly tasks: only show if VA's position is "Project Based"
+        if (a.billing_type === "hourly" && normalizePosition(a.profiles?.position) === "Project Based") return true;
         return false;
       });
       setAssignments(filtered);
