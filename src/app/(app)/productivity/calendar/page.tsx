@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import TaskEditor, { type TaskEditorInitialTask } from "@/components/TaskEditor";
 import {
   type RawTask,
@@ -120,7 +121,7 @@ export default function ProductivityCalendarPage() {
   const [ready, setReady] = useState(false);
 
   const todayStr = getDateInTimezone(orgTimezone);
-  const isAdminOrManager = role === "admin" || role === "manager";
+  const isAdminOrManager = hasBroadAdminAccess({ role });
 
   const [viewMode, setViewMode] = useUrlTab<"month" | "week" | "day">("view", "month", ["month", "week", "day"]);
   const [scope, setScope] = useState<string>("__self__");

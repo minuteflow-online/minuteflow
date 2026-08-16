@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { TimeLog, TaskScreenshot, Profile } from "@/types/database";
 import EditTimeLogModal from "./EditTimeLogModal";
 import CorrectionRequestModal from "./CorrectionRequestModal";
@@ -164,7 +165,7 @@ export default function ActivityLog({
   onResumeTask,
   onUpdateProgress,
 }: ActivityLogProps) {
-  const isAdminOrManager = role === "admin" || role === "manager";
+  const isAdminOrManager = hasBroadAdminAccess({ role });
 
   // Defensive: a null/empty username in time_logs previously crashed the entire
   // dashboard render (TypeError: Cannot read properties of null (reading '0')).

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { TimeLog, Profile, TaskScreenshot } from "@/types/database";
 import EditTimeLogModal from "@/components/EditTimeLogModal";
 import CorrectionRequestModal from "@/components/CorrectionRequestModal";
@@ -234,7 +235,7 @@ export default function TimeLogPage() {
 
   const [department, setDepartment] = useState<string | null>(null);
   const isITStaff = department?.trim().toUpperCase() === "IT";
-  const isAdminOrManager = role === "admin" || role === "manager" || isITStaff;
+  const isAdminOrManager = hasBroadAdminAccess({ role }) || isITStaff;
 
   /* ── Fetch current user & profiles ─────────────────────── */
 

@@ -20,6 +20,7 @@ import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone, countWords } from "@/lib/utils";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import { todoLabel, type TaskTodo } from "@/lib/taskTodos";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { useAccountsAndClients } from "@/hooks/useAccountsAndClients";
 import type {
   Profile,
@@ -3312,7 +3313,7 @@ export default function DashboardPage() {
           vaIds={[userId]}
           orgTimezone={orgTimezone}
           variant="detail"
-          isAdmin={role === "admin" || role === "manager"}
+          isAdmin={hasBroadAdminAccess({ role })}
           teamMembers={teamMembers.filter((m) => m.profile.pay_rate_type === "hourly").map((m) => ({ id: m.profile.id, name: m.profile.full_name }))}
         />
       )}
@@ -3379,7 +3380,7 @@ export default function DashboardPage() {
                 onPlayAssignedTask={handlePlayAssignedTask}
                 onPlayTodo={handlePlayTodo}
                 orgTimezone={orgTimezone}
-                isAdmin={role === "admin" || role === "manager"}
+                isAdmin={hasBroadAdminAccess({ role })}
                 refetchCount={widgetRefetchCount}
                 activeAssignedTaskId={activeTask?.assignedTaskId ?? null}
                 activeTodoLabel={activeTask?.todoLabel ?? null}
@@ -3404,7 +3405,7 @@ export default function DashboardPage() {
                 onSelectProject={handleProjectSelect}
                 onQuickAction={handleQuickAction}
                 onAutoHoldAction={handleAutoHoldAndStartMessage}
-                isAdmin={role === "admin" || role === "manager"}
+                isAdmin={hasBroadAdminAccess({ role })}
               />
             )}
           </div>

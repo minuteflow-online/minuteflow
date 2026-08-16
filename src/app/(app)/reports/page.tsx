@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { Profile, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
 import {
   formatDuration,
@@ -933,7 +934,7 @@ export default function ReportsPage() {
             </button>
           </div>
           {/* VA Filter (admin/manager only) */}
-          {(role === "admin" || role === "manager") && (
+          {hasBroadAdminAccess({ role }) && (
             <select
               value={selectedVA}
               onChange={(e) => setSelectedVA(e.target.value)}
