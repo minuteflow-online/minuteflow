@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { countWords } from "@/lib/utils";
+import { countWords, screenshotCaptureTime } from "@/lib/utils";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { TimeLog, TaskScreenshot, Profile } from "@/types/database";
 import EditTimeLogModal from "./EditTimeLogModal";
@@ -807,7 +807,13 @@ export default function ActivityLog({
               {filteredLogs.map((log) => {
                 const displayCategory = normalizeCategory(log.category);
                 const catTag = getCategoryTag(displayCategory);
-                const logScreenshots = screenshots[log.id] || [];
+                // Oldest first: the row reads as the sequence the work happened in.
+                // Ordered by capture time, not row id — an upload retry lands out of order.
+                const logScreenshots = [...(screenshots[log.id] || [])].sort(
+                  (a, b) =>
+                    new Date(screenshotCaptureTime(a.filename) ?? a.created_at).getTime() -
+                    new Date(screenshotCaptureTime(b.filename) ?? b.created_at).getTime()
+                );
                 const isLive = !log.end_time;
                 const isEdited = editedLogIds.has(log.id);
                 const isManual = log.is_manual;
@@ -1082,7 +1088,10 @@ export default function ActivityLog({
                                   setLightboxIndex(Math.max(0, urls.indexOf(url)));
                                 }}
                                 className="w-[28px] h-[20px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer transition-all hover:border-terracotta hover:scale-105 flex-shrink-0"
-                                title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                                title={`${ss.screenshot_type || "manual"} — taken ${formatTime(
+                                  screenshotCaptureTime(ss.filename) ?? ss.created_at,
+                                  timezone
+                                )}`}
                               >
                                 {url ? (
                                   <img src={url} alt="" className="w-full h-full object-cover" />

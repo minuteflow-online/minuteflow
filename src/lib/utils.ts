@@ -143,15 +143,24 @@ export function getTimezoneAbbr(timezone: string): string {
 }
 
 /**
- * Convert local midnight (year/month/day, month is 0-indexed) in a given timezone
- * to the equivalent UTC instant.
+ * Convert a wall-clock time (month is 0-indexed) as read in a given timezone to
+ * the equivalent UTC instant.
  *
  * The UTC offset is derived from the target instant itself (not from "now"), so this
  * stays correct across DST transitions — reusing a single "now"-based offset for a
  * boundary date on the other side of a DST change silently shifts it by a day/hour.
  */
-function localMidnightToUtc(year: number, month: number, day: number, timezone: string): Date {
-  const guess = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+function zonedTimeToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  ms: number,
+  timezone: string
+): Date {
+  const guess = new Date(Date.UTC(year, month, day, hour, minute, second, ms));
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
@@ -166,12 +175,53 @@ function localMidnightToUtc(year: number, month: number, day: number, timezone: 
   const gYear = parseInt(parts.find(p => p.type === "year")!.value);
   const gMonth = parseInt(parts.find(p => p.type === "month")!.value) - 1;
   const gDay = parseInt(parts.find(p => p.type === "day")!.value);
-  const gHour = parseInt(parts.find(p => p.type === "hour")!.value);
+  // Intl renders midnight as hour "24" in some zones; normalize it back to 0.
+  const gHour = parseInt(parts.find(p => p.type === "hour")!.value) % 24;
   const gMinute = parseInt(parts.find(p => p.type === "minute")!.value);
   const gSecond = parseInt(parts.find(p => p.type === "second")!.value);
-  const tzAsUtc = Date.UTC(gYear, gMonth, gDay, gHour, gMinute, gSecond);
+  // Zone offsets never carry a sub-second component, so the guess's own ms is
+  // reused here — Intl gives no fractional seconds to read back.
+  const tzAsUtc = Date.UTC(gYear, gMonth, gDay, gHour, gMinute, gSecond, ms);
   const offsetMs = tzAsUtc - guess.getTime();
   return new Date(guess.getTime() - offsetMs);
+}
+
+/** Convert local midnight (month is 0-indexed) in a given timezone to a UTC instant. */
+function localMidnightToUtc(year: number, month: number, day: number, timezone: string): Date {
+  return zonedTimeToUtc(year, month, day, 0, 0, 0, 0, timezone);
+}
+
+/**
+ * When a screenshot was actually taken, read out of its Drive filename.
+ *
+ * The filename is written once at upload and never touched again, so it is the one
+ * timestamp on a screenshot that cannot drift afterwards — `created_at` is the DB
+ * insert, which lands a few seconds later and moves if a row is ever re-inserted.
+ * Three filename generations exist in the data:
+ *
+ *   Name_Task_2026-08-16_14-12-58-411_ET.png  Eastern wall clock (current format)
+ *   Name_Task_2026-07-23_21-40-23-665.png     UTC
+ *   progress_2026-04-28T17-11-54-803Z.png     UTC (oldest)
+ *
+ * Returns a UTC ISO string, or null for a filename matching none of them — callers
+ * fall back to `created_at` in that case.
+ */
+export function screenshotCaptureTime(filename: string | null | undefined): string | null {
+  if (!filename) return null;
+
+  const eastern = filename.match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})-(\d{3})_ET\.png$/);
+  if (eastern) {
+    const [year, month, day, hour, minute, second, ms] = eastern.slice(1).map(Number);
+    return zonedTimeToUtc(year, month - 1, day, hour, minute, second, ms, "America/New_York").toISOString();
+  }
+
+  const utc = filename.match(/(\d{4}-\d{2}-\d{2})[_T](\d{2})-(\d{2})-(\d{2})-(\d{3})Z?\.png$/);
+  if (utc) {
+    const parsed = new Date(`${utc[1]}T${utc[2]}:${utc[3]}:${utc[4]}.${utc[5]}Z`);
+    return isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
+  return null;
 }
 
 /**
