@@ -2005,17 +2005,17 @@ export default function VaPortalPage() {
       <aside className="w-56 shrink-0 border-r border-sand bg-parchment">
         <div className="sticky top-14 pt-4 pb-6">
           {/* Portal header */}
-          <div className="px-4 pb-3 border-b border-sand mb-3">
+          <div className="px-4 pb-4 border-b border-sand mb-3">
             <p className="text-[11px] font-bold text-stone tracking-widest uppercase">Portal</p>
             {profile && (
-              <div className="mt-1.5 flex items-center gap-2">
+              <div className="mt-2 flex flex-col items-center gap-2 text-center">
                 <AvatarUpload
                   avatarUrl={profile.avatar_url}
                   fullName={profile.full_name}
-                  size={32}
+                  size={88}
                   onUploaded={(url) => setProfile((prev) => (prev ? { ...prev, avatar_url: url } : prev))}
                 />
-                <p className="text-xs font-medium text-espresso truncate">{profile.full_name}</p>
+                <p className="text-sm font-semibold text-espresso truncate max-w-full">{profile.full_name}</p>
               </div>
             )}
           </div>
