@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import TopNav from "@/components/TopNav";
 import type { UserRole } from "@/types/database";
-import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { hasAdminPanelAccess } from "@/lib/financialAccess";
 
 export default async function AdminLayout({
   children,
@@ -18,11 +18,12 @@ export default async function AdminLayout({
     redirect("/login");
   }
 
-  // Check role — admins, managers, staff tagged Founder/Accounting/IT/Project
-  // Coordinator (see financialAccess.ts), and VAs granted a specific admin
-  // permission (see adminPermissions.ts) can access admin pages. (Department
-  // is used instead of a dedicated role because the `profiles.role` column
-  // has a DB check constraint limited to admin/manager/va.)
+  // Check role — Admin, Manager, Specialist, and Founder/CEO/Accounting (see
+  // hasAdminPanelAccess in financialAccess.ts), plus VAs granted a specific
+  // admin permission (see adminPermissions.ts), can access admin pages.
+  // Coordinator is deliberately excluded here even though it gets broad
+  // Insights/Productivity visibility elsewhere (hasBroadAdminAccess) — the
+  // admin panel itself is a narrower tier.
   const { data: profile } = await supabase
     .from("profiles")
     .select("full_name, role, department, admin_permissions, avatar_url")
@@ -30,7 +31,7 @@ export default async function AdminLayout({
     .single();
 
   const hasAnyAdminPermission = (profile?.admin_permissions?.length ?? 0) > 0;
-  if (!profile || (!hasBroadAdminAccess(profile) && !hasAnyAdminPermission)) {
+  if (!profile || (!hasAdminPanelAccess(profile) && !hasAnyAdminPermission)) {
     redirect("/dashboard");
   }
 

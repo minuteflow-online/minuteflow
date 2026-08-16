@@ -55,7 +55,7 @@ import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { ADMIN_PERMISSION_BUNDLES, type AdminPermissionBundle } from "@/lib/adminPermissions";
-import { hasFinancialAccess, hasBroadAdminAccess, hasAccountsClientsAccess, canGrantRoles } from "@/lib/financialAccess";
+import { hasFinancialAccess, hasAdminPanelAccess, hasAccountsClientsAccess, canGrantRoles } from "@/lib/financialAccess";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -506,7 +506,10 @@ export default function AdminPage() {
   // also admits an Accounting-department Specialist for financial
   // visibility but not role-granting. See canGrantRoles in financialAccess.ts.
   const canManageRoles = canGrantRoles(currentUserProfile) && !previewAsIT;
-  const hasBroadAccess = hasBroadAdminAccess(currentUserProfile);
+  // Unrestricted admin-panel access — narrower than hasBroadAdminAccess
+  // (Coordinator gets broad Insights/Productivity visibility elsewhere but
+  // not this). See hasAdminPanelAccess in financialAccess.ts.
+  const hasBroadAccess = hasAdminPanelAccess(currentUserProfile);
   const canSeeAccountsClients = hasAccountsClientsAccess(currentUserProfile);
 
   // A plain "va" role account only reaches /admin at all if the layout gate
