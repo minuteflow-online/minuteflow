@@ -15,6 +15,8 @@ import {
   formatDateLocalTZ,
 } from "@/lib/utils";
 import { hasFinancialAccess } from "@/lib/financialAccess";
+import RevisionBadge from "@/components/RevisionBadge";
+import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
 
 /* ── Types ────────────────────────────────────────────────── */
 
@@ -1773,6 +1775,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
 /* ── Task Log List (shared between compact & expanded) ───── */
 
 function TaskLogList({ logs, showProgress, timezone = "UTC" }: { logs: TimeLog[]; showProgress?: boolean; timezone?: string }) {
+  const revisionByLogId = useRevisionByLogId(logs);
   const progressConfig: Record<string, { label: string; bg: string; text: string; dot: string }> = {
     in_progress: { label: "In Progress", bg: "bg-blue-50", text: "text-blue-600", dot: "bg-blue-500" },
     completed: { label: "Completed", bg: "bg-sage-soft", text: "text-sage", dot: "bg-sage" },
@@ -1817,6 +1820,7 @@ function TaskLogList({ logs, showProgress, timezone = "UTC" }: { logs: TimeLog[]
                 <span className="text-[12px] font-semibold text-espresso truncate">
                   {log.task_name}
                 </span>
+                <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
                 {showProgress && pConfig && log.category !== "Break" && log.category !== "Clock In" && (
                   <span className={`inline-flex items-center gap-1 shrink-0 rounded-full px-2 py-[1px] text-[9px] font-semibold ${pConfig.bg} ${pConfig.text}`}>
                     <span className={`w-1 h-1 rounded-full ${pConfig.dot}`} />

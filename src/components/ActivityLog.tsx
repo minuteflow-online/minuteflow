@@ -8,6 +8,8 @@ import type { TimeLog, TaskScreenshot, Profile } from "@/types/database";
 import EditTimeLogModal from "./EditTimeLogModal";
 import CorrectionRequestModal from "./CorrectionRequestModal";
 import ScreenshotLightbox from "./ScreenshotLightbox";
+import RevisionBadge from "@/components/RevisionBadge";
+import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -247,6 +249,8 @@ export default function ActivityLog({
 
   // Edited log IDs (for "edited" indicator)
   const [editedLogIds, setEditedLogIds] = useState<Set<number>>(new Set());
+
+  const revisionByLogId = useRevisionByLogId(logs);
 
   // Load edited log IDs on mount
   useEffect(() => {
@@ -849,6 +853,7 @@ export default function ActivityLog({
                         <span className={`font-semibold ${isExpanded ? "whitespace-pre-wrap break-words" : "overflow-hidden text-ellipsis whitespace-nowrap"}`}>
                           {log.task_name}
                         </span>
+                        <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
                         {log.todo_label && (
                           <span className="shrink-0 inline-block py-[1px] px-1 rounded text-[8px] font-semibold bg-sage-soft text-sage" title="Logged against this to-do item">
                             {log.todo_label}
@@ -1303,7 +1308,10 @@ export default function ActivityLog({
                       {formatDate(log.start_time, timezone)}
                     </td>
                     <td className="py-2 px-3 text-[12px] font-semibold text-espresso border-b border-parchment">
-                      {log.task_name}
+                      <span className="inline-flex items-center gap-1">
+                        {log.task_name}
+                        <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
+                      </span>
                     </td>
                     <td className="py-2 px-3 text-[12px] text-espresso border-b border-parchment">
                       {log.account || <span className="text-stone">&mdash;</span>}
@@ -1379,7 +1387,10 @@ export default function ActivityLog({
                       {formatDate(log.start_time, timezone)}
                     </td>
                     <td className="py-2 px-3 text-[12px] font-semibold text-espresso border-b border-parchment">
-                      {log.task_name}
+                      <span className="inline-flex items-center gap-1">
+                        {log.task_name}
+                        <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
+                      </span>
                     </td>
                     <td className="py-2 px-3 text-[12px] text-espresso border-b border-parchment">
                       {log.account || <span className="text-stone">&mdash;</span>}

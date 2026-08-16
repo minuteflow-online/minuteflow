@@ -1160,7 +1160,10 @@ export default function TimeLogPage() {
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <div className="font-medium text-espresso">{log.task_name}</div>
+                          <div className="flex items-center gap-1 font-medium text-espresso">
+                            {log.task_name}
+                            <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
+                          </div>
                           {log.account && <div className="text-[11px] text-bark">{log.account}</div>}
                         </td>
                         {isAdminOrManager && (
@@ -1170,10 +1173,7 @@ export default function TimeLogPage() {
                           {log.start_time ? new Date(log.start_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone }) : "—"}
                         </td>
                         <td className="px-4 py-3 text-bark">
-                          <span className="inline-flex items-center gap-1">
-                            {log.duration_ms ? formatDuration(log.duration_ms) : "—"}
-                            <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
-                          </span>
+                          {log.duration_ms ? formatDuration(log.duration_ms) : "—"}
                         </td>
                         <td className="px-4 py-3 text-bark text-[11px]">
                           {log.deleted_at ? new Date(log.deleted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: orgTimezone }) : "—"}
@@ -1481,6 +1481,7 @@ export default function TimeLogPage() {
                               <span className={`font-semibold text-espresso text-[12px] ${isExpanded ? "whitespace-pre-wrap break-words" : "overflow-hidden text-ellipsis whitespace-nowrap"}`}>
                                 {log.task_name}
                               </span>
+                              <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
                               {isLive && (
                                 <span className="inline-block h-2 w-2 rounded-full bg-terracotta animate-pulse shrink-0" />
                               )}
@@ -1541,11 +1542,8 @@ export default function TimeLogPage() {
 
                           {/* Duration */}
                           <td className="px-3 py-2.5 text-right align-top whitespace-nowrap">
-                            <div className={`flex items-center justify-end gap-1 font-serif font-bold ${isLive ? "text-terracotta" : isBreak ? "text-amber" : "text-sage"}`}>
+                            <div className={`font-serif font-bold ${isLive ? "text-terracotta" : isBreak ? "text-amber" : "text-sage"}`}>
                               {isLive ? "live" : log.duration_ms > 0 ? formatDurationShort(log.duration_ms) : "0:00"}
-                              {/* Beside the time, so scanning durations shows
-                                  which minutes were revision work. */}
-                              <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
                             </div>
                             <div className="text-[10px] text-stone mt-0.5 tabular-nums">
                               {log.start_time ? formatTimeTZ(log.start_time, orgTimezone) : "—"}

@@ -18,6 +18,7 @@ import type { RecurringTaskTemplate } from "@/types/database";
 import { countWords } from "@/lib/utils";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
+import RevisionBadge from "@/components/RevisionBadge";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -289,16 +290,6 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[status]}`}>
       {STATUS_LABELS[status]}
-    </span>
-  );
-}
-
-function RevisionBadge({ count }: { count: number }) {
-  if (count <= 0) return null;
-  const label = count === 1 ? 'R' : `${count}R`;
-  return (
-    <span className="text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-terracotta text-white">
-      {label}
     </span>
   );
 }

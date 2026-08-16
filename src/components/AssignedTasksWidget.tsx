@@ -4,6 +4,8 @@ import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import type { VAAssignedTask, AssignedTaskStatus } from "@/types/database";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import { fetchTodos, todoLabel, type TaskTodo } from "@/lib/taskTodos";
+import SubmitWorkModal from "@/components/SubmitWorkModal";
+import RevisionBadge from "@/components/RevisionBadge";
 
 interface AssignedTasksWidgetProps {
   userId: string;
@@ -86,15 +88,6 @@ function renderTextWithLinks(text: string) {
   return parts.length > 0 ? parts : [<Fragment key="empty">{text}</Fragment>];
 }
 
-function RevisionBadge({ count }: { count: number }) {
-  if (count <= 0) return null;
-  const label = count === 1 ? 'R' : `${count}R`;
-  return (
-    <span className="text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-terracotta text-white">
-      {label}
-    </span>
-  );
-}
 
 export default function AssignedTasksWidget({
   userId,
@@ -114,6 +107,9 @@ export default function AssignedTasksWidget({
   const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [optimisticStatuses, setOptimisticStatuses] = useState<Record<number, AssignedTaskStatus>>({});
+  // Submitting opens the modal first — the status only moves once the
+  // submission record is saved, so "submitted" always has evidence behind it.
+  const [submitTarget, setSubmitTarget] = useState<VAAssignedTask | null>(null);
   const [todosByTaskId, setTodosByTaskId] = useState<Record<number, TaskTodo[]>>({});
   const [todosLoadingId, setTodosLoadingId] = useState<number | null>(null);
   // Optimistic "has been played" set (todo.id), so a to-do turns yellow the
@@ -195,22 +191,11 @@ export default function AssignedTasksWidget({
                   (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
               )
           );
-        } else if (task.assigned_tasks.status === "revision_needed") {
-          // Moving out of revision_needed — increment revision_count badge in state
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.id === id
-                ? {
-                    ...t,
-                    assigned_tasks: {
-                      ...t.assigned_tasks,
-                      revision_count: (t.assigned_tasks.revision_count ?? 0) + 1,
-                    },
-                  }
-                : t
-            )
-          );
         }
+        // No optimistic bump on the way out of revision_needed: revision_count
+        // is incremented server-side when the revision is issued, so the badge
+        // is already correct here. Bumping again on Accept/Start would show R2
+        // for a single revision.
       } catch {
         setTasks((prev) =>
           prev
@@ -555,6 +540,16 @@ export default function AssignedTasksWidget({
                           </button>
                         )}
 
+                        {effectiveStatus === "revision_needed" && (
+                          <button
+                            onClick={() => updateStatus(task, "on_queue")}
+                            disabled={isUpdating}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-terracotta text-white hover:bg-[#a85840] cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isUpdating ? "Queuing..." : "Rework"}
+                          </button>
+                        )}
+
                         {effectiveStatus === "on_queue" && (
                           <button
                             onClick={() => handlePlay(task)}
@@ -580,7 +575,7 @@ export default function AssignedTasksWidget({
 
                         {effectiveStatus === "in_progress" && (
                           <button
-                            onClick={() => updateStatus(task, "submitted")}
+                            onClick={() => setSubmitTarget(task)}
                             disabled={isUpdating}
                             className="flex items-center gap-1.5 text-[11px] font-semibold py-1 px-3 rounded-lg bg-sky-500 text-white hover:bg-sky-600 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
@@ -597,6 +592,19 @@ export default function AssignedTasksWidget({
             </div>
           )}
         </div>
+      )}
+
+      {submitTarget && (
+        <SubmitWorkModal
+          taskId={submitTarget.assigned_tasks.id}
+          taskName={submitTarget.assigned_tasks.task_name}
+          onClose={() => setSubmitTarget(null)}
+          onSubmitted={() => {
+            const task = submitTarget;
+            setSubmitTarget(null);
+            void updateStatus(task, "submitted");
+          }}
+        />
       )}
     </div>
   );

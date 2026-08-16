@@ -92,7 +92,12 @@ export async function POST(request: NextRequest) {
       .eq("id", user.id)
       .single();
 
-    const formData = await request.formData();
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return Response.json({ error: "Invalid form data" }, { status: 400 });
+    }
     const blob = formData.get("file") as Blob | null;
     const userId = formData.get("userId") as string | null;
     const fileType = formData.get("fileType") as string | null;

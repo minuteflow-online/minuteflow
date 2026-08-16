@@ -6,6 +6,8 @@ import { CATEGORY_OPTIONS, autoCategoryForTask } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
+import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
 import type { Project } from "@/types/database";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -189,6 +191,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [todoBusyId, setTodoBusyId] = useState<number | null>(null);
   const [screenshots, setScreenshots] = useState<Array<{ id: number; url: string | null; screenshot_type: string | null }>>([]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
+  const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Assignment
@@ -281,6 +284,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       .catch(() => setScreenshots([]))
       .finally(() => setScreenshotsLoading(false));
   }, [supportsTodos, editingTaskId]);
+
+  // Submissions exist for any assigned task that's been turned in — output-based
+  // included — so unlike screenshots these aren't gated on supportsTodos.
+  useEffect(() => {
+    if (!editingTaskId) return;
+    void fetchSubmissions(editingTaskId).then(setSubmissions);
+  }, [editingTaskId]);
 
   const handleAddTodo = useCallback(async () => {
     const text = newTodoText.trim();
@@ -718,12 +728,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Notes</label>
+          <SubmissionNotes submissions={submissions} />
           <textarea value={taskNotes} onChange={(e) => setTaskNotes(e.target.value)} rows={2} disabled={readOnly} placeholder="Internal notes" className={`${inputClass} resize-none`} />
         </div>
 
         <div>
           <label className={labelClass}>Link</label>
           <input value={link} onChange={(e) => setLink(e.target.value)} disabled={readOnly} placeholder="https://..." className={inputClass} />
+          <SubmissionLinks submissions={submissions} />
         </div>
 
         <div>
@@ -922,7 +934,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
-      {(supportsTodos || attachmentsExtra) && (
+      {(supportsTodos || attachmentsExtra || submissions.some((s) => s.attachments.length > 0)) && (
         <Section title={supportsTodos ? "Attachments & Screenshots" : "Attachments"}>
           {supportsTodos && (
             <>
@@ -963,6 +975,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               )}
             </>
           )}
+          <SubmissionFiles submissions={submissions} />
           {attachmentsExtra}
         </Section>
       )}
