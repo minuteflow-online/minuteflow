@@ -20,12 +20,13 @@ type NavItem = {
   href: string;
 };
 
+// Time Log and Team moved under Monitoring's shared sub-nav (see
+// MonitoringSubNav.tsx) — they're still their own routes (/timelog, /team),
+// just no longer top-level nav items.
 const allNavItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
-  { label: "Time Log", href: "/timelog" },
   { label: "Productivity", href: "/productivity" },
-  { label: "Team", href: "/team" },
-  { label: "Reports", href: "/reports" },
+  { label: "Monitoring", href: "/reports" },
   { label: "Portal", href: "/portal" },
 ];
 
@@ -115,16 +116,10 @@ export default function TopNav({ user }: TopNavProps) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutMood, setLogoutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
 
-  // Filter nav items based on role
-  // VAs see: Dashboard, Time Log, Productivity, Reports, Portal (no Team)
-  // Admins/managers/IT staff see: Dashboard, Time Log, Team, Productivity, Reports, Portal
-  const isITStaff = user.department?.trim().toUpperCase() === "IT";
-  const navItems = allNavItems.filter((item) => {
-    if (user.role === "va" && !isITStaff) {
-      return item.href !== "/team";
-    }
-    return true;
-  });
+  // Every top-level item is now visible to everyone — the one item that used
+  // to be role-gated here (Team) moved under Monitoring's own sub-nav, which
+  // does its own role check (see (monitoring)/layout.tsx).
+  const navItems = allNavItems;
 
   const handleLogoutClick = useCallback(async () => {
     // Check if user has an active task by reading their session from Supabase
