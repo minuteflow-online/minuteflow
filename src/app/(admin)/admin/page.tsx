@@ -55,7 +55,7 @@ import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { ADMIN_PERMISSION_BUNDLES, type AdminPermissionBundle } from "@/lib/adminPermissions";
-import { hasFinancialAccess, hasBroadAdminAccess, hasAccountsClientsAccess } from "@/lib/financialAccess";
+import { hasFinancialAccess, hasBroadAdminAccess, hasAccountsClientsAccess, canGrantRoles } from "@/lib/financialAccess";
 
 /* ── Constants ───────────────────────────────────────────── */
 
@@ -502,10 +502,10 @@ export default function AdminPage() {
   const searchParams = useSearchParams();
   const previewAsIT = searchParams.get("viewAs") === "it";
   const isFullAdmin = hasFinancialAccess(currentUserProfile) && !previewAsIT;
-  // Role-changing is founder-only — narrower than isFullAdmin, which also
-  // covers CEO and Specialist+Accounting. Even a CEO cannot change roles,
-  // including their own.
-  const isFounder = currentUserProfile?.role === "founder" && !previewAsIT;
+  // Role-changing is CEO/Founder-only — narrower than isFullAdmin, which
+  // also admits an Accounting-department Specialist for financial
+  // visibility but not role-granting. See canGrantRoles in financialAccess.ts.
+  const canManageRoles = canGrantRoles(currentUserProfile) && !previewAsIT;
   const hasBroadAccess = hasBroadAdminAccess(currentUserProfile);
   const canSeeAccountsClients = hasAccountsClientsAccess(currentUserProfile);
 
@@ -1582,6 +1582,7 @@ export default function AdminPage() {
               fetchData={fetchData}
               orgTimezone={orgTimezone}
               isFullAdmin={isFullAdmin}
+              canManageRoles={canManageRoles}
               currentUserId={currentUserId}
             />
           )}
@@ -2171,12 +2172,14 @@ function TeamManagementTab({
   fetchData,
   orgTimezone,
   isFullAdmin,
+  canManageRoles,
   currentUserId,
 }: {
   profiles: Profile[];
   fetchData: () => void;
   orgTimezone: string;
   isFullAdmin: boolean;
+  canManageRoles: boolean;
   currentUserId: string | null;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
@@ -2941,12 +2944,12 @@ function TeamManagementTab({
                 className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
               >
                 <option value="va">Staff</option>
-                {isFullAdmin && <option value="coordinator">Coordinator</option>}
-                {isFullAdmin && <option value="admin">Admin</option>}
-                {isFullAdmin && <option value="specialist">Specialist</option>}
-                <option value="manager">Manager</option>
-                {isFullAdmin && <option value="ceo">CEO</option>}
-                {isFullAdmin && <option value="founder">Founder</option>}
+                {canManageRoles && <option value="coordinator">Coordinator</option>}
+                {canManageRoles && <option value="admin">Admin</option>}
+                {canManageRoles && <option value="specialist">Specialist</option>}
+                {canManageRoles && <option value="manager">Manager</option>}
+                {canManageRoles && <option value="ceo">CEO</option>}
+                {canManageRoles && <option value="founder">Founder</option>}
               </select>
             </div>
             <div>
@@ -3235,24 +3238,25 @@ function TeamManagementTab({
                           autoFocus
                         >
                           <option value="va">Staff</option>
-                          {isFullAdmin && <option value="coordinator">Coordinator</option>}
-                          {isFullAdmin && <option value="admin">Admin</option>}
-                          {isFullAdmin && <option value="specialist">Specialist</option>}
+                          <option value="coordinator">Coordinator</option>
+                          <option value="admin">Admin</option>
+                          <option value="specialist">Specialist</option>
                           <option value="manager">Manager</option>
-                          {isFullAdmin && <option value="ceo">CEO</option>}
-                          {isFullAdmin && <option value="founder">Founder</option>}
+                          <option value="ceo">CEO</option>
+                          <option value="founder">Founder</option>
                         </select>
                         <button onClick={saveEdit} disabled={savingEdit} className="text-sage hover:text-sage text-sm font-bold">
                           {savingEdit ? "..." : "OK"}
                         </button>
                         <button onClick={cancelEdit} className="text-bark hover:text-terracotta text-sm">&times;</button>
                       </div>
-                    ) : p.role === "founder" && p.id !== currentUserId ? (
-                      // A founder's role can only ever be changed by that same account
-                      // (enforced server-side too, see /api/users PATCH) — not even
-                      // another founder or full admin can touch it from here.
+                    ) : !canManageRoles || (p.role === "founder" && p.id !== currentUserId) ? (
+                      // Role-granting is CEO/Founder-only (see canGrantRoles in
+                      // financialAccess.ts), and a founder's own role can only ever
+                      // be changed by that same account (enforced server-side too,
+                      // see /api/users PATCH) — neither case gets a click target here.
                       <span
-                        title="Only this founder can change their own role"
+                        title={!canManageRoles ? "Only CEO or Founder can change roles" : "Only this founder can change their own role"}
                         className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-parchment text-bark"
                       >
                         {displayRole(p.role, p.department)}

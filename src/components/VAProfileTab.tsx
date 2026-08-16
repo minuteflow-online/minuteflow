@@ -215,6 +215,7 @@ function BasicInfoSection({
             avatarUrl={profile.avatar_url}
             fullName={profile.full_name}
             size={96}
+            hint
             onUploaded={(url) => onSaved({ ...profile, avatar_url: url })}
           />
         </div>
