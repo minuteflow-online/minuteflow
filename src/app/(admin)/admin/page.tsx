@@ -3178,12 +3178,21 @@ function TeamManagementTab({
                       <svg className={`h-3 w-3 text-bark shrink-0 transition-transform ${expandedId === p.id ? "rotate-90" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M9 18l6-6-6-6" />
                       </svg>
-                      <div
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
-                        style={{ backgroundColor: getAvatarColor(p.id) }}
-                      >
-                        {getInitials(p.full_name)}
-                      </div>
+                      {p.avatar_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={p.avatar_url}
+                          alt=""
+                          className="h-7 w-7 shrink-0 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                          style={{ backgroundColor: getAvatarColor(p.id) }}
+                        >
+                          {getInitials(p.full_name)}
+                        </div>
+                      )}
                       <span className="font-semibold text-espresso text-[13px]">{p.full_name}</span>
                     </div>
                   </td>

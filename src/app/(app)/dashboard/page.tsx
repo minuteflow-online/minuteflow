@@ -3167,7 +3167,11 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <SessionBannerWrapper />
+      {/* When idle, the "Ready to Start" banner just duplicated the greeting
+          below for no benefit — the Clock In action now lives inline in the
+          greeting row instead. Once clocked in or on break, the full banner
+          (live timer, Break/Clock Out) earns its own space again. */}
+      {sessionState !== "idle" && <SessionBannerWrapper />}
 
       {/* Screen Share Alert — shown after 3 consecutive capture failures */}
       {showScreenShareAlert && (
@@ -3293,18 +3297,35 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Greeting */}
-      <div className="mb-7">
-        <h1 className="font-serif text-[26px] font-normal text-espresso mb-1">
-          {getGreeting(orgTimezone)},{" "}
-          <strong className="font-bold">{firstName}</strong>
-        </h1>
-        <p className="text-sm text-bark">
-          {formatDateLong(orgTimezone)} &mdash;{" "}
-          {todayStats.taskCount > 0
-            ? `${todayStats.taskCount} task${todayStats.taskCount !== 1 ? "s" : ""} logged \u00B7 ${formatHoursMinutes(todayStats.totalMs)} tracked today`
-            : "No tasks logged yet today"}
-        </p>
+      {/* Greeting \u2014 doubles as the Clock In prompt when idle, instead of a separate banner */}
+      <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-[26px] font-normal text-espresso mb-1">
+            {getGreeting(orgTimezone)},{" "}
+            <strong className="font-bold">{firstName}</strong>
+          </h1>
+          <p className="text-sm text-bark">
+            {formatDateLong(orgTimezone)} &mdash;{" "}
+            {todayStats.taskCount > 0
+              ? `${todayStats.taskCount} task${todayStats.taskCount !== 1 ? "s" : ""} logged \u00B7 ${formatHoursMinutes(todayStats.totalMs)} tracked today`
+              : "No tasks logged yet today"}
+          </p>
+          {sessionState === "idle" && (
+            <p className="mt-1.5 text-[13px] italic text-stone">
+              &ldquo;Let Every Minute Count With Purpose&rdquo;
+            </p>
+          )}
+        </div>
+        {sessionState === "idle" && (
+          <button
+            onClick={clockIn}
+            disabled={sessionActionPending}
+            className="inline-flex shrink-0 items-center gap-1.5 px-5 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#5a8a60] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(107,143,113,0.25)] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
+            Clock In
+          </button>
+        )}
       </div>
 
       {/* VA Performance Metrics */}
