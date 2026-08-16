@@ -2945,9 +2945,13 @@ function TeamManagementTab({
                 onChange={(e) => setNewRole(e.target.value)}
                 className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
               >
-                <option value="va">VA</option>
+                <option value="va">Staff</option>
                 <option value="manager">Manager</option>
                 {isFullAdmin && <option value="admin">Admin</option>}
+                {isFullAdmin && <option value="coordinator">Coordinator</option>}
+                {isFullAdmin && <option value="specialist">Specialist</option>}
+                {isFullAdmin && <option value="ceo">CEO</option>}
+                {isFullAdmin && <option value="founder">Founder</option>}
               </select>
             </div>
             <div>
@@ -3199,9 +3203,13 @@ function TeamManagementTab({
                           className="rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
                           autoFocus
                         >
-                          <option value="va">va</option>
-                          <option value="manager">manager</option>
-                          {isFullAdmin && <option value="admin">admin</option>}
+                          <option value="va">Staff</option>
+                          <option value="manager">Manager</option>
+                          {isFullAdmin && <option value="admin">Admin</option>}
+                          {isFullAdmin && <option value="coordinator">Coordinator</option>}
+                          {isFullAdmin && <option value="specialist">Specialist</option>}
+                          {isFullAdmin && <option value="ceo">CEO</option>}
+                          {isFullAdmin && <option value="founder">Founder</option>}
                         </select>
                         <button onClick={saveEdit} disabled={savingEdit} className="text-sage hover:text-sage text-sm font-bold">
                           {savingEdit ? "..." : "OK"}
