@@ -502,6 +502,10 @@ export default function AdminPage() {
   const searchParams = useSearchParams();
   const previewAsIT = searchParams.get("viewAs") === "it";
   const isFullAdmin = hasFinancialAccess(currentUserProfile) && !previewAsIT;
+  // Role-changing is founder-only — narrower than isFullAdmin, which also
+  // covers CEO and Specialist+Accounting. Even a CEO cannot change roles,
+  // including their own.
+  const isFounder = currentUserProfile?.role === "founder" && !previewAsIT;
   const hasBroadAccess = hasBroadAdminAccess(currentUserProfile);
   const canSeeAccountsClients = hasAccountsClientsAccess(currentUserProfile);
 
@@ -2320,32 +2324,43 @@ function TeamManagementTab({
       .catch(() => {});
   }, []);
 
-  // Assignments cell editor (click-to-open type-to-filter checklist)
+  // Assignments cell editor — plain typeable text, comma-separated category
+  // names, matched (case-insensitive) against the real task_categories list.
   const [editingAssignmentsFor, setEditingAssignmentsFor] = useState<string | null>(null);
-  const [assignmentSearch, setAssignmentSearch] = useState("");
-  const [assignmentSelected, setAssignmentSelected] = useState<Set<number>>(new Set());
+  const [assignmentText, setAssignmentText] = useState("");
   const [savingCategoryAssignments, setSavingCategoryAssignments] = useState(false);
 
   const startEditingAssignments = (userId: string) => {
-    const currentIds = vaCatAssignments.filter((a) => a.va_id === userId).map((a) => a.category_id);
-    setAssignmentSelected(new Set(currentIds));
-    setAssignmentSearch("");
+    const currentNames = vaCatAssignments
+      .filter((a) => a.va_id === userId && a.task_categories)
+      .map((a) => a.task_categories!.category_name);
+    setAssignmentText(currentNames.join(", "));
     setEditingAssignmentsFor(userId);
   };
   const cancelEditingAssignments = () => {
     setEditingAssignmentsFor(null);
-    setAssignmentSearch("");
-    setAssignmentSelected(new Set());
+    setAssignmentText("");
   };
+  // Typed names that don't match any real category — shown as a hint, save isn't blocked by them.
+  const unmatchedAssignmentNames = useMemo(() => {
+    const typed = assignmentText.split(",").map((s) => s.trim()).filter(Boolean);
+    const known = new Set(taskCategories.map((c) => c.category_name.toLowerCase()));
+    return typed.filter((name) => !known.has(name.toLowerCase()));
+  }, [assignmentText, taskCategories]);
   const saveAssignments = async () => {
     if (!editingAssignmentsFor) return;
     const userId = editingAssignmentsFor;
     setSavingCategoryAssignments(true);
     try {
+      const typedNames = assignmentText.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+      const matchedIds = new Set(
+        taskCategories.filter((c) => typedNames.includes(c.category_name.toLowerCase())).map((c) => c.id)
+      );
+
       const current = vaCatAssignments.filter((a) => a.va_id === userId);
       const currentIds = new Set(current.map((a) => a.category_id));
-      const toAdd = [...assignmentSelected].filter((id) => !currentIds.has(id));
-      const toRemoveAssignmentIds = current.filter((a) => !assignmentSelected.has(a.category_id)).map((a) => a.id);
+      const toAdd = [...matchedIds].filter((id) => !currentIds.has(id));
+      const toRemoveAssignmentIds = current.filter((a) => !matchedIds.has(a.category_id)).map((a) => a.id);
 
       if (toAdd.length > 0) {
         await fetch("/api/va-category-assignments", {
@@ -3018,10 +3033,10 @@ function TeamManagementTab({
                 className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
               >
                 <option value="va">Staff</option>
-                <option value="manager">Manager</option>
-                {isFullAdmin && <option value="admin">Admin</option>}
                 {isFullAdmin && <option value="coordinator">Coordinator</option>}
+                {isFullAdmin && <option value="admin">Admin</option>}
                 {isFullAdmin && <option value="specialist">Specialist</option>}
+                <option value="manager">Manager</option>
                 {isFullAdmin && <option value="ceo">CEO</option>}
                 {isFullAdmin && <option value="founder">Founder</option>}
               </select>
@@ -3303,10 +3318,10 @@ function TeamManagementTab({
                           autoFocus
                         >
                           <option value="va">Staff</option>
-                          <option value="manager">Manager</option>
-                          {isFullAdmin && <option value="admin">Admin</option>}
                           {isFullAdmin && <option value="coordinator">Coordinator</option>}
+                          {isFullAdmin && <option value="admin">Admin</option>}
                           {isFullAdmin && <option value="specialist">Specialist</option>}
+                          <option value="manager">Manager</option>
                           {isFullAdmin && <option value="ceo">CEO</option>}
                           {isFullAdmin && <option value="founder">Founder</option>}
                         </select>
@@ -3325,49 +3340,29 @@ function TeamManagementTab({
                     )}
                   </td>
                   )}
-                  {/* Category Assignments — moved next to Role, click-to-edit type-to-filter checklist */}
+                  {/* Category Assignments — moved next to Role, click-to-edit plain-typed field */}
                   {!hiddenColumns.has("assignments") && (
                   <td className="px-3 py-3 min-w-[160px]">
                     {editingAssignmentsFor === p.id ? (
-                      <div className="w-44 rounded border border-terracotta bg-white p-1.5 space-y-1">
-                        <input
-                          type="text"
-                          value={assignmentSearch}
-                          onChange={(e) => setAssignmentSearch(e.target.value)}
-                          placeholder="Type to filter..."
-                          autoFocus
-                          className="w-full rounded border border-sand px-1.5 py-0.5 text-[11px] outline-none focus:border-terracotta"
-                        />
-                        <div className="max-h-32 overflow-y-auto space-y-0.5">
-                          {taskCategories
-                            .filter((c) => c.category_name.toLowerCase().includes(assignmentSearch.toLowerCase()))
-                            .map((c) => (
-                              <label key={c.id} className="flex items-center gap-1.5 text-[11px] text-espresso cursor-pointer hover:bg-parchment rounded px-1 py-0.5">
-                                <input
-                                  type="checkbox"
-                                  checked={assignmentSelected.has(c.id)}
-                                  onChange={(e) => {
-                                    setAssignmentSelected((prev) => {
-                                      const next = new Set(prev);
-                                      if (e.target.checked) next.add(c.id); else next.delete(c.id);
-                                      return next;
-                                    });
-                                  }}
-                                />
-                                {c.category_name}
-                              </label>
-                            ))}
-                          {taskCategories.length > 0 &&
-                            taskCategories.filter((c) => c.category_name.toLowerCase().includes(assignmentSearch.toLowerCase())).length === 0 && (
-                              <p className="text-[10px] text-stone px-1">No matches.</p>
-                            )}
-                        </div>
-                        <div className="flex items-center gap-1 pt-0.5">
-                          <button onClick={saveAssignments} disabled={savingCategoryAssignments} className="text-sage text-[11px] font-bold">
+                      <div className="w-48 space-y-1">
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={assignmentText}
+                            onChange={(e) => setAssignmentText(e.target.value)}
+                            placeholder="e.g. Message, Meeting"
+                            autoFocus
+                            className="w-full rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
+                            onKeyDown={(e) => { if (e.key === "Enter") saveAssignments(); if (e.key === "Escape") cancelEditingAssignments(); }}
+                          />
+                          <button onClick={saveAssignments} disabled={savingCategoryAssignments} className="text-sage text-[11px] font-bold shrink-0">
                             {savingCategoryAssignments ? "..." : "OK"}
                           </button>
-                          <button onClick={cancelEditingAssignments} className="text-bark hover:text-terracotta text-[11px]">Cancel</button>
+                          <button onClick={cancelEditingAssignments} className="text-bark hover:text-terracotta text-[11px] shrink-0">&times;</button>
                         </div>
+                        {unmatchedAssignmentNames.length > 0 && (
+                          <p className="text-[9px] text-terracotta">No match: {unmatchedAssignmentNames.join(", ")}</p>
+                        )}
                       </div>
                     ) : (
                       <button

@@ -19,6 +19,7 @@ export const DEPARTMENT_OPTIONS = [
   "Accounting",
   "IT",
   "Project Management",
+  "Operations",
   "Leadership",
   "Marketing",
   "Founder",
