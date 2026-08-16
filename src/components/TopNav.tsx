@@ -26,7 +26,7 @@ type NavItem = {
 const allNavItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Productivity", href: "/productivity" },
-  { label: "Monitoring", href: "/reports" },
+  { label: "Insights", href: "/reports" },
   { label: "Portal", href: "/portal" },
 ];
 
@@ -408,9 +408,28 @@ export default function TopNav({ user }: TopNavProps) {
                 </Link>
               );
             })}
+            {(hasBroadAdminAccess(user) || (user.admin_permissions?.length ?? 0) > 0) && (
+              <Link
+                href="/admin"
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  pathname.startsWith("/admin")
+                    ? "bg-terracotta-soft text-terracotta"
+                    : "text-bark hover:bg-parchment hover:text-espresso"
+                }`}
+              >
+                Admin
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={handleLogoutClick}
+              className="rounded-md px-3 py-1.5 text-sm font-medium text-bark transition-colors hover:bg-parchment hover:text-espresso cursor-pointer"
+            >
+              Log out
+            </button>
           </nav>
 
-          {/* Right: Clock, user chip, logout */}
+          {/* Right: Clock, user chip */}
           <div className="flex items-center gap-4">
             <Clock />
 
@@ -429,23 +448,6 @@ export default function TopNav({ user }: TopNavProps) {
                 )}
               </div>
             </div>
-
-            {(hasBroadAdminAccess(user) || (user.admin_permissions?.length ?? 0) > 0) && (
-              <Link
-                href="/admin"
-                className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso"
-              >
-                Admin
-              </Link>
-            )}
-
-            <button
-              type="button"
-              onClick={handleLogoutClick}
-              className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso cursor-pointer"
-            >
-              Log out
-            </button>
           </div>
         </div>
       </header>
