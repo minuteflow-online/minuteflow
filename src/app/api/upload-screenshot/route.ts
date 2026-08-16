@@ -126,6 +126,11 @@ export async function POST(request: NextRequest) {
     const logId = formData.get("logId") as string | null;
     const screenshotType = formData.get("screenshotType") as string | null;
     const captureRequestId = formData.get("captureRequestId") as string | null;
+    // When the client actually took the shot, and a perceptual hash of it. Both
+    // are optional: older extension builds don't send them, and the in-page
+    // capture path doesn't fingerprint.
+    const capturedAtRaw = formData.get("capturedAt") as string | null;
+    const fingerprint = formData.get("fingerprint") as string | null;
 
     if (!blob || !userId || !logId || !screenshotType) {
       return Response.json(
@@ -160,8 +165,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // The moment the shot was taken. Uploads can sit in the extension's local
+    // queue for hours before they arrive, so falling back to the server clock
+    // makes a drained backlog look like a burst of captures that never happened.
+    const capturedAt = capturedAtRaw && !isNaN(Date.parse(capturedAtRaw))
+      ? new Date(capturedAtRaw)
+      : new Date();
+
     // Build Drive filename (Eastern time, directly readable — see formatEasternTimestamp)
-    const timestamp = formatEasternTimestamp(new Date());
+    const timestamp = formatEasternTimestamp(capturedAt);
     const driveFilename = `${sanitizeFilename(vaName)}_${sanitizeFilename(taskName)}_${timestamp}.png`;
 
     // Convert Blob to Buffer once
@@ -211,6 +223,8 @@ export async function POST(request: NextRequest) {
         filename: driveFilename,
         drive_file_id: driveFileId,
         screenshot_type: screenshotType,
+        captured_at: capturedAt.toISOString(),
+        ...(fingerprint ? { image_hash: fingerprint } : {}),
         ...(captureRequestId ? { capture_request_id: Number(captureRequestId) } : {}),
       })
       .select()

@@ -2,7 +2,8 @@
  * MinuteFlow Chrome Extension — Background Service Worker
  *
  * Responsibilities:
- * 1. Auto-capture screenshots on task start/end and at random intervals
+ * 1. Auto-capture screenshots on task start/end and every 5 minutes in between,
+ *    recording a labelled marker instead when the machine is idle or locked
  * 2. Local-first upload: save locally → upload to Drive immediately → delete local on success
  *    (retry alarm picks up any items that failed the immediate upload)
  * 3. Poll for remote capture requests from admin
@@ -32,12 +33,18 @@ const CONFIG = {
   // Max screenshots to upload per retry cycle (prevents Drive flooding)
   UPLOAD_BATCH_SIZE: 25,
 
-  // Random check-in screenshot interval range (ms)
-  CHECKIN_MIN_MS: 3 * 60 * 1000,
-  CHECKIN_MAX_MS: 8 * 60 * 1000,
+  // Screenshot cadence: one capture every 5 minutes for as long as a task runs.
+  // This is the ONLY capture schedule — the app's in-page worker stands down
+  // whenever the extension is installed, so a VA is never captured twice.
+  CAPTURE_INTERVAL_MINUTES: 5,
+
+  // No keyboard or mouse input for this long means the machine is idle. Matched
+  // to the capture interval so an "idle" marker means idle for the whole slot,
+  // not merely idle at the instant the alarm happened to fire.
+  IDLE_THRESHOLD_SECONDS: 300,
 
   // Extension version
-  VERSION: '1.1.3',
+  VERSION: '1.2.0',
 
   // API base
   API_BASE: 'https://minuteflow.click',
@@ -48,7 +55,6 @@ const CONFIG = {
 // ---------------------------------------------------------------------------
 let pollingIntervalId = null;
 let heartbeatIntervalId = null;
-let checkinTimeoutId = null;
 let currentTaskLogId = null; // The active time_log.id we're tracking
 
 // ---------------------------------------------------------------------------
@@ -112,6 +118,53 @@ async function captureActiveTab() {
 }
 
 /**
+ * Perceptual fingerprint of a capture — a 64-bit difference hash as 16 hex chars.
+ *
+ * The image is squashed to 9x8 greyscale and each pixel compared to its right-hand
+ * neighbour, so the hash describes the *layout* of the screen rather than its exact
+ * pixels. Two captures of a screen nobody touched come out identical even though a
+ * blinking cursor or a ticking clock makes their PNG bytes differ — a byte-for-byte
+ * hash would call those two frames different and catch almost nothing.
+ *
+ * Returns null if the image can't be read; callers treat that as "unknown", never
+ * as "changed", so a fingerprint failure can never mark someone idle.
+ */
+async function imageFingerprint(blob) {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const width = 9;
+    const height = 8;
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+
+    const { data } = ctx.getImageData(0, 0, width, height);
+    const grey = [];
+    for (let i = 0; i < width * height; i++) {
+      const o = i * 4;
+      grey.push(0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]);
+    }
+
+    let bits = '';
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width - 1; x++) {
+        bits += grey[y * width + x] > grey[y * width + x + 1] ? '1' : '0';
+      }
+    }
+
+    let hex = '';
+    for (let i = 0; i < 64; i += 4) {
+      hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+    }
+    return hex;
+  } catch (err) {
+    console.warn('[MinuteFlow] Fingerprint failed:', err.message);
+    return null;
+  }
+}
+
+/**
  * Fetch the active log ID from the sessions table.
  * Used as a fallback when currentTaskLogId is null (e.g. after service worker restart).
  */
@@ -151,13 +204,36 @@ async function blobToDataUrl(blob) {
 // ---------------------------------------------------------------------------
 
 /**
+ * IDs currently being uploaded. An item stays in the queue until Drive confirms,
+ * so without this the 30-second retry drain happily picks up an item whose first
+ * upload is still in flight and sends it a second time — every extra send creating
+ * another row and another Drive file for one screenshot. That, draining at 25
+ * items per 30 seconds, is what produced ~50 rows a minute.
+ */
+const inFlightUploads = new Set();
+
+/**
  * Remove a single item from the local queue by its ID.
  * Called after a confirmed successful upload to Drive.
+ *
+ * Serialised through queueWriteLock: this is a read-modify-write of the whole
+ * queue, so two removals resolving together would each write back a snapshot
+ * taken before the other, resurrecting an item that was already uploaded.
  */
+let queueWriteLock = Promise.resolve();
+
+function withQueueLock(fn) {
+  const run = queueWriteLock.then(fn, fn);
+  queueWriteLock = run.catch(() => {});
+  return run;
+}
+
 async function removeFromQueue(itemId) {
-  const stored = await chrome.storage.local.get('mf_screenshot_queue');
-  const queue = (stored.mf_screenshot_queue || []).filter(i => i.id !== itemId);
-  await chrome.storage.local.set({ mf_screenshot_queue: queue });
+  return withQueueLock(async () => {
+    const stored = await chrome.storage.local.get('mf_screenshot_queue');
+    const queue = (stored.mf_screenshot_queue || []).filter(i => i.id !== itemId);
+    await chrome.storage.local.set({ mf_screenshot_queue: queue });
+  });
 }
 
 /**
@@ -166,7 +242,34 @@ async function removeFromQueue(itemId) {
  * Returns false on failure (caller should leave in queue for retry).
  */
 async function uploadQueueItem(item) {
+  if (inFlightUploads.has(item.id)) {
+    console.log(`[MinuteFlow] Upload already in flight, skipping: ${item.id}`);
+    return false;
+  }
+  inFlightUploads.add(item.id);
+
   try {
+    // Markers carry no image — they record *why* a slot has no screenshot
+    // (idle, locked, on MinuteFlow). They go straight to the table rather than
+    // through the Drive upload route, but ride the same queue so a marker
+    // recorded while offline still lands once the connection comes back.
+    if (item.kind === 'marker') {
+      await DB.query('task_screenshots', {
+        method: 'POST',
+        body: {
+          user_id: item.userId,
+          log_id: item.logId,
+          screenshot_type: 'failed',
+          failure_reason: item.failureReason,
+          filename: '',
+          captured_at: item.timestamp,
+        },
+      });
+      await removeFromQueue(item.id);
+      console.log(`[MinuteFlow] Marker recorded: ${item.failureReason}`);
+      return true;
+    }
+
     const res = await fetch(item.dataUrl);
     const blob = await res.blob();
 
@@ -175,6 +278,13 @@ async function uploadQueueItem(item) {
     formData.append('userId', item.userId);
     formData.append('logId', String(item.logId));
     formData.append('screenshotType', item.screenshotType);
+    // When the shot was taken, not when it reached the server. Uploads can sit
+    // in this queue for hours, so without this the server's own clock is the
+    // only timestamp and a drained backlog looks like a burst of activity.
+    formData.append('capturedAt', item.timestamp);
+    if (item.fingerprint) {
+      formData.append('fingerprint', item.fingerprint);
+    }
     if (item.captureRequestId) {
       formData.append('captureRequestId', String(item.captureRequestId));
     }
@@ -209,6 +319,8 @@ async function uploadQueueItem(item) {
   } catch (err) {
     console.error('[MinuteFlow] Upload error, keeping local copy for retry:', err.message);
     return false;
+  } finally {
+    inFlightUploads.delete(item.id);
   }
 }
 
@@ -228,24 +340,6 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
     return;
   }
 
-  // For progress captures: skip if VA is currently on a MinuteFlow tab.
-  // We only want to capture their actual work — not the time-tracking app itself.
-  // Start/end captures are always allowed (once per task, Toni said that's fine).
-  if (screenshotType === 'progress') {
-    try {
-      const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
-      if (win && win.id) {
-        const [activeTab] = await chrome.tabs.query({ active: true, windowId: win.id });
-        if (activeTab && activeTab.url && isMinuteFlowUrl(activeTab.url)) {
-          console.log('[MinuteFlow] Progress capture skipped — VA is on MinuteFlow tab');
-          return;
-        }
-      }
-    } catch (err) {
-      // Non-fatal: if we can't check, proceed with capture
-    }
-  }
-
   // Prefer explicit logId, then in-memory, then DB fallback
   let resolvedLogId = logId || currentTaskLogId;
   if (!resolvedLogId) {
@@ -256,8 +350,38 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
     return;
   }
 
+  // For progress captures, a slot that produces no screenshot records *why*
+  // instead of vanishing. A silent gap is indistinguishable from the extension
+  // having died, which is the thing that made these timelines untrustworthy.
+  if (screenshotType === 'progress') {
+    const idleState = await idleReason();
+    if (idleState) {
+      await queueMarker(session.user.id, resolvedLogId, idleState);
+      return;
+    }
+
+    try {
+      const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+      if (win && win.id) {
+        const [activeTab] = await chrome.tabs.query({ active: true, windowId: win.id });
+        if (activeTab && activeTab.url && isMinuteFlowUrl(activeTab.url)) {
+          console.log('[MinuteFlow] Progress capture skipped — VA is on MinuteFlow tab');
+          await queueMarker(session.user.id, resolvedLogId, 'On MinuteFlow — not captured');
+          return;
+        }
+      }
+    } catch (err) {
+      // Non-fatal: if we can't check, proceed with capture
+    }
+  }
+
   const blob = await captureActiveTab();
-  if (!blob) return;
+  if (!blob) {
+    if (screenshotType === 'progress') {
+      await queueMarker(session.user.id, resolvedLogId, 'Screen could not be captured');
+    }
+    return;
+  }
 
   try {
     const dataUrl = await blobToDataUrl(blob);
@@ -269,20 +393,69 @@ async function captureLocalThenUpload(screenshotType = 'progress', logId = null,
       captureRequestId: captureRequestId || null,
       userId: session.user.id,
       timestamp: new Date().toISOString(),
+      fingerprint: await imageFingerprint(blob),
     };
 
     // Step 1: Save locally first — screenshot is safe regardless of what happens next
-    const stored = await chrome.storage.local.get('mf_screenshot_queue');
-    const queue = stored.mf_screenshot_queue || [];
-    queue.push(item);
-    await chrome.storage.local.set({ mf_screenshot_queue: queue });
-    console.log(`[MinuteFlow] Saved locally: ${screenshotType} (queue: ${queue.length})`);
+    await withQueueLock(async () => {
+      const stored = await chrome.storage.local.get('mf_screenshot_queue');
+      const queue = stored.mf_screenshot_queue || [];
+      queue.push(item);
+      await chrome.storage.local.set({ mf_screenshot_queue: queue });
+      console.log(`[MinuteFlow] Saved locally: ${screenshotType} (queue: ${queue.length})`);
+    });
 
     // Step 2 + 3: Upload immediately → delete local on Drive confirmation
     await uploadQueueItem(item);
   } catch (err) {
     console.error('[MinuteFlow] Failed to capture/save screenshot:', err.message);
   }
+}
+
+/**
+ * Why this machine can't produce a meaningful screenshot right now, or null if
+ * it can. Reads OS-level input state, so "idle" means no keyboard or mouse for
+ * IDLE_THRESHOLD_SECONDS — not merely a still-looking screen.
+ *
+ * Any failure returns null (capture proceeds): a broken idle check must never
+ * be able to mark a working VA as idle.
+ */
+async function idleReason() {
+  try {
+    const state = await chrome.idle.queryState(CONFIG.IDLE_THRESHOLD_SECONDS);
+    if (state === 'locked') return 'Screen locked';
+    if (state === 'idle') return 'Computer idle';
+    return null;
+  } catch (err) {
+    console.warn('[MinuteFlow] Idle check failed, capturing anyway:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Record a slot that produced no screenshot, with the reason. Goes through the
+ * upload queue so it survives being offline — which is itself one of the reasons
+ * a slot can come up empty.
+ */
+async function queueMarker(userId, logId, failureReason) {
+  const item = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: 'marker',
+    userId,
+    logId,
+    failureReason,
+    timestamp: new Date().toISOString(),
+  };
+
+  await withQueueLock(async () => {
+    const stored = await chrome.storage.local.get('mf_screenshot_queue');
+    const queue = stored.mf_screenshot_queue || [];
+    queue.push(item);
+    await chrome.storage.local.set({ mf_screenshot_queue: queue });
+  });
+  console.log(`[MinuteFlow] Slot marked: ${failureReason}`);
+
+  await uploadQueueItem(item);
 }
 
 /**
@@ -435,58 +608,34 @@ async function captureAndUpload(screenshotType = 'manual', logId = null, capture
 }
 
 // ---------------------------------------------------------------------------
-// Random Check-in Timer
+// Capture Schedule
 // ---------------------------------------------------------------------------
 
-function scheduleNextCheckin() {
-  if (checkinTimeoutId) {
-    clearTimeout(checkinTimeoutId);
-    checkinTimeoutId = null;
-  }
-
-  const delay = CONFIG.CHECKIN_MIN_MS +
-    Math.random() * (CONFIG.CHECKIN_MAX_MS - CONFIG.CHECKIN_MIN_MS);
-
-  console.log(`[MinuteFlow] Next check-in in ${Math.round(delay / 1000)}s`);
-
-  chrome.alarms.create('minuteflow-checkin', {
-    delayInMinutes: delay / 60000,
+/** Start (or restart) the 5-minute capture alarm for the running task. */
+function startCaptureSchedule() {
+  chrome.alarms.create('minuteflow-capture', {
+    periodInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
+    delayInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
   });
 }
 
-function cancelCheckin() {
+/**
+ * Stop capturing. Also clears the pre-1.2.0 alarm names: chrome.alarms survive
+ * an extension update, so without this an upgrading VA would keep firing the old
+ * 1-minute and 3-minute alarms alongside the new schedule.
+ */
+function cancelCaptureSchedule() {
+  chrome.alarms.clear('minuteflow-capture');
   chrome.alarms.clear('minuteflow-checkin');
   chrome.alarms.clear('minuteflow-1min');
   chrome.alarms.clear('minuteflow-3min');
-  if (checkinTimeoutId) {
-    clearTimeout(checkinTimeoutId);
-    checkinTimeoutId = null;
-  }
 }
 
 // Handle all alarm fires in a single listener
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === 'minuteflow-1min') {
-    console.log('[MinuteFlow] 1-minute capture triggered');
+  if (alarm.name === 'minuteflow-capture') {
     if (currentTaskLogId) {
       await captureLocalThenUpload('progress', currentTaskLogId);
-    }
-    return;
-  }
-
-  if (alarm.name === 'minuteflow-3min') {
-    console.log('[MinuteFlow] 3-minute capture triggered');
-    if (currentTaskLogId) {
-      await captureLocalThenUpload('progress', currentTaskLogId);
-    }
-    return;
-  }
-
-  if (alarm.name === 'minuteflow-checkin') {
-    console.log('[MinuteFlow] Random check-in capture triggered');
-    await captureLocalThenUpload('progress', currentTaskLogId);
-    if (currentTaskLogId) {
-      scheduleNextCheckin();
     }
     return;
   }
@@ -518,13 +667,13 @@ async function onTaskStart(logId) {
   // Immediate start screenshot → goes to queue
   await captureLocalThenUpload('start', logId);
 
-  // 1 and 3 minute follow-up screenshots
-  chrome.alarms.create('minuteflow-1min', { delayInMinutes: 1 });
-  chrome.alarms.create('minuteflow-3min', { delayInMinutes: 3 });
-
-  // First random check-in between 5-8 minutes from task start
-  const firstRandomDelay = (5 + Math.random() * 3) * 60 * 1000;
-  chrome.alarms.create('minuteflow-checkin', { delayInMinutes: firstRandomDelay / 60000 });
+  // One repeating capture every 5 minutes for the life of the task. Replaces the
+  // old 1-minute, 3-minute and random 3-8 minute alarms, which stacked on top of
+  // the app's own in-page schedule and produced several times the intended volume.
+  chrome.alarms.create('minuteflow-capture', {
+    periodInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
+    delayInMinutes: CONFIG.CAPTURE_INTERVAL_MINUTES,
+  });
 }
 
 async function onTaskEnd(logId) {
@@ -533,7 +682,7 @@ async function onTaskEnd(logId) {
   // End screenshot → goes to queue
   await captureLocalThenUpload('end', logId || currentTaskLogId);
 
-  cancelCheckin();
+  cancelCaptureSchedule();
   currentTaskLogId = null;
   await chrome.storage.local.remove('mf_active_log_id');
 }
@@ -700,7 +849,7 @@ function stopPolling() {
   }
 
   chrome.alarms.clear(CONFIG.UPLOAD_RETRY_ALARM);
-  cancelCheckin();
+  cancelCaptureSchedule();
 }
 
 // ---------------------------------------------------------------------------
@@ -857,7 +1006,7 @@ async function initialize() {
     startPolling();
 
     if (currentTaskLogId) {
-      scheduleNextCheckin();
+      startCaptureSchedule();
     }
   } else {
     console.log('[MinuteFlow] Not authenticated — waiting for login');

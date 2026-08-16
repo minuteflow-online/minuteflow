@@ -1,14 +1,31 @@
 export type UserRole = 'admin' | 'manager' | 'va' | 'coordinator' | 'specialist' | 'ceo' | 'founder';
 
 export const VA_POSITION_OPTIONS = [
-  "Full-time VA",
-  "Part-time VA",
-  "Project Based VA",
-  "Per Task VA",
+  "Full Time",
+  "Part Time",
+  "Project Based",
+  "Output Based",
   "Admin",
 ] as const;
 
 export type VaPosition = typeof VA_POSITION_OPTIONS[number];
+
+// Positions used to be labeled with a trailing "VA" ("Full-time VA", "Per Task
+// VA", ...). Profile rows written before the rename still carry those strings,
+// so every position comparison goes through normalizePosition() rather than
+// matching the stored value directly.
+const LEGACY_POSITIONS: Record<string, VaPosition> = {
+  "Full-time VA": "Full Time",
+  "Part-time VA": "Part Time",
+  "Project Based VA": "Project Based",
+  "Per Task VA": "Output Based",
+};
+
+/** Map a stored position to its current label; passes through anything unknown. */
+export function normalizePosition(position: string | null | undefined): string | null {
+  if (!position) return null;
+  return LEGACY_POSITIONS[position] ?? position;
+}
 
 // Department is purely descriptive (see src/lib/financialAccess.ts) — it grants
 // no access on its own. This is the default option list shown in the Team
@@ -201,6 +218,12 @@ export interface TaskScreenshot {
   failure_reason: string | null;
   created_at: string;
   drive_file_id: string | null;
+  /** When the client took the shot. created_at is when the row landed, which can
+   *  be hours later if the upload sat in the extension's offline queue. */
+  captured_at: string | null;
+  /** 64-bit perceptual hash (16 hex chars) of the image, used to spot a screen
+   *  that hasn't changed between captures. Null for older rows. */
+  image_hash: string | null;
 }
 
 export interface CaptureRequest {
