@@ -245,6 +245,20 @@ export async function PATCH(request: Request) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
+  // A founder-role account's role can only ever be changed by that same
+  // account — nobody else, including another founder or full admin, can
+  // alter it through this endpoint.
+  if ("role" in updates) {
+    const { data: targetProfile } = await adminClient
+      .from("profiles")
+      .select("role")
+      .eq("id", user_id)
+      .single();
+    if (targetProfile?.role === "founder" && user_id !== authResult.userId) {
+      return Response.json({ error: "A founder's role can only be changed by that account." }, { status: 403 });
+    }
+  }
+
   // If disabling/enabling user, use admin API
   if ("disabled" in updates) {
     const banned = !!updates.disabled;
