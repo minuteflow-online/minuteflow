@@ -10,6 +10,8 @@ import {
   formatTimeRange,
   normalizeAssignedRows,
   categoryBlockClasses,
+  reanchorToDate,
+  orgWallClockToUtc,
 } from "@/lib/taskSchedule";
 
 type TeamMemberOption = { id: string; full_name: string; username: string };
@@ -71,16 +73,22 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
     setEditingBlockId(task.id);
     setFormTaskName(task.task_name);
     setFormAccount(task.account || "");
-    setFormStart(new Date(task.start_time).toTimeString().slice(0, 5));
-    setFormEnd(new Date(task.end_time).toTimeString().slice(0, 5));
+    // Reanchored before render, so these are naive org wall-clock strings —
+    // slice rather than re-parsing through Date, which would re-interpret them
+    // in the viewer's own zone.
+    setFormStart(task.start_time.slice(11, 16));
+    setFormEnd(task.end_time.slice(11, 16));
     setShowForm(true);
   };
 
   const saveBlock = async () => {
     if (!editingBlockId || formEnd <= formStart) return;
     setSavingBlock(true);
-    const startIso = new Date(`${selectedDate}T${formStart}:00`).toISOString();
-    const endIso = new Date(`${selectedDate}T${formEnd}:00`).toISOString();
+    // Org wall clock in, same as the Calendar's own form — parsing these
+    // browser-locally stored a Manila admin's 9am as 9am Manila (= 9pm
+    // Eastern the day before).
+    const startIso = orgWallClockToUtc(selectedDate, formStart);
+    const endIso = orgWallClockToUtc(selectedDate, formEnd);
     try {
       await fetch(`/api/assigned-tasks/${editingBlockId}`, {
         method: "PATCH",
@@ -133,13 +141,18 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {teamMembers.map((m) => {
-            const dayTasks = (schedules[m.id] ?? [])
+            const rawDayTasks = (schedules[m.id] ?? [])
               .filter((t) => t.start_time && t.end_time && orgDateOf(t.start_time) === selectedDate)
               .sort((a, b) => (a.start_time! < b.start_time! ? -1 : 1));
-            const totalMinutes = dayTasks.reduce(
+            // Totals come off the real instants, so a block running past
+            // midnight still measures its true length.
+            const totalMinutes = rawDayTasks.reduce(
               (sum, t) => sum + (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000,
               0
             );
+            // Display only: reanchoring yields the org wall clock, so this card
+            // reads the same hours for a Manila admin and an Eastern one.
+            const dayTasks = rawDayTasks.map((t) => reanchorToDate(t, selectedDate));
             const hrs = Math.floor(totalMinutes / 60);
             const mins = Math.round(totalMinutes % 60);
             const loadClass =
