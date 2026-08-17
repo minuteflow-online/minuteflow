@@ -23,6 +23,7 @@ import {
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 import { normalizePosition } from "@/types/database";
+import { shiftHoursFromProfile } from "@/lib/budget";
 import { useUrlTab } from "@/hooks/useUrlTab";
 
 type TeamMember = {
@@ -33,6 +34,9 @@ type TeamMember = {
   position?: string | null;
   pay_rate_type?: string | null;
   can_see_available_tasks?: boolean | null;
+  shift_hours?: number | null;
+  shift_start?: string | null;
+  shift_end?: string | null;
 };
 
 // Same derivation as FixedPayTasksPanel's isHybrid/isPerTaskVa: position
@@ -856,10 +860,34 @@ export default function ProductivityCalendarPage() {
     return { rows, totalMinutes: rows.reduce((sum, r) => sum + r.minutes, 0) };
   }, [scheduledForDate, selectedDate, daySchedule, taskPassesFilters]);
 
-  const dayTotalLabel = useMemo(
-    () => `${formatDuration(dayDurations.totalMinutes)} blocked`,
-    [dayDurations]
-  );
+  // The day's budget comes from the VA's shift in Team Management — shift_hours,
+  // or the shift_start/shift_end span when that's how it's set. The badge counts
+  // down from it as blocks are added, so the question it answers is "how much is
+  // left to give" rather than "how much is on the calendar".
+  //
+  // Display only. It doesn't stop anyone booking past the budget; going over
+  // just turns the badge terracotta.
+  const dayBudget = useMemo(() => {
+    const member = teamMembers.find((m) => m.id === dayUserId);
+    const budgetHours = member
+      ? shiftHoursFromProfile({
+          shift_hours: member.shift_hours ?? null,
+          shift_start: member.shift_start ?? null,
+          shift_end: member.shift_end ?? null,
+        })
+      : null;
+    if (budgetHours == null) return null;
+    const budgetMinutes = Math.round(budgetHours * 60);
+    return { budgetMinutes, remainingMinutes: budgetMinutes - dayDurations.totalMinutes };
+  }, [teamMembers, dayUserId, dayDurations]);
+
+  const dayTotalLabel = useMemo(() => {
+    if (!dayBudget) return `${formatDuration(dayDurations.totalMinutes)} blocked`;
+    if (dayBudget.remainingMinutes < 0) {
+      return `${formatDuration(-dayBudget.remainingMinutes)} over ${formatDuration(dayBudget.budgetMinutes)}`;
+    }
+    return `${formatDuration(dayBudget.remainingMinutes)} left of ${formatDuration(dayBudget.budgetMinutes)}`;
+  }, [dayBudget, dayDurations]);
   // Exclude items already rendered as an hour block for this date — once a task
   // has scheduled hours, it shouldn't also sit up top as an unscheduled-looking badge.
   //
@@ -1449,7 +1477,13 @@ export default function ProductivityCalendarPage() {
                   {selectedDate === todayStr ? "Today — " : ""}
                   {formatDayLabel(selectedDate)}
                 </h2>
-                <span className="text-[13px] font-bold px-3 py-[3px] rounded-full border bg-amber-soft text-amber border-amber/30">
+                <span
+                  className={`text-[13px] font-bold px-3 py-[3px] rounded-full border ${
+                    dayBudget && dayBudget.remainingMinutes < 0
+                      ? "bg-terracotta-soft text-terracotta border-terracotta/30"
+                      : "bg-amber-soft text-amber border-amber/30"
+                  }`}
+                >
                   {dayTotalLabel}
                 </span>
               </div>

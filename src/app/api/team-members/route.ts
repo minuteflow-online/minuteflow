@@ -13,7 +13,9 @@ export async function GET() {
 
   const { data: members, error } = await supabase
     .from("profiles")
-    .select("id, full_name, username, position, role, pay_rate_type, can_see_available_tasks")
+    // Shift fields ride along so the Calendar can show a day's remaining budget
+    // against what's already blocked — see shiftHoursFromProfile.
+    .select("id, full_name, username, position, role, pay_rate_type, can_see_available_tasks, shift_hours, shift_start, shift_end")
     .eq("is_active", true)
     .order("full_name");
 
