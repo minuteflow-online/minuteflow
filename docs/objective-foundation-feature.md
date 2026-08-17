@@ -99,6 +99,22 @@ supersedes any earlier vague description:
    They Are → Details button → Subtasks), scoped to that sub-objective's own data
    (per-node, not rolled up — consistent with earlier decisions).
 
+### Corrections found during browser testing ([DATE]) — before boss review
+Two gaps found comparing the live build against the Figma reference:
+
+1. **"Add Subtask" form should be collapsed by default.** Currently the Basics/
+   Details/Attachments/Assignment/Schedule/Screenshots accordion always renders at the
+   bottom of the Subtasks card. Figma shows this hidden behind an "Add Subtask"
+   button — clicking it reveals the form, same pattern as the new "Objective Details"
+   toggle already built. Apply the same collapse-by-default treatment here.
+2. **Board View should be a full-width takeover, not embedded in the existing narrow
+   content column.** Currently Board View renders squeezed next to the sidebar/
+   Objective details panel, forcing horizontal scroll on the columns (visible in
+   testing — columns get cut off). Figma shows Board View replacing the entire content
+   area: sidebar and Objective details hidden, just a **"← [Objective Name]"** back
+   button at top-left to return to the normal List View/detail layout, then the board
+   gets the full available width for its columns.
+
 ### Workflow note — test locally before deciding on the default-view change
 The "lighter default view" (Details behind a button, rather than shown immediately) is
 Neil's own UX improvement, not something boss explicitly asked for. Plan: **build and
