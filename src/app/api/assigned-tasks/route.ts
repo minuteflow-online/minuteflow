@@ -477,6 +477,7 @@ export async function POST(request: Request) {
     pay_type,
     va_ids: rawVaIds,
     initial_status,
+    review_required,
   } = body as {
     account: string;
     project: string;
@@ -501,6 +502,7 @@ export async function POST(request: Request) {
     pay_type?: string | null;
     va_ids?: string[];
     initial_status?: AssignedTaskStatus;
+    review_required?: boolean;
   };
 
   // Plain VAs always self-assign regardless of what va_ids was sent;
@@ -545,6 +547,12 @@ export async function POST(request: Request) {
       project_id: project_id ?? null,
       parent_task_id: parent_task_id ?? null,
       pay_type: pay_type ?? null,
+      // Review Required is answered at creation, and answering locks it. A
+      // caller that omits it (an older client, or an output-based task) leaves
+      // the column at its default and the task unlocked, so it can still be
+      // answered later.
+      review_required: Boolean(review_required),
+      review_required_locked: review_required !== undefined,
       created_by: user.id,
       // When no VAs are assigned at creation time, mark the task as unassigned
       status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "pending"),

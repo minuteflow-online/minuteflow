@@ -2,6 +2,8 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
 import { countWords } from "@/lib/utils";
+import { canChangeLockedReview } from "@/lib/financialAccess";
+import { createClient } from "@/lib/supabase/client";
 import { CATEGORY_OPTIONS, autoCategoryForTask } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
@@ -205,7 +207,19 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [linkedProjectIdState, setLinkedProjectId] = useState((initialTask?.project_id as string) ?? defaultLinkedProjectId ?? "");
   const linkedProjectId = lockedProjectId ?? linkedProjectIdState;
   const [parentTaskId, setParentTaskId] = useState(initialTask?.parent_task_id != null ? String(initialTask.parent_task_id) : "");
-  const [reviewRequired, setReviewRequired] = useState(Boolean(initialTask?.review_required));
+  // Review Required is a required Yes/No, not a checkbox — "" means nobody has
+  // answered yet. review_required_locked is the record of having been answered:
+  // tasks that predate the rule carry locked=false, so they keep whatever value
+  // they were saved with and stay editable until someone answers deliberately.
+  const reviewLocked = Boolean(initialTask?.review_required_locked);
+  const [reviewRequired, setReviewRequired] = useState<"" | "yes" | "no">(
+    isEditing ? (initialTask?.review_required ? "yes" : "no") : ""
+  );
+  // Only the Admin/Manager/CEO/Founder tier may change an answer once locked.
+  // The server enforces the same rule — this just avoids offering a control
+  // that would be rejected.
+  const [viewerRole, setViewerRole] = useState<string | null>(null);
+  const reviewEditable = !reviewLocked || canChangeLockedReview({ role: viewerRole });
   // Pay type is no longer a field — time-based and output-based tasks have
   // separate forms, so `mode` already settles it. Existing rows keep whatever
   // they were created with rather than getting silently rewritten on edit.
@@ -237,6 +251,20 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       })
       .catch(() => {});
   }, []);
+
+  // The viewer's own role, for the locked-Review-Required check. Fetched here
+  // rather than threaded down as a prop because TaskEditor has eight call
+  // sites and only three of them already hold the role.
+  useEffect(() => {
+    if (!currentUserId) return;
+    const supabase = createClient();
+    void supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", currentUserId)
+      .single()
+      .then(({ data }) => setViewerRole((data?.role as string) ?? null));
+  }, [currentUserId]);
 
   useEffect(() => {
     fetch("/api/projects?mine=true", { cache: "no-store" })
@@ -405,6 +433,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       setError("Client Detail is required.");
       throw new Error("Client Detail is required.");
     }
+    // Required on create only. Existing tasks predate the rule and keep the
+    // value they were saved with, so forcing an answer on them would block
+    // every unrelated edit — they lock when someone answers, not before.
+    if (mode === "time_based" && !isEditing && !reviewRequired) {
+      setError("Answer Review Required (Yes or No).");
+      throw new Error("Answer Review Required (Yes or No).");
+    }
     if (mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
       setError("Final Rate is required.");
       throw new Error("Final Rate is required.");
@@ -431,11 +466,18 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           assigned_by: assignedBy || currentUserId || null,
           instructions: instructions.trim() || null,
           instructions_locked: instructionsLocked,
-          review_required: reviewRequired,
           pay_type: payType,
           project_id: linkedProjectId || null,
           parent_task_id: parentTaskId ? Number(parentTaskId) : null,
         };
+
+        // Only sent when there's an actual answer, and only when the viewer is
+        // allowed to give one — omitting it leaves the stored value and its
+        // lock untouched, so an unrelated metadata save can't silently lock a
+        // legacy task or overwrite an answer the viewer can't change.
+        if (reviewRequired && reviewEditable) {
+          body.review_required = reviewRequired === "yes";
+        }
 
         // Work-span hours only ever anchor to startDate — due_date has its own
         // independent due_time field (below), so it never borrows this pair.
@@ -536,7 +578,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     }
   }, [
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
-    assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, payType, linkedProjectId,
+    assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, reviewEditable, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
     pendingTodoTexts, readOnly,
   ]);
@@ -832,10 +874,37 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         {mode === "time_based" && (
-          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-espresso">
-            <input type="checkbox" checked={reviewRequired} onChange={(e) => setReviewRequired(e.target.checked)} disabled={readOnly} />
-            Review Required
-          </label>
+          <div>
+            <label className={labelClass}>
+              Review Required {!isEditing && <span className="text-terracotta">*</span>}
+            </label>
+            <div className="flex gap-2">
+              {([["yes", "Yes"], ["no", "No"]] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setReviewRequired(value)}
+                  disabled={readOnly || !reviewEditable}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                    reviewRequired === value
+                      ? "bg-sage text-white"
+                      : "bg-stone/10 text-stone hover:bg-stone/20"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {reviewLocked ? (
+              <p className="mt-1 text-[10px] text-stone">
+                {reviewEditable
+                  ? "Answered and locked — you can change it because of your role."
+                  : "Answered and locked — only Admin, Manager, CEO, or Founder can change it."}
+              </p>
+            ) : (
+              <p className="mt-1 text-[10px] text-stone">Locks once answered.</p>
+            )}
+          </div>
         )}
       </Section>
 

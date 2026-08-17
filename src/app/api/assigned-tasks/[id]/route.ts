@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
+import { canChangeLockedReview } from "@/lib/financialAccess";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -160,7 +161,25 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
   if (instructions !== undefined) updatePayload.instructions = instructions;
   if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
-  if (putReviewRequired !== undefined) updatePayload.review_required = Boolean(putReviewRequired);
+  // Answering Review Required locks it. Re-answering a locked task is limited
+  // to Admin/Manager/CEO/Founder — this handler already requires admin, manager,
+  // or the task_management grant, so the extra check only bites a
+  // permission-granted Staff account, which is exactly who the lock is for.
+  if (putReviewRequired !== undefined) {
+    const { data: reviewState } = await adminSupabase
+      .from("assigned_tasks")
+      .select("review_required_locked")
+      .eq("id", id)
+      .single();
+    if (reviewState?.review_required_locked && !canChangeLockedReview(profile)) {
+      return Response.json(
+        { error: "Forbidden: Review Required is locked. Only Admin, Manager, CEO, or Founder can change it." },
+        { status: 403 }
+      );
+    }
+    updatePayload.review_required = Boolean(putReviewRequired);
+    updatePayload.review_required_locked = true;
+  }
   if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
   if (project_id !== undefined) updatePayload.project_id = project_id;
   if (parent_task_id !== undefined) updatePayload.parent_task_id = parent_task_id;
@@ -502,9 +521,22 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (!assigneeRow) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
+    // A VA still gets one "yes" — but it locks behind them, so they can't
+    // flip it afterwards and can't undo it. Already locked means no.
+    const { data: vaReviewState } = await adminSupabase
+      .from("assigned_tasks")
+      .select("review_required_locked")
+      .eq("id", id)
+      .single();
+    if (vaReviewState?.review_required_locked) {
+      return Response.json(
+        { error: "Forbidden: Review Required is locked. Only Admin, Manager, CEO, or Founder can change it." },
+        { status: 403 }
+      );
+    }
     const { error: rrError } = await adminSupabase
       .from("assigned_tasks")
-      .update({ review_required: true, updated_at: now })
+      .update({ review_required: true, review_required_locked: true, updated_at: now })
       .eq("id", id);
     if (rrError) {
       return Response.json({ error: rrError.message }, { status: 500 });
@@ -789,7 +821,24 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
     if (archived_at !== undefined) updatePayload.archived_at = archived_at;
     if (deleted_at !== undefined) updatePayload.deleted_at = deleted_at;
-    if (review_required !== undefined) updatePayload.review_required = Boolean(review_required);
+    // Same lock rule as the PUT path: answering locks, and re-answering a
+    // locked task needs the Admin/Manager/CEO/Founder tier. Reachable here by
+    // a permission-granted Staff account, which the lock is meant to stop.
+    if (review_required !== undefined) {
+      const { data: reviewState } = await adminSupabase
+        .from("assigned_tasks")
+        .select("review_required_locked")
+        .eq("id", id)
+        .single();
+      if (reviewState?.review_required_locked && !canChangeLockedReview(profile)) {
+        return Response.json(
+          { error: "Forbidden: Review Required is locked. Only Admin, Manager, CEO, or Founder can change it." },
+          { status: 403 }
+        );
+      }
+      updatePayload.review_required = Boolean(review_required);
+      updatePayload.review_required_locked = true;
+    }
 
     // Only reachable when isAdminOrManager is true (see the guard above), so
     // the service-role client is safe here — and necessary, since a
