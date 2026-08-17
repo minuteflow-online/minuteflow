@@ -33,6 +33,27 @@ const REVIEW_LOCKED_ERROR =
 const REVIEW_LOCK_SELECT = "review_required, review_required_locked";
 
 /**
+ * The only statuses a VA may set on a task marked Review Required.
+ *
+ * They can move their own work forward and hand it in, and nothing further:
+ * approved/completed/paid are the sign-off the review exists to require, and
+ * revision_needed is the reviewer's verdict on the work — a VA declaring their
+ * own submission in need of revision would be answering the review themselves.
+ *
+ * Applies to both status paths (task-level and per-assignee), so a VA can't
+ * reach a blocked status through the one that wasn't checked.
+ */
+const VA_STATUSES_UNDER_REVIEW: AssignedTaskStatus[] = [
+  "pending",
+  "on_queue",
+  "in_progress",
+  "submitted",
+];
+
+const VA_STATUS_UNDER_REVIEW_ERROR =
+  "Forbidden: task requires review — you can only set pending, on_queue, in_progress, or submitted. A reviewer decides the rest.";
+
+/**
  * Whether a task's Review Required answer is locked against ordinary edits.
  *
  * Only YES locks. Saying a task needs review is the commitment worth
@@ -679,9 +700,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .single();
 
     if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
-      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress", "submitted", "revision_needed"];
-      if (!allowedStatuses.includes(status)) {
-        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, in_progress, submitted, or revision_needed" }, { status: 403 });
+      if (!VA_STATUSES_UNDER_REVIEW.includes(status)) {
+        return Response.json({ error: VA_STATUS_UNDER_REVIEW_ERROR }, { status: 403 });
       }
     }
 
@@ -753,9 +773,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .single();
 
     if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
-      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress", "submitted", "revision_needed"];
-      if (!allowedStatuses.includes(status)) {
-        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, in_progress, submitted, or revision_needed" }, { status: 403 });
+      if (!VA_STATUSES_UNDER_REVIEW.includes(status)) {
+        return Response.json({ error: VA_STATUS_UNDER_REVIEW_ERROR }, { status: 403 });
       }
     }
 
