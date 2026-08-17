@@ -73,9 +73,23 @@ type DueItem = {
 };
 
 
-const DAY_START_HOUR = 6;
-const DAY_END_HOUR = 21;
+// Round the clock. These were 6 and 21, which meant anything genuinely early
+// or late didn't render: a block outside the window computed an offset past the
+// grid and simply wasn't drawn, and a due marker was clamped to the edge, so it
+// showed at 9pm however late it actually was. Neither failure announced itself.
+const DAY_START_HOUR = 0;
+const DAY_END_HOUR = 23;
 const HOUR_HEIGHT = 48;
+// 24 hours at 48px is ~1150px, so the grid scrolls inside a viewport rather than
+// stretching the page into one long column. The scroll sits on a plain wrapper,
+// never on the grid itself: the grid is the containing block for every
+// absolutely-positioned hour row and task block, and making it the scroll
+// container would resolve their offsets against the visible height instead of
+// the full day.
+const GRID_SCROLL_CLASS = "max-h-[70vh] overflow-y-auto";
+// Opens on the working day instead of midnight — otherwise every visit starts
+// on six empty hours and needs a scroll before anything is visible.
+const DEFAULT_SCROLL_HOUR = 6;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 
@@ -793,6 +807,13 @@ export default function ProductivityCalendarPage() {
   }, [dueItemsByDate, selectedDate, scheduledForDate]);
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i);
 
+  // Ref callback rather than an effect: it fires as each grid mounts, which is
+  // exactly when the scroll position needs setting, and there are three grids
+  // (week, compare, day) that never coexist.
+  const openAtWorkingHours = useCallback((el: HTMLDivElement | null) => {
+    if (el) el.scrollTop = (DEFAULT_SCROLL_HOUR - DAY_START_HOUR) * HOUR_HEIGHT;
+  }, []);
+
   function blockPosition(task: RawTask) {
     const start = new Date(task.start_time!);
     const end = new Date(task.end_time!);
@@ -804,11 +825,16 @@ export default function ProductivityCalendarPage() {
   }
 
   // Due Time is a plain "HH:MM" clock time (not a timestamp, no timezone
-  // conversion needed) — position it on the same grid the hour blocks use,
-  // clamped to the visible 6am-9pm range.
+  // conversion needed) — position it on the same grid the hour blocks use.
+  //
+  // Clamped to the grid's full span, which is now the whole day, so no real
+  // clock time gets pinned any more. The bound used to stop at the START of the
+  // last hour row, which silently parked anything in that final hour on the
+  // hour line instead of its own minute — 23:30 drew at 23:00.
   function dueTimePosition(dueTime: string): number {
     const [h, m] = dueTime.split(":").map(Number);
-    const minutes = Math.max(0, Math.min((DAY_END_HOUR - DAY_START_HOUR) * 60, (h - DAY_START_HOUR) * 60 + (m || 0)));
+    const gridMinutes = (DAY_END_HOUR - DAY_START_HOUR + 1) * 60;
+    const minutes = Math.max(0, Math.min(gridMinutes, (h - DAY_START_HOUR) * 60 + (m || 0)));
     return (minutes / 60) * HOUR_HEIGHT;
   }
 
@@ -1241,7 +1267,8 @@ export default function ProductivityCalendarPage() {
                   );
                 })}
 
-                <div className="relative col-span-8 grid grid-cols-[48px_repeat(7,1fr)]" style={{ height: hours.length * HOUR_HEIGHT }}>
+                <div ref={openAtWorkingHours} className={`col-span-8 ${GRID_SCROLL_CLASS}`}>
+                <div className="relative grid grid-cols-[48px_repeat(7,1fr)]" style={{ height: hours.length * HOUR_HEIGHT }}>
                   {/* Hour labels */}
                   <div className="relative">
                     {hours.map((hour, i) => (
@@ -1302,6 +1329,7 @@ export default function ProductivityCalendarPage() {
                       </div>
                     </div>
                   ))}
+                </div>
                 </div>
               </div>
             </div>
@@ -1405,6 +1433,7 @@ export default function ProductivityCalendarPage() {
                     );
                   })}
                 </div>
+                <div ref={openAtWorkingHours} className={GRID_SCROLL_CLASS}>
                 <div className="relative" style={{ height: hours.length * HOUR_HEIGHT }}>
                   {hours.map((hour, i) => (
                     <div
@@ -1459,8 +1488,10 @@ export default function ProductivityCalendarPage() {
                     })}
                   </div>
                 </div>
+                </div>
               </div>
             ) : (
+              <div ref={openAtWorkingHours} className={GRID_SCROLL_CLASS}>
               <div className="relative" style={{ height: hours.length * HOUR_HEIGHT }}>
                 {hours.map((hour, i) => (
                   <button
@@ -1599,6 +1630,7 @@ export default function ProductivityCalendarPage() {
                     );
                   })()}
                 </div>
+              </div>
               </div>
             )}
           </div>
