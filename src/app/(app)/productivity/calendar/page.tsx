@@ -87,6 +87,10 @@ const HOUR_HEIGHT = 48;
 // container would resolve their offsets against the visible height instead of
 // the full day.
 const GRID_SCROLL_CLASS = "max-h-[70vh] overflow-y-auto";
+// Vertical step for due markers that share a clock time, so the second and
+// third don't render on top of the first. Roughly a badge's height — three fit
+// inside one 48px hour row before they'd reach the next hour.
+const DUE_MARKER_ROW = 15;
 // Opens on the working day instead of midnight — otherwise every visit starts
 // on six empty hours and needs a scroll before anything is visible.
 const DEFAULT_SCROLL_HOUR = 6;
@@ -1577,8 +1581,26 @@ export default function ProductivityCalendarPage() {
                     // When that clock-time falls inside another task's scheduled
                     // hours, it docks as a compact badge in that block's reserved
                     // right-hand gutter instead of crossing over it.
-                    const dueMarkers = dueTodayItems
-                      .filter((item) => item.dateType === "due" && item.dueTime)
+                    // Markers sharing a clock time used to render at the same
+                    // top with the same docked width, so they sat exactly on
+                    // top of each other and only the last one painted — three
+                    // tasks due at 3pm looked like one, and the other two read
+                    // as missing due dates. Task blocks solve their own version
+                    // of this with col/cols; markers had no equivalent, so each
+                    // one after the first is offset down a row here. It nudges
+                    // the drawn position only; the time itself is untouched.
+                    const timedDueItems = dueTodayItems.filter(
+                      (item) => item.dateType === "due" && item.dueTime
+                    );
+                    const stackIndexByItem = new Map<string, number>();
+                    const takenAtTop = new Map<number, number>();
+                    for (const item of timedDueItems) {
+                      const markerTop = dueTimePosition(item.dueTime!);
+                      const taken = takenAtTop.get(markerTop) ?? 0;
+                      stackIndexByItem.set(item.id, taken);
+                      takenAtTop.set(markerTop, taken + 1);
+                    }
+                    const dueMarkers = timedDueItems
                       .map((item) => {
                         const scheduleTarget = item.source === "assigned"
                           ? daySchedule.find((t) => t.id === item.taskId) ?? assignedTasksAll.find((t) => t.id === item.taskId)
@@ -1596,7 +1618,7 @@ export default function ProductivityCalendarPage() {
                           <div
                             key={`due-marker-${item.id}`}
                             className={`pointer-events-none absolute flex items-center gap-1.5 ${collidesWithTask ? "right-2 w-[92px] justify-end" : "left-16 right-2"}`}
-                            style={{ top: top - 7 }}
+                            style={{ top: top - 7 + (stackIndexByItem.get(item.id) ?? 0) * DUE_MARKER_ROW }}
                           >
                             {!collidesWithTask && <span className="h-[2px] w-3 shrink-0 rounded bg-stone/60" />}
                             <button
