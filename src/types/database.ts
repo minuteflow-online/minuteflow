@@ -218,6 +218,12 @@ export interface TaskScreenshot {
   failure_reason: string | null;
   created_at: string;
   drive_file_id: string | null;
+  /** When the client took the shot. created_at is when the row landed, which can
+   *  be hours later if the upload sat in the extension's offline queue. */
+  captured_at: string | null;
+  /** 64-bit perceptual hash (16 hex chars) of the image, used to spot a screen
+   *  that hasn't changed between captures. Null for older rows. */
+  image_hash: string | null;
 }
 
 export interface CaptureRequest {
