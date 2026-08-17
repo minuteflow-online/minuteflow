@@ -4,7 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useSt
 import { countWords } from "@/lib/utils";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { createClient } from "@/lib/supabase/client";
-import { CATEGORY_OPTIONS, autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay } from "@/lib/taskSchedule";
+import { autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -710,11 +710,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Category</label>
-          <select value={category} onChange={(e) => { setCategory(e.target.value); setCategoryAutoSet(false); }} disabled={readOnly} className={inputClass}>
-            {CATEGORY_OPTIONS.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+          {/* Derived, not chosen — autoCategoryForTask sets it from Account,
+              Objective and Task Name, and every task-creation surface applies
+              the same rule. Leaving it editable meant a hand-picked value could
+              silently disagree with the rule, and get overwritten anyway the
+              next time any of the three inputs changed. */}
+          <input value={category} readOnly disabled className={inputClass} />
+          <p className="mt-1 text-[10px] text-stone">Set automatically from Account, Objective and Task Name.</p>
         </div>
       </Section>
 

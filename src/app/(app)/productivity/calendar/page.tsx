@@ -712,7 +712,26 @@ export default function ProductivityCalendarPage() {
     () => daySchedule.filter((t) => t.start_time && t.end_time && taskPassesFilters(t)),
     [daySchedule, taskPassesFilters]
   );
-  const unscheduledTasks = useMemo(() => daySchedule.filter((t) => !t.start_time || !t.end_time), [daySchedule]);
+  // Filtered like the scheduled blocks are. This list ignored the filter bar
+  // entirely, so picking Due (or any status/category) changed the grid and left
+  // the sidebar untouched — and since the sidebar is where unscheduled work
+  // lives, a VA filtering for what's due saw no effect anywhere.
+  //
+  // Date Type has to be spelled out here rather than deferred to
+  // taskPassesFilters: that predicate deliberately omits it because a scheduled
+  // block is inherently start-anchored, but an unscheduled task genuinely can
+  // be start-anchored, due-anchored, or neither.
+  const unscheduledTasks = useMemo(
+    () =>
+      daySchedule.filter((t) => {
+        if (t.start_time && t.end_time) return false;
+        if (!taskPassesFilters(t)) return false;
+        if (applied.dateType === "due" && !t.due_date) return false;
+        if (applied.dateType === "start" && !t.start_date) return false;
+        return true;
+      }),
+    [daySchedule, taskPassesFilters, applied.dateType]
+  );
   const scheduledForDate = useCallback(
     (dateStr: string) =>
       scheduledTasks
@@ -1354,44 +1373,12 @@ export default function ProductivityCalendarPage() {
               </div>
             )}
 
-            {dueTodayItems.length > 0 && (
-              <div className="mb-3 flex flex-wrap gap-1.5">
-                {dueTodayItems.map((item) => {
-                  // Look up against the admin-wide list (same source dueTodayItems is
-                  // built from), not just the current viewer's own daySchedule —
-                  // otherwise an unassigned/other-VA task shows this pill but it's
-                  // unclickable, since it never appears in dayUserId's own task list.
-                  const scheduleTarget = item.source === "assigned"
-                    ? daySchedule.find((t) => t.id === item.taskId) ?? assignedTasksAll.find((t) => t.id === item.taskId)
-                    : undefined;
-                  const dueTimeLabel = item.dateType === "due" && item.dueTime ? ` ${formatDueTime(item.dueTime)}` : "";
-                  const label = `${item.dateType === "due" ? "Due" : "Starts"}${dueTimeLabel}: ${item.title}`;
-                  const pillClasses = categoryBlockClasses(item.category, true);
-                  if (!scheduleTarget) {
-                    return (
-                      <span
-                        key={item.id}
-                        className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${pillClasses}`}
-                        title={item.account || undefined}
-                      >
-                        {label}
-                      </span>
-                    );
-                  }
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => openScheduleExisting(scheduleTarget, selectedDate)}
-                      title={`${item.account ? item.account + " — " : ""}Click to set hours`}
-                      className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border cursor-pointer hover:opacity-75 transition-opacity ${pillClasses}`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            {/* The strip of Due/Starts pills that used to sit here is gone. A
+                deadline with a time belongs on the grid at that time — it's
+                rendered as a due marker below — and everything without hours is
+                already listed in the Unscheduled sidebar, which is where work
+                waiting to be scheduled belongs. Having both meant a timed
+                deadline appeared twice, once up here and once on the grid. */}
 
             {loadingDay ? (
               <div className="py-8 text-center text-xs text-stone">Loading…</div>
@@ -1670,6 +1657,23 @@ export default function ProductivityCalendarPage() {
                             <span className="min-w-0">
                               <p className="truncate text-[12px] font-semibold text-espresso">{task.task_name}</p>
                               {task.account && <p className="truncate text-[10px] text-stone">{task.account}</p>}
+                              {/* The deadline now only appears here and on the
+                                  grid, so an unscheduled task has to carry it —
+                                  otherwise removing the pill strip above would
+                                  have hidden due dates entirely. Overdue and
+                                  due-today read as urgent; anything later is
+                                  plain, so the colour still means something. */}
+                              {task.due_date && (
+                                <p
+                                  className={`truncate text-[10px] font-semibold ${
+                                    task.due_date <= todayStr ? "text-terracotta" : "text-stone"
+                                  }`}
+                                >
+                                  Due {formatDayLabel(task.due_date)}
+                                  {task.due_time ? ` · ${formatDueTime(task.due_time)}` : ""}
+                                  {task.due_date < todayStr ? " · overdue" : ""}
+                                </p>
+                              )}
                             </span>
                           </button>
                           <button
