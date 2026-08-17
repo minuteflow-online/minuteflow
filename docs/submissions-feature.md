@@ -1,91 +1,78 @@
-# Feature: Submissions (Documents/Work Product Log)
+# Feature: Submissions — ✅ Already built by Toni Colina (commit c677249)
 
-## Status update after boss's second voicemail — scope significantly changed
-Earlier version of this doc assumed Submissions was a brand-new, freestanding concept.
-Boss's follow-up voicemail clarified it's actually **an attachment on an existing task**,
-not a new top-level entity. This is a smaller, safer build than originally scoped —
-read this whole doc before starting, the plan below supersedes the old draft.
+## Status: DONE — do not build, verify only
+This entire feature was already implemented directly on `main` by Toni Colina (CEO),
+co-authored with Claude, commit `c677249` ("Add work submission tracking with revision
+rounds"), merged into `feature/objective` via the `main` merge on [DATE]. This doc is
+kept for reference/verification purposes only — the build plan below is obsolete.
 
-## What she actually wants (paraphrased from voicemail 2)
-- A submission happens **inside the existing task**, in the same form/window used to
-  create/edit a task (the Task Editor). When a VA finishes work, they open that task and
-  either **paste a link** or **attach an image/file** — that's the submission.
-- All tasks — whether under an Objective or under Operations — already flow through the
-  same pipeline (queued → routed to the VA's dashboard → shows in Assignment/Calendar).
-  So submissions naturally follow that same single pipeline; no separate routing needed.
-- She wants a **new top-level tab**, at the same level as Assignment / Calendar /
-  Objective / Operations — called **"Submissions."**
-  - This tab is a **filterable table**: filter by specific date or date range, showing
-    what's been submitted.
-  - Pulls from both Objective-tasks and Operation-tasks in one place.
-- Additionally, inside an **Objective's or Operation's own detail view**, she wants a
-  small **"Submissions" button** — click it to see just the submissions for that
-  specific project (a pre-filtered view of the same data).
+**Action item for Neil**: verify this matches what boss described, then tell her it
+already exists — she may not be aware, since she described it as something to build.
 
-## Existing building blocks to reuse (confirmed in code — don't reinvent)
-- **`AssignedTaskStatus` already includes `'submitted'`** as a lifecycle status
-  (`src/types/database.ts`). The task already has a natural "this has been submitted"
-  state — use it, don't invent a parallel status.
-- **`TaskEditor.tsx` already has an `attachmentsExtra` slot** — a prop explicitly built
-  for "callers with their own Attachments UI (upload/list/remove)," rendered inside the
-  existing "Attachments & Screenshots" section. This is very likely the intended place
-  to add link-paste / file-attach UI for a submission — check this first before adding
-  any new UI section to the task form.
-- **`FixedPayTaskAttachment` is an existing attachment pattern** (`task_id`, `filename`,
-  `storage_path`, `file_size`, `mime_type`, `uploaded_by`, `uploaded_at`, `url`). A new
-  submissions-attachment table should likely mirror this shape for consistency, rather
-  than inventing a different structure.
-- **`AssignedTask.link`** already exists as a field — verify in the live UI whether this
-  is already used for something else (e.g. a reference link set when the task is
-  created) before assuming it's free to repurpose as "submission link." If it's already
-  used, a new field (e.g. `submission_link`) is needed instead.
-- **Pay periods already exist** (`period_start`/`period_end` pattern from
-  `FinancialSummaryTab.tsx`) — reuse this pattern for the date-range filter on the new
-  Submissions tab, don't invent a new period concept.
+## What was actually built (from commit message + file list)
+- **Submission modal** (`SubmitWorkModal.tsx`): submitting a task from the dashboard
+  opens a modal requiring an attachment, message, or link (at least one required).
+  Matches boss's description exactly ("either submit and paste a link or attach an
+  image").
+- **Status integrity**: a task only moves to `submitted` once the record actually
+  saves — so `submitted` always has evidence behind it.
+- **Append-only submissions**: VAs can't edit a saved submission, only add a new note —
+  RLS update policy for `role="va"` was deliberately dropped to enforce this.
+- **New Productivity → Submissions tab** (`productivity/submissions/page.tsx`, 1,092
+  lines): shows every submission across all tasks, as either a **threaded timeline** or
+  a **calendar** — filterable by VA, scope (Objective/Operations/Adhoc), project,
+  account, or client (`MultiSelectFilter.tsx`). This matches boss's "list + calendar,
+  filterable by date/pay period" ask, and goes further (also filters by scope/project/
+  account/client).
+- **Approval workflow**: Admin/Manager/CEO/Founder can approve, request a revision
+  (with a note), or reverse a mistaken approval — reversals are appended, original
+  approval stays in the record (audit trail, not overwritten).
+- **Related fixes bundled in**: revision-counting bug for admin-issued revisions, a
+  missing "Rework" action for `revision_needed` status, `RevisionBadge` deduplication
+  (was 3 copies, now 1 shared component), and hardening on 8 API routes that parsed
+  `request.formData()` unsafely.
 
-## Remaining open questions (smaller list now — confirm before building)
-1. Is `AssignedTask.link` already used for something else? (Check live UI/existing
-   tasks with a link set.) Determines whether we reuse it or add a new field.
-2. Can a task have **multiple** attachments/links as its submission, or just one?
-3. Does setting status to `submitted` require an attachment/link to be present, or can
-   a VA mark something submitted with neither (edge case worth deciding up front)?
+## What's NOT explicitly confirmed yet (verify in-browser before telling boss it's 100%)
+- [ ] Does a submission on an Objective-scoped task actually surface inside that
+      Objective's own detail view (the "small button, click Submissions" ask from her
+      voicemail)? The tab filters *by* project, but check whether there's a direct
+      link/button *from* the Objective/Operations page itself, or whether you'd need to
+      go to the Submissions tab and filter manually.
+- [ ] Pay-period-style date range filtering — confirm the calendar/timeline actually
+      supports filtering by a specific range, not just browsing.
 
-## Draft plan
-1. **Confirm question 1 first** — cheapest thing to check, changes the schema decision.
-2. **Schema** (new table, mirroring `FixedPayTaskAttachment`, or a new
-   `submission_link` column on `AssignedTask` — exact shape depends on Q1/Q2 above).
-   This is still a live-DB schema change — needs sign-off before running, per
-   `docs/dev-workflow-rules.md`. Smaller and lower-risk than the original draft, but
-   still not something to run unreviewed.
-3. **Wire into `TaskEditor` via `attachmentsExtra`** — build the link-paste/file-attach
-   UI as a component passed into that slot, not by modifying `TaskEditor` internals.
-4. **New "Submissions" tab** in the Productivity sub-nav (`ProductivitySubNav.tsx`),
-   alongside Assignment/Calendar/Objective/Operations — a filterable table view,
-   reading from `AssignedTask` rows where `status = 'submitted'` (or wherever the
-   submission data ends up living per step 2), filterable by date/date range.
-5. **"Submissions" button inside Objective/Operations detail view** — same table
-   component as step 4, pre-filtered to `project_id` of the current Objective/Operation.
+## Verification checklist — confirmed [DATE] via live screenshots
+1. ✅ `/productivity/submissions` tab exists and loads (subnav: Assignment, Submissions,
+   Calendar, Objective, Operations).
+2. ✅ Submission modal confirmed working — real example seen with both a link
+   (wrkpod.com) and an attached file (toni.jpg).
+3. ✅ Both Timeline and Calendar views render correctly — calendar shows color-coded
+   submission badges (L / LR / LR2) directly on the relevant dates.
+4. ✅ Filters present and visible: All VAs, All work, All projects, All accounts,
+   All clients.
+5. ✅ Approve / request revision / reverse-approval confirmed — real audit trail
+   observed: Submission → Revision requested → Resubmission → Revision requested →
+   Resubmission → Approved → Approval reversed → Note → Revision requested. Append-only
+   behavior working as designed (original approval stays in the record after reversal).
+6. ⏳ **Still unconfirmed**: whether Objective/Operations detail views have a direct
+   "Submissions" button/link for that specific project (vs. only reachable by filtering
+   from the main Submissions tab). Check next time you're in an Objective/Operations
+   detail view.
+7. ⏳ **Still unconfirmed**: precise date-range filtering (e.g. a specific pay period)
+   vs. just browsing month-by-month on the calendar.
 
-## Hard rules
-- No schema/migration work until question 1 (and ideally 2–3) are confirmed.
-- Reuse `attachmentsExtra` — don't fork or duplicate `TaskEditor`'s attachment UI.
-- Follow the `FixedPayTaskAttachment` shape for any new attachment table, for
-  consistency with the rest of the codebase.
-- Stay on `feature/objective` (or discuss with boss whether this deserves its own
-  `feature/submissions` branch, since it touches the shared task pipeline used by both
-  Objectives and Operations).
-- Files: confirm storage approach matches whatever `FixedPayTaskAttachment` already
-  uses (it uses `storage_path`, i.e. Supabase Storage) — this is a *different* pattern
-  from the screenshot rule (screenshots → Google Drive only). Don't conflate the two;
-  verify which pattern applies to submission attachments specifically before building.
+**Conclusion so far: fully matches boss's original ask, and exceeds it** (append-only
+audit trail with reversal history goes beyond what was originally described). Only
+items 6–7 remain to fully close out verification — low priority, not blocking.
 
-## Acceptance criteria (once built)
-- [ ] A VA can submit a link and/or attachment from within the existing Task Editor,
-      via the `attachmentsExtra` slot.
-- [ ] Submitting sets/reflects the task's `submitted` status.
-- [ ] New "Submissions" tab shows a filterable table (by date/date range) of all
-      submissions across Objectives and Operations.
-- [ ] A "Submissions" button inside an Objective/Operation detail view shows only that
-      project's submissions (same table, pre-filtered).
-- [ ] No duplicate/parallel attachment system created — reuses existing patterns.
-- [ ] `npm run lint` and `npm run build` pass.
+## Side note — permissions changed in the same merge, worth a quick check
+The same `main` sync that brought in Submissions also included permission-system
+changes (`Lock Coordinator out of the admin panel`, `Restrict role-granting to
+CEO/Founder only`, new `hasAdminPanelAccess` tier). Neil's displayed role changed from
+"IT Admin" to "Specialist" in the UI after this merge — confirm this didn't reduce
+actual access needed for this project (Admin panel, etc.) before it becomes a blocker
+mid-task.
+
+## Old draft plan below this line is OBSOLETE — kept only for historical reference
+(Original speculative schema/build plan from before this was discovered already built.
+No longer relevant — do not use as a build guide.)
