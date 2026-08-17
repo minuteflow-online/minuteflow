@@ -799,7 +799,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   onClick={() => setShowDetails((v) => !v)}
                   className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
                 >
-                  {showDetails ? "Hide" : ""} {kindLabel} Details
+                  {showDetails ? `Hide ${kindLabel} Details` : `${kindLabel} Details`}
                 </button>
               </div>
 
@@ -1001,11 +1001,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   </div>
                 </div>
 
-                {!subtasksLoading && subtasks.length === 0 && (
+                {!subtasksLoading && subtaskView === "list" && subtasks.length === 0 && (
                   <p className="text-[12px] text-stone/70">No subtasks yet. Add one below.</p>
                 )}
 
-                {subtaskView === "board" && subtasks.length > 0 && (
+                {subtaskView === "board" && (
                   <SubtaskBoardView
                     subtasks={subtasks}
                     editingSubId={editingSubId}

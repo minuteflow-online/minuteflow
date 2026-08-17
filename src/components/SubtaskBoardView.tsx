@@ -47,6 +47,12 @@ export default function SubtaskBoardView({
     if (col) subtasksByColumn.get(col.key)!.push(sub);
   }
 
+  // Reference list mirrors the columns exactly — "same subtasks in one place
+  // regardless of column," per the Figma spec, not a superset. Anything excluded
+  // from the columns (currently paid/cancelled, see subtaskStatusColumns.ts) is
+  // excluded here too, so nothing shows up in the list without a matching column.
+  const boardSubtasks = subtasks.filter((sub) => columnForStatus(sub.status));
+
   const handleDrop = (colKey: string) => {
     setDragOverCol(null);
     if (dragSubId == null) return;
@@ -66,10 +72,10 @@ export default function SubtaskBoardView({
       <div className="w-56 shrink-0 space-y-2">
         <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Subtasks</p>
         <div className="space-y-1.5 max-h-[560px] overflow-y-auto pr-1">
-          {subtasks.length === 0 && (
+          {boardSubtasks.length === 0 && (
             <p className="text-[11px] text-stone/70">No subtasks yet.</p>
           )}
-          {subtasks.map((sub) => (
+          {boardSubtasks.map((sub) => (
             <button
               key={sub.id}
               onClick={() => onOpenEdit(sub)}
