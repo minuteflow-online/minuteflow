@@ -18,6 +18,11 @@ signals, ticket API calls, or Telegram posting steps.
 Confirm which branch you're currently on before writing anything. Expected branch:
 [BRANCH NAME, e.g. feature/objective]. If you're not on it, stop and tell me.
 
+Then check if `main` has moved ahead of this branch (`git fetch origin` then
+`git log main..origin/main --oneline`). If there are new commits, tell me what they are
+before proceeding — don't start building until we've confirmed nothing you're about to
+build already exists on `main`.
+
 ## Task
 [ONE OR TWO SENTENCES: what you want built, in plain language]
 
