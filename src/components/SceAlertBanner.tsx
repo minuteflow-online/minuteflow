@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
-import { EXTENSION_MIN_VERSION } from "@/lib/extensionVersion";
+import { EXTENSION_MIN_VERSION, EXTENSION_STORE_URL } from "@/lib/extensionVersion";
 
 type BannerReason = "screenshare" | "sce" | "sce-login";
 
@@ -169,12 +169,17 @@ export default function SceAlertBanner() {
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            onClick={() => router.push("/install")}
+          {/* Straight to the Web Store, not /install: a store install updates
+              itself, while the load-unpacked route takes the VA off auto-update
+              and leaves them stranded on whatever build they grabbed. */}
+          <a
+            href={EXTENSION_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-amber-600 transition-colors hover:bg-amber-50"
           >
             Update Now
-          </button>
+          </a>
           <button
             onClick={() => {
               try {
