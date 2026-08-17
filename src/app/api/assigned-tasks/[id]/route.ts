@@ -432,6 +432,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     assigned_by,
     instructions,
     instructions_locked,
+    instructions_append,
     archived_at,
     deleted_at,
     review_required,
@@ -456,6 +457,10 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
+    /** Text to append to instructions, never replacing what's there. Open to
+     *  anyone who can edit the task — it's how a VA contributes a note without
+     *  being able to overwrite the assigner's wording. */
+    instructions_append?: string | null;
     archived_at?: string | null;
     deleted_at?: string | null;
     review_required?: boolean;
@@ -495,7 +500,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     end_date !== undefined ||
     assigned_by !== undefined ||
     instructions !== undefined ||
-    instructions_locked !== undefined;
+    instructions_locked !== undefined ||
+    instructions_append !== undefined;
   // Scheduling (start_time/end_time) is intentionally kept out of hasCoreMetadataUpdate:
   // VAs get a narrow carve-out below to schedule their own tasks without full metadata
   // permissions. Admins/managers reach the same fields via the general metadata path,
@@ -548,6 +554,20 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   }
 
   const now = new Date().toISOString();
+
+  // Instructions belong to whoever assigned the task — a VA can't rewrite or
+  // unlock them, which is the whole point of instructions_locked. They append
+  // instead, via instructions_append below, so a question or a note is added
+  // without any of the original wording being lost.
+  if (!isAdminOrManager && (instructions !== undefined || instructions_locked !== undefined)) {
+    return Response.json(
+      {
+        error:
+          "Forbidden: instructions are set by whoever assigned the task. Use Add to Instructions to append a note instead.",
+      },
+      { status: 403 }
+    );
+  }
 
   // VA-only: allow checking review_required (true) but never unchecking (false).
   // This is handled as a standalone path — admin review_required changes go through the metadata path below.
@@ -627,11 +647,14 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   // Task owners (non-admin) may pass va_id to target ANOTHER assignee's row, but only for
   // status-only updates (e.g., reviewing submitted work). Block everything else.
+  // Core metadata is no longer in this list — a VA who created and assigned the
+  // task can edit its fields like any other assignee (see the metadata note
+  // below); deleting it, and writing another assignee's log/notes, still aren't
+  // theirs to do.
   if (
     isTaskOwner &&
     !isAdminOrManager &&
-    (hasCoreMetadataUpdate ||
-      hasDeleteUpdate ||
+    (hasDeleteUpdate ||
       ((log_id !== undefined || notes !== undefined) && !isSelfTargetedAssigneeUpdate))
   ) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
@@ -666,9 +689,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ ok: true });
   }
 
-  if (!isAdminOrManager && hasMetadataUpdate) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  // A VA may edit the metadata of a task they're on — due date, dates, name,
+  // client detail, notes, link, category. Previously any metadata field at all
+  // was a flat 403 for non-admins, so a VA could set her hours (carved out
+  // above) but not move her own due date, and the bare "Forbidden" gave no clue
+  // why. Assignee membership is still checked immediately below; instructions
+  // are rejected earlier; and review_required keeps its own rules.
 
   if (!isAdminOrManager && !isTaskOwner) {
     const { data: assignedTask, error: assignedTaskError } = await supabase
@@ -860,6 +886,27 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
     if (instructions !== undefined) updatePayload.instructions = instructions;
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
+    // Append, never replace — read the current text and add to the end, so two
+    // people adding notes can't wipe each other's and the assigner's original
+    // wording always survives. Attributed, because an unattributed line
+    // appearing in the assigner's own instructions is worse than no note.
+    if (typeof instructions_append === "string" && instructions_append.trim()) {
+      const { data: current } = await adminSupabase
+        .from("assigned_tasks")
+        .select("instructions")
+        .eq("id", id)
+        .single();
+      const { data: author } = await adminSupabase
+        .from("profiles")
+        .select("full_name, username")
+        .eq("id", user.id)
+        .single();
+      const who = author?.full_name || author?.username || "Unknown";
+      const stamp = new Date(now).toISOString().slice(0, 10);
+      const addition = `[${stamp} — ${who}] ${instructions_append.trim()}`;
+      const existing = (current?.instructions ?? "").trimEnd();
+      updatePayload.instructions = existing ? `${existing}\n\n${addition}` : addition;
+    }
     if (archived_at !== undefined) updatePayload.archived_at = archived_at;
     if (deleted_at !== undefined) updatePayload.deleted_at = deleted_at;
     // Same lock rule as the PUT path: only Yes locks, and undoing a locked Yes
@@ -878,9 +925,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       updatePayload.review_required_locked = Boolean(review_required);
     }
 
-    // Only reachable when isAdminOrManager is true (see the guard above), so
-    // the service-role client is safe here — and necessary, since a
-    // permission-granted plain VA wouldn't pass RLS on the session client.
+    // Reachable by an admin/manager, or by a VA on a task they're an assignee
+    // of or own — the guards above establish which. The service-role client is
+    // necessary either way, since neither a permission-granted plain VA nor an
+    // ordinary assignee passes RLS on the session client for this write. What
+    // a VA is allowed to change is bounded by those guards, not by RLS: they
+    // never reach here with instructions or a locked review answer in hand.
     const { error: taskError } = await adminSupabase
       .from("assigned_tasks")
       .update(updatePayload)

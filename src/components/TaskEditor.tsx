@@ -212,6 +212,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [link, setLink] = useState((initialTask?.link as string) ?? "");
   const [instructions, setInstructions] = useState((initialTask?.instructions as string) ?? "");
   const [instructionsLocked, setInstructionsLocked] = useState(Boolean(initialTask?.instructions_locked));
+  // A VA can add to instructions but not rewrite them — the server rejects
+  // `instructions` from a non-admin outright and only accepts this append.
+  const [instructionsAppend, setInstructionsAppend] = useState("");
   const [todos, setTodos] = useState<TaskTodo[]>([]);
   const [todosLoading, setTodosLoading] = useState(false);
   const [newTodoText, setNewTodoText] = useState("");
@@ -499,12 +502,21 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           start_date: startDate || null,
           end_date: endDate || null,
           assigned_by: assignedBy || currentUserId || null,
-          instructions: instructions.trim() || null,
-          instructions_locked: instructionsLocked,
           pay_type: payType,
           project_id: linkedProjectId || null,
           parent_task_id: parentTaskId ? Number(parentTaskId) : null,
         };
+
+        // Instructions are the assigner's. Sending them from a VA is a hard 403
+        // server-side, and it would take the whole save down with it — so they
+        // go in only for admins/managers, and a VA's contribution rides along
+        // as an append instead.
+        if (isAdminOrManager) {
+          body.instructions = instructions.trim() || null;
+          body.instructions_locked = instructionsLocked;
+        } else if (instructionsAppend.trim()) {
+          body.instructions_append = instructionsAppend.trim();
+        }
 
         // Only sent when there's an actual answer, and only when the viewer is
         // allowed to give one — omitting it leaves the stored value and its
@@ -619,7 +631,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     }
   }, [
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
-    assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, reviewEditable, payType, linkedProjectId,
+    assignedBy, currentUserId, instructions, instructionsLocked, instructionsAppend, reviewRequired, reviewEditable, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
     pendingTodoTexts, readOnly,
   ]);
@@ -799,11 +811,38 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Instructions</label>
-          <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} disabled={readOnly} className={`${inputClass} resize-none`} />
-          <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
-            <input type="checkbox" checked={instructionsLocked} onChange={(e) => setInstructionsLocked(e.target.checked)} disabled={readOnly} />
-            Locked
-          </label>
+          {isAdminOrManager ? (
+            <>
+              <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} disabled={readOnly} className={`${inputClass} resize-none`} />
+              <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
+                <input type="checkbox" checked={instructionsLocked} onChange={(e) => setInstructionsLocked(e.target.checked)} disabled={readOnly} />
+                Locked
+              </label>
+            </>
+          ) : (
+            <>
+              {instructions.trim() ? (
+                <p className="whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                  {instructions}
+                </p>
+              ) : (
+                <p className="text-[12px] text-stone/50">No instructions yet.</p>
+              )}
+              {!readOnly && (
+                <div className="mt-2">
+                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Add to Instructions</label>
+                  <textarea
+                    value={instructionsAppend}
+                    onChange={(e) => setInstructionsAppend(e.target.value)}
+                    rows={2}
+                    placeholder="Add a note or question — this is added below, nothing above is changed."
+                    className={`${inputClass} resize-none`}
+                  />
+                  <p className="mt-1 text-[10px] text-stone">Saved with your name and the date. The existing instructions stay as they are.</p>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {!isEditing && isAdminOrManager && (

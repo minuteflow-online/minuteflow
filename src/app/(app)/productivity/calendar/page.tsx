@@ -232,13 +232,18 @@ export default function ProductivityCalendarPage() {
     })();
   }, [supabase]);
 
+  // Fetched for everyone, not just admins. TaskEditor renders Assign To and
+  // Assigned By as <select>s over this list, so an empty list gave a VA two
+  // blank fields on a task that was in fact assigned — the value was set, but
+  // there was no matching <option> to display it. The team picker this list
+  // also feeds stays admin-only on its own condition below, so nothing new is
+  // exposed. /api/team-members is session-authenticated and RLS-scoped.
   useEffect(() => {
-    if (!isAdminOrManager) return;
     fetch("/api/team-members")
       .then((r) => r.json())
       .then((d) => setTeamMembers(d.members ?? []))
       .catch(() => {});
-  }, [isAdminOrManager]);
+  }, []);
 
   useEffect(() => {
     fetch("/api/projects?mine=true", { cache: "no-store" })

@@ -1040,7 +1040,12 @@ export default function TaskListPage() {
     return Array.from(options).sort();
   }, [formTasksByProject, tasks]);
 
-  const panelCanEditFields = Boolean(selectedTask) && isAdmin && !profileLoading;
+  // No longer admin-only. A VA can edit the metadata of a task they're on, so
+  // gating the whole form on isAdmin left them staring at a read-only panel and
+  // sent them to the Calendar to change a due date. The real boundary is the
+  // API, which checks assignee membership and refuses instructions and a locked
+  // review answer from a VA — the form doesn't need to guess at it.
+  const panelCanEditFields = Boolean(selectedTask) && !profileLoading;
 
   const panelAssignedByOptions = useMemo(() => {
     if (assignedByProfiles.length > 0) return assignedByProfiles;
