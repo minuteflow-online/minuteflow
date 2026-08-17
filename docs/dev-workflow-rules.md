@@ -49,6 +49,48 @@ an entire feature unsupervised.
    what changed.
 6. Commit locally with a clear message. Stop. Wait for the next instruction.
 
+## Keeping your branch in sync with `main` (do this often)
+
+Since teammates — including Toni directly — push real work to `main` regularly, your
+branch can fall behind fast. Stale branches lead to wasted work (see: the Submissions
+feature, already built on `main` before this branch found out). Sync **before starting
+any new task**, and periodically during longer sessions.
+
+### Quick check — is `main` ahead of you?
+```powershell
+git fetch origin
+git log main..origin/main --oneline
+```
+Empty output = you're already caught up, skip the rest. Non-empty = new commits exist,
+proceed below. (If a pager opens, press `q` to exit.)
+
+### Sync routine
+```powershell
+git checkout main
+git pull origin main
+git checkout feature/objective
+git merge main
+```
+- If this opens an editor for a merge commit message, just save and exit with the
+  default message (`Esc` then `:wq` then `Enter` in Vim), or avoid the editor entirely
+  next time by committing with `git commit --no-edit` if it stops mid-merge.
+- If merge conflicts appear (git will clearly list "Unmerged paths"), **stop and ask
+  before resolving** — don't guess on a conflict resolution alone.
+- After merging, **restart the dev server** (`Ctrl+C`, then `npm run dev`) — hot reload
+  can get confused by a large merge. If `package.json`/`package-lock.json` changed in
+  the merge, run `npm install` first.
+
+### When to run this
+- At the start of every new work session, before writing any code.
+- Before starting a new feature/task, even mid-session.
+- Anytime you're about to ask "does X already exist?" — check `main` first, it might
+  already be answered.
+
+### Claude Code should do this too
+Add to the kickoff prompt (see `docs/claude-code-prompt-template.md`) — Claude Code
+should run the "quick check" above at the start of any session and flag it if `main`
+is ahead, rather than assuming the branch is current.
+
 ## Reporting issues found along the way
 If something looks broken, inconsistent, or risky while working (e.g. a landmine like
 the ones documented in `AGENTS.md`'s Invoice System section), **report it, don't silently
