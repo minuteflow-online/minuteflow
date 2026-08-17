@@ -10,6 +10,7 @@ export type RawTask = {
   due_time: string | null;
   start_date: string | null;
   end_date: string | null;
+  planned_minutes: number | null;
   start_time: string | null;
   end_time: string | null;
   status: string;
@@ -302,6 +303,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
           account: (nested.account as string | null) ?? null,
           due_date: (nested.due_date as string | null) ?? null,
           due_time: (nested.due_time as string | null) ?? null,
+          planned_minutes: (nested.planned_minutes as number | null) ?? null,
           start_date: (nested.start_date as string | null) ?? null,
           end_date: (nested.end_date as string | null) ?? null,
           start_time: (nested.start_time as string | null) ?? null,
@@ -322,6 +324,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
         account: (row.account as string | null) ?? null,
         due_date: (row.due_date as string | null) ?? null,
         due_time: (row.due_time as string | null) ?? null,
+        planned_minutes: (row.planned_minutes as number | null) ?? null,
         start_date: (row.start_date as string | null) ?? null,
         end_date: (row.end_date as string | null) ?? null,
         start_time: (row.start_time as string | null) ?? null,

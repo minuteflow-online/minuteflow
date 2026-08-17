@@ -24,7 +24,7 @@ type AssignedTaskStatus =
 type RouteContext = { params: Promise<{ id: string }> };
 
 const TASK_SELECT =
-  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, review_required_locked, assigned_task_assignees(id, va_id, status)";
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, instructions, instructions_locked, review_required, review_required_locked, assigned_task_assignees(id, va_id, status)";
 
 const REVIEW_LOCKED_ERROR =
   "Forbidden: Review Required is locked at Yes. Only Admin, Manager, CEO, or Founder can change it.";
@@ -165,7 +165,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, instructions, instructions_locked, planned_minutes: putPlannedMinutes, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -183,6 +183,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     instructions?: string | null;
     instructions_locked?: boolean;
     review_required?: boolean;
+    planned_minutes?: number | null;
     recurring_template_id?: string | null;
     project_id?: string | null;
     parent_task_id?: number | null;
@@ -225,6 +226,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     updatePayload.review_required = Boolean(putReviewRequired);
     updatePayload.review_required_locked = Boolean(putReviewRequired);
   }
+  if (putPlannedMinutes !== undefined) updatePayload.planned_minutes = putPlannedMinutes;
   if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
   if (project_id !== undefined) updatePayload.project_id = project_id;
   if (parent_task_id !== undefined) updatePayload.parent_task_id = parent_task_id;
@@ -433,6 +435,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     instructions,
     instructions_locked,
     instructions_append,
+    planned_minutes,
     archived_at,
     deleted_at,
     review_required,
@@ -461,6 +464,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
      *  anyone who can edit the task — it's how a VA contributes a note without
      *  being able to overwrite the assigner's wording. */
     instructions_append?: string | null;
+    /** Minutes the task takes when it has no specific hours. */
+    planned_minutes?: number | null;
     archived_at?: string | null;
     deleted_at?: string | null;
     review_required?: boolean;
@@ -501,7 +506,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     assigned_by !== undefined ||
     instructions !== undefined ||
     instructions_locked !== undefined ||
-    instructions_append !== undefined;
+    instructions_append !== undefined ||
+    planned_minutes !== undefined;
   // Scheduling (start_time/end_time) is intentionally kept out of hasCoreMetadataUpdate:
   // VAs get a narrow carve-out below to schedule their own tasks without full metadata
   // permissions. Admins/managers reach the same fields via the general metadata path,
@@ -950,6 +956,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       const existing = (current?.instructions ?? "").trimEnd();
       updatePayload.instructions = existing ? `${existing}\n\n${addition}` : addition;
     }
+    if (planned_minutes !== undefined) updatePayload.planned_minutes = planned_minutes;
     if (archived_at !== undefined) updatePayload.archived_at = archived_at;
     if (deleted_at !== undefined) updatePayload.deleted_at = deleted_at;
     // Same lock rule as the PUT path: only Yes locks, and undoing a locked Yes

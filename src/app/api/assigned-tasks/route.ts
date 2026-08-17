@@ -93,7 +93,7 @@ export async function GET(request: Request) {
   const assigneeSelect =
     "id, va_id, status, log_id, notes, accuracy_score, assigned_at, updated_at, instructions, instructions_locked";
   const taskSelect =
-    `id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, review_required, revision_count, fixed_pay_task_id, recurring_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username), projects(id, name), task_todos(id, text, sort_order),
+    `id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, review_required, revision_count, fixed_pay_task_id, recurring_template_id, fixed_pay_tasks(rate), assigned_by_profile:profiles(id, full_name, username), projects(id, name), task_todos(id, text, sort_order),
          assigned_task_assignees(${assigneeSelect})`;
 
   const formatAdminTaskRows = async (data: Array<Record<string, unknown>>) => {
@@ -206,7 +206,7 @@ export async function GET(request: Request) {
 
   // Used by both viewAsVa (admin impersonation) and the VA self-query below.
   const vaSelectString = `id, va_id, status, log_id, notes, accuracy_score, assigned_at, updated_at,
-     assigned_tasks(id, account, project, project_id, parent_task_id, category, recurring_template_id, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, review_required, revision_count, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name), task_todos(id, text, sort_order))`;
+     assigned_tasks(id, account, project, project_id, parent_task_id, category, recurring_template_id, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, archived_at, deleted_at, created_by, created_at, updated_at, status, assigned_by, instructions, instructions_locked, review_required, revision_count, fixed_pay_task_id, fixed_pay_tasks(rate), projects(id, name), task_todos(id, text, sort_order))`;
 
   if (isPermitted && viewAsVaParam) {
     // Admin viewing a specific VA's task list — bypass RLS with serviceRoleClient
@@ -478,6 +478,7 @@ export async function POST(request: Request) {
     va_ids: rawVaIds,
     initial_status,
     review_required,
+    planned_minutes,
   } = body as {
     account: string;
     project: string;
@@ -503,6 +504,9 @@ export async function POST(request: Request) {
     va_ids?: string[];
     initial_status?: AssignedTaskStatus;
     review_required?: boolean;
+    /** Minutes the task takes when it has no specific hours. Null when it has a
+     *  block, whose own length is already its duration. */
+    planned_minutes?: number | null;
   };
 
   // Plain VAs always self-assign regardless of what va_ids was sent;
@@ -553,6 +557,7 @@ export async function POST(request: Request) {
       // their defaults.
       review_required: Boolean(review_required),
       review_required_locked: Boolean(review_required),
+      planned_minutes: planned_minutes ?? null,
       created_by: user.id,
       // When no VAs are assigned at creation time, mark the task as unassigned
       status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "pending"),

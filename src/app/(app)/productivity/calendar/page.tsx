@@ -166,6 +166,9 @@ export default function ProductivityCalendarPage() {
   const [timeOff, setTimeOff] = useState<Array<{ user_id: string; start_date: string; end_date: string; start_time: string | null; end_time: string | null }>>([]);
 
   const [showFilters, setShowFilters] = useState(false);
+  // Day view has two faces: the hour grid, and an Hours table that answers
+  // "how long is each of these" without caring when they sit.
+  const [dayTab, setDayTab] = useState<"grid" | "hours">("grid");
   const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
   const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
   const toggleUnscheduledExpand = (id: number) => {
@@ -774,15 +777,55 @@ export default function ProductivityCalendarPage() {
         .sort((a, b) => new Date(a.start_time as string).getTime() - new Date(b.start_time as string).getTime()),
     [compareSchedules, taskPassesFilters]
   );
-  const dayTotalLabel = useMemo(() => {
-    const totalMinutes = scheduledForDate(selectedDate).reduce(
-      (sum, t) => sum + (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000,
-      0
-    );
+  const minutesOf = (t: RawTask) =>
+    (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000;
+
+  function formatDuration(totalMinutes: number): string {
     const hrs = Math.floor(totalMinutes / 60);
     const mins = Math.round(totalMinutes % 60);
-    return `${hrs}h${mins > 0 ? ` ${mins}m` : ""} blocked`;
-  }, [scheduledForDate, selectedDate]);
+    if (hrs === 0) return `${mins}m`;
+    return `${hrs}h${mins > 0 ? ` ${mins}m` : ""}`;
+  }
+
+  // The Hours tab: the same day's work as the grid, but as a list of how long
+  // each task takes rather than where it sits. Sorted longest first — the point
+  // of the view is how the day is spent, not the order it happens in.
+  // Two sources, never both for one task: a block contributes its own length,
+  // and a task with no block contributes planned_minutes. The editor clears one
+  // when you set the other, so nothing is counted twice.
+  const dayDurations = useMemo(() => {
+    const blocked = scheduledForDate(selectedDate).map((t) => ({
+      id: t.id,
+      name: t.task_name,
+      account: t.account,
+      minutes: minutesOf(t),
+      timed: true,
+    }));
+    const blockedIds = new Set(blocked.map((r) => r.id));
+    const untimed = daySchedule
+      .filter(
+        (t) =>
+          !blockedIds.has(t.id) &&
+          t.planned_minutes != null &&
+          t.planned_minutes > 0 &&
+          (t.start_date === selectedDate || t.due_date === selectedDate) &&
+          taskPassesFilters(t)
+      )
+      .map((t) => ({
+        id: t.id,
+        name: t.task_name,
+        account: t.account,
+        minutes: t.planned_minutes as number,
+        timed: false,
+      }));
+    const rows = [...blocked, ...untimed].sort((a, b) => b.minutes - a.minutes);
+    return { rows, totalMinutes: rows.reduce((sum, r) => sum + r.minutes, 0) };
+  }, [scheduledForDate, selectedDate, daySchedule, taskPassesFilters]);
+
+  const dayTotalLabel = useMemo(
+    () => `${formatDuration(dayDurations.totalMinutes)} blocked`,
+    [dayDurations]
+  );
   // Exclude items already rendered as an hour block for this date — once a task
   // has scheduled hours, it shouldn't also sit up top as an unscheduled-looking badge.
   //
@@ -1373,6 +1416,24 @@ export default function ProductivityCalendarPage() {
                 <span className="text-[10px] font-semibold px-2 py-[1px] rounded-full border bg-sage-soft text-sage border-sage/20">
                   {dayTotalLabel}
                 </span>
+                {/* Only for the single-VA day view — the multi-VA compare grid
+                    is a different shape and has no single day to total. */}
+                {compareVaIds.length < 2 && (
+                  <div className="mt-1 flex rounded-lg border border-sand overflow-hidden text-[10px] font-semibold">
+                    {(["grid", "hours"] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setDayTab(tab)}
+                        className={`px-2.5 py-1 transition-colors ${
+                          dayTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                        }`}
+                      >
+                        {tab === "grid" ? "Grid" : "Hours"}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -1483,6 +1544,53 @@ export default function ProductivityCalendarPage() {
                   </div>
                 </div>
                 </div>
+              </div>
+            ) : dayTab === "hours" ? (
+              <div className="rounded-lg border border-sand overflow-hidden">
+                <div className="flex items-center justify-between gap-2 border-b border-sand bg-parchment px-3 py-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">Total</span>
+                  <span className="text-[13px] font-bold text-espresso">
+                    {formatDuration(dayDurations.totalMinutes)}
+                  </span>
+                </div>
+                {dayDurations.rows.length === 0 ? (
+                  <p className="px-3 py-6 text-center text-[12px] text-stone">
+                    Nothing blocked on this day yet.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-sand">
+                    {dayDurations.rows.map((row) => (
+                      <button
+                        key={row.id}
+                        type="button"
+                        onClick={() => {
+                          // Timed rows open through the block path (it needs the
+                          // re-anchored copy); untimed ones have no block, so
+                          // they open the scheduling form on this day instead.
+                          const blocked = scheduledForDate(selectedDate).find((t) => t.id === row.id);
+                          if (blocked) {
+                            void openEditBlock(blocked);
+                            return;
+                          }
+                          const task = daySchedule.find((t) => t.id === row.id);
+                          if (task) void openScheduleExisting(task, selectedDate);
+                        }}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-cream cursor-pointer"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-[13px] font-semibold text-espresso">{row.name}</span>
+                          <span className="block truncate text-[10px] text-stone">
+                            {row.account}
+                            {!row.timed && (row.account ? " · no set time" : "No set time")}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-[12px] font-semibold text-walnut">
+                          {formatDuration(row.minutes)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div ref={openAtWorkingHours} className={GRID_SCROLL_CLASS}>

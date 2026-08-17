@@ -53,6 +53,40 @@ function computeHourlyEquivalent(durationValue: string, unit: "hours" | "minutes
   return hours * hourlyRate;
 }
 
+/**
+ * "2h", "90m", "1h 30m", "1.5h", "45" -> minutes. Null when it can't be read,
+ * which is also how an empty box reads, so the caller treats both as "not set".
+ * Deliberately forgiving about how people actually type a duration.
+ */
+function parseDurationToMinutes(input: string): number | null {
+  const text = input.trim().toLowerCase();
+  if (!text) return null;
+  const hm = text.match(/^(\d+(?:\.\d+)?)\s*h(?:ours?)?(?:\s*(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?)?$/);
+  if (hm) {
+    const minutes = Math.round(Number(hm[1]) * 60 + (hm[2] ? Number(hm[2]) : 0));
+    return minutes > 0 ? minutes : null;
+  }
+  const m = text.match(/^(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?$/);
+  if (m) {
+    const minutes = Math.round(Number(m[1]));
+    return minutes > 0 ? minutes : null;
+  }
+  const bare = text.match(/^(\d+(?:\.\d+)?)$/);
+  if (bare) {
+    const minutes = Math.round(Number(bare[1]));
+    return minutes > 0 ? minutes : null;
+  }
+  return null;
+}
+
+/** Minutes back to the shorthand the field accepts, for prefilling. */
+function formatMinutesInput(minutes: number): string {
+  const hrs = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hrs === 0) return `${mins}m`;
+  return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`;
+}
+
 function computeQuantityTotal(unitRate: string, quantity: string): number | null {
   const rate = Number(unitRate);
   const qty = Number(quantity);
@@ -199,6 +233,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [dueTime, setDueTime] = useState((initialTask?.due_time as string) ?? "");
   const [endDate, setEndDate] = useState((initialTask?.end_date as string) ?? "");
   const [hasSchedule, setHasSchedule] = useState(Boolean(initialStartTime) || Boolean(defaultStartTime));
+  // How long the task takes when it doesn't need a particular slot — the
+  // alternative to specific hours, not an addition to them.
+  const [plannedDuration, setPlannedDuration] = useState(
+    initialTask?.planned_minutes != null ? formatMinutesInput(Number(initialTask.planned_minutes)) : ""
+  );
+  const parsedPlannedMinutes = parseDurationToMinutes(plannedDuration);
   const [startTime, setStartTime] = useState(
     initialStartTime ? timeOfDay(initialStartTime).slice(0, 5) : defaultStartTime ?? "09:00"
   );
@@ -541,6 +581,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           body.start_time = null;
           body.end_time = null;
         }
+
+        // Specific hours and a bare duration are alternatives — with hours set,
+        // the block's own length is the duration, so storing one alongside it
+        // would double-count in the Hours tab's total.
+        body.planned_minutes = hasSchedule ? null : parsedPlannedMinutes;
 
         const effectiveVaId = isAdminOrManager ? vaId : currentUserId;
 
@@ -1125,9 +1170,38 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           {mode === "time_based" ? (
             <>
               <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} disabled={readOnly} />
+                <input
+                  type="checkbox"
+                  checked={hasSchedule}
+                  onChange={(e) => {
+                    setHasSchedule(e.target.checked);
+                    // The two are alternatives, not extras: specific hours
+                    // already say how long the task takes, so keeping a separate
+                    // duration around would let the Hours tab count it twice.
+                    if (e.target.checked) setPlannedDuration("");
+                  }}
+                  disabled={readOnly}
+                />
                 Add to Calendar (specific hours)
               </label>
+
+              {!hasSchedule && (
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration (no set time)</label>
+                  <input
+                    value={plannedDuration}
+                    onChange={(e) => setPlannedDuration(e.target.value)}
+                    disabled={readOnly}
+                    placeholder="2h, 90m, 1h 30m"
+                    className={inputClass}
+                  />
+                  <p className="mt-1 text-[10px] text-stone">
+                    {parsedPlannedMinutes != null
+                      ? `${parsedPlannedMinutes} minutes — counts toward the day's total on the Calendar's Hours tab, without taking a slot on the grid.`
+                      : "How long this takes, when it doesn't need a particular time. Leave empty if it doesn't matter."}
+                  </p>
+                </div>
+              )}
               {hasSchedule && (
                 <>
                   <div className="flex gap-3">
