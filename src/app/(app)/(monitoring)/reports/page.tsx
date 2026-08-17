@@ -891,20 +891,35 @@ export default function ReportsPage() {
       byUserDay.get(key)!.push(l);
     });
 
+    // Clock Out markers are zero-duration rows that filteredLogs strips out, so
+    // a gap that swallows one is really "went home and came back", not someone
+    // sitting on the wizard. Those are read off the unfiltered logs (keyed by
+    // user only — clock-outs carry no account, so the account/client filters
+    // would drop them) and any gap containing one is skipped.
+    const clockOutsByUser = new Map<string, number[]>();
+    logs.forEach((l) => {
+      if (l.category !== "Clock Out" || !l.start_time) return;
+      if (selectedVA !== "all" && l.user_id !== selectedVA) return;
+      if (!clockOutsByUser.has(l.user_id)) clockOutsByUser.set(l.user_id, []);
+      clockOutsByUser.get(l.user_id)!.push(new Date(l.start_time).getTime());
+    });
+
     let total = 0;
     byUserDay.forEach((dayLogs) => {
       const ordered = [...dayLogs].sort((a, b) => a.start_time.localeCompare(b.start_time));
+      const clockOuts = clockOutsByUser.get(ordered[0].user_id) ?? [];
       for (let i = 0; i < ordered.length - 1; i++) {
         const prev = ordered[i];
         const next = ordered[i + 1];
-        const gap =
-          new Date(next.start_time).getTime() - new Date(prev.end_time!).getTime();
-        if (gap <= 0) continue; // overlapping or back-to-back entries
-        total += Math.max(0, gap - (prev.form_fill_ms || 0));
+        const gapStart = new Date(prev.end_time!).getTime();
+        const gapEnd = new Date(next.start_time).getTime();
+        if (gapEnd <= gapStart) continue; // overlapping or back-to-back entries
+        if (clockOuts.some((t) => t > gapStart && t < gapEnd)) continue;
+        total += Math.max(0, gapEnd - gapStart - (prev.form_fill_ms || 0));
       }
     });
     return total;
-  }, [filteredLogs]);
+  }, [filteredLogs, logs, selectedVA]);
 
   /* ── By person ───────────────────────────────────────────── */
 
@@ -1757,13 +1772,13 @@ export default function ReportsPage() {
           {/* Breakdown — one tabbed box instead of Hours by Account, Project &
               Task Summary, and Team Breakdown as three separate cards. */}
           <div className="mb-6 rounded-xl border border-sand bg-white">
-            <div className="flex items-center justify-between border-b border-parchment px-5 py-3">
+            <div className="flex justify-center border-b border-parchment px-5 py-3">
               <div className="flex gap-1">
                 {([
-                  ["account", "By Account"],
-                  ["project", "By Project"],
-                  ["task", "By Task"],
-                  ["team", "Team Breakdown"],
+                  ["account", "Accounts"],
+                  ["project", "Projects"],
+                  ["task", "Tasks"],
+                  ["team", "Team"],
                 ] as const).map(([key, label]) => (
                   <button
                     key={key}
@@ -1777,11 +1792,6 @@ export default function ReportsPage() {
                     {label}
                   </button>
                 ))}
-              </div>
-              <div className="flex gap-4 text-[11px] text-bark">
-                <span><strong className="text-espresso">{projectSummary.length}</strong> projects</span>
-                <span><strong className="text-espresso">{taskSummary.reduce((sum, t) => sum + t.count, 0)}</strong> tasks completed</span>
-                <span><strong className="text-espresso">{filteredSubmissions.length}</strong> submissions</span>
               </div>
             </div>
 
