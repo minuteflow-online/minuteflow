@@ -439,6 +439,19 @@ export default function ProductivityCalendarPage() {
     [timeOff]
   );
   const isVaOffOnDate = useCallback((vaId: string, dateStr: string) => Boolean(timeOffForVaOnDate(vaId, dateStr)), [timeOffForVaOnDate]);
+
+  // Everyone off on the selected day — rendered as a sidebar card, so it's
+  // computed here rather than inline where it used to be drawn.
+  const offToday = useMemo(
+    () =>
+      timeOff
+        .filter((t) => selectedDate >= t.start_date && selectedDate <= t.end_date)
+        .map((t) => {
+          const m = teamMembers.find((tm) => tm.id === t.user_id);
+          return { name: m?.full_name || m?.username || "Someone", label: timeOffLabel(t) };
+        }),
+    [timeOff, selectedDate, teamMembers]
+  );
   // Label for an off entry: full day → "Time Off"; partial → "Short Day (h–h)".
   const timeOffLabel = (entry: { start_time: string | null; end_time: string | null } | undefined) => {
     if (!entry) return null;
@@ -1374,32 +1387,34 @@ export default function ProductivityCalendarPage() {
         </div>
       )}
 
-      {viewMode === "day" && isAdminOrManager && (() => {
-        const off = timeOff
-          .filter((t) => selectedDate >= t.start_date && selectedDate <= t.end_date)
-          .map((t) => {
-            const m = teamMembers.find((tm) => tm.id === t.user_id);
-            return { name: m?.full_name || m?.username || "Someone", label: timeOffLabel(t) };
-          });
-        if (off.length === 0) return null;
-        return (
-          <div className="rounded-xl border border-terracotta/30 bg-terracotta-soft px-4 py-2.5">
-            <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-terracotta">Off this day ({off.length})</p>
-            <div className="flex flex-wrap gap-1.5">
-              {off.map((o, i) => (
-                <span key={i} className="rounded-full border border-terracotta/30 bg-white px-2 py-[2px] text-[11px] font-semibold text-terracotta">
-                  {o.name} · {o.label}
-                </span>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
+      {/* Who's off used to be a full-width banner above the whole day — loud,
+          and the first thing you read on a day it rarely changes anything about.
+          It's a small card in the sidebar now, next to Unscheduled. */}
 
       {viewMode === "day" && (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
           {/* Hour grid */}
           <div className="rounded-xl border border-sand bg-white p-4">
+            {/* Above the date, not tucked under it — this switches what the whole
+                panel shows, so it reads as a control for the panel rather than a
+                detail of the day. Hidden in the multi-VA compare view, which is a
+                different shape with no single day to total. */}
+            {compareVaIds.length < 2 && (
+              <div className="mb-3 flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
+                {(["grid", "hours"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setDayTab(tab)}
+                    className={`px-4 py-1.5 transition-colors ${
+                      dayTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                    }`}
+                  >
+                    {tab === "grid" ? "Grid" : "Hours"}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="mb-3 flex items-center justify-between">
               <button
                 type="button"
@@ -1416,24 +1431,6 @@ export default function ProductivityCalendarPage() {
                 <span className="text-[10px] font-semibold px-2 py-[1px] rounded-full border bg-sage-soft text-sage border-sage/20">
                   {dayTotalLabel}
                 </span>
-                {/* Only for the single-VA day view — the multi-VA compare grid
-                    is a different shape and has no single day to total. */}
-                {compareVaIds.length < 2 && (
-                  <div className="mt-1 flex rounded-lg border border-sand overflow-hidden text-[10px] font-semibold">
-                    {(["grid", "hours"] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        type="button"
-                        onClick={() => setDayTab(tab)}
-                        className={`px-2.5 py-1 transition-colors ${
-                          dayTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
-                        }`}
-                      >
-                        {tab === "grid" ? "Grid" : "Hours"}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
               <button
                 type="button"
@@ -1755,6 +1752,24 @@ export default function ProductivityCalendarPage() {
             )}
           </div>
 
+          <div className="space-y-4 h-fit">
+          {/* Off today — a quiet card here rather than a banner across the top. */}
+          {isAdminOrManager && offToday.length > 0 && (
+            <div className="rounded-xl border border-sand bg-white p-3 h-fit">
+              <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-stone">
+                Off today ({offToday.length})
+              </p>
+              <div className="space-y-1">
+                {offToday.map((o, i) => (
+                  <p key={i} className="truncate text-[11px] text-walnut">
+                    <span className="font-semibold text-espresso">{o.name}</span>
+                    {o.label ? ` · ${o.label}` : ""}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Unscheduled sidebar */}
           <div className="rounded-xl border border-sand bg-white p-4 space-y-3 h-fit">
             <button
@@ -1855,6 +1870,7 @@ export default function ProductivityCalendarPage() {
                 </button>
               </>
             )}
+          </div>
           </div>
         </div>
       )}
