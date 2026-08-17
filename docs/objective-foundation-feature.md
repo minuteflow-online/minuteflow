@@ -68,6 +68,45 @@ should tasks that got sent back for revision (revision_needed) show up? And shou
 on_queue/unassigned tasks appear under Pending, or only show once someone's picked
 them up?"*
 
+### Confirmed UI flow (Figma reference, [DATE])
+Neil designed the full flow in Figma — this is now the reference design for the build,
+supersedes any earlier vague description:
+
+1. **Objective list (unchanged)** — "My Objectives" sidebar, click an Objective to
+   select it.
+2. **New: lighter default view on selection** — instead of jumping straight into the
+   full edit form, selecting an Objective shows: **"Where They Are"** (existing card,
+   stays at the top — confirmed, don't lose this in the redesign) → Objective name as a
+   header → an **"Objective Details"** button (opens the edit form on demand, not by
+   default) → the **Subtasks** section.
+3. **Subtasks section has a List View / Board View toggle** (per boss's confirmed
+   answer — toggle, not a replacement).
+   - **List View**: same as current behavior (status badge, name, VA, due date, Edit
+     button per row).
+   - **Board View**: kanban columns (Pending → In Progress → Submitted → Reviewed →
+     Approved → Completed, per boss's answer — status-mapping gap still open, see
+     above). Alongside the columns, a **persistent "Subtasks" reference list** on the
+     left shows the same subtasks in one place regardless of column — this is not a
+     separate "unsorted" tray; every subtask already has a status and sits in its
+     correct column. The side list is just a secondary, always-visible reference/nav
+     view of the same data, not a different data set. Cards are draggable between
+     columns (updates status on drop).
+   - "Add Subtask" works from both views.
+4. **Sub-objectives**: clicking "+" next to an Objective in the sidebar creates a
+   nested child (already confirmed working at the data layer) — Figma confirms the
+   sidebar should show this as an expandable tree (▼/▶ toggle), with the child indented
+   underneath. Selecting a sub-objective shows the same lighter default view (Where
+   They Are → Details button → Subtasks), scoped to that sub-objective's own data
+   (per-node, not rolled up — consistent with earlier decisions).
+
+### Workflow note — test locally before deciding on the default-view change
+The "lighter default view" (Details behind a button, rather than shown immediately) is
+Neil's own UX improvement, not something boss explicitly asked for. Plan: **build and
+test locally first, then show her directly for approval** — don't assume this becomes
+the permanent default until she's seen and confirmed it. See
+`docs/dev-workflow-rules.md` — this stays local/on-branch only until approved, same as
+every other change in this project.
+
 ### Hard rules specific to this part
 - Do not change the underlying `AssignedTaskStatus` enum or how status transitions work
   elsewhere in the app (Time Log, Dashboard, Reports all depend on these same values).
