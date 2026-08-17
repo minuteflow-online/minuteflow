@@ -218,6 +218,12 @@ export interface TaskScreenshot {
   failure_reason: string | null;
   created_at: string;
   drive_file_id: string | null;
+  /** When the client took the shot. created_at is when the row landed, which can
+   *  be hours later if the upload sat in the extension's offline queue. */
+  captured_at: string | null;
+  /** 64-bit perceptual hash (16 hex chars) of the image, used to spot a screen
+   *  that hasn't changed between captures. Null for older rows. */
+  image_hash: string | null;
 }
 
 export interface CaptureRequest {
@@ -619,6 +625,11 @@ export interface AssignedTask {
   end_time: string | null;
   pay_type?: string | null;
   review_required: boolean;
+  /** True once Review Required has been answered. Also the record that it was
+   *  answered at all — tasks predating the rule carry false and keep whatever
+   *  review_required they were saved with. Only Admin/Manager/CEO/Founder may
+   *  change the answer once this is true (see canChangeLockedReview). */
+  review_required_locked: boolean;
   revision_count: number;
   created_by: string | null;
   created_by_profile?: Pick<Profile, 'id' | 'full_name' | 'username'> | null;

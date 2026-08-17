@@ -69,3 +69,19 @@ export function canGrantRoles(
 ): boolean {
   return profile?.role === "ceo" || profile?.role === "founder";
 }
+
+// A task's Review Required answer locks the moment it is answered. Changing a
+// locked answer is Admin, Manager, CEO, and Founder — deliberately narrower
+// than hasBroadAdminAccess, which also admits Coordinator and Specialist.
+// Department plays no part here (see the note at the top of this file), so a
+// Leadership-department Staff account does not qualify; the role does.
+export function canChangeLockedReview(
+  profile?: { role?: string | null } | null
+): boolean {
+  return (
+    profile?.role === "admin" ||
+    profile?.role === "manager" ||
+    profile?.role === "ceo" ||
+    profile?.role === "founder"
+  );
+}

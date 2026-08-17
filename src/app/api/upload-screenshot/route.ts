@@ -35,6 +35,16 @@ function formatEasternTimestamp(date: Date): string {
   return `${map.year}-${map.month}-${map.day}_${map.hour}-${map.minute}-${map.second}-${ms}_ET`;
 }
 
+/**
+ * True when an insert failed because a column doesn't exist on the table.
+ * PostgREST reports an unknown column as PGRST204; Postgres itself uses 42703.
+ */
+function isMissingColumnError(err: { code?: string; message?: string }): boolean {
+  if (err.code === "PGRST204" || err.code === "42703") return true;
+  const msg = (err.message || "").toLowerCase();
+  return msg.includes("captured_at") || msg.includes("image_hash");
+}
+
 /** Returns true if the error looks like an auth/token problem. */
 function isAuthError(err: unknown): boolean {
   if (err instanceof Error) {
@@ -126,6 +136,11 @@ export async function POST(request: NextRequest) {
     const logId = formData.get("logId") as string | null;
     const screenshotType = formData.get("screenshotType") as string | null;
     const captureRequestId = formData.get("captureRequestId") as string | null;
+    // When the client actually took the shot, and a perceptual hash of it. Both
+    // are optional: older extension builds don't send them, and the in-page
+    // capture path doesn't fingerprint.
+    const capturedAtRaw = formData.get("capturedAt") as string | null;
+    const fingerprint = formData.get("fingerprint") as string | null;
 
     if (!blob || !userId || !logId || !screenshotType) {
       return Response.json(
@@ -160,8 +175,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // The moment the shot was taken. Uploads can sit in the extension's local
+    // queue for hours before they arrive, so falling back to the server clock
+    // makes a drained backlog look like a burst of captures that never happened.
+    const capturedAt = capturedAtRaw && !isNaN(Date.parse(capturedAtRaw))
+      ? new Date(capturedAtRaw)
+      : new Date();
+
     // Build Drive filename (Eastern time, directly readable — see formatEasternTimestamp)
-    const timestamp = formatEasternTimestamp(new Date());
+    const timestamp = formatEasternTimestamp(capturedAt);
     const driveFilename = `${sanitizeFilename(vaName)}_${sanitizeFilename(taskName)}_${timestamp}.png`;
 
     // Convert Blob to Buffer once
@@ -203,18 +225,39 @@ export async function POST(request: NextRequest) {
     await makeDriveFilePublic(driveAuth, driveFileId);
 
     // Insert task_screenshots record — Drive only, no storage_path
-    const { data: ssData, error: insertError } = await supabase
+    const baseRow = {
+      user_id: userId,
+      log_id: Number(logId),
+      filename: driveFilename,
+      drive_file_id: driveFileId,
+      screenshot_type: screenshotType,
+      ...(captureRequestId ? { capture_request_id: Number(captureRequestId) } : {}),
+    };
+
+    let { data: ssData, error: insertError } = await supabase
       .from("task_screenshots")
       .insert({
-        user_id: userId,
-        log_id: Number(logId),
-        filename: driveFilename,
-        drive_file_id: driveFileId,
-        screenshot_type: screenshotType,
-        ...(captureRequestId ? { capture_request_id: Number(captureRequestId) } : {}),
+        ...baseRow,
+        captured_at: capturedAt.toISOString(),
+        ...(fingerprint ? { image_hash: fingerprint } : {}),
       })
       .select()
       .single();
+
+    // captured_at and image_hash are newer than this route. If they aren't on the
+    // table yet, save the screenshot without them rather than losing it — an
+    // upload that can't be retried is worth more than the two extra fields. The
+    // full insert starts working on its own once the columns are added.
+    if (insertError && isMissingColumnError(insertError)) {
+      console.warn(
+        "[upload-screenshot] captured_at/image_hash not present on task_screenshots; inserting without them."
+      );
+      ({ data: ssData, error: insertError } = await supabase
+        .from("task_screenshots")
+        .insert(baseRow)
+        .select()
+        .single());
+    }
 
     if (insertError) {
       return Response.json(

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
+import { EXTENSION_MIN_VERSION, EXTENSION_STORE_URL } from "@/lib/extensionVersion";
 
 type BannerReason = "screenshare" | "sce" | "sce-login";
 
@@ -25,6 +26,8 @@ export default function SceAlertBanner() {
   const [reason, setReason] = useState<BannerReason>("screenshare");
   const [userId, setUserId] = useState<string | null>(null);
   const userIdRef = useRef<string | null>(null);
+  // Version of the extension this VA is actually running, when it's behind.
+  const [outdatedVersion, setOutdatedVersion] = useState<string | null>(null);
 
   // Skip on dashboard — it renders its own banner with full capture logic
   const isDashboard = pathname === "/dashboard";
@@ -46,6 +49,22 @@ export default function SceAlertBanner() {
   const isDismissed = () => {
     try {
       const until = sessionStorage.getItem(DISMISS_KEY);
+      if (!until) return false;
+      return Date.now() < parseInt(until, 10);
+    } catch {
+      return false;
+    }
+  };
+
+  // Updating means reinstalling by hand, so "Later" holds for the rest of the
+  // browser session rather than the 30 minutes the SCE warning uses — nagging
+  // every half hour about a task they can't do in one click is just noise.
+  const VERSION_DISMISS_KEY = "extension_version_banner_dismissed_until";
+  const VERSION_DISMISS_DURATION_MS = 8 * 60 * 60 * 1000; // 8 hours
+
+  const isVersionDismissed = () => {
+    try {
+      const until = sessionStorage.getItem(VERSION_DISMISS_KEY);
       if (!until) return false;
       return Date.now() < parseInt(until, 10);
     } catch {
@@ -103,6 +122,82 @@ export default function SceAlertBanner() {
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, isDashboard, screenShareActive]);
+
+  // Which extension build this VA is on. Hourly is plenty — the answer only
+  // changes when they reinstall, and the route reads a table they can't query
+  // directly (extension_upload_status is admin-only under RLS).
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+
+    const checkVersion = async () => {
+      try {
+        const res = await fetch("/api/extension-version");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setOutdatedVersion(data.outdated ? data.version : null);
+      } catch {
+        // Offline or route unavailable — leave the banner alone rather than
+        // guessing that a VA is out of date.
+      }
+    };
+
+    checkVersion();
+    const interval = setInterval(checkVersion, 60 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [userId]);
+
+  // Outdated-extension notice. Unlike the SCE warnings this also shows on the
+  // dashboard: the dashboard's own banner covers screen-share and heartbeat
+  // trouble, not which build the VA is running, and the dashboard is where they
+  // spend the day. Suppressed while an SCE warning is up so the two never stack.
+  if (outdatedVersion && !show && !isVersionDismissed()) {
+    return (
+      <div className="fixed top-14 left-0 right-0 z-[60] flex items-center justify-between gap-3 bg-amber-500 px-4 py-2.5 shadow-md">
+        <div className="flex items-center gap-2 text-sm font-medium text-white">
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          <span>
+            Your screen capture extension is out of date (v{outdatedVersion} — current is v
+            {EXTENSION_MIN_VERSION}). Please update to keep your screenshots accurate.
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* Straight to the Web Store, not /install: a store install updates
+              itself, while the load-unpacked route takes the VA off auto-update
+              and leaves them stranded on whatever build they grabbed. */}
+          <a
+            href={EXTENSION_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-amber-600 transition-colors hover:bg-amber-50"
+          >
+            Update Now
+          </a>
+          <button
+            onClick={() => {
+              try {
+                sessionStorage.setItem(
+                  VERSION_DISMISS_KEY,
+                  String(Date.now() + VERSION_DISMISS_DURATION_MS)
+                );
+              } catch { /* ignore */ }
+              setOutdatedVersion(null);
+            }}
+            className="px-2 py-1 text-xs text-white/80 transition-colors hover:text-white"
+          >
+            Later
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!show || isDashboard) return null;
 

@@ -99,6 +99,7 @@ function screenshotTypeLabel(type: string | null): string {
     end: "End",
     remote: "Remote",
     manual: "Manual",
+    failed: "No capture",
   };
   return labels[type] || type;
 }
@@ -122,6 +123,7 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
     end: { bg: "bg-terracotta-soft", text: "text-terracotta" },
     remote: { bg: "bg-amber-soft", text: "text-amber" },
     manual: { bg: "bg-parchment", text: "text-bark" },
+    failed: { bg: "bg-stone/10", text: "text-stone" },
   };
   return styles[type] || { bg: "bg-parchment", text: "text-bark" };
 }
@@ -129,11 +131,19 @@ function screenshotTypeBadge(type: string | null): { bg: string; text: string } 
 /* ── Screenshot Grouping ─────────────────────────────────── */
 
 /**
- * A screenshot carrying the moment it was taken. `captureTime` comes from the Drive
- * filename, which is stamped once at upload and never rewritten; `created_at` is only
- * the fallback for the handful of rows whose filename predates that convention.
+ * A screenshot carrying the moment it was taken, and whether the screen had moved
+ * since the previous shot of the same task.
+ *
+ * `captureTime` prefers `captured_at` (stamped by the client at the moment of
+ * capture), falls back to the Drive filename, and only then to `created_at` — the
+ * row's insert time, which for a queued upload can be hours late.
  */
-type CapturedScreenshot = TaskScreenshot & { captureTime: string; captureFromFilename: boolean };
+type CapturedScreenshot = TaskScreenshot & {
+  captureTime: string;
+  captureIsExact: boolean;
+  /** Screen is pixel-for-pixel the layout of the previous capture in this task. */
+  unchanged: boolean;
+};
 
 /**
  * One task's screenshots — the unit the Screenshots tab renders. The tab is a flat
@@ -980,8 +990,12 @@ export default function AdminPage() {
       const fromFilename = screenshotCaptureTime(ss.filename);
       return {
         ...ss,
-        captureTime: fromFilename ?? ss.created_at,
-        captureFromFilename: fromFilename !== null,
+        captureTime: ss.captured_at ?? fromFilename ?? ss.created_at,
+        // Boolean(), not a null check: before the captured_at column exists the
+        // field is absent from the row entirely, and `undefined !== null` would
+        // label every old screenshot as exactly timed.
+        captureIsExact: Boolean(ss.captured_at),
+        unchanged: false, // resolved below, once shots are ordered within a task
       };
     });
 
@@ -1013,9 +1027,16 @@ export default function AdminPage() {
     });
 
     const tasks = Array.from(byTask.values());
-    tasks.forEach((t) =>
-      t.shots.sort((a, b) => new Date(a.captureTime).getTime() - new Date(b.captureTime).getTime())
-    );
+    tasks.forEach((t) => {
+      t.shots.sort((a, b) => new Date(a.captureTime).getTime() - new Date(b.captureTime).getTime());
+      // Flag a shot whose screen is identical to the one before it. Compared only
+      // against the immediately preceding shot of the same task, so a run of
+      // untouched screens reads as a run of flags rather than one isolated mark.
+      t.shots.forEach((shot, i) => {
+        const prev = i > 0 ? t.shots[i - 1] : null;
+        shot.unchanged = !!(shot.image_hash && prev?.image_hash && shot.image_hash === prev.image_hash);
+      });
+    });
     const latest = (t: ScreenshotTaskGroup) =>
       new Date(t.shots[t.shots.length - 1].captureTime).getTime();
     tasks.sort((a, b) => latest(b) - latest(a));
@@ -2247,6 +2268,8 @@ function TaskScreenshotCard({
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
   const vaName = profile?.full_name || "Unknown";
+  const unchangedCount = group.shots.filter((s) => s.unchanged).length;
+  const noCaptureCount = group.shots.filter((s) => s.screenshot_type === "failed").length;
 
   return (
     <div className="rounded-xl border border-sand bg-cream p-3">
@@ -2278,6 +2301,16 @@ function TaskScreenshotCard({
           )}
           <span className="text-[11px] font-medium text-walnut">{vaName}</span>
           <span className="text-[10px] text-stone">{group.dateLabel}</span>
+          {unchangedCount > 0 && (
+            <span className="rounded-full border border-amber/20 bg-amber-soft px-2 py-[1px] text-[9px] font-semibold text-amber">
+              {unchangedCount} unchanged
+            </span>
+          )}
+          {noCaptureCount > 0 && (
+            <span className="rounded-full border border-stone/20 bg-stone/10 px-2 py-[1px] text-[9px] font-semibold text-stone">
+              {noCaptureCount} idle/no capture
+            </span>
+          )}
         </div>
       </div>
 
@@ -2285,16 +2318,25 @@ function TaskScreenshotCard({
         {visible.map((ss) => {
           const url = screenshotUrls[ss.id];
           const badge = screenshotTypeBadge(ss.screenshot_type);
+          // A marker slot: no image was captured, and the row says why.
+          const isMarker = ss.screenshot_type === "failed" || !ss.drive_file_id;
 
           return (
             <button
               key={ss.id}
               onClick={() => setSelectedScreenshot(ss)}
               className="group relative cursor-pointer overflow-hidden rounded-lg border border-sand bg-parchment transition-all hover:border-terracotta hover:shadow-md"
-              title={ss.filename}
+              title={ss.failure_reason || ss.filename}
             >
               <div className="relative aspect-video w-full overflow-hidden bg-sand">
-                {url ? (
+                {isMarker ? (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-parchment px-2 text-center">
+                    <span className="text-base text-stone">&#8709;</span>
+                    <span className="text-[10px] leading-tight text-bark">
+                      {ss.failure_reason || "No screenshot"}
+                    </span>
+                  </div>
+                ) : url ? (
                   <img
                     src={url}
                     alt={`Screenshot by ${vaName}`}
@@ -2311,13 +2353,21 @@ function TaskScreenshotCard({
                 >
                   {screenshotTypeLabel(ss.screenshot_type)}
                 </span>
+                {ss.unchanged && (
+                  <span
+                    className="absolute top-1.5 right-1.5 rounded bg-amber-soft px-1.5 py-0.5 text-[9px] font-semibold text-amber"
+                    title="Screen is identical to the previous capture — nothing moved"
+                  >
+                    Unchanged
+                  </span>
+                )}
               </div>
               <div className="px-2.5 py-2 text-left">
                 <div className="text-[11px] font-medium text-espresso">
                   {formatCaptureTime(ss.captureTime, orgTimezone)}
                 </div>
                 <div className="text-[10px] text-stone">
-                  {ss.captureFromFilename ? "taken" : "uploaded"}
+                  {ss.captureIsExact ? "taken" : "approx."}
                 </div>
               </div>
             </button>
@@ -7028,10 +7078,11 @@ function ScreenshotLightbox({
   }, [onClose, onPrev, onNext]);
 
   const badge = screenshotTypeBadge(screenshot.screenshot_type);
-  // Filename time is when the shot was taken; created_at is when the row landed,
-  // a few seconds later. Show the former, keep the latter on hover for support.
-  const capturedFromFilename = screenshotCaptureTime(screenshot.filename);
-  const capturedAt = capturedFromFilename ?? screenshot.created_at;
+  // captured_at is the client's own stamp from the moment of capture; the filename
+  // is the next best thing; created_at is when the row landed, which for a queued
+  // upload can be hours later. Kept on hover either way for support questions.
+  const exactCapture = screenshot.captured_at ?? screenshotCaptureTime(screenshot.filename);
+  const capturedAt = exactCapture ?? screenshot.created_at;
 
   return (
     <div
@@ -7073,7 +7124,7 @@ function ScreenshotLightbox({
                 timezone
               )} · ${screenshot.filename}`}
             >
-              {capturedFromFilename ? "Taken" : "Uploaded"} {formatDateShort(capturedAt, timezone)} at{" "}
+              {exactCapture ? "Taken" : "Uploaded"} {formatDateShort(capturedAt, timezone)} at{" "}
               {formatCaptureTime(capturedAt, timezone)}
             </span>
             <button

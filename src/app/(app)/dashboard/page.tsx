@@ -110,6 +110,11 @@ function getCorrectSessionDate(
 // logging >200 rows/day could lose part of *today's own* data. A rolling
 // date window guarantees "today" is never cut off, while staying bounded so
 // months-old abandoned on_hold/in_progress rows don't pile up forever.
+// One capture every 5 minutes. Must stay in step with CAPTURE_INTERVAL_MINUTES in
+// extension/background.js — the extension normally owns this schedule, and this
+// path only runs for VAs without the extension installed.
+const CAPTURE_INTERVAL_MS = 5 * 60 * 1000;
+
 const ACTIVITY_LOOKBACK_DAYS = 14;
 function activityLogFloorIso(): string {
   return new Date(Date.now() - ACTIVITY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -253,6 +258,10 @@ export default function DashboardPage() {
   const captureWorkerRef = useRef<Worker | null>(null);
   const silentCaptureRef = useRef<((logId: number, screenshotType: 'start' | 'progress' | 'end' | 'manual') => Promise<boolean>) | null>(null);
   const isCapturingRef = useRef(false);
+  // True while the SCE extension is alive for this VA. The extension runs its own
+  // 5-minute schedule, so the in-page capture path stands down rather than adding
+  // a second stream of screenshots on top of it.
+  const extensionLiveRef = useRef(false);
   const lastCaptureTimeRef = useRef(0);
   const consecutiveCaptureFailuresRef = useRef(0);
   const [showScreenShareAlert, setShowScreenShareAlert] = useState(false);
@@ -377,6 +386,32 @@ export default function DashboardPage() {
   // ─── SCE heartbeat monitor ─────────────────────────────────
   // Every 2 min while clocked in: check if the extension last_seen is stale (>5 min).
   // If so and screenshare is also inactive, trigger the amber banner so the VA
+  // Track whether the extension is capturing, so the in-page path knows to stand
+  // down. Deliberately separate from the banner check below, which stops polling
+  // once it has something to show — this needs an answer every cycle.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+
+    const refresh = async () => {
+      const { data } = await supabase
+        .from("extension_heartbeats")
+        .select("last_seen")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (cancelled) return;
+      const staleMs = data?.last_seen ? Date.now() - new Date(data.last_seen).getTime() : Infinity;
+      extensionLiveRef.current = staleMs <= 5 * 60 * 1000;
+    };
+
+    refresh();
+    const interval = setInterval(refresh, 2 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [userId]);
+
   // knows to reshare screen as a fallback.
   useEffect(() => {
     if (sceCheckRef.current) clearInterval(sceCheckRef.current);
@@ -1943,6 +1978,13 @@ export default function DashboardPage() {
         console.warn(`[Screenshot] Skipped (${screenshotType}): another capture is already in progress.`);
         return false;
       }
+      // Guard: the extension owns capture whenever it's running. Only it can see
+      // OS-level idle, so it takes the whole automatic schedule; this path exists
+      // for VAs without the extension. Manual captures are always honoured.
+      if (screenshotType !== 'manual' && extensionLiveRef.current) {
+        console.info(`[Screenshot] Skipped (${screenshotType}): SCE extension is capturing.`);
+        return false;
+      }
       // Guard: enforce 45-second cooldown between captures (skip for 'end' and 'manual' — those are intentional)
       if (screenshotType !== 'end' && screenshotType !== 'manual') {
         const now = Date.now();
@@ -2050,19 +2092,18 @@ export default function DashboardPage() {
       // Immediate start screenshot
       silentCapture(logId, "start");
 
-      // Every 10 minutes consistently
+      // Every 5 minutes, matching the extension's schedule
       const scheduleRepeating = (afterMs: number) => {
         const t = setTimeout(() => {
           if (activeLogIdRef.current === logId) {
             silentCapture(logId, "progress");
-            scheduleRepeating(600_000); // Next one in 10 min
+            scheduleRepeating(CAPTURE_INTERVAL_MS);
           }
         }, afterMs);
         captureTimersRef.current.push(t);
       };
 
-      // First repeating capture at 10 min
-      scheduleRepeating(600_000);
+      scheduleRepeating(CAPTURE_INTERVAL_MS);
     },
     [clearCaptureTimers, silentCapture]
   );
