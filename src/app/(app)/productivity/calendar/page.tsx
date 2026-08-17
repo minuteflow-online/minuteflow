@@ -440,18 +440,6 @@ export default function ProductivityCalendarPage() {
   );
   const isVaOffOnDate = useCallback((vaId: string, dateStr: string) => Boolean(timeOffForVaOnDate(vaId, dateStr)), [timeOffForVaOnDate]);
 
-  // Everyone off on the selected day — rendered as a sidebar card, so it's
-  // computed here rather than inline where it used to be drawn.
-  const offToday = useMemo(
-    () =>
-      timeOff
-        .filter((t) => selectedDate >= t.start_date && selectedDate <= t.end_date)
-        .map((t) => {
-          const m = teamMembers.find((tm) => tm.id === t.user_id);
-          return { name: m?.full_name || m?.username || "Someone", label: timeOffLabel(t) };
-        }),
-    [timeOff, selectedDate, teamMembers]
-  );
   // Label for an off entry: full day → "Time Off"; partial → "Short Day (h–h)".
   const timeOffLabel = (entry: { start_time: string | null; end_time: string | null } | undefined) => {
     if (!entry) return null;
@@ -464,6 +452,18 @@ export default function ProductivityCalendarPage() {
     };
     return `Short Day (${fmt(entry.start_time)}–${fmt(entry.end_time)})`;
   };
+  // Everyone off on the selected day — rendered as a sidebar card, so it's
+  // computed here rather than inline where it used to be drawn.
+  const offToday = useMemo(
+    () =>
+      timeOff
+        .filter((t) => selectedDate >= t.start_date && selectedDate <= t.end_date)
+        .map((t) => {
+          const m = teamMembers.find((tm) => tm.id === t.user_id);
+          return { name: m?.full_name || m?.username || "Someone", label: timeOffLabel(t) };
+        }),
+    [timeOff, selectedDate, teamMembers]
+  );
 
   // The "My View" control is a multi-select of teammates. Opening it seeds the
   // draft from what's applied; Apply commits it. 0 selected = just me; 1 = that
