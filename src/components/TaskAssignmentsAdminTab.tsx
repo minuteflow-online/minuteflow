@@ -2093,6 +2093,10 @@ export default function TaskAssignmentsAdminTab({
             <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
 
               <TaskEditor
+                // Keyed on the task id — TaskEditor seeds its fields on mount
+                // only, so a shared key let one task's form state carry over to
+                // the next and be saved onto it.
+                key={selectedTask ? `edit-${selectedTask.id}` : "create"}
                 ref={taskEditorRef}
                 mode="time_based"
                 editingTaskId={selectedTask ? selectedTask.id : null}

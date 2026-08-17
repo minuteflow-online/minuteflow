@@ -2795,6 +2795,11 @@ export default function TaskListPage() {
                 </div>
               ) : (
                 <TaskEditor
+                  // Keyed on the task id: TaskEditor seeds its fields with
+                  // useState, which only runs on mount, so without this the
+                  // panel kept the previously-selected task's form state and a
+                  // save wrote those values over the task now open.
+                  key={selectedTask.assigned_tasks.id}
                   ref={taskEditorRef}
                   mode="time_based"
                   editingTaskId={selectedTask.assigned_tasks.id}

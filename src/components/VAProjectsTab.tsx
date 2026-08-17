@@ -948,6 +948,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                           {isEditing && (
                             <div className="ml-3 space-y-3 rounded-lg border border-sand bg-parchment p-3">
                               <TaskEditor
+                                // Task id in the key, so expanding a different
+                                // subtask remounts the form instead of carrying
+                                // the last one's field values into it.
+                                key={`edit-${sub.id}`}
                                 ref={editTaskEditorRef}
                                 mode="time_based"
                                 editingTaskId={sub.id}

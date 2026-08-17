@@ -1755,7 +1755,12 @@ export default function ProductivityCalendarPage() {
                 );
               })()}
               <TaskEditor
-                key={editingBlockId ? "edit" : taskMode}
+                // Keyed on the task id, not the literal "edit". TaskEditor seeds
+                // every field with useState, which only runs on mount — so a
+                // constant key meant opening task B after task A reused A's form
+                // state, and saving wrote A's values (or blanks) over B. That is
+                // how a due date got wiped by a save that never touched it.
+                key={editingBlockId ? `edit-${editingBlockId}` : taskMode}
                 mode={editingBlockId ? "time_based" : taskMode}
                 editingTaskId={editingBlockId}
                 initialTask={editingTaskFull}
