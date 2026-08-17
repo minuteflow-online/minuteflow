@@ -638,12 +638,25 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
+  // What's still required, per section. These sections start collapsed, so an
+  // empty required field was invisible and the only symptom was a Save button
+  // that refused to work with no explanation. Each section names its own gap in
+  // its header, and the footer lists them together.
+  const missingBasics = !taskName.trim() ? "Task Name" : null;
+  const missingDetails = !taskDetail.trim() ? "Client Detail" : null;
+  const missingAssignment = mode === "time_based" && !isEditing && !reviewRequired ? "Review Required" : null;
+  const missingRate =
+    mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate))) ? "Final Rate" : null;
+  const missingRequired = [missingBasics, missingDetails, missingAssignment, missingRate].filter(
+    (m): m is string => Boolean(m)
+  );
+
   const assignToOptions = teamMembers;
   const assignByOptions = teamMembers;
 
   return (
     <div className="space-y-3">
-      <Section title="Basics">
+      <Section title="Basics" warning={missingBasics}>
         <div>
           <label className={labelClass}>Account</label>
           <select
@@ -720,7 +733,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Details">
+      <Section title="Details" warning={missingDetails}>
         <div>
           <div className="mb-1 flex items-center gap-1.5">
             <label className="block text-[11px] font-bold uppercase tracking-wide text-amber">
@@ -878,7 +891,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         )}
       </Section>
 
-      <Section title="Assignment">
+      <Section title="Assignment" warning={missingAssignment}>
         {manageAssignment && (
           <div>
             <label className={labelClass}>Assign To</label>
@@ -993,7 +1006,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       {mode === "output_based" && (
-        <Section title="Rate">
+        <Section title="Rate" warning={missingRate}>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Unit Rate</label>
@@ -1192,6 +1205,21 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             />
           )}
         </Section>
+      )}
+
+      {/* Named here as well as in each section header, because this sits next to
+          the Save button — the place someone looks when a save won't go through.
+          Shown for hideFooter callers too: those drive submit() from their own
+          footer, so without this they'd get a rejection and no reason. */}
+      {!readOnly && missingRequired.length > 0 && (
+        <div className="rounded-lg border border-terracotta/30 bg-terracotta-soft px-3 py-2">
+          <p className="text-[11px] font-semibold text-terracotta">
+            Before saving, fill in: {missingRequired.join(", ")}
+          </p>
+          <p className="mt-0.5 text-[10px] text-terracotta/80">
+            The section above each one is marked — open it to fill it in.
+          </p>
+        </div>
       )}
 
       {error && <p className="text-[12px] text-red-600">{error}</p>}

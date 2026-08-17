@@ -522,6 +522,21 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     log_id === undefined &&
     notes === undefined &&
     status === undefined;
+  // Trashing (and restoring) on its own, mirroring hasArchiveOnlyUpdate. Both
+  // directions are reversible — deleted_at is a soft flag the Trash view reads —
+  // so a VA can bin a task they created by mistake and pull it back out.
+  // Permanent delete is the DELETE handler, which stays admin-only.
+  //
+  // Carved out explicitly rather than left to fall through the metadata path:
+  // that path is for editing fields, and a VA who OWNS the task is blocked from
+  // deletes further down, which is exactly the person who mis-created it.
+  const hasTrashOnlyUpdate =
+    hasDeleteUpdate &&
+    !hasArchiveUpdate &&
+    !hasCoreMetadataUpdate &&
+    log_id === undefined &&
+    notes === undefined &&
+    status === undefined;
   const canUseTaskLevelStatusUpdate = isAdminOrManager || isTaskOwner;
   const hasTaskLevelStatusUpdate =
     status !== undefined &&
@@ -644,6 +659,34 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   // Projects tab) got a 403 when hitting Start, because the Start PATCH carries log_id —
   // so their assignee row never moved to in_progress and the button stayed on "Start".
   const isSelfTargetedAssigneeUpdate = bodyVaId === undefined || bodyVaId === user.id;
+
+  // VA trash / restore. Runs before the owner guard below, which blocks deletes
+  // for non-admin owners — the very person who created the task by mistake.
+  // Allowed for an assignee or the owner; anyone else still gets a 403.
+  if (!isAdminOrManager && hasTrashOnlyUpdate) {
+    let permitted = isTaskOwner;
+    if (!permitted) {
+      const { data: assigneeRow } = await supabase
+        .from("assigned_task_assignees")
+        .select("id")
+        .eq("assigned_task_id", id)
+        .eq("va_id", user.id)
+        .limit(1)
+        .maybeSingle();
+      permitted = Boolean(assigneeRow);
+    }
+    if (!permitted) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const { error: trashError } = await adminSupabase
+      .from("assigned_tasks")
+      .update({ deleted_at, updated_at: now })
+      .eq("id", id);
+    if (trashError) {
+      return Response.json({ error: trashError.message }, { status: 500 });
+    }
+    return Response.json({ ok: true });
+  }
 
   // Task owners (non-admin) may pass va_id to target ANOTHER assignee's row, but only for
   // status-only updates (e.g., reviewing submitted work). Block everything else.

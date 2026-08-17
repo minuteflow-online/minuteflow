@@ -472,7 +472,12 @@ export default function TaskListPage() {
   const silentCaptureRef = useRef<((logId: number, screenshotType: "start" | "progress") => Promise<boolean>) | null>(
     null
   );
-  const taskViewOptions = currentRole === "va" ? (["active", "archived"] as const) : (["active", "archived", "trash"] as const);
+  // Trash is no longer admin-only. A VA who mis-creates a task needs a way to
+  // get rid of it, and needs to see where it went — it's the same deleted_at
+  // column the admin trash reads, so both views show the same rows. Restore is
+  // open too, since trashing by accident deserves an undo. Permanent delete
+  // stays admin-only.
+  const taskViewOptions = ["active", "archived", "trash"] as const;
 
   useEffect(() => {
     setSelectedTaskIds([]);
@@ -2258,15 +2263,17 @@ export default function TaskListPage() {
                     >
                       Archive
                     </button>
-                    {currentRole !== "va" && (
-                      <button
-                        type="button"
-                        onClick={() => void handleBulkTrash()}
-                        className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-                      >
-                        Trash
-                      </button>
-                    )}
+                    {/* Open to VAs now. Trashing is reversible — it sets
+                        deleted_at, and Restore in the Trash view undoes it — so
+                        it's the safe half of deleting. Permanent delete is still
+                        admin-only. */}
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkTrash()}
+                      className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                    >
+                      Trash
+                    </button>
                   </>
                 )}
                 {(taskView === "archived" || taskView === "trash") && (
