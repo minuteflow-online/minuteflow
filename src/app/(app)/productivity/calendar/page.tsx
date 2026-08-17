@@ -758,10 +758,17 @@ export default function ProductivityCalendarPage() {
   }, [scheduledForDate, selectedDate]);
   // Exclude items already rendered as an hour block for this date — once a task
   // has scheduled hours, it shouldn't also sit up top as an unscheduled-looking badge.
+  //
+  // A due TIME is the exception. "Runs 8-9" and "is due at 9" are different
+  // facts, and dropping the second because the first exists took the deadline
+  // marker off the day entirely for any task that also had hours booked. The
+  // redundant case is the start badge, which is what this filter is actually
+  // for; a timed deadline still earns its marker on the grid.
   const dueTodayItems = useMemo(() => {
     const scheduledIdsToday = new Set(scheduledForDate(selectedDate).map((t) => t.id));
     return (dueItemsByDate[selectedDate] ?? []).filter((item) => {
       if (item.source !== "assigned") return true;
+      if (item.dateType === "due" && item.dueTime) return true;
       return !scheduledIdsToday.has(item.taskId);
     });
   }, [dueItemsByDate, selectedDate, scheduledForDate]);
@@ -1504,7 +1511,11 @@ export default function ProductivityCalendarPage() {
                       // Reserve room on the right for a due-time badge when one
                       // falls inside this block's time span, so the two sit side
                       // by side instead of the badge floating on top of the block.
-                      const collidesWithDueMarker = dueMarkerTops.some((markerTop) => markerTop >= top && markerTop < top + height);
+                      // Inclusive of the block's end: a task running 8-9 and due
+                      // at 9 puts the marker exactly on the bottom edge, and the
+                      // marker is drawn 7px above its own position, so it lands
+                      // on the block. Treat the edge as a collision and dock it.
+                      const collidesWithDueMarker = dueMarkerTops.some((markerTop) => markerTop >= top && markerTop <= top + height);
                       const dueGutter = collidesWithDueMarker ? 96 : 0;
                       return (
                         <button
@@ -1568,7 +1579,10 @@ export default function ProductivityCalendarPage() {
                         const top = dueTimePosition(item.dueTime!);
                         const collidesWithTask = dayTasks.some((task) => {
                           const pos = blockPosition(task);
-                          return top >= pos.top && top < pos.top + pos.height;
+                          // Same inclusive end as the block side above — the two
+                          // must agree, or the block reserves a gutter the marker
+                          // doesn't dock into, or vice versa.
+                          return top >= pos.top && top <= pos.top + pos.height;
                         });
                         return (
                           <div
