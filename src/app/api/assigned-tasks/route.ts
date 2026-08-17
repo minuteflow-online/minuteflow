@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
+import { weeklyBudgetRejectionForAssignees } from "@/lib/scheduleBudget";
 
 export const dynamic = "force-dynamic";
 
@@ -525,6 +526,17 @@ export async function POST(request: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
+
+  // Creating a task with hours counts against the assignees' weekly budgets.
+  if (start_time && end_time && va_ids.length > 0) {
+    const rejection = await weeklyBudgetRejectionForAssignees(
+      adminSupabase,
+      va_ids,
+      start_time,
+      end_time
+    );
+    if (rejection) return Response.json({ error: rejection }, { status: 403 });
+  }
 
   // Insert the task
   const { data: task, error: taskError } = await adminSupabase

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canChangeLockedReview } from "@/lib/financialAccess";
+import { weeklyBudgetRejection, weeklyBudgetRejectionForAssignees } from "@/lib/scheduleBudget";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -28,6 +29,30 @@ const TASK_SELECT =
 
 const REVIEW_LOCKED_ERROR =
   "Forbidden: Review Required is locked at Yes. Only Admin, Manager, CEO, or Founder can change it.";
+
+/**
+ * Weekly-budget check for an existing task, against whoever it's assigned to.
+ * The task itself is excluded from the running total, so shortening or moving
+ * a block is never rejected because of its own previous length.
+ */
+async function rejectIfOverWeeklyBudget(
+  // Structural, not ReturnType<typeof createAdminClient> — the service-role
+  // client's generics don't survive being passed through a function boundary.
+  adminSupabase: Parameters<typeof weeklyBudgetRejectionForAssignees>[0],
+  id: string,
+  startIso: string,
+  endIso: string
+): Promise<string | null> {
+  const { data: assignees } = await adminSupabase
+    .from("assigned_task_assignees")
+    .select("va_id")
+    .eq("assigned_task_id", id);
+  const vaIds = (assignees ?? [])
+    .map((a: { va_id: string | null }) => a.va_id)
+    .filter((v: string | null): v is string => Boolean(v));
+  if (vaIds.length === 0) return null;
+  return weeklyBudgetRejectionForAssignees(adminSupabase, vaIds, startIso, endIso, id);
+}
 
 /** Columns isReviewLocked needs — select exactly these before calling it. */
 const REVIEW_LOCK_SELECT = "review_required, review_required_locked";
@@ -165,7 +190,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, instructions, instructions_locked, planned_minutes: putPlannedMinutes, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, planned_minutes: putPlannedMinutes, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -230,6 +255,13 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
   if (project_id !== undefined) updatePayload.project_id = project_id;
   if (parent_task_id !== undefined) updatePayload.parent_task_id = parent_task_id;
+
+  // Hours set from the admin edit form count against the assignees' weeks too —
+  // the calendar's greyed-out button is only one of several ways in.
+  if (start_time && end_time) {
+    const rejection = await rejectIfOverWeeklyBudget(adminSupabase, id, start_time, end_time);
+    if (rejection) return Response.json({ error: rejection }, { status: 403 });
+  }
 
   const { data: updatedTask, error: updateError } = await adminSupabase
     .from("assigned_tasks")
@@ -649,6 +681,11 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (!assigneeRow) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
+    // A VA scheduling their own hours counts against their own week.
+    if (start_time && end_time) {
+      const rejection = await weeklyBudgetRejection(adminSupabase, user.id, start_time, end_time, id);
+      if (rejection) return Response.json({ error: rejection }, { status: 403 });
+    }
     const { error: scheduleError } = await adminSupabase
       .from("assigned_tasks")
       .update({ start_time: start_time ?? null, end_time: end_time ?? null, updated_at: now })
@@ -973,6 +1010,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       }
       updatePayload.review_required = Boolean(review_required);
       updatePayload.review_required_locked = Boolean(review_required);
+    }
+
+    // Same weekly-budget rule as the other write paths.
+    if (start_time && end_time) {
+      const rejection = await rejectIfOverWeeklyBudget(adminSupabase, id, start_time, end_time);
+      if (rejection) return Response.json({ error: rejection }, { status: 403 });
     }
 
     // Reachable by an admin/manager, or by a VA on a task they're an assignee
