@@ -447,8 +447,15 @@ export async function POST(request: Request) {
   const isVaPost = profile?.role === "va";
   const isPermittedPost = isAdminOrManagerPost || hasAdminPermission(profile, "task_management");
 
-  // VAs can only self-assign; admins/managers (and permission-granted VAs) can assign to anyone
-  if (!isAdminOrManagerPost && !isVaPost) {
+  // Mirrors the GET handler's isPermitted check above: broad-admin-access
+  // roles (admin, manager, coordinator, specialist, ceo, founder — see
+  // hasBroadAdminAccess) and permission-granted plain VAs can create tasks;
+  // a plain "va" role can too, but only ever self-assigns (see va_ids below).
+  // Previously this checked isAdminOrManagerPost instead of isPermittedPost,
+  // so every role added by hasBroadAdminAccess other than admin/manager
+  // (coordinator, specialist, ceo, founder) 403'd here before ever reaching
+  // that broader check.
+  if (!isPermittedPost && !isVaPost) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
