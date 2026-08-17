@@ -452,6 +452,7 @@ export default function ProductivityCalendarPage() {
     };
     return `Short Day (${fmt(entry.start_time)}–${fmt(entry.end_time)})`;
   };
+
   // Everyone off on the selected day — rendered as a sidebar card, so it's
   // computed here rather than inline where it used to be drawn.
   const offToday = useMemo(
@@ -755,6 +756,26 @@ export default function ProductivityCalendarPage() {
         return true;
       }),
     [daySchedule, taskPassesFilters, applied.dateType]
+  );
+
+  // What's due on the selected day, for the sidebar's Due card. Overdue work
+  // rides along so a missed deadline doesn't quietly drop off the day it was
+  // due and never reappear.
+  const dueSidebarItems = useMemo(
+    () =>
+      daySchedule
+        .filter(
+          (t) => t.due_date && t.due_date <= selectedDate && taskPassesFilters(t) && t.status !== "completed"
+        )
+        .sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? ""))
+        .map((t) => ({
+          id: t.id,
+          name: t.task_name,
+          dueDate: t.due_date as string,
+          dueTime: t.due_time,
+          overdue: (t.due_date as string) < selectedDate,
+        })),
+    [daySchedule, selectedDate, taskPassesFilters]
   );
   const scheduledForDate = useCallback(
     (dateStr: string) =>
@@ -1770,6 +1791,40 @@ export default function ProductivityCalendarPage() {
             </div>
           )}
 
+          {/* Due — its own card above Unscheduled, so deadlines read as their
+              own thing rather than a line buried on every backlog row. */}
+          {dueSidebarItems.length > 0 && (
+            <div className="rounded-xl border border-sand bg-white p-4 h-fit">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-espresso">
+                Due ({dueSidebarItems.length})
+              </p>
+              <div className="space-y-1.5 max-h-[220px] overflow-y-auto">
+                {dueSidebarItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      const task = daySchedule.find((t) => t.id === item.id);
+                      if (task) void openScheduleExisting(task, selectedDate);
+                    }}
+                    className="flex w-full items-start justify-between gap-2 rounded-lg border border-sand bg-white px-2.5 py-2 text-left transition-colors hover:bg-cream cursor-pointer"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-espresso">
+                      {item.name}
+                    </span>
+                    <span
+                      className={`shrink-0 text-[10px] font-semibold ${
+                        item.overdue ? "text-terracotta" : "text-walnut"
+                      }`}
+                    >
+                      {item.overdue ? "Overdue" : item.dueTime ? formatDueTime(item.dueTime) : "Today"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Unscheduled sidebar */}
           <div className="rounded-xl border border-sand bg-white p-4 space-y-3 h-fit">
             <button
@@ -1824,23 +1879,11 @@ export default function ProductivityCalendarPage() {
                             <span className="min-w-0">
                               <p className="truncate text-[12px] font-semibold text-espresso">{task.task_name}</p>
                               {task.account && <p className="truncate text-[10px] text-stone">{task.account}</p>}
-                              {/* The deadline now only appears here and on the
-                                  grid, so an unscheduled task has to carry it —
-                                  otherwise removing the pill strip above would
-                                  have hidden due dates entirely. Overdue and
-                                  due-today read as urgent; anything later is
-                                  plain, so the colour still means something. */}
-                              {task.due_date && (
-                                <p
-                                  className={`truncate text-[10px] font-semibold ${
-                                    task.due_date <= todayStr ? "text-terracotta" : "text-stone"
-                                  }`}
-                                >
-                                  Due {formatDayLabel(task.due_date)}
-                                  {task.due_time ? ` · ${formatDueTime(task.due_time)}` : ""}
-                                  {task.due_date < todayStr ? " · overdue" : ""}
-                                </p>
-                              )}
+                              {/* Deadlines live in the Due card above this list,
+                                  not on each row — this list is a backlog of
+                                  work to schedule, and repeating the date on
+                                  every row buried the ones that actually fall
+                                  due. */}
                             </span>
                           </button>
                           <button
