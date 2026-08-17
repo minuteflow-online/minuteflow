@@ -8,6 +8,17 @@
  */
 export const EXTENSION_MIN_VERSION = "1.2.0";
 
+/**
+ * The Chrome Web Store listing. This is where VAs should install from: a store
+ * install auto-updates itself, while the load-unpacked route on /install goes
+ * stale the moment a new version ships and has to be redone by hand.
+ *
+ * Publishing a new version here is what actually moves the fleet — most VAs are
+ * on the store build and will pick it up on their own.
+ */
+export const EXTENSION_STORE_URL =
+  "https://chromewebstore.google.com/detail/minuteflow-screen-capture/lmfgamnipididbdgehimnbhmoodclack";
+
 /** True when semver string `version` is strictly older than `target`. */
 export function isVersionOlder(version: string, target: string): boolean {
   const a = version.split(".").map((n) => parseInt(n, 10) || 0);
