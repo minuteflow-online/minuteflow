@@ -23,7 +23,7 @@ import {
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 import { normalizePosition } from "@/types/database";
-import { shiftHoursFromProfile } from "@/lib/budget";
+import { BUDGET_WARN_THRESHOLD, shiftHoursFromProfile } from "@/lib/budget";
 import { useUrlTab } from "@/hooks/useUrlTab";
 
 type TeamMember = {
@@ -37,6 +37,7 @@ type TeamMember = {
   shift_hours?: number | null;
   shift_start?: string | null;
   shift_end?: string | null;
+  weekly_budget_limit?: number | null;
 };
 
 // Same derivation as FixedPayTasksPanel's isHybrid/isPerTaskVa: position
@@ -173,6 +174,7 @@ export default function ProductivityCalendarPage() {
   // Day view has two faces: the hour grid, and an Hours table that answers
   // "how long is each of these" without caring when they sit.
   const [dayTab, setDayTab] = useState<"grid" | "hours">("grid");
+  const [limitNotice, setLimitNotice] = useState<string | null>(null);
   const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
   const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
   const toggleUnscheduledExpand = (id: number) => {
@@ -669,6 +671,15 @@ export default function ProductivityCalendarPage() {
   const goToToday = () => jumpToDate(todayStr);
 
   const openAddBlock = (hour: number, dateStr: string = selectedDate) => {
+    // Adding is blocked once the day's budget is spent. Editing an existing
+    // block is deliberately still allowed — otherwise going over would trap the
+    // day, with no way to shorten the very blocks that put it over.
+    // Only the weekly limit stops anything. A full day still lets work in —
+    // it just eats into the week, which the notice says.
+    if (dateStr === selectedDate && weekBudgetSpent) {
+      setLimitNotice("Weekly limit reached — request more time to continue.");
+      return;
+    }
     setEditingBlockId(null);
     setEditingTaskFull(null);
     setFormDate(dateStr);
@@ -880,6 +891,47 @@ export default function ProductivityCalendarPage() {
     const budgetMinutes = Math.round(budgetHours * 60);
     return { budgetMinutes, remainingMinutes: budgetMinutes - dayDurations.totalMinutes };
   }, [teamMembers, dayUserId, dayDurations]);
+
+  // Spent when nothing is left. Warned at BUDGET_WARN_THRESHOLD of the budget,
+  // the same 90% the rest of the app warns at, so the day says "nearly full"
+  // before it says "full".
+  const dayBudgetSpent = Boolean(dayBudget && dayBudget.remainingMinutes <= 0);
+
+  // Stale the moment the day or the person changes — the limit it described
+  // belonged to a different day's budget.
+  useEffect(() => {
+    setLimitNotice(null);
+  }, [selectedDate, dayUserId]);
+  const dayBudgetWarning = Boolean(
+    dayBudget &&
+      !dayBudgetSpent &&
+      dayBudget.budgetMinutes > 0 &&
+      (dayBudget.budgetMinutes - dayBudget.remainingMinutes) / dayBudget.budgetMinutes >= BUDGET_WARN_THRESHOLD
+  );
+
+  // Two budgets, two different consequences. Filling the day is a warning —
+  // the work still goes in, it just starts drawing on the week. Filling the
+  // week is the actual stop, because there's nothing left to draw on: more
+  // time has to be granted before anything else gets booked.
+  const weekDates = useMemo(() => {
+    const back = new Date(`${selectedDate}T00:00:00`).getDay();
+    const start = addDaysToDateStr(selectedDate, -back);
+    return Array.from({ length: 7 }, (_, i) => addDaysToDateStr(start, i));
+  }, [selectedDate]);
+
+  const weekBudget = useMemo(() => {
+    const member = teamMembers.find((m) => m.id === dayUserId);
+    const limitHours = member?.weekly_budget_limit ?? null;
+    if (limitHours == null || limitHours <= 0) return null;
+    const usedMinutes = weekDates.reduce(
+      (sum, d) => sum + scheduledForDate(d).reduce((s, t) => s + minutesOf(t), 0),
+      0
+    );
+    const budgetMinutes = Math.round(limitHours * 60);
+    return { budgetMinutes, usedMinutes, remainingMinutes: budgetMinutes - usedMinutes };
+  }, [teamMembers, dayUserId, weekDates, scheduledForDate]);
+
+  const weekBudgetSpent = Boolean(weekBudget && weekBudget.remainingMinutes <= 0);
 
   const dayTotalLabel = useMemo(() => {
     if (!dayBudget) return `${formatDuration(dayDurations.totalMinutes)} blocked`;
@@ -1464,6 +1516,24 @@ export default function ProductivityCalendarPage() {
                 ))}
               </div>
             )}
+            {/* Sits above the grid so the reason a click did nothing is next to
+                the thing that was clicked. */}
+            {(limitNotice || weekBudgetSpent || dayBudgetSpent || dayBudgetWarning) && (
+              <div
+                className={`mb-3 rounded-lg border px-3 py-2 text-[12px] font-semibold ${
+                  limitNotice || weekBudgetSpent
+                    ? "border-terracotta/30 bg-terracotta-soft text-terracotta"
+                    : "border-amber/30 bg-amber-soft text-amber"
+                }`}
+              >
+                {limitNotice ??
+                  (weekBudgetSpent
+                    ? "Weekly limit reached — request more time to continue."
+                    : dayBudgetSpent
+                    ? "Daily limit reached — more time here comes out of the weekly budget."
+                    : `Nearly full — ${formatDuration(dayBudget!.remainingMinutes)} left today.`)}
+              </div>
+            )}
             <div className="mb-3 flex items-center justify-between">
               <button
                 type="button"
@@ -1941,9 +2011,11 @@ export default function ProductivityCalendarPage() {
                 <button
                   type="button"
                   onClick={() => openAddBlock(9)}
-                  className="w-full px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer"
+                  disabled={weekBudgetSpent}
+                  title={weekBudgetSpent ? "Weekly limit reached — request more time to continue" : undefined}
+                  className="w-full px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-stone/10"
                 >
-                  + Add Hour Block
+                  {weekBudgetSpent ? "Weekly limit reached" : "+ Add Hour Block"}
                 </button>
               </>
             )}
