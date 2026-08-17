@@ -6,7 +6,7 @@ import {
   getDateInTimezone,
   addDaysToDateStr,
   formatDayLabel,
-  localDateOf,
+  orgDateOf,
   formatTimeRange,
   normalizeAssignedRows,
   categoryBlockClasses,
@@ -134,7 +134,7 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
         <div className="flex gap-3 overflow-x-auto pb-2">
           {teamMembers.map((m) => {
             const dayTasks = (schedules[m.id] ?? [])
-              .filter((t) => t.start_time && t.end_time && localDateOf(t.start_time) === selectedDate)
+              .filter((t) => t.start_time && t.end_time && orgDateOf(t.start_time) === selectedDate)
               .sort((a, b) => (a.start_time! < b.start_time! ? -1 : 1));
             const totalMinutes = dayTasks.reduce(
               (sum, t) => sum + (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000,
