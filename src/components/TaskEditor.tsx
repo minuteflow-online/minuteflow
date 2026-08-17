@@ -196,6 +196,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
+  // Accordion behavior for the Basics/Details/Attachments/Assignment/Rate/
+  // Schedule/Screenshots Sections below — opening one closes whichever was
+  // open, so only one is expanded at a time. Keyed by each Section's title,
+  // which is unique within a single TaskEditor render.
+  const [openSection, setOpenSection] = useState<string | null>(null);
+  const accordionProps = (title: string) => ({
+    open: openSection === title,
+    onToggle: () => setOpenSection((prev) => (prev === title ? null : title)),
+  });
+
   // Assignment
   // Initial status — create-only, admin/manager-only (matches the pre-consolidation
   // forms: TaskAssignmentsAdminTab's Status select and FixedPayTasksTab's Status
@@ -590,7 +600,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   return (
     <div className="space-y-3">
-      <Section title="Basics">
+      <Section title="Basics" {...accordionProps("Basics")}>
         <div>
           <label className={labelClass}>Account</label>
           <select
@@ -665,7 +675,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Details">
+      <Section title="Details" {...accordionProps("Details")}>
         <div>
           <div className="mb-1 flex items-center gap-1.5">
             <label className="block text-[11px] font-bold uppercase tracking-wide text-amber">
@@ -777,7 +787,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         )}
       </Section>
 
-      <Section title="Attachments & Files">
+      <Section title="Attachments & Files" {...accordionProps("Attachments & Files")}>
         {attachmentsExtra}
 
         <div>
@@ -796,7 +806,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         )}
       </Section>
 
-      <Section title="Assignment">
+      <Section title="Assignment" {...accordionProps("Assignment")}>
         {manageAssignment && (
           <div>
             <label className={labelClass}>Assign To</label>
@@ -909,7 +919,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       {mode === "output_based" && (
-        <Section title="Rate">
+        <Section title="Rate" {...accordionProps("Rate")}>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Unit Rate</label>
@@ -1001,7 +1011,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
-      <Section title="Schedule">
+      <Section title="Schedule" {...accordionProps("Schedule")}>
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional) — its own hours make the daily time block on the Calendar</p>
           <div className="flex gap-3">
@@ -1054,7 +1064,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       {supportsTodos && (
-        <Section title="Screenshots">
+        <Section title="Screenshots" {...accordionProps("Screenshots")}>
           {!editingTaskId ? (
             <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
           ) : screenshotsLoading ? (

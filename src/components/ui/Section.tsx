@@ -6,19 +6,28 @@ interface SectionProps {
   title: string;
   defaultOpen?: boolean;
   children: ReactNode;
+  // Controlled mode (optional) — pass both to let a parent coordinate several
+  // Sections as an accordion (only one open at a time). Omit both to keep the
+  // original uncontrolled behavior, where each Section tracks its own state
+  // and several can be open independently.
+  open?: boolean;
+  onToggle?: () => void;
 }
 
 // Reusable collapsible form section — header is a real <button> for
 // accessibility, chevron rotates open/closed. Used to break long task forms
 // (TaskEditor) into named, independently-collapsible groups.
-export default function Section({ title, defaultOpen = false, children }: SectionProps) {
-  const [open, setOpen] = useState(defaultOpen);
+export default function Section({ title, defaultOpen = false, children, open: controlledOpen, onToggle }: SectionProps) {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const handleToggle = isControlled ? onToggle! : () => setInternalOpen((prev) => !prev);
 
   return (
     <div className="rounded-xl border border-sand bg-white overflow-hidden">
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={handleToggle}
         className={`flex w-full cursor-pointer items-center justify-between gap-2 px-4 py-2.5 text-left transition-colors ${
           open ? "bg-terracotta-soft hover:bg-terracotta-soft" : "bg-parchment hover:bg-cream"
         }`}
