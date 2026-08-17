@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { BillingType } from "@/types/database";
 import { countWords } from "@/lib/utils";
 import { autoCategoryForTask } from "@/lib/taskSchedule";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -96,7 +97,7 @@ interface TaskEntryFormProps {
 type WizardStep = "form" | "close-old" | "log-fixed";
 
 export default function TaskEntryForm({ onStartTask, hasActiveTask = false, role = "va", sessionState = "idle", previewMode = false, activeTaskClientMemo = "", bare = false }: TaskEntryFormProps) {
-  const isAdmin = role === "admin" || role === "manager";
+  const isAdmin = hasBroadAdminAccess({ role });
 
   // ─── Form Fields ───
   const [account, setAccount] = useState("");

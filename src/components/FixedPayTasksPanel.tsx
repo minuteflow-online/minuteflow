@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import ToolbarFilterDropdown from "@/components/table/ToolbarFilterDropdown";
@@ -190,17 +192,18 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterProjects, persistFilters,
   ]);
 
-  // Same eligibility as the fixed-pay-tasks POST route: per-task VAs, or hourly VAs
+  // Same eligibility as the fixed-pay-tasks POST route: Output Based VAs, or hourly VAs
   // with the hybrid "Avail. Tasks" toggle on. Hybrid VAs additionally get the
   // hourly/fixed-pay create toggle.
-  const isPerTaskVa = currentPosition === "Per Task VA" || currentPayRateType === "per_task";
+  const isPerTaskVa = normalizePosition(currentPosition) === "Output Based" || currentPayRateType === "per_task";
   const isEligibleVa = currentRole === "va" && (isPerTaskVa || canSeeAvailableTasks);
-  const isAdminOrManager = currentRole === "admin" || currentRole === "manager";
+  const isAdminOrManager = hasBroadAdminAccess({ role: currentRole });
   const canViewPage = isEligibleVa || isAdminOrManager;
-  // Hybrid = labeled as an hourly VA (Part-time or Full-time position) with
+  // Hybrid = labeled as an hourly VA (Part Time or Full Time position) with
   // the "Available Tasks" toggle on in Team management. Keyed on position,
   // not pay_rate_type, so it can't be thrown off by rate-field edge cases.
-  const isHybrid = (currentPosition === "Part-time VA" || currentPosition === "Full-time VA") && canSeeAvailableTasks;
+  const isHybrid =
+    ["Part Time", "Full Time"].includes(normalizePosition(currentPosition) ?? "") && canSeeAvailableTasks;
 
 
   const fetchCurrentUser = useCallback(async () => {

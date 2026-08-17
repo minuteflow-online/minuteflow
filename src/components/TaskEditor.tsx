@@ -6,6 +6,8 @@ import { CATEGORY_OPTIONS, autoCategoryForTask } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
+import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
 import type { Project } from "@/types/database";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -189,6 +191,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [todoBusyId, setTodoBusyId] = useState<number | null>(null);
   const [screenshots, setScreenshots] = useState<Array<{ id: number; url: string | null; screenshot_type: string | null }>>([]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
+  const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Assignment
@@ -203,7 +206,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const linkedProjectId = lockedProjectId ?? linkedProjectIdState;
   const [parentTaskId, setParentTaskId] = useState(initialTask?.parent_task_id != null ? String(initialTask.parent_task_id) : "");
   const [reviewRequired, setReviewRequired] = useState(Boolean(initialTask?.review_required));
-  const [payType, setPayType] = useState<"hourly" | "fixed">((initialTask?.pay_type as "hourly" | "fixed") ?? "hourly");
+  // Pay type is no longer a field — time-based and output-based tasks have
+  // separate forms, so `mode` already settles it. Existing rows keep whatever
+  // they were created with rather than getting silently rewritten on edit.
+  const payType = (initialTask?.pay_type as string) ?? "hourly";
 
   // Rate (output_based only)
   const [unitRate, setUnitRate] = useState("");
@@ -282,6 +288,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       .finally(() => setScreenshotsLoading(false));
   }, [supportsTodos, editingTaskId]);
 
+  // Submissions exist for any assigned task that's been turned in — output-based
+  // included — so unlike screenshots these aren't gated on supportsTodos.
+  useEffect(() => {
+    if (!editingTaskId) return;
+    void fetchSubmissions(editingTaskId).then(setSubmissions);
+  }, [editingTaskId]);
+
   const handleAddTodo = useCallback(async () => {
     const text = newTodoText.trim();
     if (!text) return;
@@ -341,6 +354,29 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const linkedObjectives = useMemo(() => linkedProjects.filter((p) => p.kind === "objective"), [linkedProjects]);
   const linkedOperations = useMemo(() => linkedProjects.filter((p) => p.kind === "operation"), [linkedProjects]);
 
+  // "Link to Objective" and "Link to Operations" are two fields over one
+  // `project_id` column, so they're mutually exclusive: whichever you pick
+  // becomes the link and the other select falls back to "— None —". Until
+  // /api/projects resolves, both read empty while linkedProjectId still holds
+  // the saved value — so a save mid-load re-sends the existing link untouched
+  // rather than clearing it.
+  const linkedObjectiveId = useMemo(
+    () => (linkedObjectives.some((p) => p.id === linkedProjectId) ? linkedProjectId : ""),
+    [linkedObjectives, linkedProjectId]
+  );
+  const linkedOperationId = useMemo(
+    () => (linkedOperations.some((p) => p.id === linkedProjectId) ? linkedProjectId : ""),
+    [linkedOperations, linkedProjectId]
+  );
+
+  // Submission notes live under Attachments & Files, not beside the editable
+  // internal Notes box — the emptiness check has to sit out here so the
+  // "Submission Notes" label disappears along with the (null-rendering) list.
+  const hasSubmissionNotes = useMemo(
+    () => submissions.some((s) => s.submission_comment?.trim()),
+    [submissions]
+  );
+
   const hourlyEquivalentTotal = computeHourlyEquivalent(durationValue, durationUnit, currentPayRate ?? null);
   const quantityTotal = computeQuantityTotal(unitRate, quantity);
 
@@ -361,6 +397,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     if (!taskName.trim()) {
       setError("Task name is required.");
       throw new Error("Task name is required.");
+    }
+    // Client Detail is what carries over to the client memo/invoice, so a task
+    // can't be saved without one — including edits to older tasks that predate
+    // the rule, which have to be filled in before any other change will save.
+    if (!taskDetail.trim()) {
+      setError("Client Detail is required.");
+      throw new Error("Client Detail is required.");
     }
     if (mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
       setError("Final Rate is required.");
@@ -580,62 +623,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Schedule">
-        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional) — its own hours make the daily time block on the Calendar</p>
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className={labelClass}>Start Date</label>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={readOnly} className={inputClass} />
-            </div>
-            <div className="flex-1">
-              <label className={labelClass}>End Date</label>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={readOnly} className={inputClass} />
-            </div>
-          </div>
-
-          <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-walnut">
-            <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} disabled={readOnly} />
-            Add to Calendar (specific hours)
-          </label>
-          {hasSchedule && (
-            <>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Start Time</label>
-                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={readOnly} className={inputClass} />
-                </div>
-                <div className="flex-1">
-                  <label className="mb-1 block text-[10px] font-semibold text-walnut">End Time</label>
-                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={readOnly} className={inputClass} />
-                </div>
-              </div>
-              {scheduleHelperText && <p className="text-[11px] text-stone">{scheduleHelperText}</p>}
-              {!startDate && <p className="text-[11px] text-terracotta">Set a Start Date above so these hours have a day to block.</p>}
-            </>
-          )}
-        </div>
-
-        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline — unrelated to the work span above, its own single time</p>
-          <div>
-            <label className={labelClass}>Due Date</label>
-            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={readOnly} className={inputClass} />
-          </div>
-          {dueDate && (
-            <div>
-              <label className="mb-1 block text-[10px] font-semibold text-walnut">Due Time (optional)</label>
-              <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} disabled={readOnly} className={inputClass} />
-              <p className="mt-1 text-[10px] text-stone">Shows this deadline on the Calendar at this time — doesn&apos;t count toward blocked hours.</p>
-            </div>
-          )}
-        </div>
-      </Section>
-
       <Section title="Details">
         <div>
           <div className="mb-1 flex items-center gap-1.5">
-            <label className="block text-[11px] font-bold uppercase tracking-wide text-amber">Client Detail</label>
+            <label className="block text-[11px] font-bold uppercase tracking-wide text-amber">
+              Client Detail <span className="text-terracotta">*</span>
+            </label>
             <ClientMemoFormatTooltip />
           </div>
           <textarea
@@ -722,11 +715,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         <div>
-          <label className={labelClass}>Link</label>
-          <input value={link} onChange={(e) => setLink(e.target.value)} disabled={readOnly} placeholder="https://..." className={inputClass} />
-        </div>
-
-        <div>
           <label className={labelClass}>Instructions</label>
           <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} disabled={readOnly} className={`${inputClass} resize-none`} />
           <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
@@ -734,6 +722,36 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             Locked
           </label>
         </div>
+
+        {!isEditing && isAdminOrManager && (
+          <div>
+            <label className={labelClass}>Status</label>
+            <select value={initialStatus} onChange={(e) => setInitialStatus(e.target.value)} disabled={readOnly} className={inputClass}>
+              {(mode === "time_based" ? TIME_BASED_STATUS_OPTIONS : OUTPUT_BASED_STATUS_OPTIONS).map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Attachments & Files">
+        {attachmentsExtra}
+
+        <div>
+          <label className={labelClass}>Link</label>
+          <input value={link} onChange={(e) => setLink(e.target.value)} disabled={readOnly} placeholder="https://..." className={inputClass} />
+          <SubmissionLinks submissions={submissions} />
+        </div>
+
+        <SubmissionFiles submissions={submissions} />
+
+        {hasSubmissionNotes && (
+          <div>
+            <label className={labelClass}>Submission Notes</label>
+            <SubmissionNotes submissions={submissions} />
+          </div>
+        )}
       </Section>
 
       <Section title="Assignment">
@@ -766,40 +784,41 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           </select>
         </div>
 
-        {!isEditing && isAdminOrManager && (
-          <div>
-            <label className={labelClass}>Status</label>
-            <select value={initialStatus} onChange={(e) => setInitialStatus(e.target.value)} disabled={readOnly} className={inputClass}>
-              {(mode === "time_based" ? TIME_BASED_STATUS_OPTIONS : OUTPUT_BASED_STATUS_OPTIONS).map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </div>
-        )}
-
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           {lockedProjectId ? (
             <p className="text-[11px] text-stone">Scoped to this project — added here, so it can&apos;t be linked elsewhere.</p>
           ) : (
             <>
-              <label className={labelClass}>Link to Project</label>
-              <select value={linkedProjectId} onChange={(e) => setLinkedProjectId(e.target.value)} disabled={readOnly} className={inputClass}>
-                <option value="">— None —</option>
-                {linkedObjectives.length > 0 && (
-                  <optgroup label="Objectives">
-                    {linkedObjectives.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {linkedOperations.length > 0 && (
-                  <optgroup label="Operations">
-                    {linkedOperations.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
+              <div>
+                <label className={labelClass}>Link to Objective</label>
+                <select
+                  value={linkedObjectiveId}
+                  onChange={(e) => setLinkedProjectId(e.target.value)}
+                  disabled={readOnly}
+                  className={inputClass}
+                >
+                  <option value="">— None —</option>
+                  {linkedObjectives.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className={labelClass}>Link to Operations</label>
+                <select
+                  value={linkedOperationId}
+                  onChange={(e) => setLinkedProjectId(e.target.value)}
+                  disabled={readOnly}
+                  className={inputClass}
+                >
+                  <option value="">— None —</option>
+                  {linkedOperations.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[10px] text-stone">A task links to one or the other — picking here clears the other field.</p>
             </>
           )}
           {mode === "time_based" && linkedProjectId && parentTaskOptions.length > 0 && (
@@ -813,19 +832,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         {mode === "time_based" && (
-          <div className="flex items-center gap-4">
-            <div>
-              <label className={labelClass}>Pay Type</label>
-              <select value={payType} onChange={(e) => setPayType(e.target.value as "hourly" | "fixed")} disabled={readOnly} className={inputClass}>
-                <option value="hourly">Time-based</option>
-                <option value="fixed">Output Based</option>
-              </select>
-            </div>
-            <label className="mt-5 flex items-center gap-1.5 text-[11px] font-semibold text-espresso">
-              <input type="checkbox" checked={reviewRequired} onChange={(e) => setReviewRequired(e.target.checked)} disabled={readOnly} />
-              Review Required
-            </label>
-          </div>
+          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-espresso">
+            <input type="checkbox" checked={reviewRequired} onChange={(e) => setReviewRequired(e.target.checked)} disabled={readOnly} />
+            Review Required
+          </label>
         )}
       </Section>
 
@@ -922,48 +932,94 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
-      {(supportsTodos || attachmentsExtra) && (
-        <Section title={supportsTodos ? "Attachments & Screenshots" : "Attachments"}>
-          {supportsTodos && (
+      <Section title="Schedule">
+        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional) — its own hours make the daily time block on the Calendar</p>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className={labelClass}>Start Date</label>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={readOnly} className={inputClass} />
+            </div>
+            <div className="flex-1">
+              <label className={labelClass}>End Date</label>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={readOnly} className={inputClass} />
+            </div>
+          </div>
+
+          <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-walnut">
+            <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} disabled={readOnly} />
+            Add to Calendar (specific hours)
+          </label>
+          {hasSchedule && (
             <>
-              <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber">Screenshots</label>
-              {!editingTaskId ? (
-                <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
-              ) : screenshotsLoading ? (
-                <p className="text-[12px] text-stone">Loading screenshots...</p>
-              ) : screenshots.length === 0 ? (
-                <p className="text-[12px] text-stone/50">No screenshots.</p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {screenshots.map((ss, i) => (
-                    <button
-                      key={ss.id}
-                      type="button"
-                      onClick={() => ss.url && setLightboxIndex(i)}
-                      disabled={!ss.url}
-                      className="relative h-[36px] w-[48px] shrink-0 cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed"
-                      title={`Screenshot ${ss.screenshot_type || "manual"}`}
-                    >
-                      {ss.url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={ss.url} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
-                      )}
-                    </button>
-                  ))}
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Start Time</label>
+                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={readOnly} className={inputClass} />
                 </div>
-              )}
-              {lightboxIndex !== null && (
-                <ScreenshotLightbox
-                  urls={screenshots.map((s) => s.url).filter((u): u is string => Boolean(u))}
-                  initialIndex={lightboxIndex}
-                  onClose={() => setLightboxIndex(null)}
-                />
-              )}
+                <div className="flex-1">
+                  <label className="mb-1 block text-[10px] font-semibold text-walnut">End Time</label>
+                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={readOnly} className={inputClass} />
+                </div>
+              </div>
+              {scheduleHelperText && <p className="text-[11px] text-stone">{scheduleHelperText}</p>}
+              {!startDate && <p className="text-[11px] text-terracotta">Set a Start Date above so these hours have a day to block.</p>}
             </>
           )}
-          {attachmentsExtra}
+        </div>
+
+        <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline — unrelated to the work span above, its own single time</p>
+          <div>
+            <label className={labelClass}>Due Date</label>
+            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={readOnly} className={inputClass} />
+          </div>
+          {dueDate && (
+            <div>
+              <label className="mb-1 block text-[10px] font-semibold text-walnut">Due Time (optional)</label>
+              <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} disabled={readOnly} className={inputClass} />
+              <p className="mt-1 text-[10px] text-stone">Shows this deadline on the Calendar at this time — doesn&apos;t count toward blocked hours.</p>
+            </div>
+          )}
+        </div>
+      </Section>
+
+      {supportsTodos && (
+        <Section title="Screenshots">
+          {!editingTaskId ? (
+            <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
+          ) : screenshotsLoading ? (
+            <p className="text-[12px] text-stone">Loading screenshots...</p>
+          ) : screenshots.length === 0 ? (
+            <p className="text-[12px] text-stone/50">No screenshots.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {screenshots.map((ss, i) => (
+                <button
+                  key={ss.id}
+                  type="button"
+                  onClick={() => ss.url && setLightboxIndex(i)}
+                  disabled={!ss.url}
+                  className="relative h-[36px] w-[48px] shrink-0 cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed"
+                  title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                >
+                  {ss.url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={ss.url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          {lightboxIndex !== null && (
+            <ScreenshotLightbox
+              urls={screenshots.map((s) => s.url).filter((u): u is string => Boolean(u))}
+              initialIndex={lightboxIndex}
+              onClose={() => setLightboxIndex(null)}
+            />
+          )}
         </Section>
       )}
 
@@ -979,7 +1035,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             <>
               <button
                 onClick={() => void handleSubmit().catch(() => {})}
-                disabled={saving || !taskName.trim()}
+                disabled={saving || !taskName.trim() || !taskDetail.trim()}
                 className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
               >
                 {saving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}

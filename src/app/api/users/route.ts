@@ -1,17 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { hasBroadAdminAccess, hasFinancialAccess } from "@/lib/financialAccess";
+import { hasAdminPanelAccess, hasFinancialAccess, canGrantRoles } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-/** Verify the caller has broad admin access (admin, manager, IT, or Project
- * Coordinator — see financialAccess.ts). Broad access gets team-management
- * access but never pay rates, role escalation, or admin_permissions grants
- * — those are enforced field-by-field in each handler below, gated to
- * financial access (Founder/Accounting) specifically. */
+/** This is Team Management's backing API — only reachable from the admin
+ * panel, so it's gated to admin-panel access (Admin, Manager, Specialist, or
+ * Founder/CEO/Accounting), not the broader hasBroadAdminAccess tier.
+ * Coordinator gets broad Insights/Productivity visibility elsewhere but not
+ * this. Pay rates, role escalation, and admin_permissions grants are
+ * enforced field-by-field in each handler below, gated to financial access
+ * (Founder/CEO/Accounting) or role-granting (CEO/Founder) specifically. */
 async function verifyAdmin(): Promise<{ userId: string; role: string; isFinancialAccess: boolean } | Response> {
   const supabase = await createServerClient();
   const {
@@ -25,7 +27,7 @@ async function verifyAdmin(): Promise<{ userId: string; role: string; isFinancia
     .select("role, department")
     .eq("id", user.id)
     .single();
-  if (!profile || !hasBroadAdminAccess(profile)) {
+  if (!profile || !hasAdminPanelAccess(profile)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
   return { userId: user.id, role: profile.role, isFinancialAccess: hasFinancialAccess(profile) };
@@ -47,11 +49,12 @@ export async function POST(request: Request) {
     );
   }
 
-  // Only full admins may grant the admin role or set pay rates.
+  // Only CEO/Founder may set a role other than the Staff default; only full
+  // admins (Founder/CEO/Accounting) may set pay rates.
+  if (role && role !== "va" && !canGrantRoles({ role: authResult.role })) {
+    return Response.json({ error: "Only CEO or Founder can set a role other than Staff" }, { status: 403 });
+  }
   if (!isFullAdmin) {
-    if (role === "admin") {
-      return Response.json({ error: "Only admins can grant the admin role" }, { status: 403 });
-    }
     pay_rate = 0;
     pay_rate_type = "hourly";
   }
@@ -166,17 +169,20 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const { user_id, action, email, ...updates } = body;
 
-  // Only financial-access accounts (Founder/Accounting) may see/change pay
-  // rates, grant the admin role, or grant admin_permissions bundles (see
-  // adminPermissions.ts) — everyone else with broad access (admin, manager,
-  // IT, Project Coordinator) can't self-escalate or escalate anyone else.
+  // Only financial-access accounts (Founder/CEO/Accounting) may see/change
+  // pay rates or grant admin_permissions bundles (see adminPermissions.ts)
+  // — everyone else with broad access (admin, manager, IT, Project
+  // Coordinator) can't self-escalate or escalate anyone else. Changing a
+  // role at all is further restricted to CEO/Founder specifically (see
+  // canGrantRoles in financialAccess.ts) — an Accounting Specialist gets
+  // financial visibility but not role-granting.
   if (!isFullAdmin) {
     delete updates.pay_rate;
     delete updates.pay_rate_type;
     delete updates.admin_permissions;
-    if (updates.role === "admin") {
-      return Response.json({ error: "Only admins can grant the admin role" }, { status: 403 });
-    }
+  }
+  if ("role" in updates && !canGrantRoles({ role: authResult.role })) {
+    return Response.json({ error: "Only CEO or Founder can change roles" }, { status: 403 });
   }
 
   // ── Send Password Reset Link ──────────────────────────────────────────────
@@ -245,6 +251,20 @@ export async function PATCH(request: Request) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
+  // A founder-role account's role can only ever be changed by that same
+  // account — nobody else, including another founder or full admin, can
+  // alter it through this endpoint.
+  if ("role" in updates) {
+    const { data: targetProfile } = await adminClient
+      .from("profiles")
+      .select("role")
+      .eq("id", user_id)
+      .single();
+    if (targetProfile?.role === "founder" && user_id !== authResult.userId) {
+      return Response.json({ error: "A founder's role can only be changed by that account." }, { status: 403 });
+    }
+  }
+
   // If disabling/enabling user, use admin API
   if ("disabled" in updates) {
     const banned = !!updates.disabled;
@@ -276,6 +296,7 @@ export async function PATCH(request: Request) {
     "requires_extension",
     "extension_popup_shown",
     "admin_permissions",
+    "assignments_label",
   ];
   for (const field of allowedFields) {
     if (field in updates) {

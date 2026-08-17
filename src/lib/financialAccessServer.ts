@@ -8,8 +8,9 @@ import { hasFinancialAccess } from "@/lib/financialAccess";
 // client code).
 
 /** Server-route guard: verifies the caller is authenticated and has
- * financial access (Founder/Accounting department tag). Returns
- * `{ userId }` on success or a ready-to-return `Response` on failure. */
+ * financial access (role = founder/ceo, or specialist in Accounting).
+ * Returns `{ userId }` on success or a ready-to-return `Response` on
+ * failure. */
 export async function requireFinancialAccess(): Promise<{ userId: string } | Response> {
   const supabase = await createClient();
   const {

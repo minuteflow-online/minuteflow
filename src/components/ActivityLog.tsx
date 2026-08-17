@@ -2,11 +2,14 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { countWords } from "@/lib/utils";
+import { countWords, screenshotCaptureTime } from "@/lib/utils";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { TimeLog, TaskScreenshot, Profile } from "@/types/database";
 import EditTimeLogModal from "./EditTimeLogModal";
 import CorrectionRequestModal from "./CorrectionRequestModal";
 import ScreenshotLightbox from "./ScreenshotLightbox";
+import RevisionBadge from "@/components/RevisionBadge";
+import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -164,7 +167,7 @@ export default function ActivityLog({
   onResumeTask,
   onUpdateProgress,
 }: ActivityLogProps) {
-  const isAdminOrManager = role === "admin" || role === "manager";
+  const isAdminOrManager = hasBroadAdminAccess({ role });
 
   // Defensive: a null/empty username in time_logs previously crashed the entire
   // dashboard render (TypeError: Cannot read properties of null (reading '0')).
@@ -246,6 +249,8 @@ export default function ActivityLog({
 
   // Edited log IDs (for "edited" indicator)
   const [editedLogIds, setEditedLogIds] = useState<Set<number>>(new Set());
+
+  const revisionByLogId = useRevisionByLogId(logs);
 
   // Load edited log IDs on mount
   useEffect(() => {
@@ -802,7 +807,13 @@ export default function ActivityLog({
               {filteredLogs.map((log) => {
                 const displayCategory = normalizeCategory(log.category);
                 const catTag = getCategoryTag(displayCategory);
-                const logScreenshots = screenshots[log.id] || [];
+                // Oldest first: the row reads as the sequence the work happened in.
+                // Ordered by capture time, not row id — an upload retry lands out of order.
+                const logScreenshots = [...(screenshots[log.id] || [])].sort(
+                  (a, b) =>
+                    new Date(screenshotCaptureTime(a.filename) ?? a.created_at).getTime() -
+                    new Date(screenshotCaptureTime(b.filename) ?? b.created_at).getTime()
+                );
                 const isLive = !log.end_time;
                 const isEdited = editedLogIds.has(log.id);
                 const isManual = log.is_manual;
@@ -848,6 +859,7 @@ export default function ActivityLog({
                         <span className={`font-semibold ${isExpanded ? "whitespace-pre-wrap break-words" : "overflow-hidden text-ellipsis whitespace-nowrap"}`}>
                           {log.task_name}
                         </span>
+                        <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
                         {log.todo_label && (
                           <span className="shrink-0 inline-block py-[1px] px-1 rounded text-[8px] font-semibold bg-sage-soft text-sage" title="Logged against this to-do item">
                             {log.todo_label}
@@ -1076,7 +1088,10 @@ export default function ActivityLog({
                                   setLightboxIndex(Math.max(0, urls.indexOf(url)));
                                 }}
                                 className="w-[28px] h-[20px] rounded border border-sand bg-parchment overflow-hidden cursor-pointer transition-all hover:border-terracotta hover:scale-105 flex-shrink-0"
-                                title={`Screenshot ${ss.screenshot_type || "manual"}`}
+                                title={`${ss.screenshot_type || "manual"} — taken ${formatTime(
+                                  screenshotCaptureTime(ss.filename) ?? ss.created_at,
+                                  timezone
+                                )}`}
                               >
                                 {url ? (
                                   <img src={url} alt="" className="w-full h-full object-cover" />
@@ -1302,7 +1317,10 @@ export default function ActivityLog({
                       {formatDate(log.start_time, timezone)}
                     </td>
                     <td className="py-2 px-3 text-[12px] font-semibold text-espresso border-b border-parchment">
-                      {log.task_name}
+                      <span className="inline-flex items-center gap-1">
+                        {log.task_name}
+                        <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
+                      </span>
                     </td>
                     <td className="py-2 px-3 text-[12px] text-espresso border-b border-parchment">
                       {log.account || <span className="text-stone">&mdash;</span>}
@@ -1378,7 +1396,10 @@ export default function ActivityLog({
                       {formatDate(log.start_time, timezone)}
                     </td>
                     <td className="py-2 px-3 text-[12px] font-semibold text-espresso border-b border-parchment">
-                      {log.task_name}
+                      <span className="inline-flex items-center gap-1">
+                        {log.task_name}
+                        <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
+                      </span>
                     </td>
                     <td className="py-2 px-3 text-[12px] text-espresso border-b border-parchment">
                       {log.account || <span className="text-stone">&mdash;</span>}

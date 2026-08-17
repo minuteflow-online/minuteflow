@@ -10,6 +10,8 @@
 // financial access (see src/lib/financialAccess.ts), everywhere they're
 // checked.
 
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
+
 export const ADMIN_PERMISSION_BUNDLES = [
   {
     key: "task_management",
@@ -22,16 +24,16 @@ export type AdminPermissionBundle = (typeof ADMIN_PERMISSION_BUNDLES)[number]["k
 
 /**
  * True if `profile` should be treated as admin-equivalent for `bundle`.
- * Real admins (role === "admin") always pass, for every bundle. Everyone
- * else needs `bundle` explicitly present in their admin_permissions grant.
- * Deliberately does NOT special-case role === "manager" — Neil's existing
- * department === "IT" path is a separate, untouched mechanism.
+ * Anyone with broad admin-panel access (Admin, Manager, Coordinator,
+ * Specialist, CEO, Founder — see hasBroadAdminAccess) always passes, for
+ * every bundle. Everyone else (plain role="va") needs `bundle` explicitly
+ * present in their admin_permissions grant.
  */
 export function hasAdminPermission(
   profile: { role?: string | null; admin_permissions?: string[] | null } | null | undefined,
   bundle: AdminPermissionBundle
 ): boolean {
   if (!profile) return false;
-  if (profile.role === "admin") return true;
+  if (hasBroadAdminAccess(profile)) return true;
   return Boolean(profile.admin_permissions?.includes(bundle));
 }

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type {
   Profile,
   AssignedTaskWithAssignees,
@@ -10,6 +11,7 @@ import type {
   RecurringTaskTemplate,
   Project,
 } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
@@ -17,6 +19,7 @@ import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
+import RevisionBadge from "@/components/RevisionBadge";
 
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 180 },
@@ -204,15 +207,6 @@ function StatusBadge({ status }: { status: AssignedTaskStatus }) {
 
 // ─── Revision badge ───────────────────────────────────────────────────────────
 
-function RevisionBadge({ count }: { count: number }) {
-  if (count <= 0) return null;
-  const label = count === 1 ? 'R' : `${count}R`;
-  return (
-    <span className="text-[10px] font-bold px-1.5 py-[2px] rounded-full bg-terracotta text-white">
-      {label}
-    </span>
-  );
-}
 
 // ─── Status dot color helper ──────────────────────────────────────────────────
 
@@ -441,7 +435,7 @@ export default function TaskAssignmentsAdminTab({
   const supabase = useMemo(() => createClient(), []);
   const activeProfiles = profiles.filter((p) => p.is_active !== false);
   const assignedByProfiles = activeProfiles.filter(
-    (p) => p.role === "admin" || p.position === "Full-time VA" || p.position === "Part-time VA"
+    (p) => hasBroadAdminAccess(p) || ["Full Time", "Part Time"].includes(normalizePosition(p.position) ?? "")
   );
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);

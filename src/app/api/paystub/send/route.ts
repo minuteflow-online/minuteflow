@@ -7,6 +7,7 @@ import {
   type RateSegment,
 } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
+import { normalizePosition } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -119,8 +120,8 @@ export async function POST(request: Request) {
 
   // Group by session_date (local date) — matches Financial tab logic.
   // Personal time is never included in paystub hours or totals.
-  // Break time is excluded for Full-Time VAs on sessions dated July 6, 2026 or later.
-  const isFullTimeVa = vaProfile.position === "Full-time VA";
+  // Break time is excluded for Full Time VAs on sessions dated July 6, 2026 or later.
+  const isFullTimeVa = normalizePosition(vaProfile.position) === "Full Time";
   const BREAK_EXCLUSION_DATE = "2026-07-06";
 
   const byDate: Record<string, number> = {};

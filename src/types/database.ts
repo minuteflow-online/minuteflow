@@ -1,14 +1,46 @@
-export type UserRole = 'admin' | 'manager' | 'va';
+export type UserRole = 'admin' | 'manager' | 'va' | 'coordinator' | 'specialist' | 'ceo' | 'founder';
 
 export const VA_POSITION_OPTIONS = [
-  "Full-time VA",
-  "Part-time VA",
-  "Project Based VA",
-  "Per Task VA",
+  "Full Time",
+  "Part Time",
+  "Project Based",
+  "Output Based",
   "Admin",
 ] as const;
 
 export type VaPosition = typeof VA_POSITION_OPTIONS[number];
+
+// Positions used to be labeled with a trailing "VA" ("Full-time VA", "Per Task
+// VA", ...). Profile rows written before the rename still carry those strings,
+// so every position comparison goes through normalizePosition() rather than
+// matching the stored value directly.
+const LEGACY_POSITIONS: Record<string, VaPosition> = {
+  "Full-time VA": "Full Time",
+  "Part-time VA": "Part Time",
+  "Project Based VA": "Project Based",
+  "Per Task VA": "Output Based",
+};
+
+/** Map a stored position to its current label; passes through anything unknown. */
+export function normalizePosition(position: string | null | undefined): string | null {
+  if (!position) return null;
+  return LEGACY_POSITIONS[position] ?? position;
+}
+
+// Department is purely descriptive (see src/lib/financialAccess.ts) — it grants
+// no access on its own. This is the default option list shown in the Team
+// Management dropdown; any department already in use on a profile (e.g. a
+// custom one typed in via "+ Add new department...") is merged in alongside
+// these at render time, so the list grows as new ones are added.
+export const DEPARTMENT_OPTIONS = [
+  "Accounting",
+  "IT",
+  "Project Management",
+  "Operations",
+  "Leadership",
+  "Marketing",
+  "Founder",
+] as const;
 
 export interface PaymentAccountDetails {
   gcash?: { number?: string; name?: string };
@@ -23,6 +55,7 @@ export interface Profile {
   id: string;
   username: string;
   full_name: string;
+  avatar_url: string | null;
   department: string | null;
   position: string | null;
   role: UserRole;
@@ -55,6 +88,11 @@ export interface Profile {
   // changes `role`, never used for Financials/Invoices/Paystubs (those stay
   // hard-locked to role === "admin"). See src/lib/adminPermissions.ts.
   admin_permissions: string[];
+  // Free-text label shown in Team Management's "Assignments" column — plain
+  // notes only, not tied to task_categories/va_category_assignments (that
+  // relational system is still used elsewhere, e.g. ProjectsTasksTab, for
+  // real task-claim eligibility).
+  assignments_label: string | null;
 }
 
 export interface BudgetRequest {

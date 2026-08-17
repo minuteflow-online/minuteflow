@@ -185,6 +185,7 @@ async function handleCron(request: NextRequest) {
         account: template.account,
         project: template.project,
         task_name: template.title,
+        category: template.category,
         task_detail: template.task_detail ?? template.description,
         task_notes: template.task_notes,
         due_date: tomorrow,

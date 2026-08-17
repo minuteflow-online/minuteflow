@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Profile, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import type { Profile, TimeLog, UserRole } from "@/types/database";
+import { fetchScreenshotOwnersInRange, type ScreenshotOwnerRow } from "@/lib/screenshots";
 import {
   formatDuration,
   getInitials,
@@ -96,7 +98,7 @@ type VAProgress = {
 export default function ReportsPage() {
   const [logs, setLogs] = useState<TimeLog[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [screenshots, setScreenshots] = useState<TaskScreenshot[]>([]);
+  const [screenshots, setScreenshots] = useState<ScreenshotOwnerRow[]>([]);
   const [dateRange, setDateRange] = useState<DateRange>("week");
   const [selectedVA, setSelectedVA] = useState<string>("all");
   const [customStart, setCustomStart] = useState<string>("");
@@ -261,7 +263,7 @@ export default function ReportsPage() {
         setRole(userRole);
       }
 
-      const [logsRes, profilesRes, screenshotsRes] = await Promise.all([
+      const [logsRes, profilesRes, screenshotRows] = await Promise.all([
         supabase
           .from("time_logs")
           .select("*")
@@ -269,16 +271,14 @@ export default function ReportsPage() {
           .lte("session_date", toLocalDate(qEnd, tz))
           .order("start_time", { ascending: true }),
         supabase.from("profiles").select("*"),
-        supabase
-          .from("task_screenshots")
-          .select("*")
-          .gte("created_at", qStart)
-          .lte("created_at", qEnd),
+        // Paged: a single request stops at 1000 rows, which a week of team
+        // captures clears easily — the screenshot counts came out short.
+        fetchScreenshotOwnersInRange(supabase, qStart, qEnd),
       ]);
 
       setLogs((logsRes.data ?? []) as TimeLog[]);
       setProfiles((profilesRes.data ?? []) as Profile[]);
-      setScreenshots((screenshotsRes.data ?? []) as TaskScreenshot[]);
+      setScreenshots(screenshotRows);
     } catch (err) {
       console.error("Reports fetch error:", err);
       // Ensure we still show the page (with empty data) rather than stuck loading
@@ -909,31 +909,10 @@ export default function ReportsPage() {
           <p className="mt-0.5 text-[13px] text-bark">{periodLabel}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {/* Tab: Overview vs Progress */}
-          <div className="flex rounded-lg border border-sand overflow-hidden mr-1">
-            <button
-              onClick={() => setReportTab("overview")}
-              className={`px-4 py-2 text-[13px] font-semibold transition-all ${
-                reportTab === "overview"
-                  ? "bg-espresso text-white"
-                  : "bg-parchment text-walnut hover:bg-sand"
-              }`}
-            >
-              Overview
-            </button>
-            <button
-              onClick={() => setReportTab("progress")}
-              className={`px-4 py-2 text-[13px] font-semibold transition-all border-l border-sand ${
-                reportTab === "progress"
-                  ? "bg-espresso text-white"
-                  : "bg-parchment text-walnut hover:bg-sand"
-              }`}
-            >
-              Progress
-            </button>
-          </div>
+          {/* Overview vs Progress is now switched via the Monitoring sub-nav
+              (Report / Progress tabs) — see MonitoringSubNav.tsx. */}
           {/* VA Filter (admin/manager only) */}
-          {(role === "admin" || role === "manager") && (
+          {hasBroadAdminAccess({ role }) && (
             <select
               value={selectedVA}
               onChange={(e) => setSelectedVA(e.target.value)}

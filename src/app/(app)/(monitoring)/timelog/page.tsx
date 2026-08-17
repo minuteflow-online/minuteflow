@@ -2,13 +2,17 @@
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import type { TimeLog, Profile, TaskScreenshot } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 import EditTimeLogModal from "@/components/EditTimeLogModal";
 import CorrectionRequestModal from "@/components/CorrectionRequestModal";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import CSVUploadModal from "@/components/CSVUploadModal";
 import TimeLogColumnFilter from "@/components/TimeLogColumnFilter";
+import RevisionBadge from "@/components/RevisionBadge";
+import { useRevisionByLogId } from "@/hooks/useRevisionByLogId";
 import {
   formatDuration,
   formatDurationShort,
@@ -16,6 +20,7 @@ import {
   getTimezoneAbbr,
   getDayBoundsInTimezone,
   getMonthBoundsForDate,
+  screenshotCaptureTime,
 } from "@/lib/utils";
 
 /* ── Types ────────────────────────────────────────────────── */
@@ -172,6 +177,7 @@ function formatTimeOffLabel(entry: { start_time: string | null; end_time: string
 
 export default function TimeLogPage() {
   const [logs, setLogs] = useState<TimeLog[]>([]);
+  const revisionByLogId = useRevisionByLogId(logs);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("day");
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
@@ -257,7 +263,10 @@ export default function TimeLogPage() {
 
   const [department, setDepartment] = useState<string | null>(null);
   const isITStaff = department?.trim().toUpperCase() === "IT";
-  const isAdminOrManager = role === "admin" || role === "manager" || isITStaff;
+  const isAdminOrManager = hasBroadAdminAccess({ role }) || isITStaff;
+  // Coordinator sees every VA's time entries (rides on isAdminOrManager above)
+  // but is view-only here — no editing, creating, or CSV-uploading entries.
+  const canEditTimeLogs = isAdminOrManager && role !== "coordinator";
 
   /* ── Fetch current user & profiles ─────────────────────── */
 
@@ -690,9 +699,9 @@ export default function TimeLogPage() {
     const BREAK_EXCLUSION_DAY = "2026-07-06";
     logs.forEach((l) => {
       totalMs += l.duration_ms || 0;
-      // For Full-time VAs on/after July 6, breaks are never billable regardless of the flag
+      // For Full Time VAs on/after July 6, breaks are never billable regardless of the flag
       const logProfile = profiles.find((p) => p.id === l.user_id);
-      const isFullTimeVa = logProfile?.position === "Full-time VA";
+      const isFullTimeVa = normalizePosition(logProfile?.position) === "Full Time";
       const logDate = l.start_time ? l.start_time.slice(0, 10) : "";
       const breakExcluded = l.category === "Break" && isFullTimeVa && logDate >= BREAK_EXCLUSION_DAY;
       if (l.billable && !breakExcluded) billableMs += l.duration_ms || 0;
@@ -1063,7 +1072,7 @@ export default function TimeLogPage() {
           >
             🗑 Trash
           </button>
-          {isAdminOrManager && (
+          {canEditTimeLogs && (
             <>
               <button
                 onClick={() => setShowCSVUpload(true)}
@@ -1153,7 +1162,10 @@ export default function TimeLogPage() {
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <div className="font-medium text-espresso">{log.task_name}</div>
+                          <div className="flex items-center gap-1 font-medium text-espresso">
+                            {log.task_name}
+                            <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
+                          </div>
                           {log.account && <div className="text-[11px] text-bark">{log.account}</div>}
                         </td>
                         {isAdminOrManager && (
@@ -1471,6 +1483,7 @@ export default function TimeLogPage() {
                               <span className={`font-semibold text-espresso text-[12px] ${isExpanded ? "whitespace-pre-wrap break-words" : "overflow-hidden text-ellipsis whitespace-nowrap"}`}>
                                 {log.task_name}
                               </span>
+                              <RevisionBadge count={revisionByLogId.get(log.id) ?? 0} />
                               {isLive && (
                                 <span className="inline-block h-2 w-2 rounded-full bg-terracotta animate-pulse shrink-0" />
                               )}
@@ -1602,7 +1615,7 @@ export default function TimeLogPage() {
                           {/* Actions */}
                           <td className="px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-1">
-                              {isAdminOrManager && (
+                              {canEditTimeLogs && (
                                 <button
                                   onClick={() => setEditingLog(log)}
                                   className="w-[24px] h-[24px] rounded flex items-center justify-center text-stone hover:text-terracotta hover:bg-terracotta-soft transition-all"

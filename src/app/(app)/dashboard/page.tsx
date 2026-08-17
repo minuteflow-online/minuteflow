@@ -18,8 +18,10 @@ import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
 import { getTodayBoundsInTimezone, countWords } from "@/lib/utils";
+import { fetchScreenshotsForLogs, groupScreenshotsByLog } from "@/lib/screenshots";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import { todoLabel, type TaskTodo } from "@/lib/taskTodos";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { useAccountsAndClients } from "@/hooks/useAccountsAndClients";
 import type {
   Profile,
@@ -31,6 +33,7 @@ import type {
   Message,
   VAAssignedTask,
 } from "@/types/database";
+import { normalizePosition } from "@/types/database";
 
 type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string };
 
@@ -164,6 +167,12 @@ export default function DashboardPage() {
   const [screenshots, setScreenshots] = useState<
     Record<number, TaskScreenshot[]>
   >({});
+  // Mirror of timeLogs for the screenshot poller, which scopes its fetch to the
+  // logs currently on screen without restarting the interval on every log change.
+  const timeLogsRef = useRef<TimeLog[]>([]);
+  useEffect(() => {
+    timeLogsRef.current = timeLogs;
+  }, [timeLogs]);
 
   // Role
   const [role, setRole] = useState<UserRole>("va");
@@ -442,7 +451,7 @@ export default function DashboardPage() {
       setLoading(true);
       try {
 
-      const [profileRes, sessionRes, allProfilesRes, allSessionsRes, logsRes, ssRes, orgSettingsRes] =
+      const [profileRes, sessionRes, allProfilesRes, allSessionsRes, logsRes, orgSettingsRes] =
         await Promise.all([
           supabase.from("profiles").select("*").eq("id", userId!).single(),
           supabase.from("sessions").select("*").eq("user_id", userId!).maybeSingle(),
@@ -453,7 +462,6 @@ export default function DashboardPage() {
             .select("*")
             .gte("start_time", activityLogFloorIso())
             .order("start_time", { ascending: false }),
-          supabase.from("task_screenshots").select("*"),
           supabase.from("organization_settings").select("timezone").limit(1).single(),
         ]);
 
@@ -508,16 +516,16 @@ export default function DashboardPage() {
       // Gap-fill detection removed: clocking in means time is always running.
       // There is no untracked gap for a clocked-in VA regardless of active task state.
 
-      // Screenshots grouped by log_id
-      if (ssRes.data) {
-        const grouped: Record<number, TaskScreenshot[]> = {};
-        (ssRes.data as TaskScreenshot[]).forEach((ss) => {
-          if (ss.log_id) {
-            if (!grouped[ss.log_id]) grouped[ss.log_id] = [];
-            grouped[ss.log_id].push(ss);
-          }
-        });
-        setScreenshots(grouped);
+      // Screenshots for the logs actually on screen, grouped by log_id. Scoped to
+      // those logs rather than fetched table-wide: an unscoped select returns the
+      // oldest 1000 rows a viewer is allowed to see, which for a VA with thousands
+      // of stored shots meant today's never arrived (see src/lib/screenshots.ts).
+      if (logsRes.data) {
+        const shots = await fetchScreenshotsForLogs(
+          supabase,
+          (logsRes.data as TimeLog[]).map((l) => l.id)
+        );
+        setScreenshots(groupScreenshotsByLog(shots));
       }
 
       // After load: recover any pending capture requests missed during page refresh.
@@ -602,24 +610,19 @@ export default function DashboardPage() {
   }, [loading, sessionState, activeTask, screenShareActive, notifyVA]);
 
   // ─── Screenshot polling (refresh counts every 15s) ───────
+  // Runs for VAs too — they see their own shots in the Activity Log, and skipping
+  // the refresh for them meant a shot taken after page load never appeared.
   useEffect(() => {
-    if (!userId || role === "va") return;
+    if (!userId) return;
     const interval = setInterval(async () => {
-      const { data } = await supabase.from("task_screenshots").select("*");
-      if (data) {
-        const grouped: Record<number, TaskScreenshot[]> = {};
-        (data as TaskScreenshot[]).forEach((ss) => {
-          if (ss.log_id) {
-            if (!grouped[ss.log_id]) grouped[ss.log_id] = [];
-            grouped[ss.log_id].push(ss);
-          }
-        });
-        setScreenshots(grouped);
-      }
+      const logIds = timeLogsRef.current.map((l) => l.id);
+      if (logIds.length === 0) return;
+      const shots = await fetchScreenshotsForLogs(supabase, logIds);
+      setScreenshots(groupScreenshotsByLog(shots));
     }, 15000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, role]);
+  }, [userId]);
 
   // ─── In-app message polling ──────────────────────────────
   useEffect(() => {
@@ -3166,7 +3169,11 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <SessionBannerWrapper />
+      {/* When idle, the "Ready to Start" banner just duplicated the greeting
+          below for no benefit — the Clock In action now lives inline in the
+          greeting row instead. Once clocked in or on break, the full banner
+          (live timer, Break/Clock Out) earns its own space again. */}
+      {sessionState !== "idle" && <SessionBannerWrapper />}
 
       {/* Screen Share Alert — shown after 3 consecutive capture failures */}
       {showScreenShareAlert && (
@@ -3292,18 +3299,35 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Greeting */}
-      <div className="mb-7">
-        <h1 className="font-serif text-[26px] font-normal text-espresso mb-1">
-          {getGreeting(orgTimezone)},{" "}
-          <strong className="font-bold">{firstName}</strong>
-        </h1>
-        <p className="text-sm text-bark">
-          {formatDateLong(orgTimezone)} &mdash;{" "}
-          {todayStats.taskCount > 0
-            ? `${todayStats.taskCount} task${todayStats.taskCount !== 1 ? "s" : ""} logged \u00B7 ${formatHoursMinutes(todayStats.totalMs)} tracked today`
-            : "No tasks logged yet today"}
-        </p>
+      {/* Greeting \u2014 doubles as the Clock In prompt when idle, instead of a separate banner */}
+      <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-[26px] font-normal text-espresso mb-1">
+            {getGreeting(orgTimezone)},{" "}
+            <strong className="font-bold">{firstName}</strong>
+          </h1>
+          <p className="text-sm text-bark">
+            {formatDateLong(orgTimezone)} &mdash;{" "}
+            {todayStats.taskCount > 0
+              ? `${todayStats.taskCount} task${todayStats.taskCount !== 1 ? "s" : ""} logged \u00B7 ${formatHoursMinutes(todayStats.totalMs)} tracked today`
+              : "No tasks logged yet today"}
+          </p>
+        </div>
+        {sessionState === "idle" && (
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <button
+              onClick={clockIn}
+              disabled={sessionActionPending}
+              className="inline-flex items-center gap-1.5 px-5 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold cursor-pointer transition-all hover:bg-[#5a8a60] hover:-translate-y-px hover:shadow-[0_4px_12px_rgba(107,143,113,0.25)] disabled:opacity-60 disabled:cursor-not-allowed disabled:pointer-events-none"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
+              Clock In
+            </button>
+            <p className="text-[13px] italic text-stone">
+              &ldquo;Let Every Minute Count With Purpose&rdquo;
+            </p>
+          </div>
+        )}
       </div>
 
       {/* VA Performance Metrics */}
@@ -3312,7 +3336,7 @@ export default function DashboardPage() {
           vaIds={[userId]}
           orgTimezone={orgTimezone}
           variant="detail"
-          isAdmin={role === "admin" || role === "manager"}
+          isAdmin={hasBroadAdminAccess({ role })}
           teamMembers={teamMembers.filter((m) => m.profile.pay_rate_type === "hourly").map((m) => ({ id: m.profile.id, name: m.profile.full_name }))}
         />
       )}
@@ -3348,10 +3372,10 @@ export default function DashboardPage() {
       {(() => {
         // ─── VA Visibility Rules ───────────────────────────────────
         const isVa = role === "va";
-        const pos = profile?.position ?? "";
-        const isProjectBased = pos === "Project Based VA";
-        const isPerTask = pos === "Per Task VA";
-        const isHourly = !isProjectBased && !isPerTask; // Full-time, Part-time, null
+        const pos = normalizePosition(profile?.position) ?? "";
+        const isProjectBased = pos === "Project Based";
+        const isPerTask = pos === "Output Based";
+        const isHourly = !isProjectBased && !isPerTask; // Full Time, Part Time, null
         const canSeeAvailable = isVa && !!profile?.can_see_available_tasks;
         // "manager" role is only ever granted alongside department "IT" (IT-admin
         // accounts that also do task work, e.g. Neil) — this carve-out lets them
@@ -3379,7 +3403,7 @@ export default function DashboardPage() {
                 onPlayAssignedTask={handlePlayAssignedTask}
                 onPlayTodo={handlePlayTodo}
                 orgTimezone={orgTimezone}
-                isAdmin={role === "admin" || role === "manager"}
+                isAdmin={hasBroadAdminAccess({ role })}
                 refetchCount={widgetRefetchCount}
                 activeAssignedTaskId={activeTask?.assignedTaskId ?? null}
                 activeTodoLabel={activeTask?.todoLabel ?? null}
@@ -3404,7 +3428,7 @@ export default function DashboardPage() {
                 onSelectProject={handleProjectSelect}
                 onQuickAction={handleQuickAction}
                 onAutoHoldAction={handleAutoHoldAndStartMessage}
-                isAdmin={role === "admin" || role === "manager"}
+                isAdmin={hasBroadAdminAccess({ role })}
               />
             )}
           </div>

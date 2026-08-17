@@ -641,6 +641,14 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     }
 
     if (status === "revision_needed") {
+      // The revision is counted the moment it's issued, so the R exists from
+      // then on — already showing when the VA moves the task back to on_queue
+      // and reworks it.
+      await adminSupabase
+        .from("assigned_tasks")
+        .update({ revision_count: (taskForReview?.revision_count ?? 0) + 1, updated_at: now })
+        .eq("id", id);
+
       // Decrement accuracy_score by 10 for every assignee on this task
       const { data: assigneeRows } = await adminSupabase
         .from("assigned_task_assignees")
@@ -661,15 +669,6 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       if (assigneeStatusError) {
         return Response.json({ error: assigneeStatusError.message }, { status: 500 });
       }
-    }
-
-    // Increment revision_count when moving out of revision_needed back to an active status
-    const revisionAllowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress"];
-    if (taskForReview?.status === "revision_needed" && revisionAllowedStatuses.includes(status)) {
-      await adminSupabase
-        .from("assigned_tasks")
-        .update({ revision_count: (taskForReview.revision_count ?? 0) + 1, updated_at: now })
-        .eq("id", id);
     }
 
     return Response.json({ ok: true });
@@ -713,17 +712,28 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (log_id !== undefined) updatePayload.log_id = log_id;
     if (notes !== undefined) updatePayload.notes = notes;
 
-    // When marking revision_needed, decrement accuracy_score by 10 on the targeted row
+    const { data: priorAssigneeRow } = await adminSupabase
+      .from("assigned_task_assignees")
+      .select("accuracy_score")
+      .eq("assigned_task_id", id)
+      .eq("va_id", targetVaId)
+      .maybeSingle();
+
     if (status === "revision_needed") {
-      const { data: currentAssigneeRow } = await adminSupabase
-        .from("assigned_task_assignees")
-        .select("accuracy_score")
-        .eq("assigned_task_id", id)
-        .eq("va_id", targetVaId)
-        .single();
-      if (currentAssigneeRow) {
-        updatePayload.accuracy_score = (currentAssigneeRow.accuracy_score as number) - 10;
+      // Decrement accuracy_score by 10 on the targeted row
+      if (priorAssigneeRow) {
+        updatePayload.accuracy_score = (priorAssigneeRow.accuracy_score as number) - 10;
       }
+
+      // Count the revision the moment it's issued. This is the path an admin's
+      // "Request Revision" takes, and it's the one that was silently never
+      // counting: the parent task's status is only synced for non-admins, so
+      // the old exit-triggered increment never saw revision_needed and the R
+      // badge never appeared at all.
+      await adminSupabase
+        .from("assigned_tasks")
+        .update({ revision_count: (taskForReview?.revision_count ?? 0) + 1, updated_at: now })
+        .eq("id", id);
     }
 
     // Task owners targeting another VA's row need the admin client to bypass RLS
@@ -745,15 +755,6 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
     if (!updatedAssignee) {
       return Response.json({ error: "Assignee row not found" }, { status: 404 });
-    }
-
-    // Increment revision_count when moving out of revision_needed back to an active status
-    const revisionAllowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress"];
-    if (status !== undefined && taskForReview?.status === "revision_needed" && revisionAllowedStatuses.includes(status)) {
-      await adminSupabase
-        .from("assigned_tasks")
-        .update({ revision_count: (taskForReview.revision_count ?? 0) + 1, updated_at: now })
-        .eq("id", id);
     }
 
     if (status !== undefined && !isAdminOrManager) {

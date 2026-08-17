@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from "react";
 import { signOut } from "@/app/actions/auth";
 import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
+import AvatarUpload from "@/components/AvatarUpload";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -20,17 +21,19 @@ type NavItem = {
   href: string;
 };
 
+// Time Log and Team moved under Monitoring's shared sub-nav (see
+// MonitoringSubNav.tsx) — they're still their own routes (/timelog, /team),
+// just no longer top-level nav items.
 const allNavItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
-  { label: "Time Log", href: "/timelog" },
   { label: "Productivity", href: "/productivity" },
-  { label: "Team", href: "/team" },
-  { label: "Reports", href: "/reports" },
+  { label: "Insights", href: "/reports" },
   { label: "Portal", href: "/portal" },
 ];
 
 import { getTimezoneAbbr, displayRole } from "@/lib/utils";
 import type { UserRole } from "@/types/database";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 type TopNavProps = {
   user: {
@@ -38,6 +41,7 @@ type TopNavProps = {
     role: UserRole;
     department?: string | null;
     admin_permissions?: string[] | null;
+    avatar_url?: string | null;
   };
 };
 
@@ -88,13 +92,13 @@ function Clock() {
   );
 }
 
-function getInitials(name: string): string {
-  return name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+function DoorIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+      <rect x="5" y="3" width="14" height="18" rx="1" />
+      <circle cx="15" cy="12" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
 }
 
 export default function TopNav({ user }: TopNavProps) {
@@ -114,16 +118,14 @@ export default function TopNav({ user }: TopNavProps) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutMood, setLogoutMood] = useState<'bad' | 'neutral' | 'good' | null>(null);
 
-  // Filter nav items based on role
-  // VAs see: Dashboard, Time Log, Productivity, Reports, Portal (no Team)
-  // Admins/managers/IT staff see: Dashboard, Time Log, Team, Productivity, Reports, Portal
-  const isITStaff = user.department?.trim().toUpperCase() === "IT";
-  const navItems = allNavItems.filter((item) => {
-    if (user.role === "va" && !isITStaff) {
-      return item.href !== "/team";
-    }
-    return true;
-  });
+  // Name-chip dropdown (Log out, upload photo)
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null | undefined>(user.avatar_url);
+
+  // Every top-level item is now visible to everyone — the one item that used
+  // to be role-gated here (Team) moved under Monitoring's own sub-nav, which
+  // does its own role check (see (monitoring)/layout.tsx).
+  const navItems = allNavItems;
 
   const handleLogoutClick = useCallback(async () => {
     // Check if user has an active task by reading their session from Supabase
@@ -412,44 +414,68 @@ export default function TopNav({ user }: TopNavProps) {
                 </Link>
               );
             })}
-          </nav>
-
-          {/* Right: Clock, user chip, logout */}
-          <div className="flex items-center gap-4">
-            <Clock />
-
-            <div className="flex items-center gap-2 rounded-full bg-parchment px-3 py-1">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-terracotta text-xs font-bold text-white">
-                {getInitials(user.full_name)}
-              </div>
-              <div className="hidden sm:block">
-                <p className="text-xs font-medium text-espresso leading-tight">
-                  {user.full_name}
-                </p>
-                {user.role && (
-                  <p className="text-[10px] text-bark leading-tight">
-                    {displayRole(user.role, user.department)}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {(user.role === "admin" || user.department?.trim().toUpperCase() === "IT" || (user.admin_permissions?.length ?? 0) > 0) && (
+            {(hasBroadAdminAccess(user) || (user.admin_permissions?.length ?? 0) > 0) && (
               <Link
                 href="/admin"
-                className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso"
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  pathname.startsWith("/admin")
+                    ? "bg-terracotta-soft text-terracotta"
+                    : "text-bark hover:bg-parchment hover:text-espresso"
+                }`}
               >
                 Admin
               </Link>
             )}
+          </nav>
 
-            <button
-              type="button"
-              onClick={handleLogoutClick}
-              className="rounded-md px-3 py-1.5 text-sm text-bark transition-colors hover:bg-parchment hover:text-espresso cursor-pointer"
-            >
-              Log out
-            </button>
+          {/* Right: Clock, user chip (dropdown: upload photo, log out) */}
+          <div className="flex items-center gap-4">
+            <Clock />
+
+            <div className="relative flex items-center gap-2 rounded-full bg-parchment py-1 pl-1 pr-3">
+              <AvatarUpload
+                avatarUrl={avatarUrl}
+                fullName={user.full_name}
+                size={28}
+                onUploaded={setAvatarUrl}
+              />
+              <button
+                type="button"
+                onClick={() => setShowUserMenu((o) => !o)}
+                className="flex cursor-pointer items-center gap-1.5"
+              >
+                <div className="hidden sm:block text-left">
+                  <p className="text-xs font-medium text-espresso leading-tight">
+                    {user.full_name}
+                  </p>
+                  {user.role && (
+                    <p className="text-[10px] text-bark leading-tight">
+                      {displayRole(user.role, user.department)}
+                    </p>
+                  )}
+                </div>
+                <DoorIcon className="h-3.5 w-3.5 shrink-0 text-bark" />
+              </button>
+
+              {showUserMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                  <div className="absolute right-0 top-full z-50 mt-1 w-40 rounded-xl border border-sand bg-white py-1 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        handleLogoutClick();
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-[13px] text-espresso transition-colors hover:bg-parchment"
+                    >
+                      <DoorIcon className="h-4 w-4 text-bark" />
+                      Log out
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </header>

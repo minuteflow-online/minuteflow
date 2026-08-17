@@ -161,7 +161,15 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const form = await request.formData();
+  // This backs an emailed approval link, so a replayed or malformed POST is a
+  // realistic hit — it must render the same styled page as every other failure
+  // here, not throw a 500 at whoever clicked the link.
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return resultPage(false, "Invalid submission", "That form could not be read. Open the link from your email again and resubmit.");
+  }
   const id = String(form.get("id") || "");
   const action = String(form.get("do") || "");
   const t = String(form.get("t") || "");

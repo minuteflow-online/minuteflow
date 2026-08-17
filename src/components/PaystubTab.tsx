@@ -259,8 +259,36 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
       .eq("status", "draft")
       .order("created_at", { ascending: false });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setDrafts((data ?? []) as any);
+    const rows = (data ?? []) as any[];
+    setDrafts(rows);          // show stored numbers immediately
     setDraftsLoading(false);
+    // Then recompute each from the CURRENT time logs, so edits (e.g. fixing a
+    // missed clock-out) reflect here too — and sync the stored snapshot.
+    const refreshed = await Promise.all(rows.map(async (d) => {
+      try {
+        const res = await fetch("/api/paystub/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: d.user_id, start_date: d.period_start, end_date: d.period_end, preview: true }),
+        });
+        if (!res.ok) return d;
+        const p = await res.json();
+        const freshGross = Number(p.totalGrossPay ?? p.grossPay) || 0;
+        const freshMs = Math.round((Number(p.totalHours) || 0) * 3_600_000);
+        if (Math.abs(freshGross - Number(d.gross_pay)) > 0.005 || Math.abs(freshMs - Number(d.total_hours_ms)) > 1000) {
+          const byDateWithRates: Record<string, { ms: number; rate: number }> = {};
+          for (const [dt, ms] of Object.entries(p.byDate ?? {})) {
+            byDateWithRates[dt] = { ms: Number(ms), rate: Number((p.rateByDate ?? {})[dt] ?? p.payRate) };
+          }
+          await supabase.from("paystub_snapshots").update({
+            gross_pay: freshGross, total_hours_ms: freshMs, by_date: byDateWithRates,
+          }).eq("id", d.id);
+          return { ...d, gross_pay: freshGross, total_hours_ms: freshMs };
+        }
+      } catch { /* keep stored on any error */ }
+      return d;
+    }));
+    setDrafts(refreshed);
   }, []);
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
   // Set when "Edit" on a draft pre-fills the generator, to auto-run Calculate.

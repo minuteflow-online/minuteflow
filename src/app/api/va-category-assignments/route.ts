@@ -23,7 +23,7 @@ export async function GET(request: Request) {
 
   let query = supabase
     .from("va_category_assignments")
-    .select("id, va_id, category_id, assigned_by, assigned_at, task_categories(id, category_name), profiles!va_category_assignments_va_id_fkey(id, full_name, username)")
+    .select("id, va_id, category_id, assigned_by, assigned_at, task_categories(id, category_name)")
     .order("assigned_at", { ascending: false });
 
   if (vaId) {
@@ -39,7 +39,19 @@ export async function GET(request: Request) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  return Response.json({ assignments: data ?? [] });
+  const rows = data ?? [];
+  // va_category_assignments.va_id has no direct FK to profiles (it points to
+  // auth.users), so PostgREST can't embed profiles via a join hint here —
+  // fetch them separately and merge instead.
+  const vaIds = [...new Set(rows.map((r) => r.va_id))];
+  const { data: vaProfiles } = vaIds.length
+    ? await supabase.from("profiles").select("id, full_name, username").in("id", vaIds)
+    : { data: [] };
+  const profileMap = new Map((vaProfiles ?? []).map((p) => [p.id, p]));
+
+  const assignments = rows.map((r) => ({ ...r, profiles: profileMap.get(r.va_id) ?? null }));
+
+  return Response.json({ assignments });
 }
 
 /** POST: Assign VA(s) to category/categories (batch support)
@@ -94,13 +106,25 @@ export async function POST(request: Request) {
   const { data, error } = await supabase
     .from("va_category_assignments")
     .upsert(rows, { onConflict: "va_id,category_id", ignoreDuplicates: true })
-    .select("id, va_id, category_id, assigned_at, task_categories(id, category_name), profiles!va_category_assignments_va_id_fkey(id, full_name, username)");
+    .select("id, va_id, category_id, assigned_at, task_categories(id, category_name)");
 
   if (error) {
     return Response.json({ error: error.message }, { status: 400 });
   }
 
-  return Response.json({ assignments: data }, { status: 201 });
+  // va_category_assignments.va_id has no direct FK to profiles (it points to
+  // auth.users), so PostgREST can't embed profiles via a join hint here —
+  // fetch them separately and merge instead.
+  const upserted = data ?? [];
+  const vaIds = [...new Set(upserted.map((r) => r.va_id))];
+  const { data: vaProfiles } = vaIds.length
+    ? await supabase.from("profiles").select("id, full_name, username").in("id", vaIds)
+    : { data: [] };
+  const profileMap = new Map((vaProfiles ?? []).map((p) => [p.id, p]));
+
+  const assignments = upserted.map((r) => ({ ...r, profiles: profileMap.get(r.va_id) ?? null }));
+
+  return Response.json({ assignments }, { status: 201 });
 }
 
 /** DELETE: Remove VA category assignment(s)
