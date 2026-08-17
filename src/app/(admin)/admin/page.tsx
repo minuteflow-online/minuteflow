@@ -991,7 +991,10 @@ export default function AdminPage() {
       return {
         ...ss,
         captureTime: ss.captured_at ?? fromFilename ?? ss.created_at,
-        captureIsExact: ss.captured_at !== null,
+        // Boolean(), not a null check: before the captured_at column exists the
+        // field is absent from the row entirely, and `undefined !== null` would
+        // label every old screenshot as exactly timed.
+        captureIsExact: Boolean(ss.captured_at),
         unchanged: false, // resolved below, once shots are ordered within a task
       };
     });

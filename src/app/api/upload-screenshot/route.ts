@@ -35,6 +35,16 @@ function formatEasternTimestamp(date: Date): string {
   return `${map.year}-${map.month}-${map.day}_${map.hour}-${map.minute}-${map.second}-${ms}_ET`;
 }
 
+/**
+ * True when an insert failed because a column doesn't exist on the table.
+ * PostgREST reports an unknown column as PGRST204; Postgres itself uses 42703.
+ */
+function isMissingColumnError(err: { code?: string; message?: string }): boolean {
+  if (err.code === "PGRST204" || err.code === "42703") return true;
+  const msg = (err.message || "").toLowerCase();
+  return msg.includes("captured_at") || msg.includes("image_hash");
+}
+
 /** Returns true if the error looks like an auth/token problem. */
 function isAuthError(err: unknown): boolean {
   if (err instanceof Error) {
@@ -215,20 +225,39 @@ export async function POST(request: NextRequest) {
     await makeDriveFilePublic(driveAuth, driveFileId);
 
     // Insert task_screenshots record — Drive only, no storage_path
-    const { data: ssData, error: insertError } = await supabase
+    const baseRow = {
+      user_id: userId,
+      log_id: Number(logId),
+      filename: driveFilename,
+      drive_file_id: driveFileId,
+      screenshot_type: screenshotType,
+      ...(captureRequestId ? { capture_request_id: Number(captureRequestId) } : {}),
+    };
+
+    let { data: ssData, error: insertError } = await supabase
       .from("task_screenshots")
       .insert({
-        user_id: userId,
-        log_id: Number(logId),
-        filename: driveFilename,
-        drive_file_id: driveFileId,
-        screenshot_type: screenshotType,
+        ...baseRow,
         captured_at: capturedAt.toISOString(),
         ...(fingerprint ? { image_hash: fingerprint } : {}),
-        ...(captureRequestId ? { capture_request_id: Number(captureRequestId) } : {}),
       })
       .select()
       .single();
+
+    // captured_at and image_hash are newer than this route. If they aren't on the
+    // table yet, save the screenshot without them rather than losing it — an
+    // upload that can't be retried is worth more than the two extra fields. The
+    // full insert starts working on its own once the columns are added.
+    if (insertError && isMissingColumnError(insertError)) {
+      console.warn(
+        "[upload-screenshot] captured_at/image_hash not present on task_screenshots; inserting without them."
+      );
+      ({ data: ssData, error: insertError } = await supabase
+        .from("task_screenshots")
+        .insert(baseRow)
+        .select()
+        .single());
+    }
 
     if (insertError) {
       return Response.json(

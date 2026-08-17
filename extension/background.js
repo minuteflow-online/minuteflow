@@ -254,17 +254,25 @@ async function uploadQueueItem(item) {
     // through the Drive upload route, but ride the same queue so a marker
     // recorded while offline still lands once the connection comes back.
     if (item.kind === 'marker') {
-      await DB.query('task_screenshots', {
-        method: 'POST',
-        body: {
-          user_id: item.userId,
-          log_id: item.logId,
-          screenshot_type: 'failed',
-          failure_reason: item.failureReason,
-          filename: '',
-          captured_at: item.timestamp,
-        },
-      });
+      const base = {
+        user_id: item.userId,
+        log_id: item.logId,
+        screenshot_type: 'failed',
+        failure_reason: item.failureReason,
+        filename: '',
+      };
+      try {
+        await DB.query('task_screenshots', {
+          method: 'POST',
+          body: { ...base, captured_at: item.timestamp },
+        });
+      } catch (err) {
+        // captured_at may not exist on the table yet. Record the marker without
+        // it rather than dropping it — the reason matters more than the exact
+        // stamp, and this starts working on its own once the column is added.
+        console.warn('[MinuteFlow] Marker insert with captured_at failed, retrying without:', err.message);
+        await DB.query('task_screenshots', { method: 'POST', body: base });
+      }
       await removeFromQueue(item.id);
       console.log(`[MinuteFlow] Marker recorded: ${item.failureReason}`);
       return true;
