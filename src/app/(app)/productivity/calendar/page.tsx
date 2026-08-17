@@ -1400,7 +1400,7 @@ export default function ProductivityCalendarPage() {
                 detail of the day. Hidden in the multi-VA compare view, which is a
                 different shape with no single day to total. */}
             {compareVaIds.length < 2 && (
-              <div className="mb-3 flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
+              <div className="mb-3 mx-auto flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
                 {(["grid", "hours"] as const).map((tab) => (
                   <button
                     key={tab}
@@ -1428,7 +1428,7 @@ export default function ProductivityCalendarPage() {
                   {selectedDate === todayStr ? "Today — " : ""}
                   {formatDayLabel(selectedDate)}
                 </h2>
-                <span className="text-[10px] font-semibold px-2 py-[1px] rounded-full border bg-sage-soft text-sage border-sage/20">
+                <span className="text-[13px] font-bold px-3 py-[3px] rounded-full border bg-amber-soft text-amber border-amber/30">
                   {dayTotalLabel}
                 </span>
               </div>
