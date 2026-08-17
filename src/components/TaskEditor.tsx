@@ -4,7 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useSt
 import { countWords } from "@/lib/utils";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { createClient } from "@/lib/supabase/client";
-import { CATEGORY_OPTIONS, autoCategoryForTask } from "@/lib/taskSchedule";
+import { CATEGORY_OPTIONS, autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -51,25 +51,6 @@ function computeHourlyEquivalent(durationValue: string, unit: "hours" | "minutes
   if (!Number.isFinite(raw) || raw <= 0 || hourlyRate == null) return null;
   const hours = unit === "hours" ? raw : raw / 60;
   return hours * hourlyRate;
-}
-
-/**
- * A stored UTC instant as "HH:MM" / "YYYY-MM-DD" on the viewer's own clock —
- * the inverse of how this form's save path builds its timestamps
- * (`new Date("<date>T<time>:00")`, which reads the typed value in the browser's
- * zone). Kept as the exact mirror of the write so prefilling and re-saving a
- * task can't drift the stored instant.
- */
-function localTimeOfDay(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
-function localDateOf(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function computeQuantityTotal(unitRate: string, quantity: string): number | null {
@@ -200,15 +181,17 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // because the Add-to-Calendar box was still ticked, saving any unrelated field
   // wrote those defaults straight over the real times.
   //
-  // Read in the browser's own zone, which is exactly how the save path below
-  // interprets what's typed in (`new Date("<date>T<time>:00")`). Matching it
-  // makes the round trip exact: open a task, save without touching the hours,
-  // and the stored instant is unchanged.
+  // Read on the ORG (Eastern) wall clock, matching the save path below. Both
+  // directions must use the same clock or the form drifts — reading locally
+  // while writing org time would show a Manila VA an hour she never picked.
+  // It also matches what the Calendar grid renders, so the block and the form
+  // agree. Round trip is exact: open a task, save without touching the hours,
+  // and the stored instant is unchanged, for every viewer.
   const initialStartTime = initialTask?.start_time as string | null | undefined;
   const initialEndTime = initialTask?.end_time as string | null | undefined;
   const [startDate, setStartDate] = useState(
     (initialTask?.start_date as string) ||
-      (initialStartTime ? localDateOf(initialStartTime) : "") ||
+      (initialStartTime ? orgDateOf(initialStartTime) : "") ||
       defaultDate ||
       ""
   );
@@ -217,10 +200,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [endDate, setEndDate] = useState((initialTask?.end_date as string) ?? "");
   const [hasSchedule, setHasSchedule] = useState(Boolean(initialStartTime) || Boolean(defaultStartTime));
   const [startTime, setStartTime] = useState(
-    initialStartTime ? localTimeOfDay(initialStartTime) : defaultStartTime ?? "09:00"
+    initialStartTime ? timeOfDay(initialStartTime).slice(0, 5) : defaultStartTime ?? "09:00"
   );
   const [endTime, setEndTime] = useState(
-    initialEndTime ? localTimeOfDay(initialEndTime) : defaultEndTime ?? "10:00"
+    initialEndTime ? timeOfDay(initialEndTime).slice(0, 5) : defaultEndTime ?? "10:00"
   );
 
   // Details
@@ -533,9 +516,15 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         // Work-span hours only ever anchor to startDate — due_date has its own
         // independent due_time field (below), so it never borrows this pair.
+        //
+        // The times are read as ORG (Eastern) wall clock, not the browser's:
+        // the Calendar grid these are entered on is an Eastern grid, so "11:00"
+        // means 11am Eastern for a Manila VA exactly as it does for an Eastern
+        // admin. Parsing them browser-locally is what shifted VA blocks by
+        // their UTC offset and pushed them off the visible grid.
         if (hasSchedule && startDate && startTime && endTime) {
-          body.start_time = new Date(`${startDate}T${startTime}:00`).toISOString();
-          body.end_time = new Date(`${startDate}T${endTime}:00`).toISOString();
+          body.start_time = orgWallClockToUtc(startDate, startTime);
+          body.end_time = orgWallClockToUtc(startDate, endTime);
         } else if (hasSchedule === false) {
           body.start_time = null;
           body.end_time = null;
@@ -1057,7 +1046,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
       <Section title="Schedule">
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional) — its own hours make the daily time block on the Calendar</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">
+            {mode === "time_based"
+              ? "Work span (optional) — its own hours make the daily time block on the Calendar"
+              : "Work span (optional) — the days this task runs across on the Calendar"}
+          </p>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Start Date</label>
@@ -1069,25 +1062,39 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             </div>
           </div>
 
-          <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-walnut">
-            <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} disabled={readOnly} />
-            Add to Calendar (specific hours)
-          </label>
-          {hasSchedule && (
+          {/* Specific hours are a time-based-only field: output-based tasks are
+              stored in fixed_pay_tasks, which has start_date/due_date/end_date
+              but no start_time/end_time columns, so the output-based save path
+              has nowhere to put them. Offering the inputs anyway meant an admin
+              could set 11am–12pm on a Per Task VA's block and watch the hours
+              vanish — the task came back as an untimed pill instead. */}
+          {mode === "time_based" ? (
             <>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Start Time</label>
-                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={readOnly} className={inputClass} />
-                </div>
-                <div className="flex-1">
-                  <label className="mb-1 block text-[10px] font-semibold text-walnut">End Time</label>
-                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={readOnly} className={inputClass} />
-                </div>
-              </div>
-              {scheduleHelperText && <p className="text-[11px] text-stone">{scheduleHelperText}</p>}
-              {!startDate && <p className="text-[11px] text-terracotta">Set a Start Date above so these hours have a day to block.</p>}
+              <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} disabled={readOnly} />
+                Add to Calendar (specific hours)
+              </label>
+              {hasSchedule && (
+                <>
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[10px] font-semibold text-walnut">Start Time</label>
+                      <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={readOnly} className={inputClass} />
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[10px] font-semibold text-walnut">End Time</label>
+                      <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={readOnly} className={inputClass} />
+                    </div>
+                  </div>
+                  {scheduleHelperText && <p className="text-[11px] text-stone">{scheduleHelperText}</p>}
+                  {!startDate && <p className="text-[11px] text-terracotta">Set a Start Date above so these hours have a day to block.</p>}
+                </>
+              )}
             </>
+          ) : (
+            <p className="text-[11px] text-stone">
+              Output Based tasks are paid per output, so they don&apos;t take specific hours — the dates above put this on the Calendar.
+            </p>
           )}
         </div>
 

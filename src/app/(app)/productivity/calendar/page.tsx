@@ -10,7 +10,7 @@ import {
   getDateInTimezone,
   addDaysToDateStr,
   formatDayLabel,
-  localDateOf,
+  orgDateOf,
   formatTimeRange,
   formatDueTime,
   normalizeAssignedRows,
@@ -641,9 +641,13 @@ export default function ProductivityCalendarPage() {
   const openEditBlock = async (task: RawTask) => {
     if (!task.start_time || !task.end_time) return;
     setEditingBlockId(task.id);
-    setFormDate(localDateOf(task.start_time));
-    setFormStart(new Date(task.start_time).toTimeString().slice(0, 5));
-    setFormEnd(new Date(task.end_time).toTimeString().slice(0, 5));
+    // These come off the grid already reanchored, so they're naive org
+    // wall-clock strings ("2026-08-18T11:00:00") — slice them rather than
+    // routing back through Date, which would re-interpret them in the
+    // viewer's own zone and shift the prefill for anyone outside Eastern.
+    setFormDate(task.start_time.slice(0, 10));
+    setFormStart(task.start_time.slice(11, 16));
+    setFormEnd(task.end_time.slice(11, 16));
     setShowForm(true);
     setEditingTaskFull(null);
     const res = await fetch(`/api/assigned-tasks/${task.id}`, { cache: "no-store" });
@@ -708,7 +712,7 @@ export default function ProductivityCalendarPage() {
     (dateStr: string) =>
       scheduledTasks
         .filter((t) => {
-          const anchorDay = localDateOf(t.start_time as string);
+          const anchorDay = orgDateOf(t.start_time as string);
           // Only expand into a multi-day span when start_date lines up with the
           // block's actual scheduled day — guards against a due-date-only task
           // whose start_time was set independently (openScheduleExisting) ever
@@ -728,7 +732,7 @@ export default function ProductivityCalendarPage() {
       (compareSchedules[vaId] ?? [])
         .filter((t) => t.start_time && t.end_time && taskPassesFilters(t))
         .filter((t) => {
-          const anchorDay = localDateOf(t.start_time as string);
+          const anchorDay = orgDateOf(t.start_time as string);
           if (t.start_date === anchorDay && t.end_date && t.end_date !== t.start_date) {
             return isDateInSpan(dateStr, t.start_date, t.end_date);
           }
