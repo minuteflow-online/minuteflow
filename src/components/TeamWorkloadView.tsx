@@ -102,17 +102,8 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
     }
   };
 
-  const removeFromCalendar = async () => {
-    if (!editingBlockId) return;
-    await fetch(`/api/assigned-tasks/${editingBlockId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ start_time: null, end_time: null }),
-    });
-    setShowForm(false);
-    await fetchSchedules();
-  };
-
+  // "Remove from Calendar" used to live here too — removed with its button
+  // rather than left as dead code, matching the day/week calendar.
   return (
     <div className="rounded-xl border border-sand bg-white p-4">
       <div className="mb-3 flex items-center justify-between">
@@ -248,13 +239,6 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
               )}
 
               <div className="flex gap-3 pt-2">
-                <button
-                  onClick={removeFromCalendar}
-                  title="Clears the time, but keeps the task itself — manage it from Assignment."
-                  className="px-3 py-2 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[12px] font-semibold cursor-pointer hover:bg-red-100 transition-colors"
-                >
-                  Remove from Calendar
-                </button>
                 <button
                   onClick={() => setShowForm(false)}
                   className="flex-1 py-2 rounded-lg bg-parchment text-walnut border border-sand text-[12px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"

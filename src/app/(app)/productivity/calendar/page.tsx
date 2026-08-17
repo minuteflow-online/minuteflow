@@ -690,20 +690,10 @@ export default function ProductivityCalendarPage() {
     await Promise.all([fetchDaySchedule(), fetchAssignedTasksAll()]);
   }, [fetchDaySchedule, fetchAssignedTasksAll]);
 
-  // Removes the task from the calendar (clears its schedule) — does not delete
-  // the underlying task, which may still carry status/assignee history managed
-  // from the Assignment tab.
-  const removeFromCalendar = async () => {
-    if (!editingBlockId) return;
-    await fetch(`/api/assigned-tasks/${editingBlockId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ start_time: null, end_time: null }),
-    });
-    setShowForm(false);
-    await refreshAfterScheduleChange();
-  };
-
+  // "Remove from Calendar" used to live here — a one-click PATCH clearing
+  // start_time/end_time. Removed along with its button rather than left behind
+  // as dead code; clearing the hours is still reachable by unticking Add to
+  // Calendar in the task editor, which at least shows what it is about to undo.
   // Same applied-filter predicate the month dots use, so the week/day hour
   // blocks respect Source/Status/Category/Project/Recurring too. Date Type is
   // left out here — a scheduled block is inherently start-anchored, so gating
@@ -1755,15 +1745,6 @@ export default function ProductivityCalendarPage() {
               </button>
             </div>
             <div className="p-5 space-y-3">
-              {editingBlockId && (
-                <button
-                  onClick={removeFromCalendar}
-                  title="Clears the time, but keeps the task itself — manage it from Assignment."
-                  className="w-full px-3 py-2 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[12px] font-semibold cursor-pointer hover:bg-red-100 transition-colors"
-                >
-                  Remove from Calendar
-                </button>
-              )}
               {!editingBlockId && (() => {
                 const modes = taskModesForMember(teamMembers.find((m) => m.id === dayUserId));
                 if (!modes.canTimeBased || !modes.canOutputBased) return null;
