@@ -547,12 +547,12 @@ export async function POST(request: Request) {
       project_id: project_id ?? null,
       parent_task_id: parent_task_id ?? null,
       pay_type: pay_type ?? null,
-      // Review Required is answered at creation, and answering locks it. A
-      // caller that omits it (an older client, or an output-based task) leaves
-      // the column at its default and the task unlocked, so it can still be
-      // answered later.
+      // Review Required is answered at creation, but only Yes locks — No stays
+      // changeable so the task can still be escalated to Yes later. A caller
+      // that omits it (an older client, or an output-based task) leaves both at
+      // their defaults.
       review_required: Boolean(review_required),
-      review_required_locked: review_required !== undefined,
+      review_required_locked: Boolean(review_required),
       created_by: user.id,
       // When no VAs are assigned at creation time, mark the task as unassigned
       status: va_ids.length === 0 ? "unassigned" : (initial_status ?? "pending"),

@@ -24,7 +24,34 @@ type AssignedTaskStatus =
 type RouteContext = { params: Promise<{ id: string }> };
 
 const TASK_SELECT =
-  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, assigned_task_assignees(id, va_id, status)";
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, review_required_locked, assigned_task_assignees(id, va_id, status)";
+
+const REVIEW_LOCKED_ERROR =
+  "Forbidden: Review Required is locked at Yes. Only Admin, Manager, CEO, or Founder can change it.";
+
+/** Columns isReviewLocked needs — select exactly these before calling it. */
+const REVIEW_LOCK_SELECT = "review_required, review_required_locked";
+
+/**
+ * Whether a task's Review Required answer is locked against ordinary edits.
+ *
+ * Only YES locks. Saying a task needs review is the commitment worth
+ * protecting — a VA shouldn't be able to quietly take it back and skip the
+ * review. NO is not a commitment, so it stays freely changeable and anyone can
+ * still escalate the task to Yes later. The lock is deliberately one-way.
+ *
+ * `review_required` is checked alongside the flag so a row locked at No by the
+ * earlier version of this rule reads as unlocked rather than staying stuck.
+ *
+ * All three write paths (admin PUT, admin PATCH, VA standalone) call this, so
+ * the rule can't drift between them. It takes the row rather than the client
+ * because the service-role client's generics don't survive being passed around.
+ */
+function isReviewLocked(
+  row: { review_required?: boolean | null; review_required_locked?: boolean | null } | null | undefined
+): boolean {
+  return Boolean(row?.review_required_locked) && Boolean(row?.review_required);
+}
 
 /**
  * GET /api/assigned-tasks/[id]
@@ -161,24 +188,21 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
   if (instructions !== undefined) updatePayload.instructions = instructions;
   if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
-  // Answering Review Required locks it. Re-answering a locked task is limited
-  // to Admin/Manager/CEO/Founder — this handler already requires admin, manager,
-  // or the task_management grant, so the extra check only bites a
-  // permission-granted Staff account, which is exactly who the lock is for.
+  // Only YES locks Review Required — see reviewLockedAt() for why. Undoing a
+  // locked Yes is limited to Admin/Manager/CEO/Founder. This handler already
+  // requires admin, manager, or the task_management grant, so the extra check
+  // only bites a permission-granted Staff account, which is who the lock is for.
   if (putReviewRequired !== undefined) {
-    const { data: reviewState } = await adminSupabase
+    const { data: reviewRow } = await adminSupabase
       .from("assigned_tasks")
-      .select("review_required_locked")
+      .select(REVIEW_LOCK_SELECT)
       .eq("id", id)
       .single();
-    if (reviewState?.review_required_locked && !canChangeLockedReview(profile)) {
-      return Response.json(
-        { error: "Forbidden: Review Required is locked. Only Admin, Manager, CEO, or Founder can change it." },
-        { status: 403 }
-      );
+    if (isReviewLocked(reviewRow) && !canChangeLockedReview(profile)) {
+      return Response.json({ error: REVIEW_LOCKED_ERROR }, { status: 403 });
     }
     updatePayload.review_required = Boolean(putReviewRequired);
-    updatePayload.review_required_locked = true;
+    updatePayload.review_required_locked = Boolean(putReviewRequired);
   }
   if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
   if (project_id !== undefined) updatePayload.project_id = project_id;
@@ -521,18 +545,16 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (!assigneeRow) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
-    // A VA still gets one "yes" — but it locks behind them, so they can't
-    // flip it afterwards and can't undo it. Already locked means no.
-    const { data: vaReviewState } = await adminSupabase
+    // A VA gets to escalate to Yes, and that locks behind them — they can't
+    // undo it afterwards. Already locked at Yes means there's nothing to do
+    // and no way for them to change it.
+    const { data: vaReviewRow } = await adminSupabase
       .from("assigned_tasks")
-      .select("review_required_locked")
+      .select(REVIEW_LOCK_SELECT)
       .eq("id", id)
       .single();
-    if (vaReviewState?.review_required_locked) {
-      return Response.json(
-        { error: "Forbidden: Review Required is locked. Only Admin, Manager, CEO, or Founder can change it." },
-        { status: 403 }
-      );
+    if (isReviewLocked(vaReviewRow)) {
+      return Response.json({ error: REVIEW_LOCKED_ERROR }, { status: 403 });
     }
     const { error: rrError } = await adminSupabase
       .from("assigned_tasks")
@@ -821,23 +843,20 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
     if (archived_at !== undefined) updatePayload.archived_at = archived_at;
     if (deleted_at !== undefined) updatePayload.deleted_at = deleted_at;
-    // Same lock rule as the PUT path: answering locks, and re-answering a
-    // locked task needs the Admin/Manager/CEO/Founder tier. Reachable here by
-    // a permission-granted Staff account, which the lock is meant to stop.
+    // Same lock rule as the PUT path: only Yes locks, and undoing a locked Yes
+    // needs the Admin/Manager/CEO/Founder tier. Reachable here by a
+    // permission-granted Staff account, which the lock is meant to stop.
     if (review_required !== undefined) {
-      const { data: reviewState } = await adminSupabase
+      const { data: reviewRow } = await adminSupabase
         .from("assigned_tasks")
-        .select("review_required_locked")
+        .select(REVIEW_LOCK_SELECT)
         .eq("id", id)
         .single();
-      if (reviewState?.review_required_locked && !canChangeLockedReview(profile)) {
-        return Response.json(
-          { error: "Forbidden: Review Required is locked. Only Admin, Manager, CEO, or Founder can change it." },
-          { status: 403 }
-        );
+      if (isReviewLocked(reviewRow) && !canChangeLockedReview(profile)) {
+        return Response.json({ error: REVIEW_LOCKED_ERROR }, { status: 403 });
       }
       updatePayload.review_required = Boolean(review_required);
-      updatePayload.review_required_locked = true;
+      updatePayload.review_required_locked = Boolean(review_required);
     }
 
     // Only reachable when isAdminOrManager is true (see the guard above), so

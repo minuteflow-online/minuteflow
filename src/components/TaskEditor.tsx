@@ -53,6 +53,25 @@ function computeHourlyEquivalent(durationValue: string, unit: "hours" | "minutes
   return hours * hourlyRate;
 }
 
+/**
+ * A stored UTC instant as "HH:MM" / "YYYY-MM-DD" on the viewer's own clock —
+ * the inverse of how this form's save path builds its timestamps
+ * (`new Date("<date>T<time>:00")`, which reads the typed value in the browser's
+ * zone). Kept as the exact mirror of the write so prefilling and re-saving a
+ * task can't drift the stored instant.
+ */
+function localTimeOfDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function localDateOf(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function computeQuantityTotal(unitRate: string, quantity: string): number | null {
   const rate = Number(unitRate);
   const qty = Number(quantity);
@@ -173,13 +192,36 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   }, []);
 
   // Schedule
-  const [startDate, setStartDate] = useState((initialTask?.start_date as string) ?? defaultDate ?? "");
+  //
+  // The saved hours have to be read back out of initialTask, not just defaulted.
+  // Only the Calendar passes defaultStartTime/defaultEndTime; every other call
+  // site (Assignment panel, admin Task Assignments, VA Projects) passes neither,
+  // so the inputs opened on 09:00–10:00 for a task that already had hours — and
+  // because the Add-to-Calendar box was still ticked, saving any unrelated field
+  // wrote those defaults straight over the real times.
+  //
+  // Read in the browser's own zone, which is exactly how the save path below
+  // interprets what's typed in (`new Date("<date>T<time>:00")`). Matching it
+  // makes the round trip exact: open a task, save without touching the hours,
+  // and the stored instant is unchanged.
+  const initialStartTime = initialTask?.start_time as string | null | undefined;
+  const initialEndTime = initialTask?.end_time as string | null | undefined;
+  const [startDate, setStartDate] = useState(
+    (initialTask?.start_date as string) ||
+      (initialStartTime ? localDateOf(initialStartTime) : "") ||
+      defaultDate ||
+      ""
+  );
   const [dueDate, setDueDate] = useState((initialTask?.due_date as string) ?? "");
   const [dueTime, setDueTime] = useState((initialTask?.due_time as string) ?? "");
   const [endDate, setEndDate] = useState((initialTask?.end_date as string) ?? "");
-  const [hasSchedule, setHasSchedule] = useState(Boolean(initialTask?.start_time) || Boolean(defaultStartTime));
-  const [startTime, setStartTime] = useState(defaultStartTime ?? "09:00");
-  const [endTime, setEndTime] = useState(defaultEndTime ?? "10:00");
+  const [hasSchedule, setHasSchedule] = useState(Boolean(initialStartTime) || Boolean(defaultStartTime));
+  const [startTime, setStartTime] = useState(
+    initialStartTime ? localTimeOfDay(initialStartTime) : defaultStartTime ?? "09:00"
+  );
+  const [endTime, setEndTime] = useState(
+    initialEndTime ? localTimeOfDay(initialEndTime) : defaultEndTime ?? "10:00"
+  );
 
   // Details
   const [taskDetail, setTaskDetail] = useState((initialTask?.task_detail as string) ?? "");
@@ -208,16 +250,22 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const linkedProjectId = lockedProjectId ?? linkedProjectIdState;
   const [parentTaskId, setParentTaskId] = useState(initialTask?.parent_task_id != null ? String(initialTask.parent_task_id) : "");
   // Review Required is a required Yes/No, not a checkbox — "" means nobody has
-  // answered yet. review_required_locked is the record of having been answered:
-  // tasks that predate the rule carry locked=false, so they keep whatever value
-  // they were saved with and stay editable until someone answers deliberately.
-  const reviewLocked = Boolean(initialTask?.review_required_locked);
+  // answered yet.
+  //
+  // Only YES locks. Saying a task needs review is the commitment worth
+  // protecting: a VA shouldn't be able to quietly take it back and skip the
+  // review. NO is not a commitment — it stays freely changeable, so anyone can
+  // still escalate a task to Yes later. The lock is deliberately one-way, and
+  // `&& review_required` keeps that true even for a row locked at No by the
+  // earlier version of this rule.
+  const reviewLocked =
+    Boolean(initialTask?.review_required_locked) && Boolean(initialTask?.review_required);
   const [reviewRequired, setReviewRequired] = useState<"" | "yes" | "no">(
     isEditing ? (initialTask?.review_required ? "yes" : "no") : ""
   );
-  // Only the Admin/Manager/CEO/Founder tier may change an answer once locked.
-  // The server enforces the same rule — this just avoids offering a control
-  // that would be rejected.
+  // Only the Admin/Manager/CEO/Founder tier may undo a locked Yes. The server
+  // enforces the same rule — this just avoids offering a control that would be
+  // rejected.
   const [viewerRole, setViewerRole] = useState<string | null>(null);
   const reviewEditable = !reviewLocked || canChangeLockedReview({ role: viewerRole });
   // Pay type is no longer a field — time-based and output-based tasks have
@@ -255,16 +303,20 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // The viewer's own role, for the locked-Review-Required check. Fetched here
   // rather than threaded down as a prop because TaskEditor has eight call
   // sites and only three of them already hold the role.
+  // Keyed off the authenticated session rather than the currentUserId prop:
+  // several call sites pass `currentUserId ?? ""`, and an empty id skipped the
+  // fetch entirely, leaving viewerRole null — which read as "not in the tier"
+  // and disabled the control for everyone, founders included. That is why a
+  // locked task appeared unchangeable by anyone at all.
   useEffect(() => {
-    if (!currentUserId) return;
     const supabase = createClient();
-    void supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", currentUserId)
-      .single()
-      .then(({ data }) => setViewerRole((data?.role as string) ?? null));
-  }, [currentUserId]);
+    void (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+      setViewerRole((data?.role as string) ?? null);
+    })();
+  }, []);
 
   useEffect(() => {
     fetch("/api/projects?mine=true", { cache: "no-store" })
@@ -898,11 +950,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             {reviewLocked ? (
               <p className="mt-1 text-[10px] text-stone">
                 {reviewEditable
-                  ? "Answered and locked — you can change it because of your role."
-                  : "Answered and locked — only Admin, Manager, CEO, or Founder can change it."}
+                  ? "Locked at Yes — you can change it because of your role."
+                  : "Locked at Yes — only Admin, Manager, CEO, or Founder can change it."}
               </p>
             ) : (
-              <p className="mt-1 text-[10px] text-stone">Locks once answered.</p>
+              <p className="mt-1 text-[10px] text-stone">
+                Yes locks — it can only be undone by Admin, Manager, CEO, or Founder. No stays changeable.
+              </p>
             )}
           </div>
         )}
