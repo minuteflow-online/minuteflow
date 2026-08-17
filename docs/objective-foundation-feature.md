@@ -33,17 +33,40 @@ card within its status column.
   open the same edit flow (`TaskEditor`), just triggered from a card instead of a list
   row.
 
-### Open questions before building
-- [ ] Should the kanban grid **replace** the current list entirely, or be a **toggle**
-      (list view / board view) so existing users aren't surprised by a sudden layout
-      change? Cheaper to ask now than to rebuild after.
-- [ ] Column grouping: one column per `AssignedTaskStatus` value (11 columns — likely
-      too many/cramped), or grouped into fewer buckets (e.g. Basecamp-style ~5)? If
-      grouped, which statuses combine into which column? Get boss's input — this is a
-      product decision, not a technical one.
-- [ ] Does drag-and-drop between columns need to work (i.e., dragging a card to
-      "Completed" changes its status), or is this read-only/click-to-edit only for v1?
-      Drag-and-drop is meaningfully more complex — confirm scope before starting.
+### Answers from boss (confirmed [DATE])
+- **Replace vs. toggle**: Kanban is an **additional option**, not a replacement — build
+  a toggle between list view and board view. List view must keep working exactly as-is.
+- **Cards = tasks**: Confirmed — "cards" are the existing subtasks/tasks, same entity,
+  just displayed differently in board view.
+- **Drag-and-drop**: **Yes, required** — cards must be draggable between columns, and
+  dragging a card to a column changes its status accordingly.
+- **Column/status grouping**: "We will choose what status go to kanban" — **needs one
+  follow-up clarification before building**, see below.
+
+### Still open — one follow-up needed before starting
+Boss answered: columns should be **Pending → In Progress → Submitted → Reviewed →
+Approved → Completed** (6 columns, hardcoded — not a configurable settings screen).
+This resolves the "hardcoded vs. settings UI" question from before: it's (a), a
+one-time decision.
+
+**Remaining gap — needs one more quick confirm before building**: her 6 labels don't
+map 1:1 onto the actual `AssignedTaskStatus` enum (11 values:
+`unassigned, pending, on_queue, in_progress, submitted, reviewing, revision_needed,
+approved, completed, paid, cancelled`). Three things to resolve:
+
+- [ ] Do `unassigned` and `on_queue` tasks show under **Pending** too, or are they
+      excluded from the board (only shown once picked up)?
+- [ ] Where does `revision_needed` go? Not in her list — but it's an action-needed
+      state (task was reviewed and sent back), so silently dropping it risks hiding
+      those tasks from the board. Best guess: it likely belongs back in **Submitted**
+      or as part of **Reviewed** — confirm rather than assume.
+- [ ] `paid` and `cancelled` — assumed excluded (board is for active work), but confirm
+      this is intentional, not an oversight in her answer.
+
+Suggested one-line follow-up to send: *"Quick follow-up on the board columns — where
+should tasks that got sent back for revision (revision_needed) show up? And should
+on_queue/unassigned tasks appear under Pending, or only show once someone's picked
+them up?"*
 
 ### Hard rules specific to this part
 - Do not change the underlying `AssignedTaskStatus` enum or how status transitions work
