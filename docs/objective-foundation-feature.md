@@ -10,6 +10,28 @@ see "What's actually left to build" below before starting anything.
 | B — Cards | 🔧 **Confirmed: build kanban grid** | Boss confirmed she wants the existing subtask list restyled into a Basecamp-style kanban card grid (columns like the "Scheduled / Recorded / Editing / Approved / Done" example from her Basecamp reference). This is now a real, scoped build task — see "Part B build plan" below. |
 | C — "Where they are" (VA progress) | ❌ **Confirmed missing — this is the real build task** | Boss explicitly confirmed she wants this: a way to see, per VA, their progress on an Objective. This is the actual scoped work below. |
 
+## Unit tests
+
+Pure-logic unit tests (no browser, no login, no database) exist for two pieces of
+this feature — run with `npm run test`:
+
+- **`src/lib/subtaskStatusColumns.test.ts`** — tests `columnForStatus`/`BOARD_COLUMNS`
+  from `src/lib/subtaskStatusColumns.ts` (Part B). Pins today's TBD guesses
+  (`revision_needed`→Submitted, `unassigned`/`on_queue`→Pending, `paid`/`cancelled`
+  excluded) — if boss's eventual answer on the "Remaining gap" above changes the
+  mapping, the test that breaks tells you exactly what to update, both in the source
+  file and in this doc.
+- **`src/components/VAProjectsTab.vaProgress.test.ts`** — tests the completed/total
+  logic behind the "Where They Are" card (Part C). This is a hand-kept **copy** of the
+  `vaProgress` `useMemo` body in `VAProjectsTab.tsx` (not an import) — the real
+  computation lives inside the component and was left untouched, so if that
+  `useMemo` changes, update this test file to match. Note: the `pct` percentage
+  itself is computed inline in JSX at render time, not inside the memo, so it isn't
+  covered by these tests — only `completed`/`total` are.
+
+Framework: Vitest (`vitest.config.mts`), installed for this purpose — first test
+framework in this repo.
+
 ## Part B build plan — Kanban card grid for Subtasks
 
 ### Goal
