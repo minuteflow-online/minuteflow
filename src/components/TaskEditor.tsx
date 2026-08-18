@@ -1493,21 +1493,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
-      {/* Named here as well as in each section header, because this sits next to
-          the Save button — the place someone looks when a save won't go through.
-          Shown for hideFooter callers too: those drive submit() from their own
-          footer, so without this they'd get a rejection and no reason. */}
-      {!readOnly && missingRequired.length > 0 && (
-        <div className="rounded-lg border border-terracotta/30 bg-terracotta-soft px-3 py-2">
-          <p className="text-[11px] font-semibold text-terracotta">
-            Before saving, fill in: {missingRequired.join(", ")}
-          </p>
-          <p className="mt-0.5 text-[10px] text-terracotta/80">
-            The section above each one is marked — open it to fill it in.
-          </p>
-        </div>
-      )}
-
       {error && <p className="text-[12px] text-red-600">{error}</p>}
 
       {!hideFooter && (
@@ -1525,6 +1510,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               >
                 {saving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
               </button>
+              {/* Only when the button is actually blocked. The sections already
+                  flag themselves and the fields go terracotta, so this is the
+                  last resort for "why won't this save", not a running notice. */}
+              {missingRequired.length > 0 && (
+                <InfoTip text={`Still needed: ${missingRequired.join(", ")}. The section holding each one is marked.`} />
+              )}
               <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
                 Cancel
               </button>
