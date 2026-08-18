@@ -5,10 +5,11 @@ import { useState, type ReactNode } from "react";
 interface SectionProps {
   title: string;
   defaultOpen?: boolean;
-  /** Names what still has to be filled in inside this section. Rendered in the
-   *  header, so it shows while the section is collapsed — which is the whole
-   *  point: these sections start closed, so a required field that is empty was
-   *  invisible, and the only symptom was a Save button that wouldn't work. */
+  /** Badge text for a section with something outstanding, rendered verbatim so
+   *  the caller controls the wording. Shows while the section is collapsed —
+   *  which is the whole point: these sections start closed, so a required field
+   *  that is empty was invisible, and the only symptom was a Save button that
+   *  wouldn't work. */
   warning?: string | null;
   children: ReactNode;
 }
@@ -32,7 +33,7 @@ export default function Section({ title, defaultOpen = false, warning = null, ch
           <h3 className="text-xs font-bold text-terracotta uppercase tracking-wider">{title}</h3>
           {warning && (
             <span className="rounded-full border border-terracotta/30 bg-white px-2 py-[1px] text-[10px] font-semibold text-terracotta">
-              Needs {warning}
+              {warning}
             </span>
           )}
         </span>

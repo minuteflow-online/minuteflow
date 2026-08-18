@@ -687,14 +687,31 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // empty required field was invisible and the only symptom was a Save button
   // that refused to work with no explanation. Each section names its own gap in
   // its header, and the footer lists them together.
-  const missingBasics = !taskName.trim() ? "Task Name" : null;
-  const missingDetails = !taskDetail.trim() ? "Client Detail" : null;
-  const missingAssignment = mode === "time_based" && !isEditing && !reviewRequired ? "Review Required" : null;
-  const missingRate =
-    mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate))) ? "Final Rate" : null;
-  const missingRequired = [missingBasics, missingDetails, missingAssignment, missingRate].filter(
-    (m): m is string => Boolean(m)
-  );
+  const needsTaskName = !taskName.trim();
+  const needsClientDetail = !taskDetail.trim();
+  const needsReviewAnswer = mode === "time_based" && !isEditing && !reviewRequired;
+  const needsRate = mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)));
+
+  // Section badges say what kind of gap it is, not which field — the field
+  // itself goes amber, so naming it twice was redundant. Basics is entirely
+  // required, so it says so outright.
+  const missingBasics = needsTaskName ? "Required block" : null;
+  const missingDetails = needsClientDetail ? "Required field/s inside" : null;
+  const missingAssignment = needsReviewAnswer ? "Required field/s inside" : null;
+  const missingRate = needsRate ? "Required field/s inside" : null;
+
+  // The footer still names them, since that's the "why won't this save" spot.
+  const missingRequired = [
+    needsTaskName ? "Task Name" : null,
+    needsClientDetail ? "Client Detail" : null,
+    needsReviewAnswer ? "Review Required" : null,
+    needsRate ? "Final Rate" : null,
+  ].filter((m): m is string => Boolean(m));
+
+  // An unfilled required input reads amber — a prompt, not an error. Terracotta
+  // is kept for the things that have actually gone wrong.
+  const requiredInputClass = (filled: boolean) =>
+    filled ? inputClass : `${inputClass} border-amber bg-amber-soft/40`;
 
   const assignToOptions = teamMembers;
   const assignByOptions = teamMembers;
@@ -754,7 +771,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 applyAutoCategory(account, project, value);
               }}
               disabled={readOnly}
-              className={inputClass}
+              className={requiredInputClass(!needsTaskName)}
             >
               <option value="">Select task...</option>
               {taskOptionsForObjective.map((t) => (
@@ -762,7 +779,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               ))}
             </select>
           ) : (
-            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} disabled={readOnly} placeholder="Task name" className={inputClass} />
+            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} disabled={readOnly} placeholder="Task name" className={requiredInputClass(!needsTaskName)} />
           )}
         </div>
 
@@ -792,7 +809,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             rows={2}
             disabled={readOnly}
             placeholder="Client-visible memo"
-            className={`${inputClass} resize-none`}
+            className={`${requiredInputClass(!needsClientDetail)} resize-none`}
           />
           <p className="mt-1 text-[10px] text-stone">
             {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(taskDetail))} words remaining — this is what carries over to the client invoice/report.
@@ -1028,6 +1045,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50 ${
                     reviewRequired === value
                       ? "bg-sage text-white"
+                      : needsReviewAnswer
+                      ? // Unanswered and required — amber, like the other
+                        // required fields waiting on input.
+                        "border border-amber bg-amber-soft/40 text-amber hover:bg-amber-soft"
                       : "bg-stone/10 text-stone hover:bg-stone/20"
                   }`}
                 >
@@ -1138,7 +1159,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
           <div>
             <label className={labelClass}>Final Rate</label>
-            <input value={rate} onChange={(e) => setRate(e.target.value)} disabled={readOnly} placeholder="0.00" className={inputClass} />
+            <input value={rate} onChange={(e) => setRate(e.target.value)} disabled={readOnly} placeholder="0.00" className={requiredInputClass(!needsRate)} />
           </div>
         </Section>
       )}
