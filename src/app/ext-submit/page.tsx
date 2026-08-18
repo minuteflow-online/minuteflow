@@ -186,7 +186,7 @@ Privacy policy: https://minuteflow.click/extension-privacy`}
 
         {/* Footer */}
         <p className="text-center text-xs text-bark mt-6">
-          Prepared by Manny · MinuteFlow internal use only
+          MinuteFlow internal use only
         </p>
       </div>
     </div>

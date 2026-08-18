@@ -45,7 +45,7 @@ Objective, Operations. Objective/Operations both render `VAProjectsTab` (`kind="
 - `src/app/api/assigned-tasks/route.ts` — GET selects + POST insert
 - `src/app/api/assigned-tasks/[id]/route.ts` — GET select, PUT/PATCH read + payload
 
-Remaining for Section 5: the DB column migration (via Manny) and the **UI** — split the date picker
+Remaining for Section 5: the DB column migration (via `.claude-local/run-migration.mjs`, needs approval) and the **UI** — split the date picker
 (combined start/end with optional end), give start/end **time** its own field, and make **due date +
 due time** fully separate with a single time. Frontend not yet started.
 
@@ -58,7 +58,7 @@ Grouped by what they touch, so shared edits land once.
 ### A. Date/time model — Section 5  *(foundation; partly started)*
 Everything else that renders a task date (calendar dots, deadline markers, daily totals) depends on the
 final shape of this model. Land the schema + shared date/time UI **first**.
-- **Schema (Manny):** confirm/add `due_time` column on `assigned_tasks`.
+- **Schema (migration, needs approval):** confirm/add `due_time` column on `assigned_tasks`.
 - Combined start+end date picker with optional end date.
 - Separate start/end **time** field (not shared with date range or due date).
 - Fully separate due date + single due **time**.
@@ -79,7 +79,7 @@ Largest net-new build; self-contained enough to run in parallel with B once A's 
 - **Shift** field on each VA profile (hours or a time range) in Team Management → drives budget.
 - Soft warning at **90%** of shift budget (advisory, never hard-blocks).
 - Over-budget flow: VA submits request → **any admin** approves; admins can also add budget directly.
-- **Schema (Manny):** shift field on `profiles`; a budget/over-budget-request table + approval status.
+- **Schema (migration, needs approval):** shift field on `profiles`; a budget/over-budget-request table + approval status.
 - Touches: `TeamProfilePanel.tsx`, `team/page.tsx`, assignment surfaces, new API route(s), admin approval UI.
 
 ### D. Calendar views — Sections 6 + 7 + 8
@@ -113,7 +113,7 @@ Largest net-new build; self-contained enough to run in parallel with B once A's 
 4. **D — Calendar views.** Builds on A's end-date/deadline semantics and B's calendar filters.
 5. **C — Budget system.** Own vertical; needs its own schema + approval UI. Can start once A's schema lands.
 
-## Schema / approval dependencies (Manny owns all DB work)
+## Schema / approval dependencies (all DB work runs through `.claude-local/run-migration.mjs`, approval required)
 
 - `assigned_tasks.due_time` column — Section 5 / Workstream A.
 - `profiles` **shift** field — Section 2 / Workstream C.
@@ -204,7 +204,7 @@ Basecamp "Latest Activity": a timeline of who did what, grouped by day, with **T
 - **Reuse:** `time_logs` already capture per-person work; `ActivityLog.tsx` renders a time-log feed today.
 - **Net-new:** a broader event stream (comments, to-dos added/completed, cards moved, members added,
   files posted) — not just time logs. Needs an activity/event source (either derive from existing tables
-  or add an events table — **schema decision for Manny**).
+  or add an events table — **schema decision, needs migration approval**).
 - Per-objective activity tile can be the same feed filtered to one objective.
 
 ## 4. Reports hub  *(Want; Mission Control is the standout)*
@@ -229,7 +229,7 @@ the same sources as the per-objective tiles; build after the per-objective tiles
 
 ---
 
-## Schema / approval dependencies (Part II — Manny owns all DB work)
+## Schema / approval dependencies (Part II — all DB work runs through `.claude-local/run-migration.mjs`, approval required)
 - **Message Board + Chat:** objective-scoped posts/comments + a project chat channel (existing `messages`
   is 1:1). New table(s) likely.
 - **Activity feed:** an event stream source — derive from existing tables or add an events table.
@@ -263,7 +263,7 @@ As sub-goals complete, the system **measures progress and builds streaks**, and 
 - **Nesting UI:** `VAProjectsTab` renders objectives as a **flat list** today. Needs a tree/hierarchy view —
   create a sub-objective under a parent, reparent, and navigate parent ⇄ children.
 - **Completion concept:** `Project` has only `is_active` (boolean) — **no "completed" status and no completion
-  timestamp**. Streaks and "sub-project completed" measurement need one. **Schema (Manny):** add a
+  timestamp**. Streaks and "sub-project completed" measurement need one. **Schema (migration, needs approval):** add a
   completion status + `completed_at` (and likely a per-user or per-goal streak record, or derive streaks
   from completion history).
 - **Streaks:** define what a streak counts (consecutive sub-goals completed? completions per week without a

@@ -13,7 +13,7 @@ const STALE_THRESHOLD_MS = 15 * 60 * 1000;
  *
  * REPORT-ONLY as of 2026-07-24. This endpoint no longer ends anything.
  *
- * The time model (authoritative, per Regie): a SESSION (clock-in -> clock-out) is one
+ * The time model (authoritative): a SESSION (clock-in -> clock-out) is one
  * continuous span. TASKS only ever START — starting a new task hands off from the
  * previous one. A task may ONLY be ended by a task-switch or a logout, NEVER by
  * inactivity. A task with an end and no successor is a bug, not a fact.

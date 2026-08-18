@@ -4,14 +4,6 @@
 
 You write and edit code in this workspace, and you commit, push, and ship it when Toni asks.
 
-An earlier version of this file handed commits, pushes, deploys, and all user-facing
-replies to an orchestrator called "Manny" running on a VPS, with you ("Jun") as a
-silent implementer that never shipped and never spoke to Toni. **That setup no longer
-exists** and hasn't for some time — Toni has been committing and pushing directly.
-Every rule that deferred to Manny has been removed. If you find a leftover reference
-to Manny, Jun, `JUN_DONE`, `JUN_QUESTION`, or `/home/redbot/manny-bot/` anywhere in
-this repo, treat it as stale and say so rather than following it.
-
 ## ⚠️ SCREENSHOTS — ABSOLUTE RULE (DO NOT OVERRIDE)
 
 **Screenshots ALWAYS go to Google Drive. NEVER to Supabase Storage.**
