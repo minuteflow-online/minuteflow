@@ -141,6 +141,25 @@ export interface TaskEditorHandle {
 const inputClass = "w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white disabled:bg-parchment/40 disabled:text-stone";
 const labelClass = "mb-1 block text-[11px] font-bold uppercase tracking-wider text-amber";
 
+/**
+ * Explanation on demand, next to the label it explains.
+ *
+ * The form used to carry this as a paragraph under every field. Read once, it
+ * is noise on every visit after — and a form that is mostly grey prose is hard
+ * to scan for the bit you actually came to change. Rules that are genuinely
+ * non-obvious live here; anything self-evident was dropped rather than moved.
+ */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
+      <span className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] leading-snug text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function ClientMemoFormatTooltip() {
   return (
     <div className="group relative">
@@ -784,14 +803,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         <div>
-          <label className={labelClass}>Category</label>
+          <label className={`${labelClass} flex items-center gap-1.5`}>Category<InfoTip text="Set automatically from Account, Objective and Task Name." /></label>
           {/* Derived, not chosen — autoCategoryForTask sets it from Account,
               Objective and Task Name, and every task-creation surface applies
               the same rule. Leaving it editable meant a hand-picked value could
               silently disagree with the rule, and get overwritten anyway the
               next time any of the three inputs changed. */}
           <input value={category} readOnly disabled className={inputClass} />
-          <p className="mt-1 text-[10px] text-stone">Set automatically from Account, Objective and Task Name.</p>
         </div>
       </Section>
 
@@ -818,8 +836,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         {supportsTodos && (
           <div>
-            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber">To-Do List</label>
-            <p className="mb-1.5 text-[10px] text-stone">Internal only — tracks sub-steps and time per item, shows in internal reports. Doesn&apos;t affect the client memo above.</p>
+            <label className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-amber">To-Do List<InfoTip text="Internal only — tracks sub-steps and time per item, and shows in internal reports. Doesn't affect the client memo." /></label>
             {!isEditing && (
               <p className="mb-1.5 text-[10px] text-stone">These save with the task once you click Create Task.</p>
             )}
@@ -915,7 +932,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                     placeholder="Add a note or question — this is added below, nothing above is changed."
                     className={`${inputClass} resize-none`}
                   />
-                  <p className="mt-1 text-[10px] text-stone">Saved with your name and the date. The existing instructions stay as they are.</p>
                 </div>
               )}
             </>
@@ -989,7 +1005,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           ) : (
             <>
               <div>
-                <label className={labelClass}>Link to Objective</label>
+                <label className={`${labelClass} flex items-center gap-1.5`}>Link to Objective<InfoTip text="A task links to an Objective or an Operation, not both — picking one clears the other." /></label>
                 <select
                   value={linkedObjectiveId}
                   onChange={(e) => setLinkedProjectId(e.target.value)}
@@ -1017,7 +1033,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   ))}
                 </select>
               </div>
-              <p className="text-[10px] text-stone">A task links to one or the other — picking here clears the other field.</p>
             </>
           )}
           {mode === "time_based" && linkedProjectId && parentTaskOptions.length > 0 && (
@@ -1032,8 +1047,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         {mode === "time_based" && (
           <div>
-            <label className={labelClass}>
+            <label className={`${labelClass} flex items-center gap-1.5`}>
               Review Required {!isEditing && <span className="text-terracotta">*</span>}
+              <InfoTip text="Yes locks — only Admin, Manager, CEO, or Founder can undo it. No stays changeable." />
             </label>
             <div className="flex gap-2">
               {([["yes", "Yes"], ["no", "No"]] as const).map(([value, label]) => (
@@ -1056,16 +1072,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 </button>
               ))}
             </div>
-            {reviewLocked ? (
-              <p className="mt-1 text-[10px] text-stone">
-                {reviewEditable
-                  ? "Locked at Yes — you can change it because of your role."
-                  : "Locked at Yes — only Admin, Manager, CEO, or Founder can change it."}
-              </p>
-            ) : (
-              <p className="mt-1 text-[10px] text-stone">
-                Yes locks — it can only be undone by Admin, Manager, CEO, or Founder. No stays changeable.
-              </p>
+            {reviewLocked && !reviewEditable && (
+              <p className="mt-1 text-[10px] text-stone">Locked at Yes.</p>
             )}
           </div>
         )}
@@ -1167,9 +1175,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       <Section title="Schedule">
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">
-            {mode === "time_based"
-              ? "Work span (optional) — its own hours make the daily time block on the Calendar"
-              : "Work span (optional) — the days this task runs across on the Calendar"}
+            <span className="flex items-center gap-1.5">Work span (optional)<InfoTip text="The days this task runs across. Its hours make the daily block on the Calendar." /></span>
           </p>
           <div className="flex gap-3">
             <div className="flex-1">
@@ -1248,7 +1254,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline — unrelated to the work span above, its own single time</p>
+          <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline<InfoTip text="Separate from the work span above — a single moment, not a range." /></p>
           <div>
             <label className={labelClass}>Due Date</label>
             <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={readOnly} className={inputClass} />
@@ -1257,7 +1263,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             <div>
               <label className="mb-1 block text-[10px] font-semibold text-walnut">Due Time (optional)</label>
               <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} disabled={readOnly} className={inputClass} />
-              <p className="mt-1 text-[10px] text-stone">Shows this deadline on the Calendar at this time — doesn&apos;t count toward blocked hours.</p>
             </div>
           )}
         </div>
