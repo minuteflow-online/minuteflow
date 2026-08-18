@@ -1,13 +1,14 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
-import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { sendTelegram, sendTelegramTo, telegramEnabled, esc } from "@/lib/telegram";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
 
-/** Matches the VPS crontab interval. Used to fire the missed-clock-out alert
- *  once, on the first run that sees a session go stale, rather than every run. */
-const CRON_INTERVAL_MS = 10 * 60 * 1000;
+/** How long after the warning DM a VA has to come back before the session is
+ *  closed. Measured from profiles.idle_warned_at, so any heartbeat in between
+ *  clears it and the countdown restarts from scratch. */
+const GRACE_MS = 15 * 60 * 1000;
 
 // How long a session heartbeat (sessions.updated_at, refreshed every 60s while a tab
 // is open) must be stale before we consider the session *possibly* idle. This is used
@@ -17,19 +18,31 @@ const STALE_THRESHOLD_MS = 15 * 60 * 1000;
 /**
  * GET /api/cron/idle-timeout
  *
- * REPORT-ONLY as of 2026-07-24. This endpoint no longer ends anything.
+ * Warn-then-close, reinstated 2026-08-18 at Toni's request. Read the history
+ * before touching the thresholds.
  *
  * The time model (authoritative): a SESSION (clock-in -> clock-out) is one
  * continuous span. TASKS only ever START — starting a new task hands off from the
  * previous one. A task may ONLY be ended by a task-switch or a logout, NEVER by
  * inactivity. A task with an end and no successor is a bug, not a fact.
  *
- * The previous version auto-closed time_logs rows and cleared sessions.active_task
- * when a heartbeat went stale, which read to the client as the system losing worked
- * time. It also gated that kill on extension_heartbeats.last_seen being fresh, which
- * failed for 9 of 10 VAs (stale/old extension versions), so the guard never protected
- * them. Both behaviours are removed. This route now only reports candidates so the
- * pattern stays observable in the cron log.
+ * An earlier version auto-closed time_logs and cleared sessions.active_task the
+ * moment a heartbeat went stale. It was made report-only on 2026-07-24 because
+ * it read to VAs as the system losing worked time, and because its safety guard
+ * keyed on extension_heartbeats.last_seen, which was stale for 9 of 10 VAs on
+ * old extension versions — so the guard never actually protected anyone.
+ *
+ * What is different now, and why this is not a repeat:
+ *   - Nobody is closed without warning. The first stale run only sets
+ *     idle_warned_at and DMs the VA, giving them a grace period to come back.
+ *   - The close only happens if they are STILL stale after that grace. Any
+ *     heartbeat in between clears the warning and nothing further happens.
+ *   - The trigger is the session heartbeat, not the extension. The old guard
+ *     failed precisely because it trusted extension state.
+ *   - Every forced close is announced to the VA and to the admin group, so a
+ *     wrong one surfaces immediately instead of turning up in payroll later.
+ *
+ * Requires profiles.telegram_chat_id and profiles.idle_warned_at.
  *
  * Secured by IDLE_TIMEOUT_CRON_SECRET (VPS crontab, every 10 min).
  */
@@ -71,40 +84,113 @@ export async function GET(request: NextRequest) {
 
   if (candidates.length > 0) {
     console.log(
-      `idle-timeout cron (REPORT-ONLY, no action taken): ${candidates.length} session(s) with a stale heartbeat`,
+      `idle-timeout cron: ${candidates.length} session(s) with a stale heartbeat`,
       candidates
     );
   }
 
-  // Alert on a likely missed clock-out. This cron runs every 10 minutes, so
-  // alerting on every stale session would repeat the same name indefinitely.
-  // Only the first detection window fires: heartbeats that went stale within
-  // the last cron interval, which each session passes through exactly once.
-  const freshlyStale = candidates.filter((c) => {
-    const age = Date.now() - new Date(c.last_heartbeat).getTime();
-    return age >= STALE_THRESHOLD_MS && age < STALE_THRESHOLD_MS + CRON_INTERVAL_MS;
-  });
+  // Anyone who came back clears their warning, so the grace period always
+  // measures one uninterrupted stretch of silence rather than accumulating
+  // across the day.
+  const staleIds = candidates.map((c) => c.user_id);
+  let clearQuery = supabase.from("profiles").update({ idle_warned_at: null }).not("idle_warned_at", "is", null);
+  if (staleIds.length > 0) clearQuery = clearQuery.not("id", "in", `(${staleIds.join(",")})`);
+  await clearQuery;
 
-  if (freshlyStale.length > 0 && telegramEnabled("submissions")) {
-    for (const c of freshlyStale) {
-      const { data: prof } = await supabase
-        .from("profiles")
-        .select("full_name, username")
-        .eq("id", c.user_id)
-        .single();
-      const who = prof?.full_name || prof?.username || "Someone";
-      const since = new Date(c.last_heartbeat).toLocaleTimeString("en-US", {
-        timeZone: ORG_TIMEZONE,
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      });
-      await sendTelegram(
-        "submissions",
-        `⚠️ <b>${esc(who)}</b> may have missed a clock-out — still clocked in with a task, no activity since ${since} ET`
+  const warned: string[] = [];
+  const closed: string[] = [];
+  const unreachable: string[] = [];
+
+  for (const c of candidates) {
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("full_name, username, telegram_chat_id, idle_warned_at")
+      .eq("id", c.user_id)
+      .single();
+    if (!prof) continue;
+
+    const who = prof.full_name || prof.username || "Someone";
+    const graceStarted = prof.idle_warned_at ? new Date(prof.idle_warned_at).getTime() : null;
+
+    // No way to reach them, so no way to warn them. Closing someone who never
+    // got the warning is the exact behaviour that made the old version unfair,
+    // so an unlinked VA is reported and left running.
+    if (!prof.telegram_chat_id) {
+      unreachable.push(who);
+      continue;
+    }
+
+    // First stale run for this stretch: warn only, never close.
+    if (!graceStarted) {
+      await supabase.from("profiles").update({ idle_warned_at: new Date().toISOString() }).eq("id", c.user_id);
+      warned.push(who);
+      await sendTelegramTo(
+        prof.telegram_chat_id,
+        `⏰ <b>Are you still there?</b>\n\nMinuteFlow has not seen activity on your session for ${Math.round(
+          STALE_THRESHOLD_MS / 60000
+        )} minutes. If you are still working, open MinuteFlow to keep your time running.\n\nIf nothing changes in the next ${Math.round(
+          GRACE_MS / 60000
+        )} minutes you will be clocked out automatically.`
+      );
+      continue;
+    }
+
+    // Still silent after the grace period — close the session.
+    if (Date.now() - graceStarted >= GRACE_MS) {
+      const now = new Date().toISOString();
+
+      if (c.log_id) {
+        const { data: log } = await supabase
+          .from("time_logs")
+          .select("start_time, end_time")
+          .eq("id", c.log_id)
+          .single();
+        // Only close a log that is genuinely still open, so a task the VA
+        // already ended by hand is never rewritten.
+        if (log && !log.end_time) {
+          await supabase
+            .from("time_logs")
+            .update({
+              end_time: now,
+              duration_ms: new Date(now).getTime() - new Date(log.start_time as string).getTime(),
+            })
+            .eq("id", c.log_id);
+        }
+      }
+
+      await supabase
+        .from("sessions")
+        .update({ clocked_in: false, clock_out_time: now, active_task: null, updated_at: now })
+        .eq("user_id", c.user_id);
+      await supabase.from("profiles").update({ idle_warned_at: null }).eq("id", c.user_id);
+      closed.push(who);
+
+      await sendTelegramTo(
+        prof.telegram_chat_id,
+        `⚪ <b>You have been clocked out</b>\n\nNo activity was seen after the warning, so MinuteFlow ended your session. If this was wrong, tell Toni — the time can be corrected.`
       );
     }
   }
 
-  return Response.json({ mode: "report-only", stopped: 0, candidates });
+  // Always tell the admin group about a forced close. A wrong one needs to be
+  // visible the same day, not discovered at payroll.
+  if (closed.length > 0 && telegramEnabled("submissions")) {
+    const at = new Date().toLocaleTimeString("en-US", {
+      timeZone: ORG_TIMEZONE,
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+    await sendTelegram(
+      "submissions",
+      `⚠️ <b>Forced clock-out</b> — ${esc(closed.join(", "))} at ${at} ET after no activity through the warning period.`
+    );
+  }
+
+  return Response.json({
+    warned: warned.length,
+    closed: closed.length,
+    unreachable: unreachable.length,
+    candidates,
+  });
 }

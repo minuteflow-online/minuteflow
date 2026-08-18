@@ -54,6 +54,40 @@ export function telegramEnabled(topic: TelegramTopic): boolean {
 }
 
 /**
+ * Post to one specific chat id rather than a topic. For direct messages to a
+ * person — a VA's own chat id from profiles.telegram_chat_id.
+ *
+ * Telegram will not let a bot open a conversation, so this only reaches people
+ * who have messaged the bot first. A VA who never did returns ok:false, which
+ * callers should treat as "not reachable", not as an error worth retrying.
+ */
+export async function sendTelegramTo(
+  chatId: string | number,
+  text: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (!BOT_TOKEN) return { ok: false, error: "TELEGRAM_BOT_TOKEN not set" };
+  if (!chatId) return { ok: false, error: "no chat id" };
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+      }),
+    });
+    if (!res.ok) return { ok: false, error: await res.text() };
+    return { ok: true };
+  } catch (err) {
+    console.error("telegram DM failed:", err);
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Post to the chat for `topic`. Best-effort: never throws, so a Telegram
  * outage can never fail the request that triggered the alert.
  *
