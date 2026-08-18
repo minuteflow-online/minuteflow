@@ -766,6 +766,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         const body: Record<string, unknown> = {
           task_name: taskName.trim(),
           account: account || null,
+          project: project || null,
           category: category || null,
           rate: Number(rate),
           start_date: startDate || null,
