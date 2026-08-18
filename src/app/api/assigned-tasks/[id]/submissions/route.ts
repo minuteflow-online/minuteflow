@@ -351,11 +351,14 @@ export async function POST(request: Request, { params }: RouteContext) {
       .eq("id", id);
   }
 
-  // Telegram alert for work a reviewer is expected to look at. Auto-outcome
-  // submissions are skipped: they close on submit and never enter the queue,
-  // so pinging about them is noise. Best-effort — the submission is already
-  // committed and must not fail on a Telegram problem.
-  if (messageType === "submission" && !autoStatus && telegramEnabled("submissions")) {
+  // Telegram alert on every submission, including the ones that close on
+  // submit — those still represent work handed in, and Toni wants to see them
+  // land. The auto-outcome is named in the message so a submission needing
+  // review is still distinguishable at a glance.
+  //
+  // Best-effort: the submission is already committed and must not fail on a
+  // Telegram problem.
+  if (messageType === "submission" && telegramEnabled("submissions")) {
     const { data: prof } = await admin
       .from("profiles")
       .select("full_name, username")
@@ -364,12 +367,19 @@ export async function POST(request: Request, { params }: RouteContext) {
     const who = prof?.full_name || prof?.username || "A VA";
     const where = [task.account, task.project].filter(Boolean).join(" / ");
 
+    const outcome =
+      autoStatus === "approved"
+        ? "Auto approved — no review needed"
+        : autoStatus === "completed"
+          ? "Logged — completes on submit"
+          : "Waiting for review";
+
     const lines = [
       `📤 <b>New submission</b> from ${esc(who)}`,
       `Task: ${esc(task.task_name ?? "a task")}`,
     ];
     if (where) lines.push(`Project: ${esc(where)}`);
-    lines.push("", "Review: https://minuteflow.click/admin");
+    lines.push(outcome, "", "Review: https://minuteflow.click/admin");
 
     await sendTelegram("submissions", lines.join("\n"));
   }
