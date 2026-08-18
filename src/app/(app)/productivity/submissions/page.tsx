@@ -180,6 +180,7 @@ export default function SubmissionsPage() {
   const [ownerMode, setOwnerMode] = useState<OwnerMode>("all");
   const [currentUserId, setCurrentUserId] = useState("");
   const [showTrash, setShowTrash] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
   // Every filter is multi-select; an empty set means "all".
   const [vaFilter, setVaFilter] = useState<Set<string>>(new Set());
@@ -317,35 +318,47 @@ export default function SubmissionsPage() {
     [load]
   );
 
-  /** Trashes or restores every submission on one task, from the card header. */
-  const trashThread = useCallback(
-    async (thread: Thread, restore: boolean) => {
-      const count = thread.items.length;
+  const handleSelectChange = useCallback((taskId: number, checked: boolean) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(taskId);
+      else next.delete(taskId);
+      return next;
+    });
+  }, []);
+
+  /** Trashes or restores every submission on the selected tasks. */
+  const trashSelected = useCallback(
+    async (restore: boolean) => {
+      const targets = items.filter(
+        (i) => i.task && selectedTaskIds.has(i.task.id)
+      );
+      const taskCount = selectedTaskIds.size;
       if (
         !restore &&
         !confirm(
-          `Move ${count} submission${count === 1 ? "" : "s"} on this task to trash?
+          `Move ${targets.length} submission${targets.length === 1 ? "" : "s"} across ${taskCount} task${taskCount === 1 ? "" : "s"} to trash?
 
 They can be restored from the Trash view.`
         )
       ) {
         return;
       }
-      setBusyId(thread.latest.id);
       try {
-        for (const item of thread.items) {
+        for (const item of targets) {
           if (!item.task) continue;
           await fetch(
             `/api/assigned-tasks/${item.task.id}/submissions?submissionId=${item.id}${restore ? "&restore=1" : ""}`,
             { method: "DELETE" }
           );
         }
+        setSelectedTaskIds(new Set());
         await load();
-      } finally {
-        setBusyId(null);
+      } catch {
+        alert("Something went wrong — some submissions may not have moved.");
       }
     },
-    [load]
+    [items, selectedTaskIds, load]
   );
 
   /** Permanently removes everything in the trash. Founder only, and final. */
@@ -705,6 +718,26 @@ This cannot be undone.`
         </span>
       </div>
 
+      {selectedTaskIds.size > 0 && (
+        <div className="mb-3 flex items-center gap-3 rounded-xl border border-terracotta/30 bg-terracotta-soft px-3 py-2">
+          <span className="text-[11px] font-semibold text-terracotta">
+            {selectedTaskIds.size} selected
+          </span>
+          <button
+            onClick={() => void trashSelected(showTrash)}
+            className="rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840]"
+          >
+            {showTrash ? "Restore" : "Move to trash"}
+          </button>
+          <button
+            onClick={() => setSelectedTaskIds(new Set())}
+            className="ml-auto text-[10px] font-semibold text-stone transition-colors hover:text-espresso"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       {view === "timeline" ? (
         <TimelineView
           byDay={threadsByDay}
@@ -717,8 +750,8 @@ This cannot be undone.`
           roundDurations={roundDurations}
           reviewState={reviewState}
           showTrash={showTrash}
-          onTrash={trashSubmission}
-          onTrashThread={trashThread}
+          selectedTaskIds={selectedTaskIds}
+          onSelectChange={handleSelectChange}
         />
       ) : (
         <CalendarView
@@ -877,19 +910,12 @@ function SubmissionEntry({
   index,
   roundMs,
   timezone,
-  canTrash,
-  trashed,
-  onTrash,
 }: {
   item: FeedItem;
   index: number;
   /** Time logged during this revision round, if any was tracked. */
   roundMs?: number;
   timezone: string;
-  /** Admin and above; everyone else can't trash a record they may have written. */
-  canTrash: boolean;
-  trashed: boolean;
-  onTrash: (item: FeedItem, restore: boolean) => void;
 }) {
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
   const time = new Date(item.created_at).toLocaleString("en-US", {
@@ -951,15 +977,6 @@ function SubmissionEntry({
         <span className="text-[10px] text-stone/80">
           {who} · {time}
         </span>
-        {canTrash && (
-          <button
-            onClick={() => onTrash(item, Boolean(trashed))}
-            className="text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
-            title={trashed ? "Restore this submission" : "Move to trash — nothing is destroyed"}
-          >
-            {trashed ? "Restore" : "Trash"}
-          </button>
-        )}
         {late === false && (
           <span
             className="rounded-full border border-sage/20 bg-sage-soft px-2 py-[2px] text-[10px] font-semibold text-sage"
@@ -1033,8 +1050,8 @@ function ThreadCard({
   state,
   timezone,
   trashed,
-  onTrash,
-  onTrashThread,
+  selected,
+  onSelectChange,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -1047,8 +1064,8 @@ function ThreadCard({
   state?: string;
   timezone: string;
   trashed: boolean;
-  onTrash: (item: FeedItem, restore: boolean) => void;
-  onTrashThread: (thread: Thread, restore: boolean) => void;
+  selected: boolean;
+  onSelectChange: (taskId: number, checked: boolean) => void;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -1082,6 +1099,17 @@ function ThreadCard({
     <div className="rounded-lg border border-sand bg-white px-3 py-2.5">
       {/* Task Name | R# Task Type | Total time | Approve Revise */}
       <div className="flex items-center gap-2">
+        {/* Selection drives the bulk trash action. One checkbox per card beats
+            a Trash link on every row, which was noise on rows nobody was binning. */}
+        {canReview && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={(e) => onSelectChange(thread.taskId, e.target.checked)}
+            className="shrink-0 cursor-pointer accent-terracotta"
+            aria-label="Select this task's submissions"
+          />
+        )}
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -1110,21 +1138,6 @@ function ThreadCard({
             {scopeLabel(head)}
           </span>
         </button>
-
-        {canReview && (
-          <button
-            onClick={() => onTrashThread(thread, trashed)}
-            disabled={busy}
-            className="shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta disabled:opacity-50"
-            title={
-              trashed
-                ? "Restore every submission on this task"
-                : "Move this task's submissions to trash"
-            }
-          >
-            {trashed ? "Restore" : "Trash"}
-          </button>
-        )}
 
         {totalMs > 0 && (
           <span
@@ -1200,9 +1213,6 @@ function ThreadCard({
                 index={idx}
                 roundMs={item.message_type === "submission" ? rounds[String(idx)] : undefined}
                 timezone={timezone}
-                canTrash={canReview}
-                trashed={trashed}
-                onTrash={onTrash}
               />
             );
           })}
@@ -1276,8 +1286,8 @@ function TimelineView({
   roundDurations,
   reviewState,
   showTrash,
-  onTrash,
-  onTrashThread,
+  selectedTaskIds,
+  onSelectChange,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -1289,8 +1299,8 @@ function TimelineView({
   roundDurations: Record<string, Record<string, number>>;
   reviewState: Record<string, string>;
   showTrash: boolean;
-  onTrash: (item: FeedItem, restore: boolean) => void;
-  onTrashThread: (thread: Thread, restore: boolean) => void;
+  selectedTaskIds: Set<number>;
+  onSelectChange: (taskId: number, checked: boolean) => void;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -1325,8 +1335,8 @@ function TimelineView({
                 state={reviewState[String(thread.taskId)]}
                 timezone={orgTimezone}
                 trashed={showTrash}
-                onTrash={onTrash}
-                onTrashThread={onTrashThread}
+                selected={selectedTaskIds.has(thread.taskId)}
+                onSelectChange={onSelectChange}
               />
             ))}
         </DayGroup>
