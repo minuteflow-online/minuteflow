@@ -228,7 +228,7 @@ export async function POST(request: Request, { params }: RouteContext) {
 
   const { data: task, error: taskError } = await admin
     .from("assigned_tasks")
-    .select("id")
+    .select("id, category, review_required")
     .eq("id", id)
     .single();
   if (taskError || !task) {
@@ -314,15 +314,13 @@ export async function POST(request: Request, { params }: RouteContext) {
   let autoStatus: string | null = null;
 
   if (messageType === "submission") {
-    const { data: taskRow } = await admin
-      .from("assigned_tasks")
-      .select("category, review_required")
-      .eq("id", id)
-      .single();
-
-    if (taskRow && AUTO_COMPLETE_CATEGORIES.includes((taskRow.category ?? "").trim())) {
+    // Reuses the row fetched for the existence check above. The previous
+    // version issued a second lookup and ignored its error, so any failure
+    // there silently skipped the whole auto-outcome — which is exactly how
+    // tasks 314 and 315 ended up sitting in the queue.
+    if (AUTO_COMPLETE_CATEGORIES.includes((task.category ?? "").trim())) {
       autoStatus = "completed";
-    } else if (taskRow && taskRow.review_required === false) {
+    } else if (task.review_required === false) {
       autoStatus = "approved";
       await admin.from("task_submissions").insert({
         assigned_task_id: Number(id),
