@@ -787,7 +787,9 @@ export default function TaskListPage() {
     setFilterObjectives([]);
     setFilterDueStart("");
     setFilterDueEnd("");
-    setTaskNameSearch("");
+    // taskNameSearch (the typed title text) intentionally survives a tab
+    // switch — clearing it made re-selecting the same title across tabs
+    // confusing, since it vanished even when nothing else was picked.
   }, [taskView]);
 
   useEffect(() => {
