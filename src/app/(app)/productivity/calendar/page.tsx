@@ -38,6 +38,7 @@ type TeamMember = {
   shift_start?: string | null;
   shift_end?: string | null;
   weekly_budget_limit?: number | null;
+  monthly_budget_limit?: number | null;
 };
 
 // Same derivation as FixedPayTasksPanel's isHybrid/isPerTaskVa: position
@@ -186,12 +187,13 @@ export default function ProductivityCalendarPage() {
   const [timeOff, setTimeOff] = useState<Array<{ user_id: string; start_date: string; end_date: string; start_time: string | null; end_time: string | null }>>([]);
 
   const [showFilters, setShowFilters] = useState(false);
-  // Day view has two faces: the hour grid, and an Hours table that answers
+  // Day view has two faces: the Time Block grid, and a Duration Block table that answers
   // "how long is each of these" without caring when they sit.
   const [dayTab, setDayTab] = useState<"grid" | "hours">("grid");
   // Week gets the same Grid/Hours split as Day. Separate state so switching
   // views doesn't drag one view's choice onto the other.
   const [weekTab, setWeekTab] = useState<"grid" | "hours">("grid");
+  const [rangeTab, setRangeTab] = useState<"grid" | "hours">("grid");
   const [limitNotice, setLimitNotice] = useState<string | null>(null);
   const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
   const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
@@ -892,14 +894,14 @@ export default function ProductivityCalendarPage() {
     return `${hrs}h${mins > 0 ? ` ${mins}m` : ""}`;
   }
 
-  // The Hours tab: the same day's work as the grid, but as a list of how long
+  // The Duration Block tab: the same day's work as the grid, but as a list of how long
   // each task takes rather than where it sits. Sorted longest first — the point
   // of the view is how the day is spent, not the order it happens in.
   // Two sources, never both for one task: a block contributes its own length,
   // and a task with no block contributes planned_minutes. The editor clears one
   // when you set the other, so nothing is counted twice.
   // Date-parameterised so Week and Month can ask the same question per day that
-  // the Day view asks about selectedDate — the Hours tab, the day badges and the
+  // the Day view asks about selectedDate — the Duration Block tab, the day badges and the
   // budget all read from this one place rather than each re-deriving a total.
   const durationsForDate = useCallback(
     (dateStr: string) => {
@@ -1083,6 +1085,24 @@ export default function ProductivityCalendarPage() {
   }, [teamMembers, dayUserId, weekDates, durationsForDate]);
 
   const weekBudgetSpent = Boolean(weekBudget && weekBudget.remainingMinutes <= 0);
+
+  // The third period. monthly_budget_limit is already on the profile and is
+  // read as HOURS for time-based VAs (see lib/budget) — the same unit
+  // weekly_budget_limit uses here.
+  //
+  // Counted over the days that actually belong to the month, not the 42-cell
+  // grid: that grid pads with the tail of the previous month and the head of
+  // the next, and totalling those would bill this month for other months' work.
+  const monthBudget = useMemo(() => {
+    const member = teamMembers.find((m) => m.id === dayUserId);
+    const limitHours = member?.monthly_budget_limit ?? null;
+    if (limitHours == null || limitHours <= 0) return null;
+    const usedMinutes = monthGrid
+      .filter((d) => Number(d.slice(5, 7)) - 1 === monthMonth)
+      .reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0);
+    const budgetMinutes = Math.round(limitHours * 60);
+    return { budgetMinutes, usedMinutes, remainingMinutes: budgetMinutes - usedMinutes };
+  }, [teamMembers, dayUserId, monthGrid, monthMonth, durationsForDate]);
 
   const dayTotalLabel = useMemo(() => {
     if (!dayBudget) return `${formatDuration(dayDurations.totalMinutes)} blocked`;
@@ -1299,6 +1319,81 @@ export default function ProductivityCalendarPage() {
                   </div>
                 </div>
               </div>
+  );
+
+  // The same work as the grid, but as lengths rather than positions. Grouped by
+  // day rather than pooled into one list: "how is this span distributed" is the
+  // question, and a flat sorted list answers a different one.
+  //
+  // Shared by Week and Range so the two can't drift, and so Range gets the tab
+  // at all — it was only ever wired into Week.
+  const renderDurationList = (dates: string[], totalLabel: string) => (
+    <div className="rounded-lg border border-sand overflow-hidden">
+      <div className="flex items-center justify-between gap-2 border-b border-sand bg-parchment px-3 py-2">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">{totalLabel}</span>
+        <span className="text-[13px] font-bold text-espresso">
+          {formatDuration(dates.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0))}
+        </span>
+      </div>
+      <div className="divide-y divide-sand">
+        {dates.map((dateStr) => {
+          const { rows, totalMinutes } = durationsForDate(dateStr);
+          const { weekday, day } = formatDayShort(dateStr);
+          const badge = budgetBadgeFor(dateStr, "hide");
+          // Empty days stay in the list. Dropping them made the span look
+          // shorter than it is and hid exactly the thing you scan this view
+          // for — which days are still free.
+          return (
+            <div key={dateStr}>
+              <button
+                type="button"
+                onClick={() => openDay(dateStr)}
+                className="flex w-full items-center justify-between gap-2 bg-cream/50 px-3 py-1.5 text-left transition-colors hover:bg-cream cursor-pointer"
+              >
+                <span className="text-[11px] font-bold uppercase tracking-wide text-walnut">
+                  {weekday} {day}
+                </span>
+                <span className="flex items-center gap-2">
+                  {badge && (
+                    <span className={`rounded-full border px-1.5 text-[9px] font-semibold ${budgetBadgeClass(badge)}`}>
+                      {badge.text}
+                    </span>
+                  )}
+                  <span className={`text-[12px] font-semibold ${rows.length === 0 ? "text-stone" : "text-espresso"}`}>
+                    {rows.length === 0 ? "Nothing blocked" : formatDuration(totalMinutes)}
+                  </span>
+                </span>
+              </button>
+              {rows.length > 0 && (
+                <div className="space-y-1 p-2">
+                  {rows.map((row) => (
+                    <div
+                      key={`${row.source}-${row.id}`}
+                      className={`flex items-center justify-between gap-3 rounded-md border px-2 py-1.5 shadow-sm ${categoryBlockClasses(row.category)}`}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-[12px] font-semibold">{row.name}</span>
+                        <span className="block truncate text-[10px] opacity-80">
+                          {row.account}
+                          {row.source === "fixed"
+                            ? row.account
+                              ? " · Output Based"
+                              : "Output Based"
+                            : !row.timed && (row.account ? " · no set time" : "No set time")}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[11px] font-semibold">
+                        {formatDuration(row.minutes)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 
   if (!ready) {
@@ -1608,7 +1703,22 @@ export default function ProductivityCalendarPage() {
             >
               &larr;
             </button>
-            <h2 className="text-sm font-bold text-espresso">{monthLabel}</h2>
+            <div className="flex flex-col items-center gap-0.5">
+              <h2 className="text-sm font-bold text-espresso">{monthLabel}</h2>
+              {monthBudget && (
+                <span
+                  className={`text-[11px] font-bold px-2.5 py-[2px] rounded-full border ${
+                    monthBudget.remainingMinutes < 0
+                      ? "bg-terracotta-soft text-terracotta border-terracotta/30"
+                      : "bg-amber-soft text-amber border-amber/30"
+                  }`}
+                >
+                  {monthBudget.remainingMinutes < 0
+                    ? `${formatDuration(-monthBudget.remainingMinutes)} over ${formatDuration(monthBudget.budgetMinutes)} this month`
+                    : `${formatDuration(monthBudget.remainingMinutes)} left of ${formatDuration(monthBudget.budgetMinutes)} this month`}
+                </span>
+              )}
+            </div>
             <button
               type="button"
               onClick={goToNextMonth}
@@ -1712,7 +1822,7 @@ export default function ProductivityCalendarPage() {
                   weekTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
                 }`}
               >
-                {tab === "grid" ? "Grid" : "Hours"}
+                {tab === "grid" ? "Time Block" : "Duration Block"}
               </button>
             ))}
           </div>
@@ -1760,72 +1870,7 @@ export default function ProductivityCalendarPage() {
           {loadingDay ? (
             <div className="py-8 text-center text-xs text-stone">Loading…</div>
           ) : weekTab === "hours" ? (
-            // The week's work as lengths rather than positions. Grouped by day
-            // rather than pooled into one list: "how is the week distributed"
-            // is the question a week view gets asked, and a flat sorted list
-            // answers a different one.
-            <div className="rounded-lg border border-sand overflow-hidden">
-              <div className="flex items-center justify-between gap-2 border-b border-sand bg-parchment px-3 py-2">
-                <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">Week total</span>
-                <span className="text-[13px] font-bold text-espresso">
-                  {formatDuration(weekGrid.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0))}
-                </span>
-              </div>
-              {weekGrid.every((d) => durationsForDate(d).rows.length === 0) ? (
-                <p className="px-3 py-6 text-center text-[12px] text-stone">Nothing blocked this week yet.</p>
-              ) : (
-                <div className="divide-y divide-sand">
-                  {weekGrid.map((dateStr) => {
-                    const { rows, totalMinutes } = durationsForDate(dateStr);
-                    if (rows.length === 0) return null;
-                    const { weekday, day } = formatDayShort(dateStr);
-                    const badge = budgetBadgeFor(dateStr, "hide");
-                    return (
-                      <div key={dateStr}>
-                        <button
-                          type="button"
-                          onClick={() => openDay(dateStr)}
-                          className="flex w-full items-center justify-between gap-2 bg-cream/50 px-3 py-1.5 text-left transition-colors hover:bg-cream cursor-pointer"
-                        >
-                          <span className="text-[11px] font-bold uppercase tracking-wide text-walnut">
-                            {weekday} {day}
-                          </span>
-                          <span className="flex items-center gap-2">
-                            {badge && (
-                              <span className={`rounded-full border px-1.5 text-[9px] font-semibold ${budgetBadgeClass(badge)}`}>
-                                {badge.text}
-                              </span>
-                            )}
-                            <span className="text-[12px] font-semibold text-espresso">{formatDuration(totalMinutes)}</span>
-                          </span>
-                        </button>
-                        <div className="space-y-1 p-2">{rows.map((row) => (
-                          <div
-                            key={`${row.source}-${row.id}`}
-                            className={`flex items-center justify-between gap-3 rounded-md border px-2 py-1.5 shadow-sm ${categoryBlockClasses(row.category)}`}
-                          >
-                            <span className="min-w-0">
-                              <span className="block truncate text-[12px] font-semibold">{row.name}</span>
-                              <span className="block truncate text-[10px] opacity-80">
-                                {row.account}
-                                {row.source === "fixed"
-                                  ? row.account
-                                    ? " · Output Based"
-                                    : "Output Based"
-                                  : !row.timed && (row.account ? " · no set time" : "No set time")}
-                              </span>
-                            </span>
-                            <span className="shrink-0 text-[11px] font-semibold">
-                              {formatDuration(row.minutes)}
-                            </span>
-                          </div>
-                        ))}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            renderDurationList(weekGrid, "Week total")
           ) : (
             renderTimeGrid(weekGrid)
           )}
@@ -1834,6 +1879,20 @@ export default function ProductivityCalendarPage() {
 
       {viewMode === "range" && (
         <div className="rounded-xl border border-sand bg-white p-4">
+          <div className="mb-3 mx-auto flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
+            {(["grid", "hours"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setRangeTab(tab)}
+                className={`px-4 py-1.5 transition-colors ${
+                  rangeTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                }`}
+              >
+                {tab === "grid" ? "Time Block" : "Duration Block"}
+              </button>
+            ))}
+          </div>
           <div className="mb-3 flex flex-col items-center gap-0.5">
             <h2 className="text-sm font-bold text-espresso">
               {formatDayLabel(rangeGrid[0])} – {formatDayLabel(rangeGrid[rangeGrid.length - 1])}
@@ -1857,6 +1916,8 @@ export default function ProductivityCalendarPage() {
 
           {loadingDay ? (
             <div className="py-8 text-center text-xs text-stone">Loading…</div>
+          ) : rangeTab === "hours" ? (
+            renderDurationList(rangeGrid, "Range total")
           ) : (
             renderTimeGrid(rangeGrid)
           )}
@@ -1886,7 +1947,7 @@ export default function ProductivityCalendarPage() {
                       dayTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
                     }`}
                   >
-                    {tab === "grid" ? "Grid" : "Hours"}
+                    {tab === "grid" ? "Time Block" : "Duration Block"}
                   </button>
                 ))}
               </div>
