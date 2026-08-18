@@ -1359,12 +1359,18 @@ export default function ProductivityCalendarPage() {
               </div>
   );
 
-  // The same work as the grid, but as lengths rather than positions. Grouped by
-  // day rather than pooled into one list: "how is this span distributed" is the
-  // question, and a flat sorted list answers a different one.
+  // The same work the Time Block grid shows, as lengths rather than positions.
   //
-  // Shared by Week and Range so the two can't drift, and so Range gets the tab
-  // at all — it was only ever wired into Week.
+  // Laid out in the SAME shape as that grid: one column per day, not one row.
+  // It was a stacked list, which meant switching tabs re-oriented the whole week
+  // and you had to re-find the day you were looking at. Columns keep Monday
+  // where Monday was.
+  //
+  // Empty days keep their column. Dropping them made a span look shorter than
+  // it is and hid the thing this view is scanned for — which days are free.
+  //
+  // Shared by Week and Range, so the two can't drift and Range gets the tab at
+  // all; it was only ever wired into Week.
   const renderDurationList = (dates: string[], totalLabel: string) => (
     <div className="rounded-lg border border-sand overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-sand bg-parchment px-3 py-2">
@@ -1373,63 +1379,66 @@ export default function ProductivityCalendarPage() {
           {formatDuration(dates.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0))}
         </span>
       </div>
-      <div className="divide-y divide-sand">
-        {dates.map((dateStr) => {
-          const { rows, totalMinutes } = durationsForDate(dateStr);
-          const { weekday, day } = formatDayShort(dateStr);
-          const badge = budgetBadgeFor(dateStr, "hide");
-          // Empty days stay in the list. Dropping them made the span look
-          // shorter than it is and hid exactly the thing you scan this view
-          // for — which days are still free.
-          return (
-            <div key={dateStr}>
-              <button
-                type="button"
-                onClick={() => openDay(dateStr)}
-                className="flex w-full items-center justify-between gap-2 bg-cream/50 px-3 py-1.5 text-left transition-colors hover:bg-cream cursor-pointer"
-              >
-                <span className="text-[11px] font-bold uppercase tracking-wide text-walnut">
-                  {weekday} {day}
-                </span>
-                <span className="flex items-center gap-2">
+      <div className="overflow-x-auto">
+        <div
+          className="grid divide-x divide-sand"
+          style={{
+            minWidth: Math.max(760, dates.length * 130),
+            gridTemplateColumns: `repeat(${dates.length}, minmax(120px, 1fr))`,
+          }}
+        >
+          {dates.map((dateStr) => {
+            const { rows, totalMinutes } = durationsForDate(dateStr);
+            const { weekday, day } = formatDayShort(dateStr);
+            const isToday = dateStr === todayStr;
+            const badge = budgetBadgeFor(dateStr, "hide");
+            return (
+              <div key={dateStr} className="flex min-w-0 flex-col">
+                <button
+                  type="button"
+                  onClick={() => openDay(dateStr)}
+                  className={`flex flex-col items-center gap-0.5 border-b border-sand px-1 py-1.5 transition-colors hover:bg-cream cursor-pointer ${
+                    isToday ? "bg-terracotta-soft" : "bg-cream/50"
+                  }`}
+                >
+                  <span className="text-[9px] font-semibold uppercase tracking-wide text-walnut">{weekday}</span>
+                  <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
+                  <span className={`text-[10px] font-semibold ${rows.length === 0 ? "text-stone" : "text-espresso"}`}>
+                    {rows.length === 0 ? "—" : formatDuration(totalMinutes)}
+                  </span>
                   {badge && (
-                    <span className={`rounded-full border px-1.5 text-[9px] font-semibold ${budgetBadgeClass(badge)}`}>
+                    <span className={`rounded-full border px-1.5 text-[9px] font-semibold leading-tight ${budgetBadgeClass(badge)}`}>
                       {badge.text}
                     </span>
                   )}
-                  <span className={`text-[12px] font-semibold ${rows.length === 0 ? "text-stone" : "text-espresso"}`}>
-                    {rows.length === 0 ? "Nothing blocked" : formatDuration(totalMinutes)}
-                  </span>
-                </span>
-              </button>
-              {rows.length > 0 && (
-                <div className="space-y-1 p-2">
-                  {rows.map((row) => (
-                    <div
-                      key={`${row.source}-${row.id}`}
-                      className={`flex items-center justify-between gap-3 rounded-md border px-2 py-1.5 shadow-sm ${categoryBlockClasses(row.category)}`}
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-[12px] font-semibold">{row.name}</span>
-                        <span className="block truncate text-[10px] opacity-80">
-                          {row.account}
+                </button>
+                <div className="min-h-[60px] space-y-1 p-1.5">
+                  {rows.length === 0 ? (
+                    <p className="pt-2 text-center text-[10px] text-stone/70">Nothing blocked</p>
+                  ) : (
+                    rows.map((row) => (
+                      <div
+                        key={`${row.source}-${row.id}`}
+                        title={`${row.name}${row.account ? " — " + row.account : ""} · ${formatDuration(row.minutes)}`}
+                        className={`rounded-md border px-1.5 py-1 shadow-sm ${categoryBlockClasses(row.category)}`}
+                      >
+                        <p className="truncate text-[11px] font-semibold leading-tight">{row.name}</p>
+                        <p className="truncate text-[9px] opacity-80">
+                          {formatDuration(row.minutes)}
                           {row.source === "fixed"
-                            ? row.account
-                              ? " · Output Based"
-                              : "Output Based"
-                            : !row.timed && (row.account ? " · no set time" : "No set time")}
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-[11px] font-semibold">
-                        {formatDuration(row.minutes)}
-                      </span>
-                    </div>
-                  ))}
+                            ? " · Output Based"
+                            : !row.timed
+                            ? " · no set time"
+                            : ""}
+                        </p>
+                      </div>
+                    ))
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
