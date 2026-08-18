@@ -15,9 +15,9 @@ const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progres
 // VA_EDITABLE_STATUSES state — once admin has moved it into review/payroll
 // (revision_needed/completed/cancelled/paid), the rate and details are
 // locked so a VA can't retroactively change what they're being paid for.
-const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "project_id", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date", "end_date"]);
+const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "project_id", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date", "end_date", "planned_minutes"]);
 const TASK_SELECT =
-  "id, task_name, account, category, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
+  "id, task_name, account, category, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -93,6 +93,15 @@ function normalizeDate(value: unknown): string | null {
   const date = new Date(text);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString().slice(0, 10);
+}
+
+// Whole minutes, matching assigned_tasks.planned_minutes. Zero or unparseable
+// clears the estimate rather than storing a meaningless 0.
+function normalizePlannedMinutes(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const minutes = Math.round(Number(value));
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  return minutes;
 }
 
 async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: FixedPayTaskWithClaimer[]) {
@@ -190,6 +199,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if ("start_date" in body) updates.start_date = normalizeDate(body.start_date);
       if ("due_date" in body) updates.due_date = normalizeDate(body.due_date);
       if ("end_date" in body) updates.end_date = normalizeDate(body.end_date);
+      if ("planned_minutes" in body) updates.planned_minutes = normalizePlannedMinutes(body.planned_minutes);
     }
 
     const { data, error } = await admin

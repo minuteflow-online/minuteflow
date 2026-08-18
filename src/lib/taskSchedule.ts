@@ -339,3 +339,42 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
     })
     .filter((t): t is RawTask => Boolean(t.id && t.task_name));
 }
+
+/**
+ * "2h", "90m", "1h 30m", "1.5h", "45" -> minutes. Null when it can't be read,
+ * which is also how an empty box reads, so the caller treats both as "not set".
+ * Deliberately forgiving about how people actually type a duration.
+ *
+ * Lives here rather than in TaskEditor because the recurring-template form has
+ * its own hand-rolled fields and needs to read durations identically — two
+ * parsers would drift, and "2h" meaning different things on two screens is
+ * exactly the kind of divergence that's hard to notice.
+ */
+export function parseDurationToMinutes(input: string): number | null {
+  const text = input.trim().toLowerCase();
+  if (!text) return null;
+  const hm = text.match(/^(\d+(?:\.\d+)?)\s*h(?:ours?)?(?:\s*(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?)?$/);
+  if (hm) {
+    const minutes = Math.round(Number(hm[1]) * 60 + (hm[2] ? Number(hm[2]) : 0));
+    return minutes > 0 ? minutes : null;
+  }
+  const m = text.match(/^(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?$/);
+  if (m) {
+    const minutes = Math.round(Number(m[1]));
+    return minutes > 0 ? minutes : null;
+  }
+  const bare = text.match(/^(\d+(?:\.\d+)?)$/);
+  if (bare) {
+    const minutes = Math.round(Number(bare[1]));
+    return minutes > 0 ? minutes : null;
+  }
+  return null;
+}
+
+/** Minutes back to the shorthand the field accepts, for prefilling. */
+export function formatMinutesInput(minutes: number): string {
+  const hrs = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hrs === 0) return `${mins}m`;
+  return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`;
+}

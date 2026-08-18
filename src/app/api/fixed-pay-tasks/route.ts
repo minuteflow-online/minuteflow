@@ -13,7 +13,7 @@ const TASK_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "su
 // Cancelled, and Paid are review/payroll actions — admin only.
 const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progress", "submitted"]);
 const TASK_SELECT =
-  "id, task_name, account, category, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
+  "id, task_name, account, category, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -79,6 +79,16 @@ function normalizeDate(value: unknown): string | null {
   const date = new Date(text);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString().slice(0, 10);
+}
+
+// How long the task takes when it doesn't need a particular time. Stored as
+// whole minutes, same as assigned_tasks.planned_minutes; anything absent, zero
+// or unparseable clears it rather than storing a bogus 0-minute estimate.
+function normalizePlannedMinutes(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const minutes = Math.round(Number(value));
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  return minutes;
 }
 
 function matchesTaskView(
@@ -225,6 +235,7 @@ export async function POST(request: Request) {
       start_date: normalizeDate(body.start_date),
       due_date: normalizeDate(body.due_date),
       end_date: normalizeDate(body.end_date),
+      planned_minutes: normalizePlannedMinutes(body.planned_minutes),
       assigned_to: isAdminOrManager ? normalizeText(body.assigned_to) : null,
       assigned_by: isAdminOrManager ? normalizeText(body.assigned_by) : null,
       is_active: isAdminOrManager ? body.is_active !== false : true,

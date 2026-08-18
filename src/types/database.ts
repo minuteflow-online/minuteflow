@@ -578,6 +578,7 @@ export interface RecurringTaskTemplate {
   task_notes?: string | null;
   instructions?: string | null;
   instructions_locked?: boolean;
+  planned_minutes?: number | null;
   start_date?: string | null;
   assigned_to: string | null;
   assigned_to_ids?: string[] | null;
@@ -688,6 +689,10 @@ export interface FixedPayTaskWithClaimer {
   start_date: string | null;
   due_date: string | null;
   end_date: string | null;
+  /** How long the task takes, when it doesn't need a particular time. Output
+   *  Based work has no start_time/end_time to occupy a slot, so this is the
+   *  only length it carries. */
+  planned_minutes: number | null;
   project_id: string | null;
   assigned_to: string | null;
   assigned_by: string | null;

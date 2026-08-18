@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { countWords } from "@/lib/utils";
-import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
+import { CATEGORY_OPTIONS, parseDurationToMinutes, formatMinutesInput } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
@@ -67,6 +67,7 @@ interface FormState {
   task_notes: string;
   instructions: string;
   instructions_locked: boolean;
+  planned_duration: string;
   assigned_to_ids: string[];
   recurrence_type: RecurrenceType;
   is_active: boolean;
@@ -164,6 +165,7 @@ function defaultForm(): FormState {
     task_notes: "",
     instructions: "",
     instructions_locked: false,
+    planned_duration: "",
     assigned_to_ids: [],
     recurrence_type: "daily",
     is_active: true,
@@ -193,6 +195,7 @@ function templateToForm(
     task_notes: template.task_notes ?? "",
     instructions: template.instructions ?? "",
     instructions_locked: Boolean(template.instructions_locked),
+    planned_duration: template.planned_minutes != null ? formatMinutesInput(Number(template.planned_minutes)) : "",
     assigned_to_ids: assignedToIds,
     recurrence_type: (["daily","weekly","biweekly","monthly","every_2_months","every_3_months"].includes(template.recurrence_type)
       ? template.recurrence_type
@@ -558,6 +561,9 @@ export default function RecurringTemplatesManager({
         task_notes: form.task_notes.trim() || null,
         instructions: form.instructions.trim() || null,
         instructions_locked: form.instructions_locked,
+        // Copied onto each generated task by the recurring-tasks cron, so a
+        // repeating job carries its own estimate instead of arriving blank.
+        planned_minutes: parseDurationToMinutes(form.planned_duration),
         start_date: form.start_date || null,
         assigned_by: form.assigned_by_id || null,
         assigned_to_ids: form.assigned_to_ids,
@@ -1128,6 +1134,24 @@ export default function RecurringTemplatesManager({
                     onChange={(e) => setForm((prev) => ({ ...prev, start_date: e.target.value }))}
                     className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
                   />
+                </div>
+
+                {/* Recurring templates never take specific hours — the cron
+                    stamps a due date, not a time slot — so this is the duration
+                    half only, the same field the task editor offers. */}
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Duration</label>
+                  <input
+                    value={form.planned_duration}
+                    onChange={(e) => setForm((prev) => ({ ...prev, planned_duration: e.target.value }))}
+                    placeholder="2h, 90m, 1h 30m"
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
+                  />
+                  <p className="mt-1 text-[10px] text-stone">
+                    {parseDurationToMinutes(form.planned_duration) != null
+                      ? `${parseDurationToMinutes(form.planned_duration)} minutes — carried onto every task this creates.`
+                      : "How long each generated task takes. Leave empty if it doesn't matter."}
+                  </p>
                 </div>
 
                 <div>

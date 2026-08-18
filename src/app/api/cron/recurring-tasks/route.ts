@@ -14,6 +14,7 @@ type TemplateRow = {
   task_notes?: string | null;
   instructions?: string | null;
   instructions_locked?: boolean;
+  planned_minutes?: number | null;
   start_date?: string | null;
   assigned_to: string | null;
   assigned_to_ids?: string[] | null;
@@ -188,6 +189,10 @@ async function handleCron(request: NextRequest) {
         category: template.category,
         task_detail: template.task_detail ?? template.description,
         task_notes: template.task_notes,
+        // Carried onto every generated task, so a recurring job says how long
+        // it takes the same way a one-off does. Without it, anything spawned
+        // from a template arrived with no duration no matter who it went to.
+        planned_minutes: template.planned_minutes ?? null,
         due_date: tomorrow,
         assigned_by: template.assigned_by,
         instructions: template.instructions,

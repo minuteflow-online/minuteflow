@@ -4,7 +4,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useSt
 import { countWords } from "@/lib/utils";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { createClient } from "@/lib/supabase/client";
-import { autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay } from "@/lib/taskSchedule";
+import { autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay, parseDurationToMinutes, formatMinutesInput } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -51,40 +51,6 @@ function computeHourlyEquivalent(durationValue: string, unit: "hours" | "minutes
   if (!Number.isFinite(raw) || raw <= 0 || hourlyRate == null) return null;
   const hours = unit === "hours" ? raw : raw / 60;
   return hours * hourlyRate;
-}
-
-/**
- * "2h", "90m", "1h 30m", "1.5h", "45" -> minutes. Null when it can't be read,
- * which is also how an empty box reads, so the caller treats both as "not set".
- * Deliberately forgiving about how people actually type a duration.
- */
-function parseDurationToMinutes(input: string): number | null {
-  const text = input.trim().toLowerCase();
-  if (!text) return null;
-  const hm = text.match(/^(\d+(?:\.\d+)?)\s*h(?:ours?)?(?:\s*(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?)?$/);
-  if (hm) {
-    const minutes = Math.round(Number(hm[1]) * 60 + (hm[2] ? Number(hm[2]) : 0));
-    return minutes > 0 ? minutes : null;
-  }
-  const m = text.match(/^(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?$/);
-  if (m) {
-    const minutes = Math.round(Number(m[1]));
-    return minutes > 0 ? minutes : null;
-  }
-  const bare = text.match(/^(\d+(?:\.\d+)?)$/);
-  if (bare) {
-    const minutes = Math.round(Number(bare[1]));
-    return minutes > 0 ? minutes : null;
-  }
-  return null;
-}
-
-/** Minutes back to the shorthand the field accepts, for prefilling. */
-function formatMinutesInput(minutes: number): string {
-  const hrs = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  if (hrs === 0) return `${mins}m`;
-  return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`;
 }
 
 function computeQuantityTotal(unitRate: string, quantity: string): number | null {
@@ -646,6 +612,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           link: link.trim() || null,
           instructions: instructions.trim() || null,
           project_id: linkedProjectId || null,
+          // Output Based tasks have no hours to compete with, so this is sent
+          // unconditionally rather than gated on hasSchedule the way the
+          // time-based path is.
+          planned_minutes: parsedPlannedMinutes,
         };
         if (isAdminOrManager) {
           body.assigned_to = vaId || null;
@@ -678,6 +648,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
     assignedBy, currentUserId, instructions, instructionsLocked, instructionsAppend, reviewRequired, reviewEditable, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
+    // Without this the callback keeps the duration from the render it was built
+    // in, so typing a duration and saving immediately wrote the previous value
+    // (usually null) — the field looked filled in and still saved empty.
+    parsedPlannedMinutes,
     pendingTodoTexts, readOnly,
   ]);
 
@@ -1147,7 +1121,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">
             {mode === "time_based"
-              ? "Work span (optional) — its own hours make the daily time block on the Calendar"
+              ? "Work span (optional) — the days this runs across, then pick how it lands on the Calendar below"
               : "Work span (optional) — the days this task runs across on the Calendar"}
           </p>
           <div className="flex gap-3">
@@ -1169,25 +1143,43 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               vanish — the task came back as an untimed pill instead. */}
           {mode === "time_based" ? (
             <>
-              <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-walnut">
-                <input
-                  type="checkbox"
-                  checked={hasSchedule}
-                  onChange={(e) => {
-                    setHasSchedule(e.target.checked);
-                    // The two are alternatives, not extras: specific hours
-                    // already say how long the task takes, so keeping a separate
-                    // duration around would let the Hours tab count it twice.
-                    if (e.target.checked) setPlannedDuration("");
-                  }}
-                  disabled={readOnly}
-                />
-                Add to Calendar (specific hours)
-              </label>
+              {/* Two named tabs rather than a checkbox. As a checkbox, the
+                  duration option only existed in the UNCHECKED state, so nobody
+                  who left it checked ever discovered it — the choice between
+                  "a slot on the calendar" and "just how long it takes" was
+                  invisible. Both are named now, so it reads as the either/or it
+                  actually is. hasSchedule is still the underlying state, so the
+                  save path is unchanged: true writes start_time/end_time, false
+                  writes planned_minutes. */}
+              <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                {([
+                  [true, "Add hours to calendar"],
+                  [false, "Add duration"],
+                ] as const).map(([wantsHours, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => {
+                      setHasSchedule(wantsHours);
+                      // The two are alternatives, not extras: specific hours
+                      // already say how long the task takes, so keeping a
+                      // separate duration around would let the Hours tab count
+                      // it twice.
+                      if (wantsHours) setPlannedDuration("");
+                    }}
+                    disabled={readOnly}
+                    className={`flex-1 px-3 py-1.5 transition-colors disabled:opacity-50 ${
+                      hasSchedule === wantsHours ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
 
               {!hasSchedule && (
                 <div>
-                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration (no set time)</label>
+                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration</label>
                   <input
                     value={plannedDuration}
                     onChange={(e) => setPlannedDuration(e.target.value)}
@@ -1220,9 +1212,30 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               )}
             </>
           ) : (
-            <p className="text-[11px] text-stone">
-              Output Based tasks are paid per output, so they don&apos;t take specific hours — the dates above put this on the Calendar.
-            </p>
+            // Output Based tasks get the duration half of the pair but not the
+            // hours half: fixed_pay_tasks has no start_time/end_time to write a
+            // slot into, but it does carry planned_minutes, and "how long this
+            // takes" is just as real a question for per-output work. No tabs
+            // here — with only one of the two available, a single-option tab
+            // strip would be noise.
+            <div>
+              <p className="mb-1.5 text-[11px] text-stone">
+                Paid per output, so this doesn&apos;t take a time slot — the dates above put it on the Calendar.
+              </p>
+              <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration</label>
+              <input
+                value={plannedDuration}
+                onChange={(e) => setPlannedDuration(e.target.value)}
+                disabled={readOnly}
+                placeholder="2h, 90m, 1h 30m"
+                className={inputClass}
+              />
+              <p className="mt-1 text-[10px] text-stone">
+                {parsedPlannedMinutes != null
+                  ? `${parsedPlannedMinutes} minutes — counts toward the day's total on the Calendar's Hours tab.`
+                  : "How long this takes. Leave empty if it doesn't matter."}
+              </p>
+            </div>
           )}
         </div>
 

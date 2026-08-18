@@ -15,6 +15,7 @@ type TemplateRow = {
   task_notes?: string | null;
   instructions?: string | null;
   instructions_locked?: boolean;
+  planned_minutes?: number | null;
   start_date?: string | null;
   assigned_to: string | null;
   assigned_to_ids?: string[] | null;
@@ -72,6 +73,15 @@ function stringOrNull(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+// Whole positive minutes, matching assigned_tasks.planned_minutes. Zero or
+// unreadable clears the estimate rather than storing a meaningless 0.
+function numberOrNull(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 function booleanOrDefault(value: unknown, fallback = true): boolean {
@@ -241,6 +251,7 @@ export async function POST(request: Request) {
     task_notes: stringOrNull(body.task_notes),
     instructions: stringOrNull(body.instructions),
     instructions_locked: booleanOrDefault(body.instructions_locked, false),
+    planned_minutes: numberOrNull(body.planned_minutes),
     start_date: stringOrNull(body.start_date),
     assigned_to: assignedToIds[0] ?? null,
     assigned_to_ids: assignedToIds,
@@ -304,6 +315,7 @@ export async function PATCH(request: Request) {
   if (body.task_notes !== undefined) updates.task_notes = stringOrNull(body.task_notes);
   if (body.instructions !== undefined) updates.instructions = stringOrNull(body.instructions);
   if (body.instructions_locked !== undefined) updates.instructions_locked = booleanOrDefault(body.instructions_locked, false);
+  if (body.planned_minutes !== undefined) updates.planned_minutes = numberOrNull(body.planned_minutes);
   if (body.start_date !== undefined) updates.start_date = stringOrNull(body.start_date);
   if (body.assigned_to_ids !== undefined || body.assigned_to !== undefined) {
     const assignedToIds = parseAssignedToIds(body);
