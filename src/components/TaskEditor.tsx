@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { countWords } from "@/lib/utils";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { createClient } from "@/lib/supabase/client";
@@ -57,6 +57,20 @@ function computeHourlyEquivalent(durationValue: string, unit: "hours" | "minutes
 // two hours, then half-hours to a full shift. A dropdown rather than a text box
 // — nobody should have to learn that "1h 30m" parses and "1.5 hrs" might not.
 const DURATION_CHOICES = [15, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480];
+
+type TaskAttachment = {
+  id: number;
+  filename: string;
+  file_size: number | null;
+  url: string | null;
+};
+
+function formatFileSize(bytes: number | null): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function computeQuantityTotal(unitRate: string, quantity: string): number | null {
   const rate = Number(unitRate);
@@ -151,6 +165,25 @@ function DurationSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+/**
+ * Explanation on demand, next to the label it explains.
+ *
+ * The form used to carry this as a paragraph under every field. Read once, it
+ * is noise on every visit after — and a form that is mostly grey prose is hard
+ * to scan for the bit you actually came to change. Rules that are genuinely
+ * non-obvious live here; anything self-evident was dropped rather than moved.
+ */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
+      <span className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] leading-snug text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+        {text}
+      </span>
+    </span>
   );
 }
 
@@ -286,6 +319,102 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [screenshots, setScreenshots] = useState<Array<{ id: number; url: string | null; screenshot_type: string | null }>>([]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
+
+  // Attachments live in the editor rather than being handed in by each caller.
+  // As a prop, only the Assignment panel ever supplied them, so the Calendar,
+  // the admin Task Assignments tab, VA Projects and the Fixed Pay panels had no
+  // way to attach a file at all — the same form, missing a field, depending on
+  // where you opened it from.
+  const attachmentsBase = mode === "time_based" ? "/api/assigned-tasks" : "/api/fixed-pay-tasks";
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+
+  const loadAttachments = useCallback(
+    async (taskId: number) => {
+      setAttachmentsLoading(true);
+      try {
+        const res = await fetch(`${attachmentsBase}/${taskId}/attachments`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const raw = Array.isArray(json) ? json : json.attachments ?? [];
+        setAttachments(
+          raw.map((r: Partial<TaskAttachment> & { id: number; filename: string }) => ({
+            id: r.id,
+            filename: r.filename,
+            file_size: r.file_size ?? null,
+            url: r.url ?? null,
+          }))
+        );
+      } catch {
+        setAttachments([]);
+      } finally {
+        setAttachmentsLoading(false);
+      }
+    },
+    [attachmentsBase]
+  );
+
+  useEffect(() => {
+    if (!editingTaskId) return;
+    void loadAttachments(editingTaskId);
+  }, [editingTaskId, loadAttachments]);
+
+  /** Upload straight away when the task exists; hold otherwise (see handleSubmit). */
+  const handleFilesPicked = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      if (!editingTaskId) {
+        setPendingFiles((prev) => [...prev, ...files]);
+        return;
+      }
+      setUploading(true);
+      try {
+        for (const file of files) {
+          const form = new FormData();
+          form.append("file", file);
+          await fetch(`${attachmentsBase}/${editingTaskId}/attachments`, { method: "POST", body: form });
+        }
+        await loadAttachments(editingTaskId);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [editingTaskId, attachmentsBase, loadAttachments]
+  );
+
+  /** Files picked before the task existed, uploaded once it does. */
+  const flushPendingFiles = useCallback(
+    async (taskId: number) => {
+      if (pendingFiles.length === 0) return;
+      setUploading(true);
+      try {
+        for (const file of pendingFiles) {
+          const form = new FormData();
+          form.append("file", file);
+          await fetch(`${attachmentsBase}/${taskId}/attachments`, { method: "POST", body: form });
+        }
+        setPendingFiles([]);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [pendingFiles, attachmentsBase]
+  );
+
+  const handleDeleteAttachment = useCallback(
+    async (attachmentId: number) => {
+      if (!editingTaskId) return;
+      if (!confirm("Delete this attachment? This cannot be undone.")) return;
+      await fetch(`${attachmentsBase}/${editingTaskId}/attachments?attachmentId=${attachmentId}`, {
+        method: "DELETE",
+      });
+      await loadAttachments(editingTaskId);
+    },
+    [editingTaskId, attachmentsBase, loadAttachments]
+  );
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Assignment
@@ -655,11 +784,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               await addTodo(task.id, text);
             }
           }
+          await flushPendingFiles(task.id);
         }
       } else {
         const body: Record<string, unknown> = {
           task_name: taskName.trim(),
           account: account || null,
+          project: project || null,
           category: category || null,
           rate: Number(rate),
           start_date: startDate || null,
@@ -719,14 +850,31 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // empty required field was invisible and the only symptom was a Save button
   // that refused to work with no explanation. Each section names its own gap in
   // its header, and the footer lists them together.
-  const missingBasics = !taskName.trim() ? "Task Name" : null;
-  const missingDetails = !taskDetail.trim() ? "Client Detail" : null;
-  const missingAssignment = mode === "time_based" && !isEditing && !reviewRequired ? "Review Required" : null;
-  const missingRate =
-    mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate))) ? "Final Rate" : null;
-  const missingRequired = [missingBasics, missingDetails, missingAssignment, missingRate].filter(
-    (m): m is string => Boolean(m)
-  );
+  const needsTaskName = !taskName.trim();
+  const needsClientDetail = !taskDetail.trim();
+  const needsReviewAnswer = mode === "time_based" && !isEditing && !reviewRequired;
+  const needsRate = mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)));
+
+  // Section badges say what kind of gap it is, not which field — the field
+  // itself goes amber, so naming it twice was redundant. Basics is entirely
+  // required, so it says so outright.
+  const missingBasics = needsTaskName ? "Required block" : null;
+  const missingDetails = needsClientDetail ? "Required field/s inside" : null;
+  const missingAssignment = needsReviewAnswer ? "Required field/s inside" : null;
+  const missingRate = needsRate ? "Required field/s inside" : null;
+
+  // The footer still names them, since that's the "why won't this save" spot.
+  const missingRequired = [
+    needsTaskName ? "Task Name" : null,
+    needsClientDetail ? "Client Detail" : null,
+    needsReviewAnswer ? "Review Required" : null,
+    needsRate ? "Final Rate" : null,
+  ].filter((m): m is string => Boolean(m));
+
+  // An unfilled required input reads amber — a prompt, not an error. Terracotta
+  // is kept for the things that have actually gone wrong.
+  const requiredInputClass = (filled: boolean) =>
+    filled ? inputClass : `${inputClass} border-terracotta bg-terracotta-soft/40`;
 
   const assignToOptions = teamMembers;
   const assignByOptions = teamMembers;
@@ -786,7 +934,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 applyAutoCategory(account, project, value);
               }}
               disabled={readOnly}
-              className={inputClass}
+              className={requiredInputClass(!needsTaskName)}
             >
               <option value="">Select task...</option>
               {taskOptionsForObjective.map((t) => (
@@ -794,19 +942,18 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               ))}
             </select>
           ) : (
-            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} disabled={readOnly} placeholder="Task name" className={inputClass} />
+            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} disabled={readOnly} placeholder="Task name" className={requiredInputClass(!needsTaskName)} />
           )}
         </div>
 
         <div>
-          <label className={labelClass}>Category</label>
+          <label className={`${labelClass} flex items-center gap-1.5`}>Category<InfoTip text="Set automatically from Account, Objective and Task Name." /></label>
           {/* Derived, not chosen — autoCategoryForTask sets it from Account,
               Objective and Task Name, and every task-creation surface applies
               the same rule. Leaving it editable meant a hand-picked value could
               silently disagree with the rule, and get overwritten anyway the
               next time any of the three inputs changed. */}
           <input value={category} readOnly disabled className={inputClass} />
-          <p className="mt-1 text-[10px] text-stone">Set automatically from Account, Objective and Task Name.</p>
         </div>
       </Section>
 
@@ -824,7 +971,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             rows={2}
             disabled={readOnly}
             placeholder="Client-visible memo"
-            className={`${inputClass} resize-none`}
+            className={`${requiredInputClass(!needsClientDetail)} resize-none`}
           />
           <p className="mt-1 text-[10px] text-stone">
             {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(taskDetail))} words remaining — this is what carries over to the client invoice/report.
@@ -833,8 +980,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         {supportsTodos && (
           <div>
-            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber">To-Do List</label>
-            <p className="mb-1.5 text-[10px] text-stone">Internal only — tracks sub-steps and time per item, shows in internal reports. Doesn&apos;t affect the client memo above.</p>
+            <label className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-amber">To-Do List<InfoTip text="Internal only — tracks sub-steps and time per item, and shows in internal reports. Doesn't affect the client memo." /></label>
             {!isEditing && (
               <p className="mb-1.5 text-[10px] text-stone">These save with the task once you click Create Task.</p>
             )}
@@ -930,7 +1076,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                     placeholder="Add a note or question — this is added below, nothing above is changed."
                     className={`${inputClass} resize-none`}
                   />
-                  <p className="mt-1 text-[10px] text-stone">Saved with your name and the date. The existing instructions stay as they are.</p>
                 </div>
               )}
             </>
@@ -950,6 +1095,81 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       <Section title="Attachments & Files">
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label className={`${labelClass} mb-0`}>Attachments</label>
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={() => attachmentInputRef.current?.click()}
+                disabled={uploading}
+                className="rounded-lg border border-sand bg-white px-3 py-1 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:opacity-50"
+              >
+                {uploading ? "Uploading..." : "Attach File"}
+              </button>
+            )}
+            <input
+              ref={attachmentInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                e.target.value = "";
+                void handleFilesPicked(picked);
+              }}
+            />
+          </div>
+
+          {attachmentsLoading ? (
+            <p className="text-[12px] text-stone">Loading...</p>
+          ) : attachments.length === 0 && pendingFiles.length === 0 ? (
+            <p className="text-[12px] text-stone/50">No attachments.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {attachments.map((a) => (
+                <div key={a.id} className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-white px-2.5 py-1.5">
+                  <span className="min-w-0">
+                    {a.url ? (
+                      <a href={a.url} target="_blank" rel="noreferrer" className="block truncate text-[12px] text-terracotta hover:underline">
+                        {a.filename}
+                      </a>
+                    ) : (
+                      <span className="block truncate text-[12px] text-espresso">{a.filename}</span>
+                    )}
+                    {a.file_size != null && <span className="text-[10px] text-stone">{formatFileSize(a.file_size)}</span>}
+                  </span>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteAttachment(a.id)}
+                      className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+              {/* Held until the task exists — uploaded by handleSubmit. */}
+              {pendingFiles.map((file, i) => (
+                <div key={`${file.name}-${i}`} className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-parchment/40 px-2.5 py-1.5">
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12px] text-walnut">{file.name}</span>
+                    <span className="text-[10px] text-stone">{formatFileSize(file.size)} · uploads when you create the task</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {attachmentsExtra}
 
         <div>
@@ -1004,7 +1224,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           ) : (
             <>
               <div>
-                <label className={labelClass}>Link to Objective</label>
+                <label className={`${labelClass} flex items-center gap-1.5`}>Link to Objective<InfoTip text="A task links to an Objective or an Operation, not both — picking one clears the other." /></label>
                 <select
                   value={linkedObjectiveId}
                   onChange={(e) => setLinkedProjectId(e.target.value)}
@@ -1032,7 +1252,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   ))}
                 </select>
               </div>
-              <p className="text-[10px] text-stone">A task links to one or the other — picking here clears the other field.</p>
             </>
           )}
           {mode === "time_based" && linkedProjectId && parentTaskOptions.length > 0 && (
@@ -1047,8 +1266,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         {mode === "time_based" && (
           <div>
-            <label className={labelClass}>
+            <label className={`${labelClass} flex items-center gap-1.5`}>
               Review Required {!isEditing && <span className="text-terracotta">*</span>}
+              <InfoTip text="Yes locks — only Admin, Manager, CEO, or Founder can undo it. No stays changeable." />
             </label>
             <div className="flex gap-2">
               {([["yes", "Yes"], ["no", "No"]] as const).map(([value, label]) => (
@@ -1060,6 +1280,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50 ${
                     reviewRequired === value
                       ? "bg-sage text-white"
+                      : needsReviewAnswer
+                      ? // Unanswered and required — amber, like the other
+                        // required fields waiting on input.
+                        "border border-terracotta bg-terracotta-soft/40 text-terracotta hover:bg-terracotta-soft"
                       : "bg-stone/10 text-stone hover:bg-stone/20"
                   }`}
                 >
@@ -1067,16 +1291,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 </button>
               ))}
             </div>
-            {reviewLocked ? (
-              <p className="mt-1 text-[10px] text-stone">
-                {reviewEditable
-                  ? "Locked at Yes — you can change it because of your role."
-                  : "Locked at Yes — only Admin, Manager, CEO, or Founder can change it."}
-              </p>
-            ) : (
-              <p className="mt-1 text-[10px] text-stone">
-                Yes locks — it can only be undone by Admin, Manager, CEO, or Founder. No stays changeable.
-              </p>
+            {reviewLocked && !reviewEditable && (
+              <p className="mt-1 text-[10px] text-stone">Locked at Yes.</p>
             )}
           </div>
         )}
@@ -1170,7 +1386,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
           <div>
             <label className={labelClass}>Final Rate</label>
-            <input value={rate} onChange={(e) => setRate(e.target.value)} disabled={readOnly} placeholder="0.00" className={inputClass} />
+            <input value={rate} onChange={(e) => setRate(e.target.value)} disabled={readOnly} placeholder="0.00" className={requiredInputClass(!needsRate)} />
           </div>
         </Section>
       )}
@@ -1178,9 +1394,20 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       <Section title="Schedule">
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">
-            {mode === "time_based"
-              ? "Work span (optional) — the days this runs across, then pick how it lands on the Calendar below"
-              : "Work span (optional) — the days this task runs across on the Calendar"}
+            {/* Tooltip rather than prose, per the form's new pattern — but the
+                text still has to split by mode: Output Based work has no hours
+                to land on the grid, so promising a "daily block" would be a lie
+                on that half of the form. */}
+            <span className="flex items-center gap-1.5">
+              Work span (optional)
+              <InfoTip
+                text={
+                  mode === "time_based"
+                    ? "The days this task runs across. Below, choose whether it takes specific hours on the Calendar or just a duration."
+                    : "The days this task runs across on the Calendar. Output Based work is paid per output, so it doesn't take a time slot."
+                }
+              />
+            </span>
           </p>
           <div className="flex gap-3">
             <div className="flex-1">
@@ -1286,7 +1513,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline — unrelated to the work span above, its own single time</p>
+          <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline<InfoTip text="Separate from the work span above — a single moment, not a range." /></p>
           <div>
             <label className={labelClass}>Due Date</label>
             <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={readOnly} className={inputClass} />
@@ -1295,7 +1522,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             <div>
               <label className="mb-1 block text-[10px] font-semibold text-walnut">Due Time (optional)</label>
               <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} disabled={readOnly} className={inputClass} />
-              <p className="mt-1 text-[10px] text-stone">Shows this deadline on the Calendar at this time — doesn&apos;t count toward blocked hours.</p>
             </div>
           )}
         </div>
@@ -1340,21 +1566,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
-      {/* Named here as well as in each section header, because this sits next to
-          the Save button — the place someone looks when a save won't go through.
-          Shown for hideFooter callers too: those drive submit() from their own
-          footer, so without this they'd get a rejection and no reason. */}
-      {!readOnly && missingRequired.length > 0 && (
-        <div className="rounded-lg border border-terracotta/30 bg-terracotta-soft px-3 py-2">
-          <p className="text-[11px] font-semibold text-terracotta">
-            Before saving, fill in: {missingRequired.join(", ")}
-          </p>
-          <p className="mt-0.5 text-[10px] text-terracotta/80">
-            The section above each one is marked — open it to fill it in.
-          </p>
-        </div>
-      )}
-
       {error && <p className="text-[12px] text-red-600">{error}</p>}
 
       {!hideFooter && (
@@ -1372,6 +1583,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               >
                 {saving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
               </button>
+              {/* Only when the button is actually blocked. The sections already
+                  flag themselves and the fields go terracotta, so this is the
+                  last resort for "why won't this save", not a running notice. */}
+              {missingRequired.length > 0 && (
+                <InfoTip text={`Still needed: ${missingRequired.join(", ")}. The section holding each one is marked.`} />
+              )}
               <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
                 Cancel
               </button>

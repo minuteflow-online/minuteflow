@@ -666,6 +666,7 @@ export function ShiftBudgetSection({
   const supabase = createClient();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   // "hours" = enter a direct shift length; "range" = enter start/end times.
   // Only relevant for time-based VAs — output-based VAs skip shift entirely
   // and just get a daily/monthly dollar cap.
@@ -726,13 +727,15 @@ export function ShiftBudgetSection({
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveMsg(null);
     // Fields may currently hold dollars (inputUnit === "dollars") — convert
     // back to hours before persisting, since storage is always hours for
     // time-based VAs.
     const toHours = (v: string) => (!isOutputBased && inputUnit === "dollars" && hourlyRate ? String(Number(v) / hourlyRate) : v);
+    const num = (v: string) => (v.trim() ? Number(toHours(v)) : null);
     const updates: Record<string, unknown> = {
-      weekly_budget_limit: weeklyLimit.trim() ? Number(toHours(weeklyLimit)) : null,
-      monthly_budget_limit: monthlyLimit.trim() ? Number(toHours(monthlyLimit)) : null,
+      weekly_budget_limit: num(weeklyLimit),
+      monthly_budget_limit: num(monthlyLimit),
     };
     if (isOutputBased) {
       updates.daily_budget_limit = dailyLimit.trim() ? Number(dailyLimit) : null;
@@ -746,8 +749,37 @@ export function ShiftBudgetSection({
           : { shift_hours: shiftHours.trim() ? Number(toHours(shiftHours)) : null, shift_start: null, shift_end: null }
       );
     }
-    await supabase.from("profiles").update(updates).eq("id", userId);
+
+    // Guard against a blank/garbled entry becoming NaN, which Postgres rejects
+    // for a numeric column and would otherwise fail the whole save silently.
+    const badNumber = Object.entries(updates).find(
+      ([, v]) => typeof v === "number" && !Number.isFinite(v)
+    );
+    if (badNumber) {
+      setSaving(false);
+      setSaveMsg({ type: "err", text: `"${badNumber[0].replace(/_/g, " ")}" isn't a valid number.` });
+      return;
+    }
+
+    // Capture the result instead of ignoring it. `.select()` lets us catch the
+    // silent case where RLS updates zero rows without raising an error.
+    const { data, error } = await supabase
+      .from("profiles")
+      .update(updates)
+      .eq("id", userId)
+      .select("id");
     setSaving(false);
+
+    if (error) {
+      setSaveMsg({ type: "err", text: `Couldn't save: ${error.message}` });
+      return;
+    }
+    if (!data || data.length === 0) {
+      setSaveMsg({ type: "err", text: "Save didn't apply — you may not have permission to edit this profile." });
+      return;
+    }
+
+    setSaveMsg({ type: "ok", text: "Saved." });
     setEditing(false);
     onRefresh();
   };
@@ -904,11 +936,15 @@ export function ShiftBudgetSection({
 
           <p className="text-[10px] text-stone">Leave a field empty for no limit on that period. VAs get a soft warning at 90% of their limit.</p>
 
+          {saveMsg && saveMsg.type === "err" && (
+            <p className="text-[11px] font-semibold text-terracotta bg-terracotta-soft rounded-lg px-2 py-1.5">{saveMsg.text}</p>
+          )}
+
           <div className="flex gap-2 pt-1">
             <button onClick={handleSave} disabled={saving} className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50">
               {saving ? "Saving…" : "Save"}
             </button>
-            <button onClick={() => setEditing(false)} className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
+            <button onClick={() => { setEditing(false); setSaveMsg(null); }} className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
               Cancel
             </button>
           </div>

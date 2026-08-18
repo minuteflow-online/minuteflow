@@ -15,9 +15,9 @@ const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progres
 // VA_EDITABLE_STATUSES state — once admin has moved it into review/payroll
 // (revision_needed/completed/cancelled/paid), the rate and details are
 // locked so a VA can't retroactively change what they're being paid for.
-const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "project_id", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date", "end_date", "planned_minutes"]);
+const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "project", "project_id", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date", "end_date", "planned_minutes"]);
 const TASK_SELECT =
-  "id, task_name, account, category, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
+  "id, task_name, account, category, project, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
@@ -186,6 +186,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       }
       if ("account" in body) updates.account = normalizeText(body.account);
       if ("category" in body) updates.category = normalizeText(body.category);
+      if ("project" in body) updates.project = normalizeText(body.project);
       if ("project_id" in body) updates.project_id = normalizeText(body.project_id);
       if ("rate" in body) {
         const rate = parseRate(body.rate);
@@ -227,7 +228,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const nextArchivedAt = hasArchivedAt ? normalizeTimestamp(body.archived_at) : undefined;
   const nextDeletedAt = hasDeletedAt ? normalizeTimestamp(body.deleted_at) : undefined;
   let currentTaskForAssignment:
-    | { claimed_by: string | null; task_name: string | null; account: string | null; category: string | null }
+    | { claimed_by: string | null; task_name: string | null; account: string | null; category: string | null; project: string | null }
     | null = null;
 
   if ("task_name" in body) {
@@ -237,6 +238,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
   if ("account" in body) updates.account = normalizeText(body.account);
   if ("category" in body) updates.category = normalizeText(body.category);
+  if ("project" in body) updates.project = normalizeText(body.project);
   if ("project_id" in body) updates.project_id = normalizeText(body.project_id);
   if ("rate" in body) {
     const rate = parseRate(body.rate);
@@ -299,7 +301,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (nextAssignedTo) {
     const { data: currentTask, error: currentTaskError } = await admin
       .from("fixed_pay_tasks")
-      .select("claimed_by, task_name, account, category")
+      .select("claimed_by, task_name, account, category, project")
       .eq("id", taskId)
       .single();
 
@@ -341,13 +343,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       task_name: data.task_name,
       account: data.account,
       category: data.category,
+      project: data.project,
     };
 
     const { data: assignedTask, error: assignedTaskError } = await admin
       .from("assigned_tasks")
       .insert({
         account: taskForAssignment.account,
-        project: taskForAssignment.category,
+        project: taskForAssignment.project ?? taskForAssignment.category,
         task_name: taskForAssignment.task_name,
         task_detail: null,
         task_notes: null,
