@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { countWords } from "@/lib/utils";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { createClient } from "@/lib/supabase/client";
@@ -85,6 +85,20 @@ function formatMinutesInput(minutes: number): string {
   const mins = minutes % 60;
   if (hrs === 0) return `${mins}m`;
   return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`;
+}
+
+type TaskAttachment = {
+  id: number;
+  filename: string;
+  file_size: number | null;
+  url: string | null;
+};
+
+function formatFileSize(bytes: number | null): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function computeQuantityTotal(unitRate: string, quantity: string): number | null {
@@ -281,6 +295,102 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [screenshots, setScreenshots] = useState<Array<{ id: number; url: string | null; screenshot_type: string | null }>>([]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
+
+  // Attachments live in the editor rather than being handed in by each caller.
+  // As a prop, only the Assignment panel ever supplied them, so the Calendar,
+  // the admin Task Assignments tab, VA Projects and the Fixed Pay panels had no
+  // way to attach a file at all — the same form, missing a field, depending on
+  // where you opened it from.
+  const attachmentsBase = mode === "time_based" ? "/api/assigned-tasks" : "/api/fixed-pay-tasks";
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+
+  const loadAttachments = useCallback(
+    async (taskId: number) => {
+      setAttachmentsLoading(true);
+      try {
+        const res = await fetch(`${attachmentsBase}/${taskId}/attachments`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const raw = Array.isArray(json) ? json : json.attachments ?? [];
+        setAttachments(
+          raw.map((r: Partial<TaskAttachment> & { id: number; filename: string }) => ({
+            id: r.id,
+            filename: r.filename,
+            file_size: r.file_size ?? null,
+            url: r.url ?? null,
+          }))
+        );
+      } catch {
+        setAttachments([]);
+      } finally {
+        setAttachmentsLoading(false);
+      }
+    },
+    [attachmentsBase]
+  );
+
+  useEffect(() => {
+    if (!editingTaskId) return;
+    void loadAttachments(editingTaskId);
+  }, [editingTaskId, loadAttachments]);
+
+  /** Upload straight away when the task exists; hold otherwise (see handleSubmit). */
+  const handleFilesPicked = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      if (!editingTaskId) {
+        setPendingFiles((prev) => [...prev, ...files]);
+        return;
+      }
+      setUploading(true);
+      try {
+        for (const file of files) {
+          const form = new FormData();
+          form.append("file", file);
+          await fetch(`${attachmentsBase}/${editingTaskId}/attachments`, { method: "POST", body: form });
+        }
+        await loadAttachments(editingTaskId);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [editingTaskId, attachmentsBase, loadAttachments]
+  );
+
+  /** Files picked before the task existed, uploaded once it does. */
+  const flushPendingFiles = useCallback(
+    async (taskId: number) => {
+      if (pendingFiles.length === 0) return;
+      setUploading(true);
+      try {
+        for (const file of pendingFiles) {
+          const form = new FormData();
+          form.append("file", file);
+          await fetch(`${attachmentsBase}/${taskId}/attachments`, { method: "POST", body: form });
+        }
+        setPendingFiles([]);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [pendingFiles, attachmentsBase]
+  );
+
+  const handleDeleteAttachment = useCallback(
+    async (attachmentId: number) => {
+      if (!editingTaskId) return;
+      if (!confirm("Delete this attachment? This cannot be undone.")) return;
+      await fetch(`${attachmentsBase}/${editingTaskId}/attachments?attachmentId=${attachmentId}`, {
+        method: "DELETE",
+      });
+      await loadAttachments(editingTaskId);
+    },
+    [editingTaskId, attachmentsBase, loadAttachments]
+  );
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Assignment
@@ -650,6 +760,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               await addTodo(task.id, text);
             }
           }
+          await flushPendingFiles(task.id);
         }
       } else {
         const body: Record<string, unknown> = {
@@ -730,7 +841,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // An unfilled required input reads amber — a prompt, not an error. Terracotta
   // is kept for the things that have actually gone wrong.
   const requiredInputClass = (filled: boolean) =>
-    filled ? inputClass : `${inputClass} border-amber bg-amber-soft/40`;
+    filled ? inputClass : `${inputClass} border-terracotta bg-terracotta-soft/40`;
 
   const assignToOptions = teamMembers;
   const assignByOptions = teamMembers;
@@ -951,6 +1062,81 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       <Section title="Attachments & Files">
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label className={`${labelClass} mb-0`}>Attachments</label>
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={() => attachmentInputRef.current?.click()}
+                disabled={uploading}
+                className="rounded-lg border border-sand bg-white px-3 py-1 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:opacity-50"
+              >
+                {uploading ? "Uploading..." : "Attach File"}
+              </button>
+            )}
+            <input
+              ref={attachmentInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                e.target.value = "";
+                void handleFilesPicked(picked);
+              }}
+            />
+          </div>
+
+          {attachmentsLoading ? (
+            <p className="text-[12px] text-stone">Loading...</p>
+          ) : attachments.length === 0 && pendingFiles.length === 0 ? (
+            <p className="text-[12px] text-stone/50">No attachments.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {attachments.map((a) => (
+                <div key={a.id} className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-white px-2.5 py-1.5">
+                  <span className="min-w-0">
+                    {a.url ? (
+                      <a href={a.url} target="_blank" rel="noreferrer" className="block truncate text-[12px] text-terracotta hover:underline">
+                        {a.filename}
+                      </a>
+                    ) : (
+                      <span className="block truncate text-[12px] text-espresso">{a.filename}</span>
+                    )}
+                    {a.file_size != null && <span className="text-[10px] text-stone">{formatFileSize(a.file_size)}</span>}
+                  </span>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteAttachment(a.id)}
+                      className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+              {/* Held until the task exists — uploaded by handleSubmit. */}
+              {pendingFiles.map((file, i) => (
+                <div key={`${file.name}-${i}`} className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-parchment/40 px-2.5 py-1.5">
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12px] text-walnut">{file.name}</span>
+                    <span className="text-[10px] text-stone">{formatFileSize(file.size)} · uploads when you create the task</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {attachmentsExtra}
 
         <div>
@@ -1064,7 +1250,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                       : needsReviewAnswer
                       ? // Unanswered and required — amber, like the other
                         // required fields waiting on input.
-                        "border border-amber bg-amber-soft/40 text-amber hover:bg-amber-soft"
+                        "border border-terracotta bg-terracotta-soft/40 text-terracotta hover:bg-terracotta-soft"
                       : "bg-stone/10 text-stone hover:bg-stone/20"
                   }`}
                 >
