@@ -1,8 +1,20 @@
 // Telegram delivery for MinuteFlow alerts.
 //
-// One bot (TELEGRAM_BOT_TOKEN) posts to several chats, chosen by topic. This
-// mirrors what extension-status and budget-requests already did inline, so
-// those call sites can route through here instead of re-implementing fetch.
+// THREE BOTS, by audience. Each is a separate BotFather account with its own
+// name and avatar, because the people on the other end are different:
+//   "internal" → TELEGRAM_BOT_TOKEN. Toni's own alerts: submissions, bugs,
+//                financials. Never talks to VAs or clients.
+//   "va"       → TELEGRAM_VA_BOT_TOKEN. The bot VAs see and reply to — idle
+//                warnings, task alerts.
+//   "client"   → TELEGRAM_CLIENT_BOT_TOKEN. Anything a client receives.
+//
+// Each falls back to the internal token when its own is unset, so adding a bot
+// is purely an env change and nothing goes dark before the bots exist. Keeping
+// them separate means a leaked VA token cannot read financial alerts, and each
+// audience sees a bot named for them rather than a shared one.
+//
+// Topic-based sends are internal by definition. Person-based sends
+// (sendTelegramTo) name their bot, defaulting to the VA one.
 //
 // Routing rules — read before adding a topic:
 //   "submissions" → TELEGRAM_SUBMISSIONS_CHAT_ID. Day-to-day operations: task
@@ -23,6 +35,21 @@
 // existing category at a different group is an env change with no code at all.
 
 export type TelegramTopic = "financial" | "submissions" | "bugs" | "board";
+
+/** Which audience a message is for. Picks the bot, not the destination. */
+export type TelegramBot = "internal" | "va" | "client";
+
+function tokenFor(bot: TelegramBot): string | undefined {
+  const internal = process.env.TELEGRAM_BOT_TOKEN;
+  switch (bot) {
+    case "va":
+      return process.env.TELEGRAM_VA_BOT_TOKEN || internal;
+    case "client":
+      return process.env.TELEGRAM_CLIENT_BOT_TOKEN || internal;
+    case "internal":
+      return internal;
+  }
+}
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -54,22 +81,28 @@ export function telegramEnabled(topic: TelegramTopic): boolean {
 }
 
 /**
- * Post to one specific chat id rather than a topic. For direct messages to a
- * person — a VA's own chat id from profiles.telegram_chat_id.
+ * Post to one specific chat id rather than a topic. For messages aimed at a
+ * person — a VA's own chat id from profiles.telegram_chat_id, or the shared
+ * group holding just them, Toni and the bot.
+ *
+ * Defaults to the VA bot, since that is who person-addressed messages are
+ * usually for; pass "client" for anything a client receives.
  *
  * Telegram will not let a bot open a conversation, so this only reaches people
- * who have messaged the bot first. A VA who never did returns ok:false, which
+ * whose chat the bot is already in. Someone unreachable returns ok:false, which
  * callers should treat as "not reachable", not as an error worth retrying.
  */
 export async function sendTelegramTo(
   chatId: string | number,
-  text: string
+  text: string,
+  bot: TelegramBot = "va"
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!BOT_TOKEN) return { ok: false, error: "TELEGRAM_BOT_TOKEN not set" };
+  const token = tokenFor(bot);
+  if (!token) return { ok: false, error: `no token for the "${bot}" bot` };
   if (!chatId) return { ok: false, error: "no chat id" };
 
   try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

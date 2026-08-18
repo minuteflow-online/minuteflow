@@ -28,6 +28,43 @@ type Diagnostics = {
   privacyHint?: boolean;
 };
 
+/** The three audience bots, in the order they are worth checking. `envVar` is
+ *  what to set in Vercel; an unset one silently falls back to the internal bot,
+ *  which is why the page says so rather than showing a blank. */
+const BOTS = [
+  { key: "internal", label: "Internal (yours)", envVar: "TELEGRAM_BOT_TOKEN" },
+  { key: "va", label: "VA facing", envVar: "TELEGRAM_VA_BOT_TOKEN" },
+  { key: "client", label: "Client facing", envVar: "TELEGRAM_CLIENT_BOT_TOKEN" },
+] as const;
+
+/** Resolves each bot token to its @username, so a wrong or unset token is
+ *  visible here instead of surfacing as silence in a group later. */
+async function botIdentities(): Promise<Array<{ label: string; envVar: string; status: string }>> {
+  return Promise.all(
+    BOTS.map(async (b) => {
+      const token = process.env[b.envVar];
+      if (!token) {
+        return {
+          label: b.label,
+          envVar: b.envVar,
+          status: b.key === "internal" ? "not set" : "not set — using internal bot",
+        };
+      }
+      try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/getMe`, { cache: "no-store" });
+        const json = (await res.json()) as { ok?: boolean; result?: { username?: string } };
+        return {
+          label: b.label,
+          envVar: b.envVar,
+          status: json.ok && json.result?.username ? `@${json.result.username}` : "token rejected",
+        };
+      } catch {
+        return { label: b.label, envVar: b.envVar, status: "could not reach Telegram" };
+      }
+    })
+  );
+}
+
 async function fetchChats(): Promise<{ chats: TgChat[]; error?: string; diag: Diagnostics }> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const diag: Diagnostics = {};
@@ -71,7 +108,7 @@ async function fetchChats(): Promise<{ chats: TgChat[]; error?: string; diag: Di
 }
 
 export default async function TelegramChatsPage() {
-  const { chats, error, diag } = await fetchChats();
+  const [{ chats, error, diag }, bots] = await Promise.all([fetchChats(), botIdentities()]);
   // Private chats are listed too: a direct message to one person is a valid
   // destination for any topic, and is the better home for financial alerts.
   // Telegram requires that person to message the bot first, which is what
@@ -94,14 +131,20 @@ export default async function TelegramChatsPage() {
       )}
 
       <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
-        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Connection</h3>
+        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Bots</h3>
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2 py-2.5 px-3 rounded-lg border border-sand bg-white">
-            <span className="text-[13px] font-semibold text-espresso">Bot</span>
-            <code className="text-[11px] text-walnut">
-              {diag.botUsername ? `@${diag.botUsername}` : "unknown"}
-            </code>
-          </div>
+          {bots.map((b) => (
+            <div
+              key={b.envVar}
+              className="flex items-center justify-between gap-2 py-2.5 px-3 rounded-lg border border-sand bg-white"
+            >
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-[13px] font-semibold text-espresso leading-tight">{b.label}</span>
+                <code className="text-[10px] text-stone/80">{b.envVar}</code>
+              </div>
+              <code className="text-[11px] text-walnut shrink-0">{b.status}</code>
+            </div>
+          ))}
           <div className="flex items-center justify-between gap-2 py-2.5 px-3 rounded-lg border border-sand bg-white">
             <span className="text-[13px] font-semibold text-espresso">Pending updates</span>
             <code className="text-[11px] text-walnut">{diag.updateCount ?? "—"}</code>
