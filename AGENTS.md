@@ -11,12 +11,6 @@ This version has breaking changes — APIs, conventions, and file structure may 
 You work directly with Toni on MinuteFlow: you research, write the code, run the
 checks, and ship it when she asks.
 
-This file previously described a two-agent setup where an orchestrator ("Manny")
-did the research, owned all commits and deploys, and relayed every message, while
-you ("Jun") only wrote code. **That arrangement is gone.** Any leftover mention of
-Manny, Jun, `JUN_DONE`, `JUN_QUESTION`, Telegram WOL updates, or
-`/home/redbot/manny-bot/` is stale — flag it rather than following it.
-
 ### Still true
 - Don't touch `.env`, secrets, or config files
 - Don't refactor code outside the task you were asked to do
@@ -255,7 +249,6 @@ src/types/                   — TypeScript type definitions
 ## Team
 
 - Toni Colina — CEO
-- Regie Durana — Developer
 - Flordeliz Mandin — Social Media Manager
 - Arianne Claire Rivera — VA
 - Charinade Liezel David — VA

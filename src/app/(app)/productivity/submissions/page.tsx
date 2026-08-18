@@ -13,6 +13,7 @@ import {
 import RevisionBadge from "@/components/RevisionBadge";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
 import type { AssignedTaskStatus, Project } from "@/types/database";
+import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 
 type FeedItem = {
   id: number;
@@ -35,6 +36,10 @@ type FeedItem = {
     project_kind: string | null;
     project_name: string | null;
     status: string | null;
+    category: string | null;
+    review_required: boolean | null;
+    assigned_by: string | null;
+    assigned_by_name: string | null;
     due_date: string | null;
     due_time: string | null;
     end_date: string | null;
@@ -48,6 +53,18 @@ type Thread = { taskId: number; items: FeedItem[]; latest: FeedItem };
 type TeamMember = { id: string; full_name: string; username: string };
 
 type ViewMode = "timeline" | "calendar";
+
+/**
+ * Whose submissions to show. Everyone has both sides: work they turned in,
+ * and work turned in on tasks they assigned — assigned_by is the reviewer.
+ */
+type OwnerMode = "all" | "mine" | "to_me";
+
+const OWNER_MODES: Array<{ value: OwnerMode; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "mine", label: "My submissions" },
+  { value: "to_me", label: "Submitted to me" },
+];
 
 /** The three review outcomes a reviewer can append to a thread. */
 type ReviewOutcome = "approval" | "revision" | "approval_reversed";
@@ -69,6 +86,18 @@ const REVIEW_STATUS: Record<ReviewOutcome, AssignedTaskStatus> = {
   approval_reversed: "submitted",
 };
 
+/**
+ * Status filter options. These match the pills on the cards, so what you
+ * filter by is what you see labelled.
+ */
+const STATUS_OPTIONS = [
+  { value: "awaiting", label: "Review" },
+  { value: "revision_requested", label: "Revision" },
+  { value: "approved", label: "Approved" },
+  { value: "auto_approved", label: "Auto approved" },
+  { value: "completed", label: "Completed" },
+];
+
 const SCOPE_OPTIONS: Array<{ value: SubmissionScopeFilter; label: string }> = [
   { value: "all", label: "All work" },
   { value: "objective", label: "Objective" },
@@ -87,6 +116,10 @@ const REVIEW_STATE_PILL: Record<string, { label: string; className: string }> = 
     className: "bg-terracotta-soft text-terracotta border-terracotta/20",
   },
   approved: { label: "Approved", className: "bg-emerald-50 text-emerald-600 border-emerald-200" },
+  // Distinct from a human Approved: this task was flagged review_required =
+  // false, so nobody looked at it. Worth being able to tell apart at a glance.
+  auto_approved: { label: "Auto approved", className: "bg-sage-soft text-sage border-sage/20" },
+  completed: { label: "Completed", className: "bg-stone/10 text-stone border-stone/20" },
 };
 
 /** "1h 23m" / "45m" / "30s" — compact enough to sit inline on a badge row. */
@@ -152,14 +185,25 @@ export default function SubmissionsPage() {
   const [roundDurations, setRoundDurations] = useState<Record<string, Record<string, number>>>({});
   const [reviewState, setReviewState] = useState<Record<string, string>>({});
   const [canReview, setCanReview] = useState(false);
+  const [canEmptyTrash, setCanEmptyTrash] = useState(false);
   const [seesAll, setSeesAll] = useState(false);
   const [orgTimezone, setOrgTimezone] = useState("UTC");
 
   const [view, setView] = useState<ViewMode>("timeline");
+  const [ownerMode, setOwnerMode] = useState<OwnerMode>("all");
+  const [currentUserId, setCurrentUserId] = useState("");
+  const [showTrash, setShowTrash] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   // Every filter is multi-select; an empty set means "all".
   const [vaFilter, setVaFilter] = useState<Set<string>>(new Set());
   const [scopeFilter, setScopeFilter] = useState<Set<string>>(new Set());
   const [projectFilter, setProjectFilter] = useState<Set<string>>(new Set());
+  // Defaults to Task: Communication/Planning/Collaboration work auto-completes
+  // on submit and isn't something anyone reviews, so it stays out of the way
+  // until deliberately asked for.
+  const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set(["Task"]));
   const [accountFilter, setAccountFilter] = useState<Set<string>>(new Set());
   const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
 
@@ -175,6 +219,11 @@ export default function SubmissionsPage() {
 
   useEffect(() => {
     (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) setCurrentUserId(user.id);
+
       const { data: org } = await supabase
         .from("organization_settings")
         .select("timezone")
@@ -223,19 +272,20 @@ export default function SubmissionsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/submissions`, { cache: "no-store" });
+      const res = await fetch(`/api/submissions${showTrash ? "?trash=1" : ""}`, { cache: "no-store" });
       const data = await res.json();
       setItems(data.submissions ?? []);
       setRoundDurations(data.roundDurations ?? {});
       setReviewState(data.reviewState ?? {});
       setCanReview(Boolean(data.canReview));
+      setCanEmptyTrash(Boolean(data.canEmptyTrash));
       setSeesAll(Boolean(data.seesAll));
     } catch {
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showTrash]);
 
   useEffect(() => {
     void load();
@@ -273,6 +323,130 @@ export default function SubmissionsPage() {
           alert(
             `Your ${REVIEW_DEFAULT_NOTE[outcome].toLowerCase()} was recorded on the submission, but the task's status could not be updated. The task has not moved — please change it from the task list.`
           );
+        }
+        await load();
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load]
+  );
+
+  const handleSelectChange = useCallback((taskId: number, checked: boolean) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(taskId);
+      else next.delete(taskId);
+      return next;
+    });
+  }, []);
+
+  /** Trashes or restores every submission on the selected tasks. */
+  const trashSelected = useCallback(
+    async (restore: boolean) => {
+      const targets = items.filter(
+        (i) => i.task && selectedTaskIds.has(i.task.id)
+      );
+      const taskCount = selectedTaskIds.size;
+      if (
+        !restore &&
+        !confirm(
+          `Move ${targets.length} submission${targets.length === 1 ? "" : "s"} across ${taskCount} task${taskCount === 1 ? "" : "s"} to trash?
+
+They can be restored from the Trash view.`
+        )
+      ) {
+        return;
+      }
+      try {
+        for (const item of targets) {
+          if (!item.task) continue;
+          await fetch(
+            `/api/assigned-tasks/${item.task.id}/submissions?submissionId=${item.id}${restore ? "&restore=1" : ""}`,
+            { method: "DELETE" }
+          );
+        }
+        setSelectedTaskIds(new Set());
+        await load();
+      } catch {
+        alert("Something went wrong — some submissions may not have moved.");
+      }
+    },
+    [items, selectedTaskIds, load]
+  );
+
+  /** Permanently removes everything in the trash. Founder only, and final. */
+  const emptyTrash = useCallback(async () => {
+    const count = items.length;
+    if (
+      !confirm(
+        `Permanently delete ${count} trashed submission${count === 1 ? "" : "s"} and their files?
+
+This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch("/api/submissions", { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error ?? "Unable to empty the trash.");
+        return;
+      }
+      await load();
+    } catch {
+      alert("Network error — nothing was deleted.");
+    }
+  }, [items.length, load]);
+
+  /**
+   * Moves a submission to trash, or restores it. Soft only — the row and its
+   * files survive, because a submission is the evidence behind a status change.
+   */
+  const trashSubmission = useCallback(
+    async (item: FeedItem, restore: boolean) => {
+      if (!item.task) return;
+      setBusyId(item.id);
+      try {
+        const res = await fetch(
+          `/api/assigned-tasks/${item.task.id}/submissions?submissionId=${item.id}${restore ? "&restore=1" : ""}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error ?? "Unable to update the submission.");
+          return;
+        }
+        await load();
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load]
+  );
+
+  /**
+   * Closes a task out without approving it — for work that's finished but was
+   * never a review decision. The note keeps the thread honest about who ended it.
+   */
+  const completeTask = useCallback(
+    async (item: FeedItem) => {
+      if (!item.task) return;
+      setBusyId(item.id);
+      try {
+        await fetch(`/api/assigned-tasks/${item.task.id}/submissions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message_type: "comment", message: "Marked complete" }),
+        });
+        const moved = await setAssignedTaskStatus({
+          assignedTaskId: item.task.id,
+          status: "completed",
+          vaId: item.user_id,
+        });
+        if (!moved) {
+          alert("The note was recorded but the task status could not be updated.");
         }
         await load();
       } finally {
@@ -335,6 +509,32 @@ export default function SubmissionsPage() {
       rows = rows.filter((r) => r.task?.project_id && projectFilter.has(r.task.project_id));
     }
 
+    if (ownerMode === "mine") {
+      rows = rows.filter((r) => r.user_id === currentUserId);
+    } else if (ownerMode === "to_me") {
+      rows = rows.filter((r) => r.task?.assigned_by === currentUserId);
+    }
+
+    if (assignedByFilter.size > 0) {
+      rows = rows.filter((r) => r.task?.assigned_by && assignedByFilter.has(r.task.assigned_by));
+    }
+
+    if (statusFilter.size > 0) {
+      rows = rows.filter((r) => {
+        if (!r.task) return false;
+        const state = reviewState[String(r.task.id)] ?? "awaiting";
+        const key =
+          state === "approved" && r.task.review_required === false
+            ? "auto_approved"
+            : state;
+        return statusFilter.has(key);
+      });
+    }
+
+    if (categoryFilter.size > 0) {
+      rows = rows.filter((r) => categoryFilter.has((r.task?.category ?? "").trim()));
+    }
+
     if (accountFilter.size > 0) {
       rows = rows.filter((r) => r.task?.account && accountFilter.has(r.task.account));
     }
@@ -350,7 +550,7 @@ export default function SubmissionsPage() {
     }
 
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, accountFilter, clientFilter, accountsByClient]);
+  }, [items, vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -371,6 +571,17 @@ export default function SubmissionsPage() {
   // Which revision round each submission belongs to — its position in its
   // task's thread. The calendar shows loose submissions rather than threads, so
   // each chip needs to carry its own round marker.
+  // Built from the loaded rows rather than the full staff list, so the filter
+  // only ever offers people who actually assigned something here.
+  const assignerOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const item of items) {
+      const id = item.task?.assigned_by;
+      if (id && !seen.has(id)) seen.set(id, item.task?.assigned_by_name || "Unknown");
+    }
+    return Array.from(seen, ([value, label]) => ({ value, label }));
+  }, [items]);
+
   // The thread carries notes and reviews too, so the headline count has to
   // exclude them or it stops meaning "work turned in".
   const submissionCount = useMemo(
@@ -431,16 +642,15 @@ export default function SubmissionsPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 pb-12">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-sm font-bold uppercase tracking-wide text-espresso">
-            Work Submitted
-          </h1>
-          <p className="text-[11px] text-stone">
-            Every submission across all tasks. Records are permanent — corrections are appended,
-            never overwritten.
-          </p>
-        </div>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        {/* The subtitle explained the append-only rule, which the Key and the
+            thread itself already make obvious — it was costing a line on every
+            visit to say something nobody rereads. */}
+        <h1 className="text-sm font-bold uppercase tracking-wide text-espresso">
+          Work Submitted
+        </h1>
+
+
 
         <div className="inline-flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
           {(["timeline", "calendar"] as ViewMode[]).map((mode) => (
@@ -457,10 +667,29 @@ export default function SubmissionsPage() {
         </div>
       </div>
 
-      <SubmissionsLegend />
+      {/* Key sits in the filter bar rather than above it: two full-width
+          bordered rows for one button was most of the page's dead space. */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-sand bg-white px-3 py-2">
+        <SubmissionsLegend />
 
-      {/* Filters */}
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-sand bg-white p-3">
+        {/* Whose submissions is a filter like any other, so it sits with them
+            rather than as a third tab strip competing with the view toggle. */}
+        <select
+          value={ownerMode}
+          onChange={(e) => setOwnerMode(e.target.value as OwnerMode)}
+          className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
+        >
+          {OWNER_MODES.map((mode) => (
+            <option key={mode.value} value={mode.value}>
+              {mode.label}
+            </option>
+          ))}
+        </select>
+
+        {/* Three groups, lightly ruled apart: what you're looking at, how it's
+            narrowed, and the actions. Ten chips in an undivided row read as one
+            undifferentiated mass. */}
+        <span className="mx-0.5 h-5 w-px shrink-0 bg-sand" aria-hidden="true" />
         {seesAll && (
           <MultiSelectFilter
             allLabel="All VAs"
@@ -484,6 +713,31 @@ export default function SubmissionsPage() {
           options={projectOptions.map((p) => ({ value: p.id, label: p.name }))}
         />
 
+        {/* Admin and above only. Everyone else has the My submissions /
+            Submitted to me switch, which covers the same ground for one person. */}
+        {canReview && (
+          <MultiSelectFilter
+            allLabel="All assigners"
+            selected={assignedByFilter}
+            onChange={setAssignedByFilter}
+            options={assignerOptions}
+          />
+        )}
+
+        <MultiSelectFilter
+          allLabel="All statuses"
+          selected={statusFilter}
+          onChange={setStatusFilter}
+          options={STATUS_OPTIONS}
+        />
+
+        <MultiSelectFilter
+          allLabel="All categories"
+          selected={categoryFilter}
+          onChange={setCategoryFilter}
+          options={CATEGORY_OPTIONS.map((c) => ({ value: c, label: c }))}
+        />
+
         <MultiSelectFilter
           allLabel="All accounts"
           selected={accountFilter}
@@ -498,10 +752,54 @@ export default function SubmissionsPage() {
           options={clients.map((c) => ({ value: c.id, label: c.name }))}
         />
 
+        <span className="mx-0.5 h-5 w-px shrink-0 bg-sand" aria-hidden="true" />
+
+        {canReview && (
+          <button
+            onClick={() => setShowTrash((v) => !v)}
+            className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+              showTrash
+                ? "border-terracotta/40 bg-terracotta-soft text-terracotta"
+                : "border-sand bg-white text-stone hover:text-espresso"
+            }`}
+          >
+            {showTrash ? "Viewing trash" : "Trash"}
+          </button>
+        )}
+
+        {showTrash && canEmptyTrash && items.length > 0 && (
+          <button
+            onClick={() => void emptyTrash()}
+            className="rounded-lg border border-terracotta/40 bg-terracotta px-2 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840]"
+          >
+            Empty trash
+          </button>
+        )}
+
         <span className="ml-auto text-[11px] text-stone">
           {loading ? "Loading..." : `${submissionCount} submission${submissionCount === 1 ? "" : "s"}`}
         </span>
       </div>
+
+      {selectedTaskIds.size > 0 && (
+        <div className="mb-3 flex items-center gap-3 rounded-xl border border-terracotta/30 bg-terracotta-soft px-3 py-2">
+          <span className="text-[11px] font-semibold text-terracotta">
+            {selectedTaskIds.size} selected
+          </span>
+          <button
+            onClick={() => void trashSelected(showTrash)}
+            className="rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840]"
+          >
+            {showTrash ? "Restore" : "Move to trash"}
+          </button>
+          <button
+            onClick={() => setSelectedTaskIds(new Set())}
+            className="ml-auto text-[10px] font-semibold text-stone transition-colors hover:text-espresso"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {view === "timeline" ? (
         <TimelineView
@@ -514,6 +812,10 @@ export default function SubmissionsPage() {
           loading={loading}
           roundDurations={roundDurations}
           reviewState={reviewState}
+          showTrash={showTrash}
+          selectedTaskIds={selectedTaskIds}
+          onSelectChange={handleSelectChange}
+          onComplete={completeTask}
         />
       ) : (
         <CalendarView
@@ -524,6 +826,75 @@ export default function SubmissionsPage() {
           roundByItemId={roundByItemId}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * A day's worth of threads, collapsible, with the day's totals on the header
+ * so a closed day still says whether anything needs doing.
+ */
+function DayGroup({
+  day,
+  orgTimezone,
+  threads,
+  reviewState,
+  children,
+}: {
+  day: string;
+  orgTimezone: string;
+  threads: Thread[];
+  reviewState: Record<string, string>;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+
+  const submissionCount = threads.reduce(
+    (n, t) => n + t.items.filter((i) => i.message_type === "submission").length,
+    0
+  );
+  // Auto-approved work is deliberately excluded: nobody is expected to act on
+  // it, so counting it would overstate the queue.
+  const needsReview = threads.filter((t) => {
+    const state = reviewState[String(t.taskId)];
+    if (state === "revision_requested" || state === "approved") return false;
+    return t.latest.task?.review_required !== false;
+  }).length;
+
+  return (
+    <div className="px-3 py-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="group flex w-full items-center gap-2 text-left"
+      >
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 12 12"
+          className={`shrink-0 text-bark transition-transform ${open ? "rotate-90" : ""}`}
+        >
+          <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
+          {new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
+            weekday: "long",
+            month: "short",
+            day: "numeric",
+            timeZone: orgTimezone,
+          })}
+        </span>
+        <span className="text-[10px] text-stone">
+          {submissionCount} submission{submissionCount === 1 ? "" : "s"}
+        </span>
+        {needsReview > 0 && (
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-[2px] text-[10px] font-semibold text-amber-600">
+            {needsReview} need{needsReview === 1 ? "s" : ""} review
+          </span>
+        )}
+      </button>
+
+      {open && <div className="mt-2 space-y-1.5">{children}</div>}
     </div>
   );
 }
@@ -542,7 +913,7 @@ function SubmissionsLegend() {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="mb-3">
+    <div className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -555,7 +926,7 @@ function SubmissionsLegend() {
       </button>
 
       {open && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-sand bg-parchment/30 px-3 py-2">
+        <div className="absolute left-0 top-8 z-30 flex w-[34rem] max-w-[80vw] flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-sand bg-white px-3 py-2 shadow-lg">
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
         <RevisionBadge count={1} />
@@ -582,7 +953,7 @@ function SubmissionsLegend() {
       </span>
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
-        {(["awaiting", "revision_requested", "approved"] as const).map((key) => (
+        {(["awaiting", "revision_requested", "approved", "auto_approved"] as const).map((key) => (
           <span
             key={key}
             className={`rounded-full border px-2 py-[2px] text-[10px] font-semibold ${REVIEW_STATE_PILL[key].className}`}
@@ -742,6 +1113,10 @@ function ThreadCard({
   rounds,
   state,
   timezone,
+  trashed,
+  selected,
+  onSelectChange,
+  onComplete,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -753,6 +1128,10 @@ function ThreadCard({
   /** "awaiting" | "revision_requested" | "approved" */
   state?: string;
   timezone: string;
+  trashed: boolean;
+  selected: boolean;
+  onSelectChange: (taskId: number, checked: boolean) => void;
+  onComplete: (item: FeedItem) => void;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -773,12 +1152,30 @@ function ThreadCard({
   // Unknown state falls through to "awaiting" — better to offer the buttons
   // than to hide a decision that still needs making.
   const awaitingReview = state !== "revision_requested" && state !== "approved";
-  const pill = state ? REVIEW_STATE_PILL[state] : undefined;
+  // An approval on a task that never required review is labelled as such, so
+  // "Approved" always means a person actually looked at it.
+  const autoApproved = state === "approved" && latest.task?.review_required === false;
+  const pill = autoApproved
+    ? REVIEW_STATE_PILL.auto_approved
+    : state
+      ? REVIEW_STATE_PILL[state]
+      : undefined;
 
   return (
     <div className="rounded-lg border border-sand bg-white px-3 py-2.5">
       {/* Task Name | R# Task Type | Total time | Approve Revise */}
       <div className="flex items-center gap-2">
+        {/* Selection drives the bulk trash action. One checkbox per card beats
+            a Trash link on every row, which was noise on rows nobody was binning. */}
+        {canReview && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={(e) => onSelectChange(thread.taskId, e.target.checked)}
+            className="shrink-0 cursor-pointer accent-terracotta"
+            aria-label="Select this task's submissions"
+          />
+        )}
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -838,6 +1235,14 @@ function ThreadCard({
             >
               Revise
             </button>
+            <button
+              onClick={() => onComplete(latest)}
+              disabled={busy}
+              className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+              title="Close this out without an approval decision"
+            >
+              Complete
+            </button>
           </div>
         ) : (
           <div className="flex shrink-0 items-center gap-1.5">
@@ -866,6 +1271,7 @@ function ThreadCard({
       <div className="mt-0.5 pl-[18px] text-[11px] text-stone/80">
         {head.task?.account ?? "—"}
         {head.task?.project_name ? ` · ${head.task.project_name}` : ""}
+        {head.task?.assigned_by_name ? ` · reviewer: ${head.task.assigned_by_name}` : ""}
         {!expanded &&
           ` · ${thread.items.length} submission${thread.items.length === 1 ? "" : "s"}`}
       </div>
@@ -953,6 +1359,10 @@ function TimelineView({
   loading,
   roundDurations,
   reviewState,
+  showTrash,
+  selectedTaskIds,
+  onSelectChange,
+  onComplete,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -963,6 +1373,10 @@ function TimelineView({
   loading: boolean;
   roundDurations: Record<string, Record<string, number>>;
   reviewState: Record<string, string>;
+  showTrash: boolean;
+  selectedTaskIds: Set<number>;
+  onSelectChange: (taskId: number, checked: boolean) => void;
+  onComplete: (item: FeedItem) => void;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -976,18 +1390,15 @@ function TimelineView({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="divide-y divide-sand overflow-hidden rounded-xl border border-sand bg-white">
       {days.map((day) => (
-        <div key={day} className="rounded-xl border border-sand bg-white p-4 space-y-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
-            {new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
-              weekday: "long",
-              month: "short",
-              day: "numeric",
-              timeZone: orgTimezone,
-            })}
-          </p>
-          <div className="space-y-2">
+        <DayGroup
+          key={day}
+          day={day}
+          orgTimezone={orgTimezone}
+          threads={byDay.get(day) ?? []}
+          reviewState={reviewState}
+        >
             {(byDay.get(day) ?? []).map((thread) => (
               <ThreadCard
                 key={thread.taskId}
@@ -999,10 +1410,13 @@ function TimelineView({
                 rounds={roundDurations[String(thread.taskId)] ?? {}}
                 state={reviewState[String(thread.taskId)]}
                 timezone={orgTimezone}
+                trashed={showTrash}
+                selected={selectedTaskIds.has(thread.taskId)}
+                onSelectChange={onSelectChange}
+                onComplete={onComplete}
               />
             ))}
-          </div>
-        </div>
+        </DayGroup>
       ))}
     </div>
   );

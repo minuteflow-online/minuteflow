@@ -6,6 +6,7 @@ import {
   submissionSummary,
   type SubmissionMessageType,
 } from "@/lib/submissions";
+import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -19,6 +20,13 @@ type CallerProfile = {
   department?: string | null;
   admin_permissions?: string[] | null;
 } | null;
+
+/**
+ * Categories that are logged rather than reviewed. Work in these completes the
+ * moment it's submitted and stays out of the review queue — only "Task" work
+ * is something a reviewer is expected to look at.
+ */
+const AUTO_COMPLETE_CATEGORIES = ["Communication", "Planning", "Collaboration"];
 
 const SUBMISSION_SELECT =
   "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, profiles!task_submissions_user_id_profiles_fkey(id, full_name, username)";
@@ -118,6 +126,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     .from("task_submissions")
     .select(SUBMISSION_SELECT)
     .eq("assigned_task_id", id)
+    .is("deleted_at", null)
     .order("created_at", { ascending: true });
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -220,7 +229,7 @@ export async function POST(request: Request, { params }: RouteContext) {
 
   const { data: task, error: taskError } = await admin
     .from("assigned_tasks")
-    .select("id")
+    .select("id, category, review_required, task_name, account, project")
     .eq("id", id)
     .single();
   if (taskError || !task) {
@@ -293,8 +302,80 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
   }
 
+  // ── Auto-outcome ─────────────────────────────────────────────────────────
+  // Some submissions never need a human decision:
+  //   * Communication / Planning / Collaboration work is logged, not reviewed
+  //     — it completes on submit.
+  //   * A task flagged review_required = false is approved on submit, and an
+  //     approval entry is written so the thread still records why it closed.
+  // Decided here rather than in the browser so it can't be skipped, and so the
+  // approval entry can be written by the system without the caller needing
+  // reviewer rights. The status move itself still goes through the client's
+  // setAssignedTaskStatus, keeping one status-write path.
+  let autoStatus: string | null = null;
+
+  if (messageType === "submission") {
+    // Reuses the row fetched for the existence check above. The previous
+    // version issued a second lookup and ignored its error, so any failure
+    // there silently skipped the whole auto-outcome — which is exactly how
+    // tasks 314 and 315 ended up sitting in the queue.
+    if (AUTO_COMPLETE_CATEGORIES.includes((task.category ?? "").trim())) {
+      autoStatus = "completed";
+    } else if (task.review_required === false) {
+      autoStatus = "approved";
+      await admin.from("task_submissions").insert({
+        assigned_task_id: Number(id),
+        va_task_assignment_id: null,
+        user_id: user.id,
+        message_type: "approval",
+        content: "Auto approved — this task does not require review",
+        submission_comment: "Auto approved — this task does not require review",
+      });
+    }
+  }
+
+  // Write the auto-outcome status here rather than leaving it to the caller.
+  // The browser still moves the status for a normal submission, but an auto
+  // outcome must not depend on it: a stale tab or a dropped response would
+  // leave the thread saying "auto approved" while the task sat in the review
+  // queue. Observed on task 313, which stayed `submitted` with no approval.
+  if (autoStatus) {
+    const stamp = new Date().toISOString();
+    await admin
+      .from("assigned_task_assignees")
+      .update({ status: autoStatus, updated_at: stamp })
+      .eq("assigned_task_id", id);
+    await admin
+      .from("assigned_tasks")
+      .update({ status: autoStatus, updated_at: stamp })
+      .eq("id", id);
+  }
+
+  // Telegram alert for work a reviewer is expected to look at. Auto-outcome
+  // submissions are skipped: they close on submit and never enter the queue,
+  // so pinging about them is noise. Best-effort — the submission is already
+  // committed and must not fail on a Telegram problem.
+  if (messageType === "submission" && !autoStatus && telegramEnabled("submissions")) {
+    const { data: prof } = await admin
+      .from("profiles")
+      .select("full_name, username")
+      .eq("id", user.id)
+      .single();
+    const who = prof?.full_name || prof?.username || "A VA";
+    const where = [task.account, task.project].filter(Boolean).join(" / ");
+
+    const lines = [
+      `📤 <b>New submission</b> from ${esc(who)}`,
+      `Task: ${esc(task.task_name ?? "a task")}`,
+    ];
+    if (where) lines.push(`Project: ${esc(where)}`);
+    lines.push("", "Review: https://minuteflow.click/admin");
+
+    await sendTelegram("submissions", lines.join("\n"));
+  }
+
   const [withFiles] = await withAttachments(admin, [submission as never]);
-  return Response.json({ submission: withFiles }, { status: 201 });
+  return Response.json({ submission: withFiles, autoStatus }, { status: 201 });
 }
 
 /**
@@ -364,4 +445,63 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const [withFiles] = await withAttachments(admin, [data as never]);
   return Response.json({ submission: withFiles });
+}
+
+/**
+ * DELETE /api/assigned-tasks/[id]/submissions?submissionId=<id>
+ *
+ * Moves a submission to trash. Never a hard delete: the row keeps its files
+ * and its place in the thread, and `deleted_at` simply hides it. A submission
+ * is the evidence behind a status change, so destroying one would leave the
+ * task claiming work that no longer exists anywhere.
+ *
+ * Pass `restore=1` to bring it back.
+ *
+ * Admin and above only — the same tier that can review or correct one.
+ */
+export async function DELETE(request: Request, { params }: RouteContext) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role, department, admin_permissions")
+    .eq("id", user.id)
+    .single();
+
+  if (!canReviewSubmissions(profile)) {
+    return Response.json(
+      { error: "Only Admin, Manager, CEO, or Founder can trash a submission" },
+      { status: 403 }
+    );
+  }
+
+  const { id } = await params;
+  const { searchParams } = new URL(request.url);
+  const submissionId = searchParams.get("submissionId");
+  const restore = searchParams.get("restore") === "1";
+  if (!submissionId) {
+    return Response.json({ error: "submissionId is required" }, { status: 400 });
+  }
+
+  const admin = adminClient();
+  const { data, error } = await admin
+    .from("task_submissions")
+    .update(
+      restore
+        ? { deleted_at: null, deleted_by: null }
+        : { deleted_at: new Date().toISOString(), deleted_by: user.id }
+    )
+    .eq("id", submissionId)
+    .eq("assigned_task_id", id)
+    .select("id, deleted_at")
+    .single();
+
+  if (error) return Response.json({ error: error.message }, { status: 400 });
+  if (!data) return Response.json({ error: "Submission not found" }, { status: 404 });
+
+  return Response.json({ submission: data });
 }

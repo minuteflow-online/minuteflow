@@ -15,7 +15,7 @@ export async function GET() {
     .from("profiles")
     // Shift fields ride along so the Calendar can show a day's remaining budget
     // against what's already blocked — see shiftHoursFromProfile.
-    .select("id, full_name, username, position, role, pay_rate_type, can_see_available_tasks, shift_hours, shift_start, shift_end, weekly_budget_limit")
+    .select("id, full_name, username, position, role, pay_rate_type, can_see_available_tasks, shift_hours, shift_start, shift_end, weekly_budget_limit, monthly_budget_limit")
     .eq("is_active", true)
     .order("full_name");
 

@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
-import { canReviewSubmissions } from "@/lib/submissions";
+import { canEmptySubmissionTrash, canReviewSubmissions } from "@/lib/submissions";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -48,6 +48,7 @@ export async function GET(request: Request) {
   const projectId = searchParams.get("projectId");
   const from = searchParams.get("from");
   const to = searchParams.get("to");
+  const showTrash = searchParams.get("trash") === "1";
 
   const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -58,16 +59,20 @@ export async function GET(request: Request) {
     .select(
       "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, " +
         "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
-        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, projects(id, name, kind))"
+        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
     )
     // The whole thread, not just submissions: revision notes, approvals and
     // added notes all belong in the timeline alongside the work.
     .not("assigned_task_id", "is", null)
     .order("created_at", { ascending: false });
 
-  if (!isAdminEquivalent) {
-    query = query.eq("user_id", user.id);
-  } else if (va && va !== "all") {
+  // Trashed submissions are hidden by default and shown on request, so a
+  // reviewer can find and restore something binned by mistake.
+  query = showTrash
+    ? query.not("deleted_at", "is", null)
+    : query.is("deleted_at", null);
+
+  if (isAdminEquivalent && va && va !== "all") {
     query = query.eq("user_id", va);
   }
 
@@ -86,6 +91,10 @@ export async function GET(request: Request) {
       project: string | null;
       project_id: string | null;
       status: string | null;
+      category: string | null;
+      review_required: boolean | null;
+      assigned_by: string | null;
+      assigned_by_profile?: { id: string; full_name: string | null; username: string | null } | null;
       due_date: string | null;
       due_time: string | null;
       end_date: string | null;
@@ -99,6 +108,17 @@ export async function GET(request: Request) {
   // is the absence of a project link, which PostgREST can't express as a
   // filter on the embedded projects row.
   let rows = (data ?? []) as unknown as Row[];
+
+  // Everyone can open this page. Someone without admin access sees their own
+  // submissions plus anything submitted on a task they assigned — assigned_by
+  // is the person who reviews it, so they need to see what's waiting on them.
+  // Filtered here rather than in the query because it's an OR across an
+  // embedded table, which PostgREST can't express.
+  if (!isAdminEquivalent) {
+    rows = rows.filter(
+      (r) => r.user_id === user.id || r.assigned_tasks?.assigned_by === user.id
+    );
+  }
 
   if (projectId && projectId !== "all") {
     rows = rows.filter((r) => r.assigned_tasks?.project_id === projectId);
@@ -206,7 +226,19 @@ export async function GET(request: Request) {
         latestByTask.set(entry.assigned_task_id, entry);
       }
     }
+    // A task marked complete is done regardless of where its thread ended —
+    // otherwise it keeps showing Approve/Revise after someone closed it out.
+    const completedTasks = new Set(
+      rows
+        .filter((r) => r.assigned_tasks?.status === "completed")
+        .map((r) => r.assigned_tasks!.id)
+    );
+
     for (const [taskId, entry] of latestByTask) {
+      if (completedTasks.has(taskId)) {
+        reviewState[taskId] = "completed";
+        continue;
+      }
       reviewState[taskId] =
         entry.message_type === "revision"
           ? "revision_requested"
@@ -275,6 +307,11 @@ export async function GET(request: Request) {
             project_kind: task.projects?.kind ?? null,
             project_name: task.projects?.name ?? null,
             status: task.status,
+            category: task.category,
+            review_required: task.review_required,
+            assigned_by: task.assigned_by,
+            assigned_by_name:
+              task.assigned_by_profile?.full_name ?? task.assigned_by_profile?.username ?? null,
             due_date: task.due_date,
             due_time: task.due_time,
             end_date: task.end_date,
@@ -294,5 +331,61 @@ export async function GET(request: Request) {
     reviewState,
     seesAll: isAdminEquivalent,
     canReview: canReviewSubmissions(profile),
+    canEmptyTrash: canEmptySubmissionTrash(profile),
   });
+}
+
+/**
+ * DELETE /api/submissions — empty the submission trash, permanently.
+ *
+ * The one irreversible action here. Removes every trashed submission along
+ * with its uploaded files, so the storage bucket doesn't keep orphans after
+ * the rows are gone. Founder only.
+ */
+export async function DELETE() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  if (!canEmptySubmissionTrash(profile)) {
+    return Response.json({ error: "Only the Founder can empty the trash" }, { status: 403 });
+  }
+
+  const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: trashed } = await admin
+    .from("task_submissions")
+    .select("id")
+    .not("deleted_at", "is", null);
+
+  const ids = (trashed ?? []).map((r) => r.id as number);
+  if (ids.length === 0) return Response.json({ purged: 0 });
+
+  // Files first: if the rows went first, the storage objects would be
+  // unreachable and would sit in the bucket forever.
+  const { data: files } = await admin
+    .from("assigned_task_attachments")
+    .select("id, storage_path")
+    .in("submission_id", ids);
+
+  const paths = (files ?? []).map((f) => f.storage_path as string).filter(Boolean);
+  if (paths.length > 0) {
+    await admin.storage.from("task-attachments").remove(paths);
+    await admin.from("assigned_task_attachments").delete().in("submission_id", ids);
+  }
+
+  const { error } = await admin.from("task_submissions").delete().in("id", ids);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  return Response.json({ purged: ids.length });
 }

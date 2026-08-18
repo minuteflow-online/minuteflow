@@ -1,13 +1,18 @@
 "use client";
 
 import { useRef, useState } from "react";
+import type { AssignedTaskStatus } from "@/types/database";
 
 interface SubmitWorkModalProps {
   taskId: number;
   taskName: string;
   onClose: () => void;
-  /** Called once the submission is saved — the caller then moves the status. */
-  onSubmitted: () => void;
+  /**
+   * Called once the submission is saved. Receives the status the task should
+   * move to: normally "submitted", but the server auto-completes logged
+   * categories and auto-approves tasks that don't require review.
+   */
+  onSubmitted: (status: AssignedTaskStatus) => void;
 }
 
 /**
@@ -74,7 +79,8 @@ export default function SubmitWorkModal({
         return;
       }
 
-      onSubmitted();
+      const data = await res.json().catch(() => ({}));
+      onSubmitted((data.autoStatus as AssignedTaskStatus) ?? "submitted");
     } catch {
       setError("Network error — nothing was recorded. Try again.");
       setSaving(false);

@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
   return new Response(
     html(`
       <h1>✅ Authorization Successful!</h1>
-      <p>Google Drive access has been granted. Manny is now updating the system automatically.</p>
+      <p>Google Drive access has been granted. MinuteFlow will use it automatically.</p>
       <p>You can close this tab and return to MinuteFlow.</p>
       <p style="font-size:12px;color:#888;margin-top:40px;">This was a one-time authorization. Screenshots will resume uploading to Google Drive shortly.</p>
     `),

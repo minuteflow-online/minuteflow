@@ -2,6 +2,7 @@ import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { makeApprovalToken } from "@/lib/approvalToken";
 import { esc } from "@/lib/approvalPages";
+import { sendTelegram, telegramEnabled, esc as tgEsc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -60,16 +61,10 @@ export async function POST(request: Request) {
   if (req.user_id !== user.id) return Response.json({ error: "Forbidden" }, { status: 403 });
 
   const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return Response.json({ ok: false, reason: "email not configured" });
-
-  // Admins only — managers (e.g. IT) are excluded from these approvals.
-  const { data: admins } = await admin.from("profiles").select("id").eq("role", "admin");
-  const emails: string[] = [];
-  for (const a of (admins ?? []) as { id: string }[]) {
-    const { data: authData } = await admin.auth.admin.getUserById(a.id);
-    if (authData?.user?.email) emails.push(authData.user.email);
-  }
-  if (emails.length === 0) return Response.json({ ok: false, reason: "no admin emails" });
+  const tgOn = telegramEnabled("submissions");
+  // Either channel suffices. This previously bailed when Resend was unset,
+  // which would have silently disabled the Telegram alert as well.
+  if (!resendKey && !tgOn) return Response.json({ ok: false, reason: "no notification channel configured" });
 
   const { data: prof } = await admin.from("profiles").select("full_name, username").eq("id", req.user_id).single();
   const vaName = prof?.full_name || prof?.username || "A VA";
@@ -83,32 +78,56 @@ export async function POST(request: Request) {
   const link = (action: string) =>
     `${BASE}/api/va-requests/action?id=${req.id}&do=${action}&t=${makeApprovalToken("shift", req.id, action)}`;
 
-  // "Propose a new time" only makes sense for a shift change.
-  const proposeBtn = req.type === "schedule_change" ? actionButton("🕑 Propose new time", link("propose"), "#b8860b") : "";
+  // Email — admins only. Managers (e.g. IT) are excluded from these approvals.
+  const emails: string[] = [];
+  if (resendKey) {
+    const { data: admins } = await admin.from("profiles").select("id").eq("role", "admin");
+    for (const a of (admins ?? []) as { id: string }[]) {
+      const { data: authData } = await admin.auth.admin.getUserById(a.id);
+      if (authData?.user?.email) emails.push(authData.user.email);
+    }
 
-  await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: "Toni Colina <noreply@minuteflow.click>",
-      to: emails,
-      subject: `🔔 ${typeLabel} request from ${vaName}`,
-      html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
-        <h2 style="color:#c2694f">🔔 ${esc(typeLabel)} request</h2>
-        <p><strong>${esc(vaName)}</strong> submitted a <strong>${esc(typeLabel)}</strong> request.</p>
-        ${req.subject ? `<p><strong>Subject:</strong> ${esc(req.subject)}</p>` : ""}
-        ${dateRange ? `<p><strong>Dates:</strong> ${esc(dateRange)}</p>` : ""}
-        ${timeRange ? `<p><strong>Requested time:</strong> ${esc(timeRange)}</p>` : ""}
-        ${req.message ? `<p style="background:#f3ede4;padding:10px 12px;border-radius:8px">${esc(req.message).replace(/\n/g, "<br>")}</p>` : ""}
-        <div style="margin:18px 0">
-          ${actionButton("✓ Approve", link("approve"), "#6b8f71")}
-          ${actionButton("✋ Decline", link("decline"), "#c2694f")}
-          ${proposeBtn}
-        </div>
-        <p style="color:#b5a898;font-size:12px">Or review in Admin → VA Requests.</p>
-      </div>`,
-    }),
-  });
+    if (emails.length > 0) {
+      // "Propose a new time" only makes sense for a shift change.
+      const proposeBtn = req.type === "schedule_change" ? actionButton("🕑 Propose new time", link("propose"), "#b8860b") : "";
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: "Toni Colina <noreply@minuteflow.click>",
+          to: emails,
+          subject: `🔔 ${typeLabel} request from ${vaName}`,
+          html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
+            <h2 style="color:#c2694f">🔔 ${esc(typeLabel)} request</h2>
+            <p><strong>${esc(vaName)}</strong> submitted a <strong>${esc(typeLabel)}</strong> request.</p>
+            ${req.subject ? `<p><strong>Subject:</strong> ${esc(req.subject)}</p>` : ""}
+            ${dateRange ? `<p><strong>Dates:</strong> ${esc(dateRange)}</p>` : ""}
+            ${timeRange ? `<p><strong>Requested time:</strong> ${esc(timeRange)}</p>` : ""}
+            ${req.message ? `<p style="background:#f3ede4;padding:10px 12px;border-radius:8px">${esc(req.message).replace(/\n/g, "<br>")}</p>` : ""}
+            <div style="margin:18px 0">
+              ${actionButton("✓ Approve", link("approve"), "#6b8f71")}
+              ${actionButton("✋ Decline", link("decline"), "#c2694f")}
+              ${proposeBtn}
+            </div>
+            <p style="color:#b5a898;font-size:12px">Or review in Admin → VA Requests.</p>
+          </div>`,
+        }),
+      });
+    }
+  }
+
+  // Telegram — carries the same one-tap approval links, so a request can be
+  // actioned from the phone without opening the admin panel.
+  if (tgOn) {
+    const lines = [`🔔 <b>${tgEsc(typeLabel)} request</b> from ${tgEsc(vaName)}`];
+    if (req.subject) lines.push(`Subject: ${tgEsc(req.subject)}`);
+    if (dateRange) lines.push(`Dates: ${tgEsc(dateRange)}`);
+    if (timeRange) lines.push(`Requested time: ${tgEsc(timeRange)}`);
+    if (req.message) lines.push("", tgEsc(req.message));
+    lines.push("", `<a href="${link("approve")}">✓ Approve</a>  •  <a href="${link("decline")}">✋ Decline</a>`);
+    if (req.type === "schedule_change") lines.push(`<a href="${link("propose")}">🕑 Propose new time</a>`);
+    await sendTelegram("submissions", lines.join("\n"));
+  }
 
   return Response.json({ ok: true, to: emails });
 }

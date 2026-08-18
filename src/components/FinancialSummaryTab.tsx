@@ -327,7 +327,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const rangeStart = `${startDate}T00:00:00.000Z`;
     const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes, paystubSnapRes, projExpRes] = await Promise.all([
+    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes] = await Promise.all([
       fetch("/api/accounts"),
       supabase
         .from("profiles")
@@ -368,6 +368,19 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .eq("billing_type", "fixed")
         .gt("rate", 0)
         .eq("assignment_type", "include"),
+      // Output Based tasks created through the current TaskEditor flow (as
+      // opposed to the legacy va_task_assignments above) — same "only counts
+      // once approved" rule applies, via status === "completed" (this table
+      // has no literal "approved" status; completed is where a reviewer
+      // signs off). Cancelled tasks are excluded outright — nothing is ever
+      // owed on those, not even a "pending" figure.
+      supabase
+        .from("fixed_pay_tasks")
+        .select("assigned_to, task_name, account, project, rate, status")
+        .not("assigned_to", "is", null)
+        .gt("rate", 0)
+        .is("deleted_at", null)
+        .neq("status", "cancelled"),
       // Custom paystub line items sent for pay periods overlapping the range
       supabase
         .from("paystub_snapshots")
@@ -411,6 +424,20 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     // Parse VA fixed assignments into flat structure
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rawFixed = (vaFixedRes.data ?? []) as any[];
+    // Output Based tasks from the current fixed_pay_tasks flow, merged in
+    // alongside the legacy va_task_assignments rows below — same shape, same
+    // "earned means approved" rule the downstream calc already applies.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawFixedPayTasks = (fixedPayTasksRes.data ?? []) as any[];
+    const parsedFixedPayTasks: VaFixedAssignment[] = rawFixedPayTasks.map((row) => ({
+      va_id: row.assigned_to,
+      task_name: row.task_name ?? "Unknown Task",
+      account: row.account ?? null,
+      project_name: row.project ?? null,
+      rate: Number(row.rate),
+      task_library_id: 0,
+      status: row.status === "completed" ? "approved" : "not_started",
+    }));
     const parsedFixed: VaFixedAssignment[] = rawFixed.map((row) => {
       const pta = row.project_task_assignments;
       const lib = pta?.task_library;
@@ -425,7 +452,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         status: row.status ?? "not_started",
       };
     });
-    setVaFixedAssignments(parsedFixed);
+    setVaFixedAssignments([...parsedFixed, ...parsedFixedPayTasks]);
 
     // Flatten custom paystub line items per VA. Older snapshots stored
     // { label, amount } only — normalized to rate = amount, quantity = 1.
@@ -709,7 +736,12 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
           loggedFixedTasks: new Set<string>(),
         };
 
-        // Calculate hourly rate
+        // Fixed monthly salary (Toni, Neil, etc.) — cost is the flat monthly
+        // amount from Team Management, NOT hours × rate. Full amount per month.
+        const isMonthlyFixed = profile.pay_rate_type === "monthly";
+        const monthlyFixedPay = isMonthlyFixed ? Number(profile.pay_rate) || 0 : 0;
+
+        // Calculate hourly rate (used for hourly/daily VAs)
         let hourlyRate = profile.pay_rate;
         if (profile.pay_rate_type === "daily") hourlyRate = profile.pay_rate / 8;
         if (profile.pay_rate_type === "monthly") hourlyRate = profile.pay_rate / 160;
@@ -742,8 +774,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         const customItems = fixedTasks.length === 0 ? (customPaystubByVa[userId] ?? []) : [];
         const customTotal = customItems.reduce((s, t) => s + t.amount, 0);
         const earnedFixedPay = fixedTasks.filter((t) => t.earned).reduce((s, t) => s + t.rate, 0);
-        // Only count approved fixed tasks toward gross pay and balance
-        const grossPay = hourlyPay + earnedFixedPay;
+        // Monthly-fixed: cost is the flat salary (+ any earned fixed tasks).
+        // Hourly/daily: hours × rate (+ earned fixed tasks).
+        const grossPay = (isMonthlyFixed ? monthlyFixedPay : hourlyPay) + earnedFixedPay;
 
         // Payments made to this VA
         const payments = vaPaymentsByUser[userId] ?? [];
@@ -771,6 +804,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
           totalMs: data.totalMs,
           paidMs: data.paidMs,
           hourlyRate,
+          isMonthlyFixed,
+          monthlyFixedPay,
           hourlyPay,
           fixedPay,
           earnedFixedPay,
@@ -791,6 +826,8 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
       totalMs: number;
       paidMs: number;
       hourlyRate: number;
+      isMonthlyFixed: boolean;
+      monthlyFixedPay: number;
       hourlyPay: number;
       fixedPay: number;
       earnedFixedPay: number;
@@ -1805,7 +1842,11 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                             {fmtHours(row.paidMs)}
                           </td>
                           <td className="px-3 py-3 text-right text-bark">
-                            {fmtMoney(row.hourlyRate)}/hr
+                            {row.isMonthlyFixed ? (
+                              <span title="Fixed monthly salary from Team Management">{fmtMoney(row.monthlyFixedPay)}/mo</span>
+                            ) : (
+                              `${fmtMoney(row.hourlyRate)}/hr`
+                            )}
                           </td>
                           <td className="px-3 py-3 text-right text-bark">
                             {row.fixedPay > 0 ? fmtMoney(row.fixedPay) : row.customTotal > 0 ? fmtMoney(row.customTotal) : "—"}

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
+import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,24 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
+  // Best-effort ping — the report is already saved, so a send failure is not
+  // worth surfacing to the VA who filed it.
+  if (telegramEnabled("bugs")) {
+    const who = profile?.full_name || profile?.username || "Someone";
+    const desc = description.trim();
+    await sendTelegram(
+      "bugs",
+      [
+        `🐞 <b>Bug report</b> from ${esc(who)}`,
+        esc(title.trim()),
+        "",
+        esc(desc.length > 400 ? desc.slice(0, 400) + "…" : desc),
+        "",
+        "Review: https://minuteflow.click/admin",
+      ].join("\n")
+    );
+  }
+
   return Response.json({ report: data }, { status: 201 });
 }
 

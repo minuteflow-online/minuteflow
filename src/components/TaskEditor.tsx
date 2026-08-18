@@ -53,10 +53,6 @@ function computeHourlyEquivalent(durationValue: string, unit: "hours" | "minutes
   return hours * hourlyRate;
 }
 
-// Durations people actually pick, coarsest sensible steps: quarter-hours up to
-// two hours, then half-hours to a full shift. A dropdown rather than a text box
-// — nobody should have to learn that "1h 30m" parses and "1.5 hrs" might not.
-const DURATION_CHOICES = [15, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480];
 
 type TaskAttachment = {
   id: number;
@@ -127,44 +123,74 @@ const inputClass = "w-full rounded-lg border border-sand px-3 py-2 text-[13px] o
 const labelClass = "mb-1 block text-[11px] font-bold uppercase tracking-wider text-amber";
 
 /**
- * Pick a duration instead of typing one. Stores the same shorthand string the
- * free-text box used ("1h 30m"), so nothing downstream changes — this is purely
- * how the value gets chosen.
+ * Hours and minutes as two plain number boxes. Stores the same shorthand string
+ * the free-text field used ("1h 30m"), so nothing downstream changes.
  *
- * A task saved before this existed can hold a duration that isn't one of the
- * presets; that value is folded into the list rather than silently snapped to
- * the nearest one, so opening an old task and saving it can't quietly change
- * how long it was.
+ * Was a dropdown of preset lengths, which quietly decided that a task takes 30
+ * or 45 minutes and nothing in between. Anything is expressible now — 1h 05m,
+ * 20m, 7h — without having to know that "1h 30m" is the phrasing the parser
+ * accepts.
+ *
+ * Minutes are clamped to 0-59 and hours to a sane ceiling; a blank pair reads
+ * as "not set" rather than zero, which is what the caller checks for.
  */
-function DurationSelect({
+function DurationFields({
   value,
   onChange,
   disabled,
+  invalid,
 }: {
   value: string;
   onChange: (next: string) => void;
   disabled?: boolean;
+  invalid?: boolean;
 }) {
-  const currentMinutes = parseDurationToMinutes(value);
-  const choices =
-    currentMinutes != null && !DURATION_CHOICES.includes(currentMinutes)
-      ? [...DURATION_CHOICES, currentMinutes].sort((a, b) => a - b)
-      : DURATION_CHOICES;
+  const total = parseDurationToMinutes(value);
+  const hours = total != null ? Math.floor(total / 60) : null;
+  const minutes = total != null ? total % 60 : null;
+
+  const emit = (nextHours: number | null, nextMinutes: number | null) => {
+    const h = Math.min(Math.max(nextHours ?? 0, 0), 99);
+    const m = Math.min(Math.max(nextMinutes ?? 0, 0), 59);
+    const sum = h * 60 + m;
+    onChange(sum > 0 ? formatMinutesInput(sum) : "");
+  };
+
+  const boxClass = `${invalid ? `${inputClass} border-terracotta bg-terracotta-soft/40` : inputClass} text-center`;
+  const readNumber = (raw: string) => (raw.trim() === "" ? null : Number(raw));
 
   return (
-    <select
-      value={currentMinutes != null ? String(currentMinutes) : ""}
-      onChange={(e) => onChange(e.target.value ? formatMinutesInput(Number(e.target.value)) : "")}
-      disabled={disabled}
-      className={inputClass}
-    >
-      <option value="">Not set</option>
-      {choices.map((minutes) => (
-        <option key={minutes} value={minutes}>
-          {formatMinutesInput(minutes)}
-        </option>
-      ))}
-    </select>
+    <div className="flex items-end gap-2">
+      <div className="flex-1">
+        <label className="mb-1 block text-[10px] font-semibold text-walnut">Hours</label>
+        <input
+          type="number"
+          min={0}
+          max={99}
+          inputMode="numeric"
+          value={hours ?? ""}
+          onChange={(e) => emit(readNumber(e.target.value), minutes)}
+          disabled={disabled}
+          placeholder="0"
+          className={boxClass}
+        />
+      </div>
+      <div className="flex-1">
+        <label className="mb-1 block text-[10px] font-semibold text-walnut">Minutes</label>
+        <input
+          type="number"
+          min={0}
+          max={59}
+          step={1}
+          inputMode="numeric"
+          value={minutes ?? ""}
+          onChange={(e) => emit(hours, readNumber(e.target.value))}
+          disabled={disabled}
+          placeholder="0"
+          className={boxClass}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -620,6 +646,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     () => (selectedObjectiveId ? tasksByProject[selectedObjectiveId] ?? [] : []),
     [tasksByProject, selectedObjectiveId]
   );
+
+  // An existing task keeps its name as-is when the current objective’s task
+  // list doesn’t contain it — there is nothing safe to preselect, and picking
+  // something else from the list would silently retarget the task.
+  const taskNameLocked =
+    isEditing && Boolean(taskName) && !taskOptionsForObjective.some((t) => t.task_name === taskName);
   const linkedObjectives = useMemo(() => linkedProjects.filter((p) => p.kind === "objective"), [linkedProjects]);
   const linkedOperations = useMemo(() => linkedProjects.filter((p) => p.kind === "operation"), [linkedProjects]);
 
@@ -680,6 +712,28 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     if (mode === "time_based" && !isEditing && !reviewRequired) {
       setError("Answer Review Required (Yes or No).");
       throw new Error("Answer Review Required (Yes or No).");
+    }
+    // Same create-only rule as Review Required — every new task needs a due
+    // date on the Calendar, but existing tasks that predate this aren't
+    // retroactively blocked.
+    if (!isEditing && !dueDate) {
+      setError("Due Date is required.");
+      throw new Error("Due Date is required.");
+    }
+    // Computed from the primitives rather than reading the derived
+    // needsSchedule, which is declared further down the component body — this
+    // closure would then depend on a binding that isn't in its dependency list.
+    if (mode === "time_based") {
+      const rangeGiven = hasSchedule && Boolean(startDate) && Boolean(startTime) && Boolean(endTime);
+      if (!rangeGiven && parsedPlannedMinutes == null) {
+        setError("Set a time range or a duration.");
+        throw new Error("Set a time range or a duration.");
+      }
+    } else if (!startDate || !endDate) {
+      // Output Based work has no time slot to fill, so Start Date + End Date
+      // on the Calendar is the schedule commitment — not a duration.
+      setError("Set a Start Date and End Date.");
+      throw new Error("Set a Start Date and End Date.");
     }
     if (mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
       setError("Final Rate is required.");
@@ -811,10 +865,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           link: link.trim() || null,
           instructions: instructions.trim() || null,
           project_id: linkedProjectId || null,
-          // Output Based tasks have no hours to compete with, so this is sent
-          // unconditionally rather than gated on hasSchedule the way the
-          // time-based path is.
-          planned_minutes: parsedPlannedMinutes,
+          // No duration field for Output Based tasks — Start Date/End Date is
+          // their schedule instead, so there's nothing to send here.
+          planned_minutes: null,
         };
         if (isAdminOrManager) {
           body.assigned_to = vaId || null;
@@ -864,6 +917,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const needsClientDetail = !taskDetail.trim();
   const needsReviewAnswer = mode === "time_based" && !isEditing && !reviewRequired;
   const needsRate = mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)));
+  const needsDueDate = !isEditing && !dueDate;
+  // Time-based: a time range OR a duration, either one satisfies it — they're
+  // alternatives, not both. Output Based has no time range or duration to
+  // offer — Start Date + End Date on the Calendar is its schedule instead.
+  const hasTimeRange = hasSchedule && Boolean(startDate) && Boolean(startTime) && Boolean(endTime);
+  const hasDuration = parsedPlannedMinutes != null;
+  const hasDateRange = Boolean(startDate) && Boolean(endDate);
+  const needsSchedule = mode === "time_based" ? !hasTimeRange && !hasDuration : !hasDateRange;
 
   // Section badges say what kind of gap it is, not which field — the field
   // itself goes amber, so naming it twice was redundant. Basics is entirely
@@ -872,6 +933,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const missingDetails = needsClientDetail ? "Required field/s inside" : null;
   const missingAssignment = needsReviewAnswer ? "Required field/s inside" : null;
   const missingRate = needsRate ? "Required field/s inside" : null;
+  const missingSchedule = needsSchedule || needsDueDate ? "Required field/s inside" : null;
 
   // The footer still names them, since that's the "why won't this save" spot.
   const missingRequired = [
@@ -879,6 +941,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     needsClientDetail ? "Client Detail" : null,
     needsReviewAnswer ? "Review Required" : null,
     needsRate ? "Final Rate" : null,
+    needsSchedule ? (mode === "time_based" ? "Time range or Duration" : "Start Date and End Date") : null,
+    needsDueDate ? "Due Date" : null,
   ].filter((m): m is string => Boolean(m));
 
   // An unfilled required input reads amber — a prompt, not an error. Terracotta
@@ -935,7 +999,15 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Task Name</label>
-          {!isEditing && taskOptionsForObjective.length > 0 ? (
+          {/* Never free text. A task name typed by hand doesn't exist in the
+              task library, so it can't carry a billing type or rate and won't
+              match anything in reporting — the dropdown is the only source.
+              Objectives with no tasks configured (Projects & Tasks in the admin
+              panel) offer nothing to pick, and the field says so rather than
+              inviting one to be invented. */}
+          {taskNameLocked ? (
+            <input value={taskName} readOnly disabled className={inputClass} />
+          ) : (
             <select
               value={taskName}
               onChange={(e) => {
@@ -943,16 +1015,20 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 setTaskName(value);
                 applyAutoCategory(account, project, value);
               }}
-              disabled={readOnly}
+              disabled={readOnly || taskOptionsForObjective.length === 0}
               className={requiredInputClass(!needsTaskName)}
             >
-              <option value="">Select task...</option>
+              <option value="">
+                {!project
+                  ? "Select an objective first..."
+                  : taskOptionsForObjective.length === 0
+                  ? "No tasks set up for this objective"
+                  : "Select task..."}
+              </option>
               {taskOptionsForObjective.map((t) => (
                 <option key={t.id} value={t.task_name}>{t.task_name}</option>
               ))}
             </select>
-          ) : (
-            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} disabled={readOnly} placeholder="Task name" className={requiredInputClass(!needsTaskName)} />
           )}
         </div>
 
@@ -1306,6 +1382,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             )}
           </div>
         )}
+
+        {mode === "output_based" && (
+          <div>
+            <label className={`${labelClass} flex items-center gap-1.5`}>
+              Review Required
+              <InfoTip text="Always Yes for Output Based tasks — pay only counts once the submission is approved." />
+            </label>
+            <span className="inline-block rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white">Yes</span>
+          </div>
+        )}
       </Section>
 
       {mode === "output_based" && (
@@ -1401,7 +1487,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
-      <Section title="Schedule" {...accordionProps("Schedule")}>
+      <Section title="Schedule" {...accordionProps("Schedule")} warning={missingSchedule}>
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">
             {/* Tooltip rather than prose, per the form's new pattern — but the
@@ -1409,12 +1495,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 to land on the grid, so promising a "daily block" would be a lie
                 on that half of the form. */}
             <span className="flex items-center gap-1.5">
-              Work span (optional)
+              {mode === "time_based" ? "Work span (optional)" : (
+                <>Work span {!isEditing && <span className="text-terracotta">*</span>}</>
+              )}
               <InfoTip
                 text={
                   mode === "time_based"
                     ? "The days this task runs across. Below, choose whether it takes specific hours on the Calendar or just a duration."
-                    : "The days this task runs across on the Calendar. Output Based work is paid per output, so it doesn't take a time slot."
+                    : "The days this task runs across on the Calendar — Output Based work is paid per output and has no duration, so Start Date and End Date are its schedule."
                 }
               />
             </span>
@@ -1422,11 +1510,23 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Start Date</label>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={readOnly} className={inputClass} />
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                disabled={readOnly}
+                className={mode === "output_based" ? requiredInputClass(Boolean(startDate)) : inputClass}
+              />
             </div>
             <div className="flex-1">
               <label className={labelClass}>End Date</label>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={readOnly} className={inputClass} />
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                disabled={readOnly}
+                className={mode === "output_based" ? requiredInputClass(Boolean(endDate)) : inputClass}
+              />
             </div>
           </div>
 
@@ -1475,7 +1575,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               {!hasSchedule && (
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration</label>
-                  <DurationSelect value={plannedDuration} onChange={setPlannedDuration} disabled={readOnly} />
+                  <DurationFields value={plannedDuration} onChange={setPlannedDuration} disabled={readOnly} invalid={needsSchedule} />
                   <p className="mt-1 text-[10px] text-stone">
                     {parsedPlannedMinutes != null
                       ? `Counts toward the day's total on the Calendar's Hours tab, without taking a slot on the grid.`
@@ -1501,32 +1601,26 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               )}
             </>
           ) : (
-            // Output Based tasks get the duration half of the pair but not the
-            // hours half: fixed_pay_tasks has no start_time/end_time to write a
-            // slot into, but it does carry planned_minutes, and "how long this
-            // takes" is just as real a question for per-output work. No tabs
-            // here — with only one of the two available, a single-option tab
-            // strip would be noise.
-            <div>
-              <p className="mb-1.5 text-[11px] text-stone">
-                Paid per output, so this doesn&apos;t take a time slot — the dates above put it on the Calendar.
-              </p>
-              <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration</label>
-              <DurationSelect value={plannedDuration} onChange={setPlannedDuration} disabled={readOnly} />
-              <p className="mt-1 text-[10px] text-stone">
-                {parsedPlannedMinutes != null
-                  ? `${parsedPlannedMinutes} minutes — counts toward the day's total on the Calendar's Hours tab.`
-                  : "How long this takes. Leave empty if it doesn't matter."}
-              </p>
-            </div>
+            // Output Based work has no duration field — it's paid per output,
+            // not per hour, so Start Date + End Date above is the whole
+            // schedule commitment. No tabs, no duration input.
+            <p className="text-[11px] text-stone">
+              Paid per output, so this doesn&apos;t take a time slot or a duration — the Start Date and End Date above put it on the Calendar.
+            </p>
           )}
         </div>
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline<InfoTip text="Separate from the work span above — a single moment, not a range." /></p>
           <div>
-            <label className={labelClass}>Due Date</label>
-            <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={readOnly} className={inputClass} />
+            <label className={labelClass}>Due Date {!isEditing && <span className="text-terracotta">*</span>}</label>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              disabled={readOnly}
+              className={requiredInputClass(Boolean(dueDate))}
+            />
           </div>
           {dueDate && (
             <div>

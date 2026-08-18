@@ -13,8 +13,9 @@ import TaskEditor from "@/components/TaskEditor";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 
-const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
+const VIEW_FILTER_PILLS: Array<{ value: "all" | "submitted" | "active" | "inactive" | "archived" | "trash"; label: string }> = [
   { value: "all", label: "All" },
+  { value: "submitted", label: "Submitted" },
   { value: "active", label: "Active" },
   { value: "inactive", label: "Inactive" },
   { value: "archived", label: "Archived" },
@@ -49,7 +50,7 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
 };
 
 type PanelMode = "create" | "edit" | "view" | null;
-type ActiveFilter = "all" | "active" | "inactive" | "archived" | "trash";
+type ActiveFilter = "all" | "submitted" | "active" | "inactive" | "archived" | "trash";
 type CreateMode = "hourly" | "fixed_pay";
 
 type StoredFixedPayFilters = {
@@ -296,6 +297,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
 
   const filterBaseTasks = useMemo(() => {
     return tasks.filter((task) => {
+      if (activeFilter === "submitted" && task.status !== "submitted") return false;
       if (activeFilter === "active" && (!task.is_active || task.archived_at || task.deleted_at)) return false;
       if (activeFilter === "inactive" && (task.is_active || task.archived_at || task.deleted_at)) return false;
       if (activeFilter === "archived" && (!task.archived_at || task.deleted_at)) return false;
@@ -590,7 +592,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
             <span>task{filteredTasks.length === 1 ? "" : "s"}</span>
             {activeFilter !== "all" && (
               <span className="rounded-full bg-slate-blue-soft px-2 py-0.5 font-semibold text-slate-blue">
-                filtered by {activeFilter === "active" ? "Active" : activeFilter === "inactive" ? "Inactive" : activeFilter === "archived" ? "Archived" : "Trash"}
+                filtered by {activeFilter === "submitted" ? "Submitted" : activeFilter === "active" ? "Active" : activeFilter === "inactive" ? "Inactive" : activeFilter === "archived" ? "Archived" : "Trash"}
               </span>
             )}
           </div>

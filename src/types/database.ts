@@ -693,6 +693,9 @@ export interface FixedPayTaskWithClaimer {
    *  Based work has no start_time/end_time to occupy a slot, so this is the
    *  only length it carries. */
   planned_minutes: number | null;
+  /** Always true — every Output Based task requires approval before its pay
+   *  counts (see FinancialSummaryTab). Not user-editable; no API field sets it. */
+  review_required: boolean;
   project_id: string | null;
   assigned_to: string | null;
   assigned_by: string | null;

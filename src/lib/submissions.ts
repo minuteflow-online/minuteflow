@@ -90,6 +90,18 @@ export function canReviewSubmissions(
   return (SUBMISSION_REVIEW_ROLES as readonly string[]).includes(profile.role);
 }
 
+/**
+ * Emptying the trash is the only destructive action in this feature: it
+ * permanently removes submissions and their files, with no undo. Founder only
+ * — deliberately narrower than SUBMISSION_REVIEW_ROLES, which can trash but
+ * not destroy.
+ */
+export function canEmptySubmissionTrash(
+  profile?: { role?: string | null } | null
+): boolean {
+  return profile?.role === "founder";
+}
+
 export const SUBMISSION_TYPE_LABELS: Record<SubmissionMessageType, string> = {
   instruction: "Instruction",
   submission: "Submission",
