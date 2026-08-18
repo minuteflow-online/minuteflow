@@ -1,0 +1,114 @@
+// One-off setup helper: lists the Telegram chats the bot can currently see,
+// with the id each one needs in Vercel. Exists so nobody has to paste a bot
+// token into a terminal to run getUpdates by hand — the token stays in the
+// server environment and is never rendered.
+//
+// Access is gated by (admin)/layout.tsx, same as every other admin page.
+
+export const dynamic = "force-dynamic";
+
+type TgChat = { id: number; title?: string; type: string; first_name?: string };
+type TgUpdate = {
+  message?: { chat?: TgChat };
+  channel_post?: { chat?: TgChat };
+  my_chat_member?: { chat?: TgChat };
+};
+
+const TARGETS = [
+  { env: "TELEGRAM_SUBMISSIONS_CHAT_ID", label: "Submissions, requests, clock-ins, extension" },
+  { env: "TELEGRAM_BUGS_CHAT_ID", label: "Bug reports" },
+  { env: "TELEGRAM_BUDGET_CHAT_ID", label: "Financial" },
+  { env: "TELEGRAM_BOARD_CHAT_ID", label: "Message board" },
+];
+
+async function fetchChats(): Promise<{ chats: TgChat[]; error?: string }> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return { chats: [], error: "TELEGRAM_BOT_TOKEN is not set in this environment." };
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`, { cache: "no-store" });
+    if (!res.ok) return { chats: [], error: `Telegram returned ${res.status}. ${await res.text()}` };
+
+    const json = (await res.json()) as { ok: boolean; result?: TgUpdate[]; description?: string };
+    if (!json.ok) return { chats: [], error: json.description || "Telegram rejected the request." };
+
+    // One update per message, so the same chat appears many times — dedupe by id.
+    const seen = new Map<number, TgChat>();
+    for (const u of json.result ?? []) {
+      const chat = u.message?.chat || u.channel_post?.chat || u.my_chat_member?.chat;
+      if (chat && !seen.has(chat.id)) seen.set(chat.id, chat);
+    }
+    return { chats: [...seen.values()] };
+  } catch (err) {
+    return { chats: [], error: String(err) };
+  }
+}
+
+export default async function TelegramChatsPage() {
+  const { chats, error } = await fetchChats();
+  const groups = chats.filter((c) => c.type !== "private");
+
+  return (
+    <div className="mx-auto w-full max-w-7xl px-6 py-8 space-y-4">
+      <div>
+        <h1 className="text-lg font-bold text-espresso">Telegram Chat IDs</h1>
+        <p className="text-[11px] text-stone/80">
+          Setup helper. Copy each id into the matching variable in Vercel, then redeploy.
+        </p>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-terracotta/20 bg-terracotta-soft px-3 py-2 text-[11px] text-terracotta">
+          {error}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
+        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Chats the bot can see</h3>
+
+        {groups.length === 0 ? (
+          <p className="text-[11px] text-stone/80">
+            No group chats yet. Add the bot to a group and send any message there, then reload this
+            page. Telegram only reveals a chat once it has activity.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            {groups.map((chat) => (
+              <div
+                key={chat.id}
+                className="flex items-center justify-between gap-2 py-2.5 px-3 rounded-lg border border-sand bg-white"
+              >
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[13px] font-semibold text-espresso leading-tight truncate">
+                    {chat.title || chat.first_name || "Untitled chat"}
+                  </span>
+                  <span className="text-[11px] text-stone/80">{chat.type}</span>
+                </div>
+                <code className="text-[13px] font-semibold text-espresso shrink-0 select-all">{chat.id}</code>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
+        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Where each id goes</h3>
+        <div className="space-y-1.5">
+          {TARGETS.map((t) => (
+            <div
+              key={t.env}
+              className="flex items-center justify-between gap-2 py-2.5 px-3 rounded-lg border border-sand bg-white"
+            >
+              <span className="text-[13px] font-semibold text-espresso">{t.label}</span>
+              <code className="text-[11px] text-walnut shrink-0">{t.env}</code>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] text-stone/80">
+          Group ids are negative — include the minus sign. Financial is deliberately separate and
+          never falls back to the team group.
+        </p>
+      </div>
+    </div>
+  );
+}

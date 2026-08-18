@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -169,5 +170,57 @@ export async function POST(request: Request) {
       .eq("id", va_task_assignment_id);
   }
 
+  // Ping Telegram when a VA submits work for review. Awaited so serverless
+  // does not kill the request mid-send; a failure never affects the submission,
+  // which is already committed above.
+  if (message_type === "submission" && telegramEnabled("submissions")) {
+    await notifySubmission(supabase, va_task_assignment_id, user.id, submission_link);
+  }
+
   return Response.json({ submission }, { status: 201 });
+}
+
+
+// Builds and sends the "new submission" alert. Every lookup tolerates a miss —
+// an unresolved name degrades to a generic label rather than dropping the alert,
+// because the alert is the point.
+async function notifySubmission(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  assignmentId: number,
+  userId: string,
+  link: string | null | undefined
+) {
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("full_name, username")
+    .eq("id", userId)
+    .single();
+  const vaName = prof?.full_name || prof?.username || "A VA";
+
+  const { data: assignment } = await supabase
+    .from("va_task_assignments")
+    .select("project_task_assignments(task_library(task_name), project_tags(account, project_name))")
+    .eq("id", assignmentId)
+    .single();
+
+  const pta = (assignment as {
+    project_task_assignments?: {
+      task_library?: { task_name?: string } | null;
+      project_tags?: { account?: string; project_name?: string } | null;
+    } | null;
+  } | null)?.project_task_assignments;
+  const taskName = pta?.task_library?.task_name || "a task";
+  const project = pta?.project_tags
+    ? `${pta.project_tags.account}${pta.project_tags.project_name ? " / " + pta.project_tags.project_name : ""}`
+    : null;
+
+  const lines = [
+    `📤 <b>New submission</b> from ${esc(vaName)}`,
+    `Task: ${esc(taskName)}`,
+  ];
+  if (project) lines.push(`Project: ${esc(project)}`);
+  if (link) lines.push(`Link: ${esc(link)}`);
+  lines.push("", "Review: https://minuteflow.click/admin");
+
+  await sendTelegram("submissions", lines.join("\n"));
 }
