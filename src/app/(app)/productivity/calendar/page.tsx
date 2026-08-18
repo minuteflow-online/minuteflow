@@ -23,7 +23,7 @@ import {
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 import { normalizePosition } from "@/types/database";
-import { BUDGET_WARN_THRESHOLD, shiftHoursFromProfile } from "@/lib/budget";
+import { BUDGET_WARN_THRESHOLD, shiftHoursFromProfile, vaBudgetType } from "@/lib/budget";
 import { useUrlTab } from "@/hooks/useUrlTab";
 
 type TeamMember = {
@@ -175,6 +175,7 @@ export default function ProductivityCalendarPage() {
   // Output Based tasks carry a duration but never an hour block, so they can't
   // come through scheduledForDate. Held separately, one entry per task, and
   // folded into the day's total by durationsForDate.
+  const [fixedSpend, setFixedSpend] = useState<Array<{ taskId: number; amount: number; date: string }>>([]);
   const [fixedDurations, setFixedDurations] = useState<
     Array<{ taskId: number; name: string; account: string | null; category: string | null; status: string; minutes: number; date: string }>
   >([]);
@@ -337,6 +338,7 @@ export default function ProductivityCalendarPage() {
         status: string;
         claimed_by: string | null;
         planned_minutes: number | null;
+        rate: number | string | null;
       }>;
       let filtered = rows.filter((t) => t.due_date || t.start_date);
       if (!isAdminOrManager || scope === "__self__") {
@@ -391,9 +393,20 @@ export default function ProductivityCalendarPage() {
             date: (t.start_date ?? t.due_date) as string,
           }))
       );
+      // Money, for the dollar-tracked budgets below. Kept separate from
+      // fixedDurations because a task counts toward the DOLLAR budget whether
+      // or not anyone estimated how long it takes.
+      setFixedSpend(
+        filtered.map((t) => ({
+          taskId: t.id,
+          amount: Number(t.rate) || 0,
+          date: (t.start_date ?? t.due_date) as string,
+        }))
+      );
     } catch {
       setFixedItems([]);
       setFixedDurations([]);
+      setFixedSpend([]);
     }
   }, [userId, isAdminOrManager, scope]);
 
@@ -964,6 +977,34 @@ export default function ProductivityCalendarPage() {
 
   const dayDurations = useMemo(() => durationsForDate(selectedDate), [durationsForDate, selectedDate]);
 
+  // Which currency this person's budget is in. Output Based VAs are paid per
+  // output, so their caps are DOLLARS (see lib/budget); everyone else is capped
+  // in hours. The calendar used to assume hours for everyone, so a Per Task VA
+  // with a $250 monthly cap read "250h left of 250h" — a number that looked
+  // like a full month of free time.
+  const budgetUnit: "hours" | "dollars" =
+    vaBudgetType(teamMembers.find((m) => m.id === dayUserId) ?? {}) === "output_based" ? "dollars" : "hours";
+
+  // Amount used in a period, in whichever unit applies: minutes booked for
+  // hours-tracked VAs, task value for dollar-tracked ones.
+  const usedInPeriod = useCallback(
+    (dates: string[]) =>
+      budgetUnit === "dollars"
+        ? fixedSpend.filter((f) => dates.includes(f.date)).reduce((sum, f) => sum + f.amount, 0)
+        : dates.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0),
+    [budgetUnit, fixedSpend, durationsForDate]
+  );
+
+  // A limit is stored as hours or dollars to match; both render through here.
+  const formatBudgetAmount = useCallback(
+    (value: number) => (budgetUnit === "dollars" ? `${Math.round(value)}` : formatDuration(value)),
+    [budgetUnit]
+  );
+  const limitToUnit = useCallback(
+    (limit: number) => (budgetUnit === "dollars" ? limit : Math.round(limit * 60)),
+    [budgetUnit]
+  );
+
   // The day's budget comes from the VA's shift in Team Management — shift_hours,
   // or the shift_start/shift_end span when that's how it's set. The badge counts
   // down from it as blocks are added, so the question it answers is "how much is
@@ -1072,17 +1113,16 @@ export default function ProductivityCalendarPage() {
 
   const weekBudget = useMemo(() => {
     const member = teamMembers.find((m) => m.id === dayUserId);
-    const limitHours = member?.weekly_budget_limit ?? null;
-    if (limitHours == null || limitHours <= 0) return null;
-    // Counted through durationsForDate, the same way the day budget is. This
-    // used to sum only the hour BLOCKS, which meant duration-only work — and
-    // every Output Based task — drew nothing against the weekly limit even
-    // though it filled the day badge. The two budgets now measure the same
-    // thing, so a week can't quietly overrun on work the day view was counting.
-    const usedMinutes = weekDates.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0);
-    const budgetMinutes = Math.round(limitHours * 60);
+    const limit = member?.weekly_budget_limit ?? null;
+    if (limit == null || limit <= 0) return null;
+    // Counted through usedInPeriod, which picks the unit. For hours-tracked
+    // VAs that runs through durationsForDate — this used to sum only the hour
+    // BLOCKS, so duration-only work drew nothing against the weekly limit even
+    // though it filled the day badge.
+    const usedMinutes = usedInPeriod(weekDates);
+    const budgetMinutes = limitToUnit(limit);
     return { budgetMinutes, usedMinutes, remainingMinutes: budgetMinutes - usedMinutes };
-  }, [teamMembers, dayUserId, weekDates, durationsForDate]);
+  }, [teamMembers, dayUserId, weekDates, usedInPeriod, limitToUnit]);
 
   const weekBudgetSpent = Boolean(weekBudget && weekBudget.remainingMinutes <= 0);
 
@@ -1095,14 +1135,12 @@ export default function ProductivityCalendarPage() {
   // the next, and totalling those would bill this month for other months' work.
   const monthBudget = useMemo(() => {
     const member = teamMembers.find((m) => m.id === dayUserId);
-    const limitHours = member?.monthly_budget_limit ?? null;
-    if (limitHours == null || limitHours <= 0) return null;
-    const usedMinutes = monthGrid
-      .filter((d) => Number(d.slice(5, 7)) - 1 === monthMonth)
-      .reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0);
-    const budgetMinutes = Math.round(limitHours * 60);
+    const limit = member?.monthly_budget_limit ?? null;
+    if (limit == null || limit <= 0) return null;
+    const usedMinutes = usedInPeriod(monthGrid.filter((d) => Number(d.slice(5, 7)) - 1 === monthMonth));
+    const budgetMinutes = limitToUnit(limit);
     return { budgetMinutes, usedMinutes, remainingMinutes: budgetMinutes - usedMinutes };
-  }, [teamMembers, dayUserId, monthGrid, monthMonth, durationsForDate]);
+  }, [teamMembers, dayUserId, monthGrid, monthMonth, usedInPeriod, limitToUnit]);
 
   const dayTotalLabel = useMemo(() => {
     if (!dayBudget) return `${formatDuration(dayDurations.totalMinutes)} blocked`;
@@ -1714,8 +1752,8 @@ export default function ProductivityCalendarPage() {
                   }`}
                 >
                   {monthBudget.remainingMinutes < 0
-                    ? `${formatDuration(-monthBudget.remainingMinutes)} over ${formatDuration(monthBudget.budgetMinutes)} this month`
-                    : `${formatDuration(monthBudget.remainingMinutes)} left of ${formatDuration(monthBudget.budgetMinutes)} this month`}
+                    ? `${formatBudgetAmount(-monthBudget.remainingMinutes)} over ${formatBudgetAmount(monthBudget.budgetMinutes)} this month`
+                    : `${formatBudgetAmount(monthBudget.remainingMinutes)} left of ${formatBudgetAmount(monthBudget.budgetMinutes)} this month`}
                 </span>
               )}
             </div>
@@ -1847,8 +1885,8 @@ export default function ProductivityCalendarPage() {
                   }`}
                 >
                   {weekBudget.remainingMinutes < 0
-                    ? `${formatDuration(-weekBudget.remainingMinutes)} over ${formatDuration(weekBudget.budgetMinutes)} this week`
-                    : `${formatDuration(weekBudget.remainingMinutes)} left of ${formatDuration(weekBudget.budgetMinutes)} this week`}
+                    ? `${formatBudgetAmount(-weekBudget.remainingMinutes)} over ${formatBudgetAmount(weekBudget.budgetMinutes)} this week`
+                    : `${formatBudgetAmount(weekBudget.remainingMinutes)} left of ${formatBudgetAmount(weekBudget.budgetMinutes)} this week`}
                 </span>
               )}
             </div>
