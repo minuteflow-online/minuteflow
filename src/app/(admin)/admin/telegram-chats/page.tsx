@@ -72,7 +72,11 @@ async function fetchChats(): Promise<{ chats: TgChat[]; error?: string; diag: Di
 
 export default async function TelegramChatsPage() {
   const { chats, error, diag } = await fetchChats();
-  const groups = chats.filter((c) => c.type !== "private");
+  // Private chats are listed too: a direct message to one person is a valid
+  // destination for any topic, and is the better home for financial alerts.
+  // Telegram requires that person to message the bot first, which is what
+  // makes their chat id appear here at all.
+  const groups = chats;
 
   return (
     <div className="mx-auto w-full max-w-7xl px-6 py-8 space-y-4">
@@ -138,7 +142,9 @@ export default async function TelegramChatsPage() {
                   <span className="text-[13px] font-semibold text-espresso leading-tight truncate">
                     {chat.title || chat.first_name || "Untitled chat"}
                   </span>
-                  <span className="text-[11px] text-stone/80">{chat.type}</span>
+                  <span className="text-[11px] text-stone/80">
+                    {chat.type === "private" ? "direct message" : chat.type}
+                  </span>
                 </div>
                 <code className="text-[13px] font-semibold text-espresso shrink-0 select-all">{chat.id}</code>
               </div>
