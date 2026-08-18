@@ -542,16 +542,13 @@ This cannot be undone.`
 
   return (
     <div className="mx-auto max-w-5xl px-4 pb-12">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-sm font-bold uppercase tracking-wide text-espresso">
-            Work Submitted
-          </h1>
-          <p className="text-[11px] text-stone">
-            Every submission across all tasks. Records are permanent — corrections are appended,
-            never overwritten.
-          </p>
-        </div>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        {/* The subtitle explained the append-only rule, which the Key and the
+            thread itself already make obvious — it was costing a line on every
+            visit to say something nobody rereads. */}
+        <h1 className="text-sm font-bold uppercase tracking-wide text-espresso">
+          Work Submitted
+        </h1>
 
         {canReview && (
           <button
@@ -608,10 +605,10 @@ This cannot be undone.`
         </div>
       </div>
 
-      <SubmissionsLegend />
-
-      {/* Filters */}
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-sand bg-white p-3">
+      {/* Key sits in the filter bar rather than above it: two full-width
+          bordered rows for one button was most of the page's dead space. */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-sand bg-white px-3 py-2">
+        <SubmissionsLegend />
         {seesAll && (
           <MultiSelectFilter
             allLabel="All VAs"
@@ -731,7 +728,7 @@ function DayGroup({
   }).length;
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4">
+    <div className="px-3 py-2">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -763,7 +760,7 @@ function DayGroup({
         )}
       </button>
 
-      {open && <div className="mt-3 space-y-2">{children}</div>}
+      {open && <div className="mt-2 space-y-1.5">{children}</div>}
     </div>
   );
 }
@@ -782,7 +779,7 @@ function SubmissionsLegend() {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="mb-3">
+    <div className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -795,7 +792,7 @@ function SubmissionsLegend() {
       </button>
 
       {open && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-sand bg-parchment/30 px-3 py-2">
+        <div className="absolute left-0 top-8 z-30 flex w-[34rem] max-w-[80vw] flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-sand bg-white px-3 py-2 shadow-lg">
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
         <RevisionBadge count={1} />
@@ -1251,7 +1248,7 @@ function TimelineView({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="divide-y divide-sand overflow-hidden rounded-xl border border-sand bg-white">
       {days.map((day) => (
         <DayGroup
           key={day}
