@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     .select(
       "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, " +
         "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
-        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, projects(id, name, kind))"
+        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, projects(id, name, kind))"
     )
     // The whole thread, not just submissions: revision notes, approvals and
     // added notes all belong in the timeline alongside the work.
@@ -86,6 +86,8 @@ export async function GET(request: Request) {
       project: string | null;
       project_id: string | null;
       status: string | null;
+      category: string | null;
+      review_required: boolean | null;
       due_date: string | null;
       due_time: string | null;
       end_date: string | null;
@@ -275,6 +277,8 @@ export async function GET(request: Request) {
             project_kind: task.projects?.kind ?? null,
             project_name: task.projects?.name ?? null,
             status: task.status,
+            category: task.category,
+            review_required: task.review_required,
             due_date: task.due_date,
             due_time: task.due_time,
             end_date: task.end_date,

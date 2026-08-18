@@ -13,6 +13,7 @@ import {
 import RevisionBadge from "@/components/RevisionBadge";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
 import type { AssignedTaskStatus, Project } from "@/types/database";
+import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 
 type FeedItem = {
   id: number;
@@ -35,6 +36,8 @@ type FeedItem = {
     project_kind: string | null;
     project_name: string | null;
     status: string | null;
+    category: string | null;
+    review_required: boolean | null;
     due_date: string | null;
     due_time: string | null;
     end_date: string | null;
@@ -87,6 +90,9 @@ const REVIEW_STATE_PILL: Record<string, { label: string; className: string }> = 
     className: "bg-terracotta-soft text-terracotta border-terracotta/20",
   },
   approved: { label: "Approved", className: "bg-emerald-50 text-emerald-600 border-emerald-200" },
+  // Distinct from a human Approved: this task was flagged review_required =
+  // false, so nobody looked at it. Worth being able to tell apart at a glance.
+  auto_approved: { label: "Auto approved", className: "bg-sage-soft text-sage border-sage/20" },
 };
 
 /** "1h 23m" / "45m" / "30s" — compact enough to sit inline on a badge row. */
@@ -160,6 +166,10 @@ export default function SubmissionsPage() {
   const [vaFilter, setVaFilter] = useState<Set<string>>(new Set());
   const [scopeFilter, setScopeFilter] = useState<Set<string>>(new Set());
   const [projectFilter, setProjectFilter] = useState<Set<string>>(new Set());
+  // Defaults to Task: Communication/Planning/Collaboration work auto-completes
+  // on submit and isn't something anyone reviews, so it stays out of the way
+  // until deliberately asked for.
+  const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set(["Task"]));
   const [accountFilter, setAccountFilter] = useState<Set<string>>(new Set());
   const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
 
@@ -335,6 +345,10 @@ export default function SubmissionsPage() {
       rows = rows.filter((r) => r.task?.project_id && projectFilter.has(r.task.project_id));
     }
 
+    if (categoryFilter.size > 0) {
+      rows = rows.filter((r) => categoryFilter.has((r.task?.category ?? "").trim()));
+    }
+
     if (accountFilter.size > 0) {
       rows = rows.filter((r) => r.task?.account && accountFilter.has(r.task.account));
     }
@@ -350,7 +364,7 @@ export default function SubmissionsPage() {
     }
 
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, accountFilter, clientFilter, accountsByClient]);
+  }, [items, vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, accountsByClient]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -485,6 +499,13 @@ export default function SubmissionsPage() {
         />
 
         <MultiSelectFilter
+          allLabel="All categories"
+          selected={categoryFilter}
+          onChange={setCategoryFilter}
+          options={CATEGORY_OPTIONS.map((c) => ({ value: c, label: c }))}
+        />
+
+        <MultiSelectFilter
           allLabel="All accounts"
           selected={accountFilter}
           onChange={setAccountFilter}
@@ -582,7 +603,7 @@ function SubmissionsLegend() {
       </span>
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
-        {(["awaiting", "revision_requested", "approved"] as const).map((key) => (
+        {(["awaiting", "revision_requested", "approved", "auto_approved"] as const).map((key) => (
           <span
             key={key}
             className={`rounded-full border px-2 py-[2px] text-[10px] font-semibold ${REVIEW_STATE_PILL[key].className}`}
@@ -773,7 +794,14 @@ function ThreadCard({
   // Unknown state falls through to "awaiting" — better to offer the buttons
   // than to hide a decision that still needs making.
   const awaitingReview = state !== "revision_requested" && state !== "approved";
-  const pill = state ? REVIEW_STATE_PILL[state] : undefined;
+  // An approval on a task that never required review is labelled as such, so
+  // "Approved" always means a person actually looked at it.
+  const autoApproved = state === "approved" && latest.task?.review_required === false;
+  const pill = autoApproved
+    ? REVIEW_STATE_PILL.auto_approved
+    : state
+      ? REVIEW_STATE_PILL[state]
+      : undefined;
 
   return (
     <div className="rounded-lg border border-sand bg-white px-3 py-2.5">

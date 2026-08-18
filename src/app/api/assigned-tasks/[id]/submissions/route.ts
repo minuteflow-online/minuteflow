@@ -20,6 +20,13 @@ type CallerProfile = {
   admin_permissions?: string[] | null;
 } | null;
 
+/**
+ * Categories that are logged rather than reviewed. Work in these completes the
+ * moment it's submitted and stays out of the review queue — only "Task" work
+ * is something a reviewer is expected to look at.
+ */
+const AUTO_COMPLETE_CATEGORIES = ["Communication", "Planning", "Collaboration"];
+
 const SUBMISSION_SELECT =
   "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, profiles!task_submissions_user_id_profiles_fkey(id, full_name, username)";
 
@@ -293,8 +300,42 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
   }
 
+  // ── Auto-outcome ─────────────────────────────────────────────────────────
+  // Some submissions never need a human decision:
+  //   * Communication / Planning / Collaboration work is logged, not reviewed
+  //     — it completes on submit.
+  //   * A task flagged review_required = false is approved on submit, and an
+  //     approval entry is written so the thread still records why it closed.
+  // Decided here rather than in the browser so it can't be skipped, and so the
+  // approval entry can be written by the system without the caller needing
+  // reviewer rights. The status move itself still goes through the client's
+  // setAssignedTaskStatus, keeping one status-write path.
+  let autoStatus: string | null = null;
+
+  if (messageType === "submission") {
+    const { data: taskRow } = await admin
+      .from("assigned_tasks")
+      .select("category, review_required")
+      .eq("id", id)
+      .single();
+
+    if (taskRow && AUTO_COMPLETE_CATEGORIES.includes((taskRow.category ?? "").trim())) {
+      autoStatus = "completed";
+    } else if (taskRow && taskRow.review_required === false) {
+      autoStatus = "approved";
+      await admin.from("task_submissions").insert({
+        assigned_task_id: Number(id),
+        va_task_assignment_id: null,
+        user_id: user.id,
+        message_type: "approval",
+        content: "Auto approved — this task does not require review",
+        submission_comment: "Auto approved — this task does not require review",
+      });
+    }
+  }
+
   const [withFiles] = await withAttachments(admin, [submission as never]);
-  return Response.json({ submission: withFiles }, { status: 201 });
+  return Response.json({ submission: withFiles, autoStatus }, { status: 201 });
 }
 
 /**

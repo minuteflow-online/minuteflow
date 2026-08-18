@@ -599,10 +599,12 @@ export default function AssignedTasksWidget({
           taskId={submitTarget.assigned_tasks.id}
           taskName={submitTarget.assigned_tasks.task_name}
           onClose={() => setSubmitTarget(null)}
-          onSubmitted={() => {
+          onSubmitted={(status) => {
             const task = submitTarget;
             setSubmitTarget(null);
-            void updateStatus(task, "submitted");
+            // The server decides: submitted, or completed/approved when the
+            // task's category or review_required says no review is needed.
+            void updateStatus(task, status);
           }}
         />
       )}
