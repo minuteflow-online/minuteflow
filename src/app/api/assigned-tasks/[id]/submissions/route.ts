@@ -125,6 +125,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     .from("task_submissions")
     .select(SUBMISSION_SELECT)
     .eq("assigned_task_id", id)
+    .is("deleted_at", null)
     .order("created_at", { ascending: true });
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -405,4 +406,63 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const [withFiles] = await withAttachments(admin, [data as never]);
   return Response.json({ submission: withFiles });
+}
+
+/**
+ * DELETE /api/assigned-tasks/[id]/submissions?submissionId=<id>
+ *
+ * Moves a submission to trash. Never a hard delete: the row keeps its files
+ * and its place in the thread, and `deleted_at` simply hides it. A submission
+ * is the evidence behind a status change, so destroying one would leave the
+ * task claiming work that no longer exists anywhere.
+ *
+ * Pass `restore=1` to bring it back.
+ *
+ * Admin and above only — the same tier that can review or correct one.
+ */
+export async function DELETE(request: Request, { params }: RouteContext) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role, department, admin_permissions")
+    .eq("id", user.id)
+    .single();
+
+  if (!canReviewSubmissions(profile)) {
+    return Response.json(
+      { error: "Only Admin, Manager, CEO, or Founder can trash a submission" },
+      { status: 403 }
+    );
+  }
+
+  const { id } = await params;
+  const { searchParams } = new URL(request.url);
+  const submissionId = searchParams.get("submissionId");
+  const restore = searchParams.get("restore") === "1";
+  if (!submissionId) {
+    return Response.json({ error: "submissionId is required" }, { status: 400 });
+  }
+
+  const admin = adminClient();
+  const { data, error } = await admin
+    .from("task_submissions")
+    .update(
+      restore
+        ? { deleted_at: null, deleted_by: null }
+        : { deleted_at: new Date().toISOString(), deleted_by: user.id }
+    )
+    .eq("id", submissionId)
+    .eq("assigned_task_id", id)
+    .select("id, deleted_at")
+    .single();
+
+  if (error) return Response.json({ error: error.message }, { status: 400 });
+  if (!data) return Response.json({ error: "Submission not found" }, { status: 404 });
+
+  return Response.json({ submission: data });
 }

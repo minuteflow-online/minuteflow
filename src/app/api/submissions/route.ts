@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
-import { canReviewSubmissions } from "@/lib/submissions";
+import { canEmptySubmissionTrash, canReviewSubmissions } from "@/lib/submissions";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -48,6 +48,7 @@ export async function GET(request: Request) {
   const projectId = searchParams.get("projectId");
   const from = searchParams.get("from");
   const to = searchParams.get("to");
+  const showTrash = searchParams.get("trash") === "1";
 
   const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -64,6 +65,12 @@ export async function GET(request: Request) {
     // added notes all belong in the timeline alongside the work.
     .not("assigned_task_id", "is", null)
     .order("created_at", { ascending: false });
+
+  // Trashed submissions are hidden by default and shown on request, so a
+  // reviewer can find and restore something binned by mistake.
+  query = showTrash
+    ? query.not("deleted_at", "is", null)
+    : query.is("deleted_at", null);
 
   if (isAdminEquivalent && va && va !== "all") {
     query = query.eq("user_id", va);
@@ -312,5 +319,61 @@ export async function GET(request: Request) {
     reviewState,
     seesAll: isAdminEquivalent,
     canReview: canReviewSubmissions(profile),
+    canEmptyTrash: canEmptySubmissionTrash(profile),
   });
+}
+
+/**
+ * DELETE /api/submissions — empty the submission trash, permanently.
+ *
+ * The one irreversible action here. Removes every trashed submission along
+ * with its uploaded files, so the storage bucket doesn't keep orphans after
+ * the rows are gone. Founder only.
+ */
+export async function DELETE() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  if (!canEmptySubmissionTrash(profile)) {
+    return Response.json({ error: "Only the Founder can empty the trash" }, { status: 403 });
+  }
+
+  const admin = createAdminClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: trashed } = await admin
+    .from("task_submissions")
+    .select("id")
+    .not("deleted_at", "is", null);
+
+  const ids = (trashed ?? []).map((r) => r.id as number);
+  if (ids.length === 0) return Response.json({ purged: 0 });
+
+  // Files first: if the rows went first, the storage objects would be
+  // unreachable and would sit in the bucket forever.
+  const { data: files } = await admin
+    .from("assigned_task_attachments")
+    .select("id, storage_path")
+    .in("submission_id", ids);
+
+  const paths = (files ?? []).map((f) => f.storage_path as string).filter(Boolean);
+  if (paths.length > 0) {
+    await admin.storage.from("task-attachments").remove(paths);
+    await admin.from("assigned_task_attachments").delete().in("submission_id", ids);
+  }
+
+  const { error } = await admin.from("task_submissions").delete().in("id", ids);
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  return Response.json({ purged: ids.length });
 }

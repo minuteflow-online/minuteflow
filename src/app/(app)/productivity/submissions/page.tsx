@@ -172,12 +172,14 @@ export default function SubmissionsPage() {
   const [roundDurations, setRoundDurations] = useState<Record<string, Record<string, number>>>({});
   const [reviewState, setReviewState] = useState<Record<string, string>>({});
   const [canReview, setCanReview] = useState(false);
+  const [canEmptyTrash, setCanEmptyTrash] = useState(false);
   const [seesAll, setSeesAll] = useState(false);
   const [orgTimezone, setOrgTimezone] = useState("UTC");
 
   const [view, setView] = useState<ViewMode>("timeline");
   const [ownerMode, setOwnerMode] = useState<OwnerMode>("all");
   const [currentUserId, setCurrentUserId] = useState("");
+  const [showTrash, setShowTrash] = useState(false);
   const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
   // Every filter is multi-select; an empty set means "all".
   const [vaFilter, setVaFilter] = useState<Set<string>>(new Set());
@@ -255,19 +257,20 @@ export default function SubmissionsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/submissions`, { cache: "no-store" });
+      const res = await fetch(`/api/submissions${showTrash ? "?trash=1" : ""}`, { cache: "no-store" });
       const data = await res.json();
       setItems(data.submissions ?? []);
       setRoundDurations(data.roundDurations ?? {});
       setReviewState(data.reviewState ?? {});
       setCanReview(Boolean(data.canReview));
+      setCanEmptyTrash(Boolean(data.canEmptyTrash));
       setSeesAll(Boolean(data.seesAll));
     } catch {
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showTrash]);
 
   useEffect(() => {
     void load();
@@ -305,6 +308,57 @@ export default function SubmissionsPage() {
           alert(
             `Your ${REVIEW_DEFAULT_NOTE[outcome].toLowerCase()} was recorded on the submission, but the task's status could not be updated. The task has not moved — please change it from the task list.`
           );
+        }
+        await load();
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load]
+  );
+
+  /** Permanently removes everything in the trash. Founder only, and final. */
+  const emptyTrash = useCallback(async () => {
+    const count = items.length;
+    if (
+      !confirm(
+        `Permanently delete ${count} trashed submission${count === 1 ? "" : "s"} and their files?
+
+This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch("/api/submissions", { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error ?? "Unable to empty the trash.");
+        return;
+      }
+      await load();
+    } catch {
+      alert("Network error — nothing was deleted.");
+    }
+  }, [items.length, load]);
+
+  /**
+   * Moves a submission to trash, or restores it. Soft only — the row and its
+   * files survive, because a submission is the evidence behind a status change.
+   */
+  const trashSubmission = useCallback(
+    async (item: FeedItem, restore: boolean) => {
+      if (!item.task) return;
+      setBusyId(item.id);
+      try {
+        const res = await fetch(
+          `/api/assigned-tasks/${item.task.id}/submissions?submissionId=${item.id}${restore ? "&restore=1" : ""}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error ?? "Unable to update the submission.");
+          return;
         }
         await load();
       } finally {
@@ -499,6 +553,30 @@ export default function SubmissionsPage() {
           </p>
         </div>
 
+        {canReview && (
+          <button
+            onClick={() => setShowTrash((v) => !v)}
+            className={`rounded-lg border px-3 py-1 text-[11px] font-semibold transition-colors ${
+              showTrash
+                ? "border-terracotta/40 bg-terracotta-soft text-terracotta"
+                : "border-sand bg-white text-stone hover:text-espresso"
+            }`}
+          >
+            {showTrash ? "Viewing trash" : "Trash"}
+          </button>
+        )}
+
+        {/* Founder only, and only while looking at the trash — the single
+            irreversible action in this feature. */}
+        {showTrash && canEmptyTrash && items.length > 0 && (
+          <button
+            onClick={() => void emptyTrash()}
+            className="rounded-lg border border-terracotta/40 bg-terracotta px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840]"
+          >
+            Empty trash
+          </button>
+        )}
+
         <div className="inline-flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
           {OWNER_MODES.map((mode) => (
             <button
@@ -605,6 +683,8 @@ export default function SubmissionsPage() {
           loading={loading}
           roundDurations={roundDurations}
           reviewState={reviewState}
+          showTrash={showTrash}
+          onTrash={trashSubmission}
         />
       ) : (
         <CalendarView
@@ -615,6 +695,75 @@ export default function SubmissionsPage() {
           roundByItemId={roundByItemId}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * A day's worth of threads, collapsible, with the day's totals on the header
+ * so a closed day still says whether anything needs doing.
+ */
+function DayGroup({
+  day,
+  orgTimezone,
+  threads,
+  reviewState,
+  children,
+}: {
+  day: string;
+  orgTimezone: string;
+  threads: Thread[];
+  reviewState: Record<string, string>;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+
+  const submissionCount = threads.reduce(
+    (n, t) => n + t.items.filter((i) => i.message_type === "submission").length,
+    0
+  );
+  // Auto-approved work is deliberately excluded: nobody is expected to act on
+  // it, so counting it would overstate the queue.
+  const needsReview = threads.filter((t) => {
+    const state = reviewState[String(t.taskId)];
+    if (state === "revision_requested" || state === "approved") return false;
+    return t.latest.task?.review_required !== false;
+  }).length;
+
+  return (
+    <div className="rounded-xl border border-sand bg-white p-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="group flex w-full items-center gap-2 text-left"
+      >
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 12 12"
+          className={`shrink-0 text-bark transition-transform ${open ? "rotate-90" : ""}`}
+        >
+          <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
+          {new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
+            weekday: "long",
+            month: "short",
+            day: "numeric",
+            timeZone: orgTimezone,
+          })}
+        </span>
+        <span className="text-[10px] text-stone">
+          {submissionCount} submission{submissionCount === 1 ? "" : "s"}
+        </span>
+        {needsReview > 0 && (
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-[2px] text-[10px] font-semibold text-amber-600">
+            {needsReview} need{needsReview === 1 ? "s" : ""} review
+          </span>
+        )}
+      </button>
+
+      {open && <div className="mt-3 space-y-2">{children}</div>}
     </div>
   );
 }
@@ -694,12 +843,19 @@ function SubmissionEntry({
   index,
   roundMs,
   timezone,
+  canTrash,
+  trashed,
+  onTrash,
 }: {
   item: FeedItem;
   index: number;
   /** Time logged during this revision round, if any was tracked. */
   roundMs?: number;
   timezone: string;
+  /** Admin and above; everyone else can't trash a record they may have written. */
+  canTrash: boolean;
+  trashed: boolean;
+  onTrash: (item: FeedItem, restore: boolean) => void;
 }) {
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
   const time = new Date(item.created_at).toLocaleString("en-US", {
@@ -761,6 +917,15 @@ function SubmissionEntry({
         <span className="text-[10px] text-stone/80">
           {who} · {time}
         </span>
+        {canTrash && (
+          <button
+            onClick={() => onTrash(item, Boolean(trashed))}
+            className="text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
+            title={trashed ? "Restore this submission" : "Move to trash — nothing is destroyed"}
+          >
+            {trashed ? "Restore" : "Trash"}
+          </button>
+        )}
         {late === false && (
           <span
             className="rounded-full border border-sage/20 bg-sage-soft px-2 py-[2px] text-[10px] font-semibold text-sage"
@@ -833,6 +998,8 @@ function ThreadCard({
   rounds,
   state,
   timezone,
+  trashed,
+  onTrash,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -844,6 +1011,8 @@ function ThreadCard({
   /** "awaiting" | "revision_requested" | "approved" */
   state?: string;
   timezone: string;
+  trashed: boolean;
+  onTrash: (item: FeedItem, restore: boolean) => void;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -980,6 +1149,9 @@ function ThreadCard({
                 index={idx}
                 roundMs={item.message_type === "submission" ? rounds[String(idx)] : undefined}
                 timezone={timezone}
+                canTrash={canReview}
+                trashed={trashed}
+                onTrash={onTrash}
               />
             );
           })}
@@ -1052,6 +1224,8 @@ function TimelineView({
   loading,
   roundDurations,
   reviewState,
+  showTrash,
+  onTrash,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -1062,6 +1236,8 @@ function TimelineView({
   loading: boolean;
   roundDurations: Record<string, Record<string, number>>;
   reviewState: Record<string, string>;
+  showTrash: boolean;
+  onTrash: (item: FeedItem, restore: boolean) => void;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -1077,16 +1253,13 @@ function TimelineView({
   return (
     <div className="space-y-4">
       {days.map((day) => (
-        <div key={day} className="rounded-xl border border-sand bg-white p-4 space-y-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
-            {new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
-              weekday: "long",
-              month: "short",
-              day: "numeric",
-              timeZone: orgTimezone,
-            })}
-          </p>
-          <div className="space-y-2">
+        <DayGroup
+          key={day}
+          day={day}
+          orgTimezone={orgTimezone}
+          threads={byDay.get(day) ?? []}
+          reviewState={reviewState}
+        >
             {(byDay.get(day) ?? []).map((thread) => (
               <ThreadCard
                 key={thread.taskId}
@@ -1098,10 +1271,11 @@ function TimelineView({
                 rounds={roundDurations[String(thread.taskId)] ?? {}}
                 state={reviewState[String(thread.taskId)]}
                 timezone={orgTimezone}
+                trashed={showTrash}
+                onTrash={onTrash}
               />
             ))}
-          </div>
-        </div>
+        </DayGroup>
       ))}
     </div>
   );
