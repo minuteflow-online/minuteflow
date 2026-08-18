@@ -636,6 +636,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     () => (selectedObjectiveId ? tasksByProject[selectedObjectiveId] ?? [] : []),
     [tasksByProject, selectedObjectiveId]
   );
+
+  // An existing task keeps its name as-is when the current objective’s task
+  // list doesn’t contain it — there is nothing safe to preselect, and picking
+  // something else from the list would silently retarget the task.
+  const taskNameLocked =
+    isEditing && Boolean(taskName) && !taskOptionsForObjective.some((t) => t.task_name === taskName);
   const linkedObjectives = useMemo(() => linkedProjects.filter((p) => p.kind === "objective"), [linkedProjects]);
   const linkedOperations = useMemo(() => linkedProjects.filter((p) => p.kind === "operation"), [linkedProjects]);
 
@@ -968,7 +974,15 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Task Name</label>
-          {!isEditing && taskOptionsForObjective.length > 0 ? (
+          {/* Never free text. A task name typed by hand doesn't exist in the
+              task library, so it can't carry a billing type or rate and won't
+              match anything in reporting — the dropdown is the only source.
+              Objectives with no tasks configured (Projects & Tasks in the admin
+              panel) offer nothing to pick, and the field says so rather than
+              inviting one to be invented. */}
+          {taskNameLocked ? (
+            <input value={taskName} readOnly disabled className={inputClass} />
+          ) : (
             <select
               value={taskName}
               onChange={(e) => {
@@ -976,16 +990,20 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 setTaskName(value);
                 applyAutoCategory(account, project, value);
               }}
-              disabled={readOnly}
+              disabled={readOnly || taskOptionsForObjective.length === 0}
               className={requiredInputClass(!needsTaskName)}
             >
-              <option value="">Select task...</option>
+              <option value="">
+                {!project
+                  ? "Select an objective first..."
+                  : taskOptionsForObjective.length === 0
+                  ? "No tasks set up for this objective"
+                  : "Select task..."}
+              </option>
               {taskOptionsForObjective.map((t) => (
                 <option key={t.id} value={t.task_name}>{t.task_name}</option>
               ))}
             </select>
-          ) : (
-            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} disabled={readOnly} placeholder="Task name" className={requiredInputClass(!needsTaskName)} />
           )}
         </div>
 
