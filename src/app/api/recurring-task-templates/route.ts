@@ -258,6 +258,14 @@ export async function POST(request: Request) {
     assigned_by: stringOrNull(body.assigned_by) ?? user.id,
     account: stringOrNull(body.account),
     project: stringOrNull(body.project),
+    link: stringOrNull(body.link),
+    // Clock times, not timestamps — the template says “9-10am” and the cron
+    // pairs that with each occurrence’s date.
+    start_time: stringOrNull(body.start_time),
+    end_time: stringOrNull(body.end_time),
+    due_time: stringOrNull(body.due_time),
+    end_date: stringOrNull(body.end_date),
+    review_required: booleanOrDefault(body.review_required, false),
     category: stringOrNull(body.category),
     pay_type: stringOrNull(body.pay_type),
     recurrence_type,
@@ -326,6 +334,12 @@ export async function PATCH(request: Request) {
   if (body.account !== undefined) updates.account = stringOrNull(body.account);
   if (body.project !== undefined) updates.project = stringOrNull(body.project);
   if (body.category !== undefined) updates.category = stringOrNull(body.category);
+  if (body.link !== undefined) updates.link = stringOrNull(body.link);
+  if (body.start_time !== undefined) updates.start_time = stringOrNull(body.start_time);
+  if (body.end_time !== undefined) updates.end_time = stringOrNull(body.end_time);
+  if (body.due_time !== undefined) updates.due_time = stringOrNull(body.due_time);
+  if (body.end_date !== undefined) updates.end_date = stringOrNull(body.end_date);
+  if (body.review_required !== undefined) updates.review_required = booleanOrDefault(body.review_required, false);
   if (body.pay_type !== undefined) updates.pay_type = stringOrNull(body.pay_type);
   if (body.recurrence_type) updates.recurrence_type = parseRecurrenceType(body.recurrence_type);
   // Always clear recurrence_days — schedule is now driven by start_date + recurrence_type

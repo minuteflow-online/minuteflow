@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
+import { orgWallClockToUtc } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,12 @@ type TemplateRow = {
   recurrence_type: RecurrenceType;
   recurrence_days: string[] | null;
   recurrence_day_of_month: number | null;
+  link?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  due_time?: string | null;
+  end_date?: string | null;
+  review_required?: boolean | null;
   is_active: boolean;
 };
 
@@ -193,7 +200,18 @@ async function handleCron(request: NextRequest) {
         // it takes the same way a one-off does. Without it, anything spawned
         // from a template arrived with no duration no matter who it went to.
         planned_minutes: template.planned_minutes ?? null,
+        link: template.link ?? null,
         due_date: tomorrow,
+        due_time: template.due_time ?? null,
+        end_date: template.end_date ?? null,
+        review_required: Boolean(template.review_required),
+        review_required_locked: Boolean(template.review_required),
+        // The template holds clock times; each occurrence pairs them with its
+        // own date so the generated task lands on the calendar as a real block,
+        // read on the org clock like every other schedule write.
+        start_date: template.start_time ? tomorrow : template.start_date ?? null,
+        start_time: template.start_time ? orgWallClockToUtc(tomorrow, template.start_time.slice(0, 5)) : null,
+        end_time: template.end_time ? orgWallClockToUtc(tomorrow, template.end_time.slice(0, 5)) : null,
         assigned_by: template.assigned_by,
         instructions: template.instructions,
         instructions_locked: Boolean(template.instructions_locked),
