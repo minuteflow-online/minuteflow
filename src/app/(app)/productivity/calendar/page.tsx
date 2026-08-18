@@ -10,7 +10,7 @@ import {
   getDateInTimezone,
   addDaysToDateStr,
   formatDayLabel,
-  localDateOf,
+  orgDateOf,
   formatTimeRange,
   formatDueTime,
   normalizeAssignedRows,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 import { normalizePosition } from "@/types/database";
+import { BUDGET_WARN_THRESHOLD, shiftHoursFromProfile } from "@/lib/budget";
 import { useUrlTab } from "@/hooks/useUrlTab";
 
 type TeamMember = {
@@ -33,6 +34,10 @@ type TeamMember = {
   position?: string | null;
   pay_rate_type?: string | null;
   can_see_available_tasks?: boolean | null;
+  shift_hours?: number | null;
+  shift_start?: string | null;
+  shift_end?: string | null;
+  weekly_budget_limit?: number | null;
 };
 
 // Same derivation as FixedPayTasksPanel's isHybrid/isPerTaskVa: position
@@ -73,10 +78,32 @@ type DueItem = {
 };
 
 
-const DAY_START_HOUR = 6;
-const DAY_END_HOUR = 21;
+// Round the clock. These were 6 and 21, which meant anything genuinely early
+// or late didn't render: a block outside the window computed an offset past the
+// grid and simply wasn't drawn, and a due marker was clamped to the edge, so it
+// showed at 9pm however late it actually was. Neither failure announced itself.
+const DAY_START_HOUR = 0;
+const DAY_END_HOUR = 23;
 const HOUR_HEIGHT = 48;
+// 24 hours at 48px is ~1150px, so the grid scrolls inside a viewport rather than
+// stretching the page into one long column. The scroll sits on a plain wrapper,
+// never on the grid itself: the grid is the containing block for every
+// absolutely-positioned hour row and task block, and making it the scroll
+// container would resolve their offsets against the visible height instead of
+// the full day.
+const GRID_SCROLL_CLASS = "max-h-[70vh] overflow-y-auto";
+// Vertical step for due markers that share a clock time, so the second and
+// third don't render on top of the first. Roughly a badge's height — three fit
+// inside one 48px hour row before they'd reach the next hour.
+const DUE_MARKER_ROW = 15;
+// Opens on the working day instead of midnight — otherwise every visit starts
+// on six empty hours and needs a scroll before anything is visible.
+const DEFAULT_SCROLL_HOUR = 6;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// Past about a month the columns are too narrow to read anything in, and every
+// extra day costs a full pass over the schedule. The range is clamped, and the
+// UI says so rather than silently showing a shorter span than was asked for.
+const RANGE_MAX_DAYS = 31;
 
 
 function formatDayShort(dateStr: string): { weekday: string; day: number } {
@@ -125,7 +152,12 @@ export default function ProductivityCalendarPage() {
   const todayStr = getDateInTimezone(orgTimezone);
   const isAdminOrManager = hasBroadAdminAccess({ role });
 
-  const [viewMode, setViewMode] = useUrlTab<"month" | "week" | "day">("view", "month", ["month", "week", "day"]);
+  const [viewMode, setViewMode] = useUrlTab<"month" | "week" | "day" | "range">("view", "month", ["month", "week", "day", "range"]);
+  // A custom span, for when the work you're looking at doesn't line up with a
+  // calendar week — a two-week push, or Thu-to-Tue. Defaults to the coming
+  // week so the view is never empty on arrival.
+  const [rangeStart, setRangeStart] = useState<string>("");
+  const [rangeEnd, setRangeEnd] = useState<string>("");
   const [scope, setScope] = useState<string>("__self__");
   // Multi-VA "compare" for Day view: pick several teammates and see each as its
   // own skinny column. Separate from `scope` (which drives the single grid).
@@ -139,6 +171,12 @@ export default function ProductivityCalendarPage() {
 
   const [assignedTasksAll, setAssignedTasksAll] = useState<RawTask[]>([]);
   const [fixedItems, setFixedItems] = useState<DueItem[]>([]);
+  // Output Based tasks carry a duration but never an hour block, so they can't
+  // come through scheduledForDate. Held separately, one entry per task, and
+  // folded into the day's total by durationsForDate.
+  const [fixedDurations, setFixedDurations] = useState<
+    Array<{ taskId: number; name: string; account: string | null; category: string | null; status: string; minutes: number; date: string }>
+  >([]);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [daySchedule, setDaySchedule] = useState<RawTask[]>([]);
   const [loadingDay, setLoadingDay] = useState(false);
@@ -148,6 +186,13 @@ export default function ProductivityCalendarPage() {
   const [timeOff, setTimeOff] = useState<Array<{ user_id: string; start_date: string; end_date: string; start_time: string | null; end_time: string | null }>>([]);
 
   const [showFilters, setShowFilters] = useState(false);
+  // Day view has two faces: the hour grid, and an Hours table that answers
+  // "how long is each of these" without caring when they sit.
+  const [dayTab, setDayTab] = useState<"grid" | "hours">("grid");
+  // Week gets the same Grid/Hours split as Day. Separate state so switching
+  // views doesn't drag one view's choice onto the other.
+  const [weekTab, setWeekTab] = useState<"grid" | "hours">("grid");
+  const [limitNotice, setLimitNotice] = useState<string | null>(null);
   const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
   const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
   const toggleUnscheduledExpand = (id: number) => {
@@ -232,13 +277,18 @@ export default function ProductivityCalendarPage() {
     })();
   }, [supabase]);
 
+  // Fetched for everyone, not just admins. TaskEditor renders Assign To and
+  // Assigned By as <select>s over this list, so an empty list gave a VA two
+  // blank fields on a task that was in fact assigned — the value was set, but
+  // there was no matching <option> to display it. The team picker this list
+  // also feeds stays admin-only on its own condition below, so nothing new is
+  // exposed. /api/team-members is session-authenticated and RLS-scoped.
   useEffect(() => {
-    if (!isAdminOrManager) return;
     fetch("/api/team-members")
       .then((r) => r.json())
       .then((d) => setTeamMembers(d.members ?? []))
       .catch(() => {});
-  }, [isAdminOrManager]);
+  }, []);
 
   useEffect(() => {
     fetch("/api/projects?mine=true", { cache: "no-store" })
@@ -284,6 +334,7 @@ export default function ProductivityCalendarPage() {
         category: string | null;
         status: string;
         claimed_by: string | null;
+        planned_minutes: number | null;
       }>;
       let filtered = rows.filter((t) => t.due_date || t.start_date);
       if (!isAdminOrManager || scope === "__self__") {
@@ -321,8 +372,26 @@ export default function ProductivityCalendarPage() {
         return out;
       });
       setFixedItems(items);
+      // Durations are counted from the RAW rows, not the span-expanded items:
+      // a task running Mon-Fri produces five DueItems, and totalling those
+      // would count its estimate five times. One row, one anchor day — the day
+      // it starts, or its due date when that's all it has.
+      setFixedDurations(
+        filtered
+          .filter((t) => t.planned_minutes != null && t.planned_minutes > 0)
+          .map((t) => ({
+            taskId: t.id,
+            name: t.task_name,
+            account: t.account,
+            category: t.category,
+            status: t.status,
+            minutes: t.planned_minutes as number,
+            date: (t.start_date ?? t.due_date) as string,
+          }))
+      );
     } catch {
       setFixedItems([]);
+      setFixedDurations([]);
     }
   }, [userId, isAdminOrManager, scope]);
 
@@ -353,7 +422,9 @@ export default function ProductivityCalendarPage() {
   }, [dayUserId, userId]);
 
   useEffect(() => {
-    if (viewMode === "day" || viewMode === "week") fetchDaySchedule();
+    // Range draws the same hour blocks Week and Day do, so it needs the same
+    // fetch — without this the grid renders empty until you visit another view.
+    if (viewMode === "day" || viewMode === "week" || viewMode === "range") fetchDaySchedule();
   }, [viewMode, fetchDaySchedule]);
 
   // Fetch a schedule per compared VA (Day view multi-column). Runs one active-
@@ -413,6 +484,7 @@ export default function ProductivityCalendarPage() {
     [timeOff]
   );
   const isVaOffOnDate = useCallback((vaId: string, dateStr: string) => Boolean(timeOffForVaOnDate(vaId, dateStr)), [timeOffForVaOnDate]);
+
   // Label for an off entry: full day → "Time Off"; partial → "Short Day (h–h)".
   const timeOffLabel = (entry: { start_time: string | null; end_time: string | null } | undefined) => {
     if (!entry) return null;
@@ -425,6 +497,19 @@ export default function ProductivityCalendarPage() {
     };
     return `Short Day (${fmt(entry.start_time)}–${fmt(entry.end_time)})`;
   };
+
+  // Everyone off on the selected day — rendered as a sidebar card, so it's
+  // computed here rather than inline where it used to be drawn.
+  const offToday = useMemo(
+    () =>
+      timeOff
+        .filter((t) => selectedDate >= t.start_date && selectedDate <= t.end_date)
+        .map((t) => {
+          const m = teamMembers.find((tm) => tm.id === t.user_id);
+          return { name: m?.full_name || m?.username || "Someone", label: timeOffLabel(t) };
+        }),
+    [timeOff, selectedDate, teamMembers]
+  );
 
   // The "My View" control is a multi-select of teammates. Opening it seeds the
   // draft from what's applied; Apply commits it. 0 selected = just me; 1 = that
@@ -581,6 +666,23 @@ export default function ProductivityCalendarPage() {
     [monthYear, monthMonth]
   );
   const weekGrid = useMemo(() => buildWeekGrid(selectedDate), [selectedDate]);
+  // The days the custom range covers. Falls back to a week from selectedDate
+  // until both ends are picked, and is capped at RANGE_MAX_DAYS — past that the
+  // columns are too narrow to read and the render cost stops being worth it.
+  const rangeGrid = useMemo(() => {
+    const start = rangeStart || selectedDate;
+    const end = rangeEnd || addDaysToDateStr(start, 6);
+    if (end < start) return [start];
+    const days: string[] = [];
+    for (let cursor = start; cursor <= end && days.length < RANGE_MAX_DAYS; cursor = addDaysToDateStr(cursor, 1)) {
+      days.push(cursor);
+    }
+    return days;
+  }, [rangeStart, rangeEnd, selectedDate]);
+  const rangeTruncated = Boolean(
+    rangeStart && rangeEnd && rangeEnd >= rangeStart && rangeGrid.length === RANGE_MAX_DAYS &&
+      rangeGrid[rangeGrid.length - 1] < rangeEnd
+  );
   const weekLabel = useMemo(() => {
     const start = weekGrid[0];
     const end = weekGrid[6];
@@ -625,6 +727,15 @@ export default function ProductivityCalendarPage() {
   const goToToday = () => jumpToDate(todayStr);
 
   const openAddBlock = (hour: number, dateStr: string = selectedDate) => {
+    // Adding is blocked once the day's budget is spent. Editing an existing
+    // block is deliberately still allowed — otherwise going over would trap the
+    // day, with no way to shorten the very blocks that put it over.
+    // Only the weekly limit stops anything. A full day still lets work in —
+    // it just eats into the week, which the notice says.
+    if (dateStr === selectedDate && weekBudgetSpent) {
+      setLimitNotice("Weekly limit reached — request more time to continue.");
+      return;
+    }
     setEditingBlockId(null);
     setEditingTaskFull(null);
     setFormDate(dateStr);
@@ -641,9 +752,13 @@ export default function ProductivityCalendarPage() {
   const openEditBlock = async (task: RawTask) => {
     if (!task.start_time || !task.end_time) return;
     setEditingBlockId(task.id);
-    setFormDate(localDateOf(task.start_time));
-    setFormStart(new Date(task.start_time).toTimeString().slice(0, 5));
-    setFormEnd(new Date(task.end_time).toTimeString().slice(0, 5));
+    // These come off the grid already reanchored, so they're naive org
+    // wall-clock strings ("2026-08-18T11:00:00") — slice them rather than
+    // routing back through Date, which would re-interpret them in the
+    // viewer's own zone and shift the prefill for anyone outside Eastern.
+    setFormDate(task.start_time.slice(0, 10));
+    setFormStart(task.start_time.slice(11, 16));
+    setFormEnd(task.end_time.slice(11, 16));
     setShowForm(true);
     setEditingTaskFull(null);
     const res = await fetch(`/api/assigned-tasks/${task.id}`, { cache: "no-store" });
@@ -667,20 +782,10 @@ export default function ProductivityCalendarPage() {
     await Promise.all([fetchDaySchedule(), fetchAssignedTasksAll()]);
   }, [fetchDaySchedule, fetchAssignedTasksAll]);
 
-  // Removes the task from the calendar (clears its schedule) — does not delete
-  // the underlying task, which may still carry status/assignee history managed
-  // from the Assignment tab.
-  const removeFromCalendar = async () => {
-    if (!editingBlockId) return;
-    await fetch(`/api/assigned-tasks/${editingBlockId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ start_time: null, end_time: null }),
-    });
-    setShowForm(false);
-    await refreshAfterScheduleChange();
-  };
-
+  // "Remove from Calendar" used to live here — a one-click PATCH clearing
+  // start_time/end_time. Removed along with its button rather than left behind
+  // as dead code; clearing the hours is still reachable by unticking Add to
+  // Calendar in the task editor, which at least shows what it is about to undo.
   // Same applied-filter predicate the month dots use, so the week/day hour
   // blocks respect Source/Status/Category/Project/Recurring too. Date Type is
   // left out here — a scheduled block is inherently start-anchored, so gating
@@ -703,12 +808,51 @@ export default function ProductivityCalendarPage() {
     () => daySchedule.filter((t) => t.start_time && t.end_time && taskPassesFilters(t)),
     [daySchedule, taskPassesFilters]
   );
-  const unscheduledTasks = useMemo(() => daySchedule.filter((t) => !t.start_time || !t.end_time), [daySchedule]);
+  // Filtered like the scheduled blocks are. This list ignored the filter bar
+  // entirely, so picking Due (or any status/category) changed the grid and left
+  // the sidebar untouched — and since the sidebar is where unscheduled work
+  // lives, a VA filtering for what's due saw no effect anywhere.
+  //
+  // Date Type has to be spelled out here rather than deferred to
+  // taskPassesFilters: that predicate deliberately omits it because a scheduled
+  // block is inherently start-anchored, but an unscheduled task genuinely can
+  // be start-anchored, due-anchored, or neither.
+  const unscheduledTasks = useMemo(
+    () =>
+      daySchedule.filter((t) => {
+        if (t.start_time && t.end_time) return false;
+        if (!taskPassesFilters(t)) return false;
+        if (applied.dateType === "due" && !t.due_date) return false;
+        if (applied.dateType === "start" && !t.start_date) return false;
+        return true;
+      }),
+    [daySchedule, taskPassesFilters, applied.dateType]
+  );
+
+  // What's due on the selected day, for the sidebar's Due card. Overdue work
+  // rides along so a missed deadline doesn't quietly drop off the day it was
+  // due and never reappear.
+  const dueSidebarItems = useMemo(
+    () =>
+      daySchedule
+        .filter(
+          (t) => t.due_date && t.due_date <= selectedDate && taskPassesFilters(t) && t.status !== "completed"
+        )
+        .sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? ""))
+        .map((t) => ({
+          id: t.id,
+          name: t.task_name,
+          dueDate: t.due_date as string,
+          dueTime: t.due_time,
+          overdue: (t.due_date as string) < selectedDate,
+        })),
+    [daySchedule, selectedDate, taskPassesFilters]
+  );
   const scheduledForDate = useCallback(
     (dateStr: string) =>
       scheduledTasks
         .filter((t) => {
-          const anchorDay = localDateOf(t.start_time as string);
+          const anchorDay = orgDateOf(t.start_time as string);
           // Only expand into a multi-day span when start_date lines up with the
           // block's actual scheduled day — guards against a due-date-only task
           // whose start_time was set independently (openScheduleExisting) ever
@@ -728,7 +872,7 @@ export default function ProductivityCalendarPage() {
       (compareSchedules[vaId] ?? [])
         .filter((t) => t.start_time && t.end_time && taskPassesFilters(t))
         .filter((t) => {
-          const anchorDay = localDateOf(t.start_time as string);
+          const anchorDay = orgDateOf(t.start_time as string);
           if (t.start_date === anchorDay && t.end_date && t.end_date !== t.start_date) {
             return isDateInSpan(dateStr, t.start_date, t.end_date);
           }
@@ -738,25 +882,239 @@ export default function ProductivityCalendarPage() {
         .sort((a, b) => new Date(a.start_time as string).getTime() - new Date(b.start_time as string).getTime()),
     [compareSchedules, taskPassesFilters]
   );
-  const dayTotalLabel = useMemo(() => {
-    const totalMinutes = scheduledForDate(selectedDate).reduce(
-      (sum, t) => sum + (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000,
-      0
-    );
+  const minutesOf = (t: RawTask) =>
+    (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000;
+
+  function formatDuration(totalMinutes: number): string {
     const hrs = Math.floor(totalMinutes / 60);
     const mins = Math.round(totalMinutes % 60);
-    return `${hrs}h${mins > 0 ? ` ${mins}m` : ""} blocked`;
-  }, [scheduledForDate, selectedDate]);
+    if (hrs === 0) return `${mins}m`;
+    return `${hrs}h${mins > 0 ? ` ${mins}m` : ""}`;
+  }
+
+  // The Hours tab: the same day's work as the grid, but as a list of how long
+  // each task takes rather than where it sits. Sorted longest first — the point
+  // of the view is how the day is spent, not the order it happens in.
+  // Two sources, never both for one task: a block contributes its own length,
+  // and a task with no block contributes planned_minutes. The editor clears one
+  // when you set the other, so nothing is counted twice.
+  // Date-parameterised so Week and Month can ask the same question per day that
+  // the Day view asks about selectedDate — the Hours tab, the day badges and the
+  // budget all read from this one place rather than each re-deriving a total.
+  const durationsForDate = useCallback(
+    (dateStr: string) => {
+      const blocked = scheduledForDate(dateStr).map((t) => ({
+        id: t.id,
+        name: t.task_name,
+        account: t.account,
+        category: t.category,
+        minutes: minutesOf(t),
+        timed: true,
+      }));
+      const blockedIds = new Set(blocked.map((r) => r.id));
+      const untimed = daySchedule
+        .filter(
+          (t) =>
+            !blockedIds.has(t.id) &&
+            t.planned_minutes != null &&
+            t.planned_minutes > 0 &&
+            (t.start_date === dateStr || t.due_date === dateStr) &&
+            taskPassesFilters(t)
+        )
+        .map((t) => ({
+          id: t.id,
+          name: t.task_name,
+          account: t.account,
+          category: t.category,
+          minutes: t.planned_minutes as number,
+          timed: false,
+        }));
+      // Output Based work on this day. Same applied filters the due dots use —
+      // project and recurring don't apply to fixed-pay rows, so only source,
+      // status and category can exclude one.
+      const fixed = fixedDurations
+        .filter((f) => {
+          if (f.date !== dateStr) return false;
+          if (applied.source.size > 0 && !applied.source.has("fixed")) return false;
+          if (applied.status.size > 0 && !applied.status.has(f.status)) return false;
+          if (applied.category.size > 0 && !(f.category && applied.category.has(f.category))) return false;
+          return true;
+        })
+        .map((f) => ({
+          id: f.taskId,
+          name: f.name,
+          account: f.account,
+          category: f.category,
+          minutes: f.minutes,
+          timed: false,
+          source: "fixed" as const,
+        }));
+
+      const rows = [
+        ...blocked.map((r) => ({ ...r, source: "assigned" as const })),
+        ...untimed.map((r) => ({ ...r, source: "assigned" as const })),
+        ...fixed,
+      ].sort((a, b) => b.minutes - a.minutes);
+      return { rows, totalMinutes: rows.reduce((sum, r) => sum + r.minutes, 0) };
+    },
+    [scheduledForDate, daySchedule, taskPassesFilters, fixedDurations, applied]
+  );
+
+  const dayDurations = useMemo(() => durationsForDate(selectedDate), [durationsForDate, selectedDate]);
+
+  // The day's budget comes from the VA's shift in Team Management — shift_hours,
+  // or the shift_start/shift_end span when that's how it's set. The badge counts
+  // down from it as blocks are added, so the question it answers is "how much is
+  // left to give" rather than "how much is on the calendar".
+  //
+  // Display only. It doesn't stop anyone booking past the budget; going over
+  // just turns the badge terracotta.
+  //
+  // The shift itself doesn't vary by date, so it's resolved once and the
+  // per-date part is just that day's total subtracted from it. Week and Month
+  // ask this for every cell they draw, so keeping the profile lookup out of
+  // the per-date call matters.
+  const shiftBudgetMinutes = useMemo(() => {
+    const member = teamMembers.find((m) => m.id === dayUserId);
+    const budgetHours = member
+      ? shiftHoursFromProfile({
+          shift_hours: member.shift_hours ?? null,
+          shift_start: member.shift_start ?? null,
+          shift_end: member.shift_end ?? null,
+        })
+      : null;
+    return budgetHours == null ? null : Math.round(budgetHours * 60);
+  }, [teamMembers, dayUserId]);
+
+  const budgetForDate = useCallback(
+    (dateStr: string) => {
+      if (shiftBudgetMinutes == null) return null;
+      const usedMinutes = durationsForDate(dateStr).totalMinutes;
+      return {
+        budgetMinutes: shiftBudgetMinutes,
+        usedMinutes,
+        remainingMinutes: shiftBudgetMinutes - usedMinutes,
+      };
+    },
+    [shiftBudgetMinutes, durationsForDate]
+  );
+
+  const dayBudget = useMemo(
+    () =>
+      shiftBudgetMinutes == null
+        ? null
+        : {
+            budgetMinutes: shiftBudgetMinutes,
+            usedMinutes: dayDurations.totalMinutes,
+            remainingMinutes: shiftBudgetMinutes - dayDurations.totalMinutes,
+          },
+    [shiftBudgetMinutes, dayDurations]
+  );
+
+  // The Day view's badge, shrunk to fit a week column or a month cell. Says
+  // what's LEFT rather than what's booked, matching dayTotalLabel — the whole
+  // point of the shift budget is how much is still available to give.
+  //
+  // `whenEmpty` is what separates the two callers: a week has seven columns, so
+  // showing full capacity on an untouched day is useful; a month grid has
+  // forty-two, and badging every empty one is just noise.
+  const budgetBadgeFor = useCallback(
+    (dateStr: string, whenEmpty: "show" | "hide") => {
+      const usedMinutes = durationsForDate(dateStr).totalMinutes;
+      if (shiftBudgetMinutes == null) {
+        return usedMinutes > 0 ? { text: formatDuration(usedMinutes), over: false, warn: false } : null;
+      }
+      if (usedMinutes === 0 && whenEmpty === "hide") return null;
+      const remaining = shiftBudgetMinutes - usedMinutes;
+      if (remaining < 0) return { text: `${formatDuration(-remaining)} over`, over: true, warn: false };
+      const warn =
+        shiftBudgetMinutes > 0 && usedMinutes / shiftBudgetMinutes >= BUDGET_WARN_THRESHOLD;
+      return { text: `${formatDuration(remaining)} left`, over: false, warn };
+    },
+    [durationsForDate, shiftBudgetMinutes]
+  );
+
+  const budgetBadgeClass = (badge: { over: boolean; warn: boolean }) =>
+    badge.over
+      ? "bg-terracotta-soft text-terracotta border-terracotta/30"
+      : badge.warn
+      ? "bg-amber-soft text-amber border-amber/30"
+      : "bg-sage-soft text-sage border-sage/20";
+
+  // Spent when nothing is left. Warned at BUDGET_WARN_THRESHOLD of the budget,
+  // the same 90% the rest of the app warns at, so the day says "nearly full"
+  // before it says "full".
+  const dayBudgetSpent = Boolean(dayBudget && dayBudget.remainingMinutes <= 0);
+
+  // Stale the moment the day or the person changes — the limit it described
+  // belonged to a different day's budget.
+  useEffect(() => {
+    setLimitNotice(null);
+  }, [selectedDate, dayUserId]);
+  const dayBudgetWarning = Boolean(
+    dayBudget &&
+      !dayBudgetSpent &&
+      dayBudget.budgetMinutes > 0 &&
+      (dayBudget.budgetMinutes - dayBudget.remainingMinutes) / dayBudget.budgetMinutes >= BUDGET_WARN_THRESHOLD
+  );
+
+  // Two budgets, two different consequences. Filling the day is a warning —
+  // the work still goes in, it just starts drawing on the week. Filling the
+  // week is the actual stop, because there's nothing left to draw on: more
+  // time has to be granted before anything else gets booked.
+  const weekDates = useMemo(() => {
+    const back = new Date(`${selectedDate}T00:00:00`).getDay();
+    const start = addDaysToDateStr(selectedDate, -back);
+    return Array.from({ length: 7 }, (_, i) => addDaysToDateStr(start, i));
+  }, [selectedDate]);
+
+  const weekBudget = useMemo(() => {
+    const member = teamMembers.find((m) => m.id === dayUserId);
+    const limitHours = member?.weekly_budget_limit ?? null;
+    if (limitHours == null || limitHours <= 0) return null;
+    // Counted through durationsForDate, the same way the day budget is. This
+    // used to sum only the hour BLOCKS, which meant duration-only work — and
+    // every Output Based task — drew nothing against the weekly limit even
+    // though it filled the day badge. The two budgets now measure the same
+    // thing, so a week can't quietly overrun on work the day view was counting.
+    const usedMinutes = weekDates.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0);
+    const budgetMinutes = Math.round(limitHours * 60);
+    return { budgetMinutes, usedMinutes, remainingMinutes: budgetMinutes - usedMinutes };
+  }, [teamMembers, dayUserId, weekDates, durationsForDate]);
+
+  const weekBudgetSpent = Boolean(weekBudget && weekBudget.remainingMinutes <= 0);
+
+  const dayTotalLabel = useMemo(() => {
+    if (!dayBudget) return `${formatDuration(dayDurations.totalMinutes)} blocked`;
+    if (dayBudget.remainingMinutes < 0) {
+      return `${formatDuration(-dayBudget.remainingMinutes)} over ${formatDuration(dayBudget.budgetMinutes)}`;
+    }
+    return `${formatDuration(dayBudget.remainingMinutes)} left of ${formatDuration(dayBudget.budgetMinutes)}`;
+  }, [dayBudget, dayDurations]);
   // Exclude items already rendered as an hour block for this date — once a task
   // has scheduled hours, it shouldn't also sit up top as an unscheduled-looking badge.
+  //
+  // A due TIME is the exception. "Runs 8-9" and "is due at 9" are different
+  // facts, and dropping the second because the first exists took the deadline
+  // marker off the day entirely for any task that also had hours booked. The
+  // redundant case is the start badge, which is what this filter is actually
+  // for; a timed deadline still earns its marker on the grid.
   const dueTodayItems = useMemo(() => {
     const scheduledIdsToday = new Set(scheduledForDate(selectedDate).map((t) => t.id));
     return (dueItemsByDate[selectedDate] ?? []).filter((item) => {
       if (item.source !== "assigned") return true;
+      if (item.dateType === "due" && item.dueTime) return true;
       return !scheduledIdsToday.has(item.taskId);
     });
   }, [dueItemsByDate, selectedDate, scheduledForDate]);
   const hours = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i);
+
+  // Ref callback rather than an effect: it fires as each grid mounts, which is
+  // exactly when the scroll position needs setting, and there are three grids
+  // (week, compare, day) that never coexist.
+  const openAtWorkingHours = useCallback((el: HTMLDivElement | null) => {
+    if (el) el.scrollTop = (DEFAULT_SCROLL_HOUR - DAY_START_HOUR) * HOUR_HEIGHT;
+  }, []);
 
   function blockPosition(task: RawTask) {
     const start = new Date(task.start_time!);
@@ -769,11 +1127,16 @@ export default function ProductivityCalendarPage() {
   }
 
   // Due Time is a plain "HH:MM" clock time (not a timestamp, no timezone
-  // conversion needed) — position it on the same grid the hour blocks use,
-  // clamped to the visible 6am-9pm range.
+  // conversion needed) — position it on the same grid the hour blocks use.
+  //
+  // Clamped to the grid's full span, which is now the whole day, so no real
+  // clock time gets pinned any more. The bound used to stop at the START of the
+  // last hour row, which silently parked anything in that final hour on the
+  // hour line instead of its own minute — 23:30 drew at 23:00.
   function dueTimePosition(dueTime: string): number {
     const [h, m] = dueTime.split(":").map(Number);
-    const minutes = Math.max(0, Math.min((DAY_END_HOUR - DAY_START_HOUR) * 60, (h - DAY_START_HOUR) * 60 + (m || 0)));
+    const gridMinutes = (DAY_END_HOUR - DAY_START_HOUR + 1) * 60;
+    const minutes = Math.max(0, Math.min(gridMinutes, (h - DAY_START_HOUR) * 60 + (m || 0)));
     return (minutes / 60) * HOUR_HEIGHT;
   }
 
@@ -837,6 +1200,107 @@ export default function ProductivityCalendarPage() {
   }
 
 
+  // The time grid, over ANY list of days. Week passes its seven; the custom
+  // range passes however many were picked. Extracted rather than copied so the
+  // two can't drift -- the block layout, the add-by-click and the overlap
+  // packing are fiddly enough that a second copy would rot.
+  const COLS = (n: number) => `48px repeat(${n}, minmax(96px, 1fr))`;
+  const renderTimeGrid = (dates: string[]) => (
+              <div className="overflow-x-auto">
+                <div className="grid" style={{ minWidth: Math.max(760, dates.length * 110), gridTemplateColumns: COLS(dates.length) }}>
+                  <div />
+                  {dates.map((dateStr) => {
+                    const { weekday, day } = formatDayShort(dateStr);
+                    const isToday = dateStr === todayStr;
+                    const badge = budgetBadgeFor(dateStr, "show");
+                    return (
+                      <button
+                        key={dateStr}
+                        type="button"
+                        onClick={() => openDay(dateStr)}
+                        className={`flex flex-col items-center gap-0.5 rounded-md py-1.5 text-center hover:bg-cream transition-colors cursor-pointer ${
+                          isToday ? "bg-terracotta-soft" : ""
+                        }`}
+                      >
+                        <span className="text-[9px] font-semibold text-walnut uppercase tracking-wide">{weekday}</span>
+                        <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
+                        {badge && (
+                          <span className={`rounded-full border px-1.5 text-[9px] font-semibold leading-tight ${budgetBadgeClass(badge)}`}>
+                            {badge.text}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+  
+                  <div ref={openAtWorkingHours} className={GRID_SCROLL_CLASS} style={{ gridColumn: `span ${dates.length + 1}` }}>
+                  <div className="relative grid" style={{ height: hours.length * HOUR_HEIGHT, gridTemplateColumns: COLS(dates.length) }}>
+                    {/* Hour labels */}
+                    <div className="relative">
+                      {hours.map((hour, i) => (
+                        <span
+                          key={hour}
+                          className="absolute left-0 w-12 pt-0.5 text-[10px] text-stone"
+                          style={{ top: i * HOUR_HEIGHT }}
+                        >
+                          {new Date(2000, 0, 1, hour).toLocaleTimeString("en-US", { hour: "numeric" })}
+                        </span>
+                      ))}
+                    </div>
+  
+                    {/* Day columns */}
+                    {dates.map((dateStr) => (
+                      <div key={dateStr} className="relative border-l border-sand">
+                        {hours.map((hour, i) => (
+                          <button
+                            key={hour}
+                            type="button"
+                            onClick={() => openAddBlock(hour, dateStr)}
+                            className="absolute left-0 right-0 border-t border-sand hover:bg-cream transition-colors cursor-pointer"
+                            style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                          />
+                        ))}
+                        <div className="pointer-events-none absolute inset-0">
+                          {(() => {
+                            const dayTasks = scheduledForDate(dateStr);
+                            const overlapLayout = computeOverlapLayout(dayTasks);
+                            return dayTasks.map((task) => {
+                              const { top, height } = blockPosition(task);
+                              // Due-date-driven blocks render fully opaque; start-date-driven
+                              // blocks (the default) stay at 70% opacity.
+                              const isDueBlock = dateStr === task.due_date && dateStr !== task.start_date;
+                              const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
+                              const label = spanLabel(task, dateStr);
+                              return (
+                                <button
+                                  key={task.id}
+                                  type="button"
+                                  onClick={() => openEditBlock(task)}
+                                  className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
+                                  style={{
+                                    top,
+                                    height,
+                                    left: `calc(2px + (100% - 4px) * ${col} / ${cols})`,
+                                    width: `calc((100% - 4px) / ${cols} - 2px)`,
+                                  }}
+                                >
+                                  <p className="truncate text-[9px] font-semibold leading-tight">
+                                    {label && <span className="opacity-70">[{label}] </span>}
+                                    {task.task_name}
+                                  </p>
+                                </button>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  </div>
+                </div>
+              </div>
+  );
+
   if (!ready) {
     return <div className="p-8 text-center text-xs text-stone">Loading calendar…</div>;
   }
@@ -873,6 +1337,21 @@ export default function ProductivityCalendarPage() {
           >
             Day
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              // Seed the pickers from wherever you already are, so switching in
+              // shows the week around the current date rather than nothing.
+              if (!rangeStart) setRangeStart(selectedDate);
+              if (!rangeEnd) setRangeEnd(addDaysToDateStr(rangeStart || selectedDate, 6));
+              setViewMode("range");
+            }}
+            className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+              viewMode === "range" ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+            }`}
+          >
+            Range
+          </button>
 
           <span className="mx-1 h-4 w-px bg-sand" />
           <button
@@ -889,6 +1368,29 @@ export default function ProductivityCalendarPage() {
             title="Jump to date"
             className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
           />
+
+          {/* Only in Range view — two more date boxes sitting next to "jump to
+              date" the rest of the time would just be three ambiguous inputs. */}
+          {viewMode === "range" && (
+            <span className="ml-1 flex items-center gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">From</span>
+              <input
+                type="date"
+                value={rangeStart}
+                max={rangeEnd || undefined}
+                onChange={(e) => setRangeStart(e.target.value)}
+                className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+              />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">To</span>
+              <input
+                type="date"
+                value={rangeEnd}
+                min={rangeStart || undefined}
+                onChange={(e) => setRangeEnd(e.target.value)}
+                className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+              />
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -1069,6 +1571,33 @@ export default function ProductivityCalendarPage() {
         </div>
       </div>
 
+      {/* Category legend. The grid, the month dots and the Hours lists are all
+          colour-coded, but nothing said what the colours meant — sits above the
+          calendar box so it reads once for whichever view is open. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-sand bg-white px-3 py-2">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-walnut">Categories</span>
+        {CATEGORY_OPTIONS.map((c) => (
+          <span key={c} className="flex items-center gap-1.5">
+            <span className={`h-2.5 w-2.5 rounded-full ${categoryDotClass(c)}`} />
+            <span className="text-[11px] text-espresso">{c}</span>
+          </span>
+        ))}
+        <span className="ml-auto flex items-center gap-3">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-stone" />
+            <span className="text-[10px] text-stone">Start date</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rotate-45 rounded-sm bg-stone" />
+            <span className="text-[10px] text-stone">Due date</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-4 rounded-sm bg-stone" />
+            <span className="text-[10px] text-stone">Spans days</span>
+          </span>
+        </span>
+      </div>
+
       {viewMode === "month" && (
         <div className="rounded-xl border border-sand bg-white p-4">
           <div className="mb-3 flex items-center justify-between">
@@ -1126,6 +1655,18 @@ export default function ProductivityCalendarPage() {
                       );
                     })()}
                   </div>
+                  {/* Only on days with something booked — badging all 42 cells
+                      would bury the dots this grid exists to show. Days outside
+                      the current month stay bare for the same reason. */}
+                  {isCurrentMonth && (() => {
+                    const badge = budgetBadgeFor(dateStr, "hide");
+                    if (!badge) return null;
+                    return (
+                      <div className={`mt-0.5 rounded-full border px-1 text-center text-[8px] font-semibold leading-tight ${budgetBadgeClass(badge)}`}>
+                        {badge.text}
+                      </div>
+                    );
+                  })()}
                   <div className="mt-1 space-y-1">
                     {/* Multi-day spans render as a bar; adjacent days line up into
                         a continuous line across the span. */}
@@ -1158,6 +1699,23 @@ export default function ProductivityCalendarPage() {
 
       {viewMode === "week" && (
         <div className="rounded-xl border border-sand bg-white p-4">
+          {/* Same control the Day view carries, in the same place — it switches
+              what the whole panel shows, so it sits above the date rather than
+              under it. */}
+          <div className="mb-3 mx-auto flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
+            {(["grid", "hours"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setWeekTab(tab)}
+                className={`px-4 py-1.5 transition-colors ${
+                  weekTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                }`}
+              >
+                {tab === "grid" ? "Grid" : "Hours"}
+              </button>
+            ))}
+          </div>
           <div className="mb-3 flex items-center justify-between">
             <button
               type="button"
@@ -1166,7 +1724,24 @@ export default function ProductivityCalendarPage() {
             >
               &larr;
             </button>
-            <h2 className="text-sm font-bold text-espresso">{weekLabel}</h2>
+            <div className="flex flex-col items-center gap-0.5">
+              <h2 className="text-sm font-bold text-espresso">{weekLabel}</h2>
+              {/* The weekly limit is the one that actually stops booking, so it
+                  gets the header slot the day total holds in the Day view. */}
+              {weekBudget && (
+                <span
+                  className={`text-[11px] font-bold px-2.5 py-[2px] rounded-full border ${
+                    weekBudget.remainingMinutes < 0
+                      ? "bg-terracotta-soft text-terracotta border-terracotta/30"
+                      : "bg-amber-soft text-amber border-amber/30"
+                  }`}
+                >
+                  {weekBudget.remainingMinutes < 0
+                    ? `${formatDuration(-weekBudget.remainingMinutes)} over ${formatDuration(weekBudget.budgetMinutes)} this week`
+                    : `${formatDuration(weekBudget.remainingMinutes)} left of ${formatDuration(weekBudget.budgetMinutes)} this week`}
+                </span>
+              )}
+            </div>
             <button
               type="button"
               onClick={goToNextWeek}
@@ -1184,122 +1759,159 @@ export default function ProductivityCalendarPage() {
 
           {loadingDay ? (
             <div className="py-8 text-center text-xs text-stone">Loading…</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <div className="grid min-w-[760px] grid-cols-[48px_repeat(7,1fr)]">
-                <div />
-                {weekGrid.map((dateStr) => {
-                  const { weekday, day } = formatDayShort(dateStr);
-                  const isToday = dateStr === todayStr;
-                  return (
-                    <button
-                      key={dateStr}
-                      type="button"
-                      onClick={() => openDay(dateStr)}
-                      className={`flex flex-col items-center gap-0.5 rounded-md py-1.5 text-center hover:bg-cream transition-colors cursor-pointer ${
-                        isToday ? "bg-terracotta-soft" : ""
-                      }`}
-                    >
-                      <span className="text-[9px] font-semibold text-walnut uppercase tracking-wide">{weekday}</span>
-                      <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
-                    </button>
-                  );
-                })}
-
-                <div className="relative col-span-8 grid grid-cols-[48px_repeat(7,1fr)]" style={{ height: hours.length * HOUR_HEIGHT }}>
-                  {/* Hour labels */}
-                  <div className="relative">
-                    {hours.map((hour, i) => (
-                      <span
-                        key={hour}
-                        className="absolute left-0 w-12 pt-0.5 text-[10px] text-stone"
-                        style={{ top: i * HOUR_HEIGHT }}
-                      >
-                        {new Date(2000, 0, 1, hour).toLocaleTimeString("en-US", { hour: "numeric" })}
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* Day columns */}
-                  {weekGrid.map((dateStr) => (
-                    <div key={dateStr} className="relative border-l border-sand">
-                      {hours.map((hour, i) => (
-                        <button
-                          key={hour}
-                          type="button"
-                          onClick={() => openAddBlock(hour, dateStr)}
-                          className="absolute left-0 right-0 border-t border-sand hover:bg-cream transition-colors cursor-pointer"
-                          style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
-                        />
-                      ))}
-                      <div className="pointer-events-none absolute inset-0">
-                        {(() => {
-                          const dayTasks = scheduledForDate(dateStr);
-                          const overlapLayout = computeOverlapLayout(dayTasks);
-                          return dayTasks.map((task) => {
-                            const { top, height } = blockPosition(task);
-                            // Due-date-driven blocks render fully opaque; start-date-driven
-                            // blocks (the default) stay at 70% opacity.
-                            const isDueBlock = dateStr === task.due_date && dateStr !== task.start_date;
-                            const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
-                            const label = spanLabel(task, dateStr);
-                            return (
-                              <button
-                                key={task.id}
-                                type="button"
-                                onClick={() => openEditBlock(task)}
-                                className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
-                                style={{
-                                  top,
-                                  height,
-                                  left: `calc(2px + (100% - 4px) * ${col} / ${cols})`,
-                                  width: `calc((100% - 4px) / ${cols} - 2px)`,
-                                }}
-                              >
-                                <p className="truncate text-[9px] font-semibold leading-tight">
-                                  {label && <span className="opacity-70">[{label}] </span>}
-                                  {task.task_name}
-                                </p>
-                              </button>
-                            );
-                          });
-                        })()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+          ) : weekTab === "hours" ? (
+            // The week's work as lengths rather than positions. Grouped by day
+            // rather than pooled into one list: "how is the week distributed"
+            // is the question a week view gets asked, and a flat sorted list
+            // answers a different one.
+            <div className="rounded-lg border border-sand overflow-hidden">
+              <div className="flex items-center justify-between gap-2 border-b border-sand bg-parchment px-3 py-2">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">Week total</span>
+                <span className="text-[13px] font-bold text-espresso">
+                  {formatDuration(weekGrid.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0))}
+                </span>
               </div>
+              {weekGrid.every((d) => durationsForDate(d).rows.length === 0) ? (
+                <p className="px-3 py-6 text-center text-[12px] text-stone">Nothing blocked this week yet.</p>
+              ) : (
+                <div className="divide-y divide-sand">
+                  {weekGrid.map((dateStr) => {
+                    const { rows, totalMinutes } = durationsForDate(dateStr);
+                    if (rows.length === 0) return null;
+                    const { weekday, day } = formatDayShort(dateStr);
+                    const badge = budgetBadgeFor(dateStr, "hide");
+                    return (
+                      <div key={dateStr}>
+                        <button
+                          type="button"
+                          onClick={() => openDay(dateStr)}
+                          className="flex w-full items-center justify-between gap-2 bg-cream/50 px-3 py-1.5 text-left transition-colors hover:bg-cream cursor-pointer"
+                        >
+                          <span className="text-[11px] font-bold uppercase tracking-wide text-walnut">
+                            {weekday} {day}
+                          </span>
+                          <span className="flex items-center gap-2">
+                            {badge && (
+                              <span className={`rounded-full border px-1.5 text-[9px] font-semibold ${budgetBadgeClass(badge)}`}>
+                                {badge.text}
+                              </span>
+                            )}
+                            <span className="text-[12px] font-semibold text-espresso">{formatDuration(totalMinutes)}</span>
+                          </span>
+                        </button>
+                        {rows.map((row) => (
+                          <div
+                            key={`${row.source}-${row.id}`}
+                            className="flex items-center justify-between gap-3 px-3 py-1.5 pl-5"
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${categoryDotClass(row.category ?? "")}`} />
+                              <span className="min-w-0">
+                              <span className="block truncate text-[12px] text-espresso">{row.name}</span>
+                              <span className="block truncate text-[10px] text-stone">
+                                {row.account}
+                                {row.source === "fixed"
+                                  ? row.account
+                                    ? " · Output Based"
+                                    : "Output Based"
+                                  : !row.timed && (row.account ? " · no set time" : "No set time")}
+                              </span>
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-[11px] font-semibold text-walnut">
+                              {formatDuration(row.minutes)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+          ) : (
+            renderTimeGrid(weekGrid)
           )}
         </div>
       )}
 
-      {viewMode === "day" && isAdminOrManager && (() => {
-        const off = timeOff
-          .filter((t) => selectedDate >= t.start_date && selectedDate <= t.end_date)
-          .map((t) => {
-            const m = teamMembers.find((tm) => tm.id === t.user_id);
-            return { name: m?.full_name || m?.username || "Someone", label: timeOffLabel(t) };
-          });
-        if (off.length === 0) return null;
-        return (
-          <div className="rounded-xl border border-terracotta/30 bg-terracotta-soft px-4 py-2.5">
-            <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-terracotta">Off this day ({off.length})</p>
-            <div className="flex flex-wrap gap-1.5">
-              {off.map((o, i) => (
-                <span key={i} className="rounded-full border border-terracotta/30 bg-white px-2 py-[2px] text-[11px] font-semibold text-terracotta">
-                  {o.name} · {o.label}
-                </span>
-              ))}
-            </div>
+      {viewMode === "range" && (
+        <div className="rounded-xl border border-sand bg-white p-4">
+          <div className="mb-3 flex flex-col items-center gap-0.5">
+            <h2 className="text-sm font-bold text-espresso">
+              {formatDayLabel(rangeGrid[0])} – {formatDayLabel(rangeGrid[rangeGrid.length - 1])}
+            </h2>
+            <span className="text-[11px] text-stone">
+              {rangeGrid.length} day{rangeGrid.length === 1 ? "" : "s"} ·{" "}
+              {formatDuration(rangeGrid.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0))} blocked
+            </span>
+            {rangeTruncated && (
+              <span className="text-[11px] text-terracotta">
+                Showing the first {RANGE_MAX_DAYS} days — narrow the range to see the rest.
+              </span>
+            )}
           </div>
-        );
-      })()}
+
+          {scope === "__all__" && isAdminOrManager && (
+            <p className="mb-3 text-[11px] text-stone">
+              Agency-wide view can&apos;t render every teammate&apos;s hour blocks at once — showing your own. Pick a teammate above to view or add blocks to theirs.
+            </p>
+          )}
+
+          {loadingDay ? (
+            <div className="py-8 text-center text-xs text-stone">Loading…</div>
+          ) : (
+            renderTimeGrid(rangeGrid)
+          )}
+        </div>
+      )}
+
+      {/* Who's off used to be a full-width banner above the whole day — loud,
+          and the first thing you read on a day it rarely changes anything about.
+          It's a small card in the sidebar now, next to Unscheduled. */}
 
       {viewMode === "day" && (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
           {/* Hour grid */}
           <div className="rounded-xl border border-sand bg-white p-4">
+            {/* Above the date, not tucked under it — this switches what the whole
+                panel shows, so it reads as a control for the panel rather than a
+                detail of the day. Hidden in the multi-VA compare view, which is a
+                different shape with no single day to total. */}
+            {compareVaIds.length < 2 && (
+              <div className="mb-3 mx-auto flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
+                {(["grid", "hours"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setDayTab(tab)}
+                    className={`px-4 py-1.5 transition-colors ${
+                      dayTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                    }`}
+                  >
+                    {tab === "grid" ? "Grid" : "Hours"}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Sits above the grid so the reason a click did nothing is next to
+                the thing that was clicked. */}
+            {(limitNotice || weekBudgetSpent || dayBudgetSpent || dayBudgetWarning) && (
+              <div
+                className={`mb-3 rounded-lg border px-3 py-2 text-[12px] font-semibold ${
+                  limitNotice || weekBudgetSpent
+                    ? "border-terracotta/30 bg-terracotta-soft text-terracotta"
+                    : "border-amber/30 bg-amber-soft text-amber"
+                }`}
+              >
+                {limitNotice ??
+                  (weekBudgetSpent
+                    ? "Weekly limit reached — request more time to continue."
+                    : dayBudgetSpent
+                    ? "Daily limit reached — more time here comes out of the weekly budget."
+                    : `Nearly full — ${formatDuration(dayBudget!.remainingMinutes)} left today.`)}
+              </div>
+            )}
             <div className="mb-3 flex items-center justify-between">
               <button
                 type="button"
@@ -1313,7 +1925,13 @@ export default function ProductivityCalendarPage() {
                   {selectedDate === todayStr ? "Today — " : ""}
                   {formatDayLabel(selectedDate)}
                 </h2>
-                <span className="text-[10px] font-semibold px-2 py-[1px] rounded-full border bg-sage-soft text-sage border-sage/20">
+                <span
+                  className={`text-[13px] font-bold px-3 py-[3px] rounded-full border ${
+                    dayBudget && dayBudget.remainingMinutes < 0
+                      ? "bg-terracotta-soft text-terracotta border-terracotta/30"
+                      : "bg-amber-soft text-amber border-amber/30"
+                  }`}
+                >
                   {dayTotalLabel}
                 </span>
               </div>
@@ -1338,44 +1956,12 @@ export default function ProductivityCalendarPage() {
               </div>
             )}
 
-            {dueTodayItems.length > 0 && (
-              <div className="mb-3 flex flex-wrap gap-1.5">
-                {dueTodayItems.map((item) => {
-                  // Look up against the admin-wide list (same source dueTodayItems is
-                  // built from), not just the current viewer's own daySchedule —
-                  // otherwise an unassigned/other-VA task shows this pill but it's
-                  // unclickable, since it never appears in dayUserId's own task list.
-                  const scheduleTarget = item.source === "assigned"
-                    ? daySchedule.find((t) => t.id === item.taskId) ?? assignedTasksAll.find((t) => t.id === item.taskId)
-                    : undefined;
-                  const dueTimeLabel = item.dateType === "due" && item.dueTime ? ` ${formatDueTime(item.dueTime)}` : "";
-                  const label = `${item.dateType === "due" ? "Due" : "Starts"}${dueTimeLabel}: ${item.title}`;
-                  const pillClasses = categoryBlockClasses(item.category, true);
-                  if (!scheduleTarget) {
-                    return (
-                      <span
-                        key={item.id}
-                        className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${pillClasses}`}
-                        title={item.account || undefined}
-                      >
-                        {label}
-                      </span>
-                    );
-                  }
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => openScheduleExisting(scheduleTarget, selectedDate)}
-                      title={`${item.account ? item.account + " — " : ""}Click to set hours`}
-                      className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border cursor-pointer hover:opacity-75 transition-opacity ${pillClasses}`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            {/* The strip of Due/Starts pills that used to sit here is gone. A
+                deadline with a time belongs on the grid at that time — it's
+                rendered as a due marker below — and everything without hours is
+                already listed in the Unscheduled sidebar, which is where work
+                waiting to be scheduled belongs. Having both meant a timed
+                deadline appeared twice, once up here and once on the grid. */}
 
             {loadingDay ? (
               <div className="py-8 text-center text-xs text-stone">Loading…</div>
@@ -1402,6 +1988,7 @@ export default function ProductivityCalendarPage() {
                     );
                   })}
                 </div>
+                <div ref={openAtWorkingHours} className={GRID_SCROLL_CLASS}>
                 <div className="relative" style={{ height: hours.length * HOUR_HEIGHT }}>
                   {hours.map((hour, i) => (
                     <div
@@ -1456,8 +2043,74 @@ export default function ProductivityCalendarPage() {
                     })}
                   </div>
                 </div>
+                </div>
+              </div>
+            ) : dayTab === "hours" ? (
+              <div className="rounded-lg border border-sand overflow-hidden">
+                <div className="flex items-center justify-between gap-2 border-b border-sand bg-parchment px-3 py-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">Total</span>
+                  <span className="text-[13px] font-bold text-espresso">
+                    {formatDuration(dayDurations.totalMinutes)}
+                  </span>
+                </div>
+                {dayDurations.rows.length === 0 ? (
+                  <p className="px-3 py-6 text-center text-[12px] text-stone">
+                    Nothing blocked on this day yet.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-sand">
+                    {dayDurations.rows.map((row) => (
+                      <button
+                        // assigned_tasks and fixed_pay_tasks number their rows
+                        // independently, so the id alone isn't unique here.
+                        key={`${row.source}-${row.id}`}
+                        type="button"
+                        disabled={row.source === "fixed"}
+                        onClick={() => {
+                          // Timed rows open through the block path (it needs the
+                          // re-anchored copy); untimed ones have no block, so
+                          // they open the scheduling form on this day instead.
+                          const blocked = scheduledForDate(selectedDate).find((t) => t.id === row.id);
+                          if (blocked) {
+                            void openEditBlock(blocked);
+                            return;
+                          }
+                          const task = daySchedule.find((t) => t.id === row.id);
+                          if (task) void openScheduleExisting(task, selectedDate);
+                        }}
+                        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors ${
+                          row.source === "fixed" ? "cursor-default" : "hover:bg-cream cursor-pointer"
+                        }`}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          {/* Same category colour the grid blocks and month dots
+                              use, so a task is recognisable wherever it shows. */}
+                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${categoryDotClass(row.category ?? "")}`} />
+                          <span className="min-w-0">
+                          <span className="block truncate text-[13px] font-semibold text-espresso">{row.name}</span>
+                          <span className="block truncate text-[10px] text-stone">
+                            {row.account}
+                            {/* Output Based rows count toward the total but have
+                                no hour block to open, so they say what they are
+                                rather than offering an edit that goes nowhere. */}
+                            {row.source === "fixed"
+                              ? row.account
+                                ? " · Output Based"
+                                : "Output Based"
+                              : !row.timed && (row.account ? " · no set time" : "No set time")}
+                          </span>
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-[12px] font-semibold text-walnut">
+                          {formatDuration(row.minutes)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
+              <div ref={openAtWorkingHours} className={GRID_SCROLL_CLASS}>
               <div className="relative" style={{ height: hours.length * HOUR_HEIGHT }}>
                 {hours.map((hour, i) => (
                   <button
@@ -1495,7 +2148,11 @@ export default function ProductivityCalendarPage() {
                       // Reserve room on the right for a due-time badge when one
                       // falls inside this block's time span, so the two sit side
                       // by side instead of the badge floating on top of the block.
-                      const collidesWithDueMarker = dueMarkerTops.some((markerTop) => markerTop >= top && markerTop < top + height);
+                      // Inclusive of the block's end: a task running 8-9 and due
+                      // at 9 puts the marker exactly on the bottom edge, and the
+                      // marker is drawn 7px above its own position, so it lands
+                      // on the block. Treat the edge as a collision and dock it.
+                      const collidesWithDueMarker = dueMarkerTops.some((markerTop) => markerTop >= top && markerTop <= top + height);
                       const dueGutter = collidesWithDueMarker ? 96 : 0;
                       return (
                         <button
@@ -1549,8 +2206,26 @@ export default function ProductivityCalendarPage() {
                     // When that clock-time falls inside another task's scheduled
                     // hours, it docks as a compact badge in that block's reserved
                     // right-hand gutter instead of crossing over it.
-                    const dueMarkers = dueTodayItems
-                      .filter((item) => item.dateType === "due" && item.dueTime)
+                    // Markers sharing a clock time used to render at the same
+                    // top with the same docked width, so they sat exactly on
+                    // top of each other and only the last one painted — three
+                    // tasks due at 3pm looked like one, and the other two read
+                    // as missing due dates. Task blocks solve their own version
+                    // of this with col/cols; markers had no equivalent, so each
+                    // one after the first is offset down a row here. It nudges
+                    // the drawn position only; the time itself is untouched.
+                    const timedDueItems = dueTodayItems.filter(
+                      (item) => item.dateType === "due" && item.dueTime
+                    );
+                    const stackIndexByItem = new Map<string, number>();
+                    const takenAtTop = new Map<number, number>();
+                    for (const item of timedDueItems) {
+                      const markerTop = dueTimePosition(item.dueTime!);
+                      const taken = takenAtTop.get(markerTop) ?? 0;
+                      stackIndexByItem.set(item.id, taken);
+                      takenAtTop.set(markerTop, taken + 1);
+                    }
+                    const dueMarkers = timedDueItems
                       .map((item) => {
                         const scheduleTarget = item.source === "assigned"
                           ? daySchedule.find((t) => t.id === item.taskId) ?? assignedTasksAll.find((t) => t.id === item.taskId)
@@ -1559,13 +2234,16 @@ export default function ProductivityCalendarPage() {
                         const top = dueTimePosition(item.dueTime!);
                         const collidesWithTask = dayTasks.some((task) => {
                           const pos = blockPosition(task);
-                          return top >= pos.top && top < pos.top + pos.height;
+                          // Same inclusive end as the block side above — the two
+                          // must agree, or the block reserves a gutter the marker
+                          // doesn't dock into, or vice versa.
+                          return top >= pos.top && top <= pos.top + pos.height;
                         });
                         return (
                           <div
                             key={`due-marker-${item.id}`}
                             className={`pointer-events-none absolute flex items-center gap-1.5 ${collidesWithTask ? "right-2 w-[92px] justify-end" : "left-16 right-2"}`}
-                            style={{ top: top - 7 }}
+                            style={{ top: top - 7 + (stackIndexByItem.get(item.id) ?? 0) * DUE_MARKER_ROW }}
                           >
                             {!collidesWithTask && <span className="h-[2px] w-3 shrink-0 rounded bg-stone/60" />}
                             <button
@@ -1590,8 +2268,76 @@ export default function ProductivityCalendarPage() {
                   })()}
                 </div>
               </div>
+              </div>
             )}
           </div>
+
+          <div className="space-y-4 h-fit">
+          {/* Adding a block is about the DAY, not about the Unscheduled list —
+              but it used to sit as the last thing inside that card, which read
+              as an action on unscheduled items and left "Nothing unscheduled"
+              sitting directly above a button. At the head of the column it's
+              the first thing in reach and unambiguous about what it does. */}
+          <button
+            type="button"
+            onClick={() => openAddBlock(9)}
+            disabled={weekBudgetSpent}
+            title={weekBudgetSpent ? "Weekly limit reached — request more time to continue" : undefined}
+            className="w-full px-3 py-2 rounded-xl text-[12px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-sage"
+          >
+            {weekBudgetSpent ? "Weekly limit reached" : "+ Add Hour Block"}
+          </button>
+
+          {/* Off today — a quiet card here rather than a banner across the top. */}
+          {isAdminOrManager && offToday.length > 0 && (
+            <div className="rounded-xl border border-sand bg-white p-3 h-fit">
+              <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-stone">
+                Off today ({offToday.length})
+              </p>
+              <div className="space-y-1">
+                {offToday.map((o, i) => (
+                  <p key={i} className="truncate text-[11px] text-walnut">
+                    <span className="font-semibold text-espresso">{o.name}</span>
+                    {o.label ? ` · ${o.label}` : ""}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Due — its own card above Unscheduled, so deadlines read as their
+              own thing rather than a line buried on every backlog row. */}
+          {dueSidebarItems.length > 0 && (
+            <div className="rounded-xl border border-sand bg-white p-4 h-fit">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-espresso">
+                Due ({dueSidebarItems.length})
+              </p>
+              <div className="space-y-1.5 max-h-[220px] overflow-y-auto">
+                {dueSidebarItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      const task = daySchedule.find((t) => t.id === item.id);
+                      if (task) void openScheduleExisting(task, selectedDate);
+                    }}
+                    className="flex w-full items-start justify-between gap-2 rounded-lg border border-sand bg-white px-2.5 py-2 text-left transition-colors hover:bg-cream cursor-pointer"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-espresso">
+                      {item.name}
+                    </span>
+                    <span
+                      className={`shrink-0 text-[10px] font-semibold ${
+                        item.overdue ? "text-terracotta" : "text-walnut"
+                      }`}
+                    >
+                      {item.overdue ? "Overdue" : item.dueTime ? formatDueTime(item.dueTime) : "Today"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Unscheduled sidebar */}
           <div className="rounded-xl border border-sand bg-white p-4 space-y-3 h-fit">
@@ -1647,6 +2393,11 @@ export default function ProductivityCalendarPage() {
                             <span className="min-w-0">
                               <p className="truncate text-[12px] font-semibold text-espresso">{task.task_name}</p>
                               {task.account && <p className="truncate text-[10px] text-stone">{task.account}</p>}
+                              {/* Deadlines live in the Due card above this list,
+                                  not on each row — this list is a backlog of
+                                  work to schedule, and repeating the date on
+                                  every row buried the ones that actually fall
+                                  due. */}
                             </span>
                           </button>
                           <button
@@ -1667,15 +2418,9 @@ export default function ProductivityCalendarPage() {
                     })}
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => openAddBlock(9)}
-                  className="w-full px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer"
-                >
-                  + Add Hour Block
-                </button>
               </>
             )}
+          </div>
           </div>
         </div>
       )}
@@ -1696,15 +2441,6 @@ export default function ProductivityCalendarPage() {
               </button>
             </div>
             <div className="p-5 space-y-3">
-              {editingBlockId && (
-                <button
-                  onClick={removeFromCalendar}
-                  title="Clears the time, but keeps the task itself — manage it from Assignment."
-                  className="w-full px-3 py-2 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[12px] font-semibold cursor-pointer hover:bg-red-100 transition-colors"
-                >
-                  Remove from Calendar
-                </button>
-              )}
               {!editingBlockId && (() => {
                 const modes = taskModesForMember(teamMembers.find((m) => m.id === dayUserId));
                 if (!modes.canTimeBased || !modes.canOutputBased) return null;
@@ -1728,7 +2464,12 @@ export default function ProductivityCalendarPage() {
                 );
               })()}
               <TaskEditor
-                key={editingBlockId ? "edit" : taskMode}
+                // Keyed on the task id, not the literal "edit". TaskEditor seeds
+                // every field with useState, which only runs on mount — so a
+                // constant key meant opening task B after task A reused A's form
+                // state, and saving wrote A's values (or blanks) over B. That is
+                // how a due date got wiped by a save that never touched it.
+                key={editingBlockId ? `edit-${editingBlockId}` : taskMode}
                 mode={editingBlockId ? "time_based" : taskMode}
                 editingTaskId={editingBlockId}
                 initialTask={editingTaskFull}

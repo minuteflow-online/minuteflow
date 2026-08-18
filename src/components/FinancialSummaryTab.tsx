@@ -283,6 +283,14 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
   const [showProjectedModal, setShowProjectedModal] = useState(false);
   const [editingProjected, setEditingProjected] = useState<ProjectedExpense | null>(null);
 
+  // Inline Daily/Weekly/Monthly budget editing in the "Budgeting — Projected
+  // VA Cost" table below — a quicker path to the same fields Team Management's
+  // Budget and Limit editor writes, for whoever's already looking at this table.
+  const [editingBudgetCell, setEditingBudgetCell] = useState<{ userId: string; field: "daily" | "weekly" | "monthly" } | null>(null);
+  const [budgetEditValue, setBudgetEditValue] = useState("");
+  const [savingBudgetCell, setSavingBudgetCell] = useState(false);
+  const [budgetEditError, setBudgetEditError] = useState<string | null>(null);
+
   /* ── Toggle helpers ────────────────────────────────────── */
 
   const toggleVa = (userId: string) => {
@@ -943,6 +951,104 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     return { rows, totalProjected, anyMissingRate, configuredCount };
   }, [vaProfiles, filterVa]);
 
+  const startEditingBudget = (userId: string, field: "daily" | "weekly" | "monthly", currentValue: number | null) => {
+    setEditingBudgetCell({ userId, field });
+    setBudgetEditValue(currentValue != null ? String(currentValue) : "");
+    setBudgetEditError(null);
+  };
+
+  const cancelEditingBudget = () => {
+    setEditingBudgetCell(null);
+    setBudgetEditValue("");
+    setBudgetEditError(null);
+  };
+
+  const saveBudgetEdit = async () => {
+    if (!editingBudgetCell) return;
+    const { userId, field } = editingBudgetCell;
+    const profile = profiles.find((p) => p.id === userId);
+    if (!profile) return;
+
+    const trimmed = budgetEditValue.trim();
+    const value = trimmed ? Number(trimmed) : null;
+    if (value != null && !Number.isFinite(value)) {
+      setBudgetEditError("Not a valid number.");
+      return;
+    }
+
+    const outputBased = vaBudgetType(profile) === "output_based";
+    const updates: Record<string, number | string | null> =
+      field === "daily"
+        ? outputBased
+          ? { daily_budget_limit: value }
+          // Direct-hours entry, same as Team Management's "Hours" mode — clears
+          // any Time Range so the two never disagree (shift_hours takes
+          // precedence, but a stale range left behind is just confusing).
+          : { shift_hours: value, shift_start: null, shift_end: null }
+        : field === "weekly"
+          ? { weekly_budget_limit: value }
+          : { monthly_budget_limit: value };
+
+    setSavingBudgetCell(true);
+    setBudgetEditError(null);
+    const { data, error } = await supabase.from("profiles").update(updates).eq("id", userId).select("id");
+    setSavingBudgetCell(false);
+
+    if (error) {
+      setBudgetEditError(`Couldn't save: ${error.message}`);
+      return;
+    }
+    if (!data || data.length === 0) {
+      setBudgetEditError("Save didn't apply — you may not have permission to edit this profile.");
+      return;
+    }
+
+    setProfiles((prev) => prev.map((p) => (p.id === userId ? { ...p, ...updates } as ProfileRow : p)));
+    cancelEditingBudget();
+  };
+
+  const renderBudgetCell = (row: (typeof budgetData.rows)[number], field: "daily" | "weekly" | "monthly") => {
+    const value = field === "daily" ? row.daily : field === "weekly" ? row.weekly : row.monthly;
+    const isEditing = editingBudgetCell?.userId === row.userId && editingBudgetCell.field === field;
+
+    if (!isEditing) {
+      return (
+        <button
+          onClick={() => startEditingBudget(row.userId, field, value)}
+          className="cursor-pointer text-bark hover:text-terracotta hover:underline transition-colors"
+          title="Click to edit"
+        >
+          {fmtLimit(value, row.unit)}
+        </button>
+      );
+    }
+
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            step="0.01"
+            autoFocus
+            value={budgetEditValue}
+            onChange={(e) => setBudgetEditValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveBudgetEdit();
+              if (e.key === "Escape") cancelEditingBudget();
+            }}
+            placeholder={row.unit === "dollars" ? "$" : "hours"}
+            className="w-20 rounded border border-terracotta px-1.5 py-0.5 text-[11px] text-right outline-none"
+          />
+          <button onClick={saveBudgetEdit} disabled={savingBudgetCell} className="cursor-pointer text-sm font-bold text-sage disabled:opacity-50">
+            {savingBudgetCell ? "…" : "✓"}
+          </button>
+          <button onClick={cancelEditingBudget} className="cursor-pointer text-sm text-bark hover:text-terracotta">&times;</button>
+        </div>
+        {budgetEditError && <p className="max-w-[160px] text-right text-[10px] text-terracotta">{budgetEditError}</p>}
+      </div>
+    );
+  };
+
   /* ── Projected Expenses — Totals ─────────────────────── */
   const projectedExpenseData = useMemo(() => {
     const rows = [...projectedExpenses].sort((a, b) =>
@@ -1194,12 +1300,13 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
           <Section title="Budgeting — Projected VA Cost">
             <div className="px-5 pt-4">
               <p className="text-[11px] text-bark/70">
-                Expected monthly cost from each VA&apos;s assigned budget (set in Team Management).
-                Hours-based limits are converted to $ using the VA&apos;s hourly-equivalent rate.
+                Expected monthly cost from each VA&apos;s assigned budget. Hours-based limits are
+                converted to $ using the VA&apos;s hourly-equivalent rate. Click any Daily/Weekly/Monthly
+                value to edit it directly — same fields as Team Management&apos;s Budget and Limit.
               </p>
             </div>
-            {budgetData.configuredCount === 0 ? (
-              <EmptyState text="No budgets assigned yet. Set a daily/weekly/monthly limit on a VA in Team Management." />
+            {budgetData.rows.length === 0 ? (
+              <EmptyState text="No active VAs to budget yet." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-[12px]">
@@ -1226,9 +1333,9 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
                             {row.type === "output_based" ? "Output" : "Time"}
                           </span>
                         </td>
-                        <td className="px-3 py-3 text-right text-bark">{fmtLimit(row.daily, row.unit)}</td>
-                        <td className="px-3 py-3 text-right text-bark">{fmtLimit(row.weekly, row.unit)}</td>
-                        <td className="px-3 py-3 text-right text-bark">{fmtLimit(row.monthly, row.unit)}</td>
+                        <td className="px-3 py-3 text-right text-bark">{renderBudgetCell(row, "daily")}</td>
+                        <td className="px-3 py-3 text-right text-bark">{renderBudgetCell(row, "weekly")}</td>
+                        <td className="px-3 py-3 text-right text-bark">{renderBudgetCell(row, "monthly")}</td>
                         <td className="px-3 py-3 text-right font-semibold">
                           {row.projected != null ? (
                             <span className="text-terracotta">{fmtMoney(row.projected)}</span>

@@ -5,6 +5,12 @@ import { useState, type ReactNode } from "react";
 interface SectionProps {
   title: string;
   defaultOpen?: boolean;
+  /** Badge text for a section with something outstanding, rendered verbatim so
+   *  the caller controls the wording. Shows while the section is collapsed —
+   *  which is the whole point: these sections start closed, so a required field
+   *  that is empty was invisible, and the only symptom was a Save button that
+   *  wouldn't work. */
+  warning?: string | null;
   children: ReactNode;
   // Controlled mode (optional) — pass both to let a parent coordinate several
   // Sections as an accordion (only one open at a time). Omit both to keep the
@@ -17,14 +23,14 @@ interface SectionProps {
 // Reusable collapsible form section — header is a real <button> for
 // accessibility, chevron rotates open/closed. Used to break long task forms
 // (TaskEditor) into named, independently-collapsible groups.
-export default function Section({ title, defaultOpen = false, children, open: controlledOpen, onToggle }: SectionProps) {
+export default function Section({ title, defaultOpen = false, warning = null, children, open: controlledOpen, onToggle }: SectionProps) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
   const handleToggle = isControlled ? onToggle! : () => setInternalOpen((prev) => !prev);
 
   return (
-    <div className="rounded-xl border border-sand bg-white overflow-hidden">
+    <div className={`rounded-xl border bg-white overflow-hidden ${warning ? "border-terracotta/40" : "border-sand"}`}>
       <button
         type="button"
         onClick={handleToggle}
@@ -32,7 +38,14 @@ export default function Section({ title, defaultOpen = false, children, open: co
           open ? "bg-terracotta-soft hover:bg-terracotta-soft" : "bg-parchment hover:bg-cream"
         }`}
       >
-        <h3 className="text-xs font-bold text-terracotta uppercase tracking-wider">{title}</h3>
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <h3 className="text-xs font-bold text-terracotta uppercase tracking-wider">{title}</h3>
+          {warning && (
+            <span className="rounded-full border border-terracotta/30 bg-white px-2 py-[1px] text-[10px] font-semibold text-terracotta">
+              {warning}
+            </span>
+          )}
+        </span>
         <svg
           className={`h-4 w-4 shrink-0 text-terracotta transition-transform ${open ? "rotate-180" : ""}`}
           viewBox="0 0 24 24"

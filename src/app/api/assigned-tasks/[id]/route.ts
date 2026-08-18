@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canChangeLockedReview } from "@/lib/financialAccess";
+import { weeklyBudgetRejection, weeklyBudgetRejectionForAssignees } from "@/lib/scheduleBudget";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -24,7 +25,79 @@ type AssignedTaskStatus =
 type RouteContext = { params: Promise<{ id: string }> };
 
 const TASK_SELECT =
-  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required, assigned_task_assignees(id, va_id, status)";
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, instructions, instructions_locked, review_required, review_required_locked, assigned_task_assignees(id, va_id, status)";
+
+const REVIEW_LOCKED_ERROR =
+  "Forbidden: Review Required is locked at Yes. Only Admin, Manager, CEO, or Founder can change it.";
+
+/**
+ * Weekly-budget check for an existing task, against whoever it's assigned to.
+ * The task itself is excluded from the running total, so shortening or moving
+ * a block is never rejected because of its own previous length.
+ */
+async function rejectIfOverWeeklyBudget(
+  // Structural, not ReturnType<typeof createAdminClient> — the service-role
+  // client's generics don't survive being passed through a function boundary.
+  adminSupabase: Parameters<typeof weeklyBudgetRejectionForAssignees>[0],
+  id: string,
+  startIso: string,
+  endIso: string
+): Promise<string | null> {
+  const { data: assignees } = await adminSupabase
+    .from("assigned_task_assignees")
+    .select("va_id")
+    .eq("assigned_task_id", id);
+  const vaIds = (assignees ?? [])
+    .map((a: { va_id: string | null }) => a.va_id)
+    .filter((v: string | null): v is string => Boolean(v));
+  if (vaIds.length === 0) return null;
+  return weeklyBudgetRejectionForAssignees(adminSupabase, vaIds, startIso, endIso, id);
+}
+
+/** Columns isReviewLocked needs — select exactly these before calling it. */
+const REVIEW_LOCK_SELECT = "review_required, review_required_locked";
+
+/**
+ * The only statuses a VA may set on a task marked Review Required.
+ *
+ * They can move their own work forward and hand it in, and nothing further:
+ * approved/completed/paid are the sign-off the review exists to require, and
+ * revision_needed is the reviewer's verdict on the work — a VA declaring their
+ * own submission in need of revision would be answering the review themselves.
+ *
+ * Applies to both status paths (task-level and per-assignee), so a VA can't
+ * reach a blocked status through the one that wasn't checked.
+ */
+const VA_STATUSES_UNDER_REVIEW: AssignedTaskStatus[] = [
+  "pending",
+  "on_queue",
+  "in_progress",
+  "submitted",
+];
+
+const VA_STATUS_UNDER_REVIEW_ERROR =
+  "Forbidden: task requires review — you can only set pending, on_queue, in_progress, or submitted. A reviewer decides the rest.";
+
+/**
+ * Whether a task's Review Required answer is locked against ordinary edits.
+ *
+ * Only YES locks. Saying a task needs review is the commitment worth
+ * protecting — a VA shouldn't be able to quietly take it back and skip the
+ * review. NO is not a commitment, so it stays freely changeable and anyone can
+ * still escalate the task to Yes later. The lock is deliberately one-way.
+ *
+ * `review_required` is checked alongside the flag so a row locked at No by the
+ * earlier version of this rule reads as unlocked rather than staying stuck.
+ *
+ * All three write paths (admin PUT, admin PATCH, VA standalone) call this, so
+ * the rule can't drift between them. It takes the row rather than the client
+ * because the service-role client's generics don't survive being passed around.
+ */
+function isReviewLocked(
+  row: { review_required?: boolean | null; review_required_locked?: boolean | null } | null | undefined
+): boolean {
+  return Boolean(row?.review_required_locked) && Boolean(row?.review_required);
+}
 
 /**
  * GET /api/assigned-tasks/[id]
@@ -117,7 +190,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, planned_minutes: putPlannedMinutes, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -135,6 +208,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     instructions?: string | null;
     instructions_locked?: boolean;
     review_required?: boolean;
+    planned_minutes?: number | null;
     recurring_template_id?: string | null;
     project_id?: string | null;
     parent_task_id?: number | null;
@@ -161,28 +235,33 @@ export async function PUT(request: Request, { params }: RouteContext) {
   if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
   if (instructions !== undefined) updatePayload.instructions = instructions;
   if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
-  // Answering Review Required locks it. Re-answering a locked task is limited
-  // to Admin/Manager/CEO/Founder — this handler already requires admin, manager,
-  // or the task_management grant, so the extra check only bites a
-  // permission-granted Staff account, which is exactly who the lock is for.
+  // Only YES locks Review Required — see reviewLockedAt() for why. Undoing a
+  // locked Yes is limited to Admin/Manager/CEO/Founder. This handler already
+  // requires admin, manager, or the task_management grant, so the extra check
+  // only bites a permission-granted Staff account, which is who the lock is for.
   if (putReviewRequired !== undefined) {
-    const { data: reviewState } = await adminSupabase
+    const { data: reviewRow } = await adminSupabase
       .from("assigned_tasks")
-      .select("review_required_locked")
+      .select(REVIEW_LOCK_SELECT)
       .eq("id", id)
       .single();
-    if (reviewState?.review_required_locked && !canChangeLockedReview(profile)) {
-      return Response.json(
-        { error: "Forbidden: Review Required is locked. Only Admin, Manager, CEO, or Founder can change it." },
-        { status: 403 }
-      );
+    if (isReviewLocked(reviewRow) && !canChangeLockedReview(profile)) {
+      return Response.json({ error: REVIEW_LOCKED_ERROR }, { status: 403 });
     }
     updatePayload.review_required = Boolean(putReviewRequired);
-    updatePayload.review_required_locked = true;
+    updatePayload.review_required_locked = Boolean(putReviewRequired);
   }
+  if (putPlannedMinutes !== undefined) updatePayload.planned_minutes = putPlannedMinutes;
   if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
   if (project_id !== undefined) updatePayload.project_id = project_id;
   if (parent_task_id !== undefined) updatePayload.parent_task_id = parent_task_id;
+
+  // Hours set from the admin edit form count against the assignees' weeks too —
+  // the calendar's greyed-out button is only one of several ways in.
+  if (start_time && end_time) {
+    const rejection = await rejectIfOverWeeklyBudget(adminSupabase, id, start_time, end_time);
+    if (rejection) return Response.json({ error: rejection }, { status: 403 });
+  }
 
   const { data: updatedTask, error: updateError } = await adminSupabase
     .from("assigned_tasks")
@@ -387,6 +466,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     assigned_by,
     instructions,
     instructions_locked,
+    instructions_append,
+    planned_minutes,
     archived_at,
     deleted_at,
     review_required,
@@ -411,6 +492,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     assigned_by?: string | null;
     instructions?: string | null;
     instructions_locked?: boolean;
+    /** Text to append to instructions, never replacing what's there. Open to
+     *  anyone who can edit the task — it's how a VA contributes a note without
+     *  being able to overwrite the assigner's wording. */
+    instructions_append?: string | null;
+    /** Minutes the task takes when it has no specific hours. */
+    planned_minutes?: number | null;
     archived_at?: string | null;
     deleted_at?: string | null;
     review_required?: boolean;
@@ -450,7 +537,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     end_date !== undefined ||
     assigned_by !== undefined ||
     instructions !== undefined ||
-    instructions_locked !== undefined;
+    instructions_locked !== undefined ||
+    instructions_append !== undefined ||
+    planned_minutes !== undefined;
   // Scheduling (start_time/end_time) is intentionally kept out of hasCoreMetadataUpdate:
   // VAs get a narrow carve-out below to schedule their own tasks without full metadata
   // permissions. Admins/managers reach the same fields via the general metadata path,
@@ -467,6 +556,21 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   const hasArchiveOnlyUpdate =
     hasArchiveUpdate &&
     !hasDeleteUpdate &&
+    !hasCoreMetadataUpdate &&
+    log_id === undefined &&
+    notes === undefined &&
+    status === undefined;
+  // Trashing (and restoring) on its own, mirroring hasArchiveOnlyUpdate. Both
+  // directions are reversible — deleted_at is a soft flag the Trash view reads —
+  // so a VA can bin a task they created by mistake and pull it back out.
+  // Permanent delete is the DELETE handler, which stays admin-only.
+  //
+  // Carved out explicitly rather than left to fall through the metadata path:
+  // that path is for editing fields, and a VA who OWNS the task is blocked from
+  // deletes further down, which is exactly the person who mis-created it.
+  const hasTrashOnlyUpdate =
+    hasDeleteUpdate &&
+    !hasArchiveUpdate &&
     !hasCoreMetadataUpdate &&
     log_id === undefined &&
     notes === undefined &&
@@ -504,6 +608,20 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const now = new Date().toISOString();
 
+  // Instructions belong to whoever assigned the task — a VA can't rewrite or
+  // unlock them, which is the whole point of instructions_locked. They append
+  // instead, via instructions_append below, so a question or a note is added
+  // without any of the original wording being lost.
+  if (!isAdminOrManager && (instructions !== undefined || instructions_locked !== undefined)) {
+    return Response.json(
+      {
+        error:
+          "Forbidden: instructions are set by whoever assigned the task. Use Add to Instructions to append a note instead.",
+      },
+      { status: 403 }
+    );
+  }
+
   // VA-only: allow checking review_required (true) but never unchecking (false).
   // This is handled as a standalone path — admin review_required changes go through the metadata path below.
   if (!isAdminOrManager && review_required !== undefined && !hasCoreMetadataUpdate && !hasAssigneeUpdate && archived_at === undefined && deleted_at === undefined) {
@@ -521,18 +639,16 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (!assigneeRow) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
-    // A VA still gets one "yes" — but it locks behind them, so they can't
-    // flip it afterwards and can't undo it. Already locked means no.
-    const { data: vaReviewState } = await adminSupabase
+    // A VA gets to escalate to Yes, and that locks behind them — they can't
+    // undo it afterwards. Already locked at Yes means there's nothing to do
+    // and no way for them to change it.
+    const { data: vaReviewRow } = await adminSupabase
       .from("assigned_tasks")
-      .select("review_required_locked")
+      .select(REVIEW_LOCK_SELECT)
       .eq("id", id)
       .single();
-    if (vaReviewState?.review_required_locked) {
-      return Response.json(
-        { error: "Forbidden: Review Required is locked. Only Admin, Manager, CEO, or Founder can change it." },
-        { status: 403 }
-      );
+    if (isReviewLocked(vaReviewRow)) {
+      return Response.json({ error: REVIEW_LOCKED_ERROR }, { status: 403 });
     }
     const { error: rrError } = await adminSupabase
       .from("assigned_tasks")
@@ -565,6 +681,11 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (!assigneeRow) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
+    // A VA scheduling their own hours counts against their own week.
+    if (start_time && end_time) {
+      const rejection = await weeklyBudgetRejection(adminSupabase, user.id, start_time, end_time, id);
+      if (rejection) return Response.json({ error: rejection }, { status: 403 });
+    }
     const { error: scheduleError } = await adminSupabase
       .from("assigned_tasks")
       .update({ start_time: start_time ?? null, end_time: end_time ?? null, updated_at: now })
@@ -582,13 +703,44 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   // so their assignee row never moved to in_progress and the button stayed on "Start".
   const isSelfTargetedAssigneeUpdate = bodyVaId === undefined || bodyVaId === user.id;
 
+  // VA trash / restore. Runs before the owner guard below, which blocks deletes
+  // for non-admin owners — the very person who created the task by mistake.
+  // Allowed for an assignee or the owner; anyone else still gets a 403.
+  if (!isAdminOrManager && hasTrashOnlyUpdate) {
+    let permitted = isTaskOwner;
+    if (!permitted) {
+      const { data: assigneeRow } = await supabase
+        .from("assigned_task_assignees")
+        .select("id")
+        .eq("assigned_task_id", id)
+        .eq("va_id", user.id)
+        .limit(1)
+        .maybeSingle();
+      permitted = Boolean(assigneeRow);
+    }
+    if (!permitted) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const { error: trashError } = await adminSupabase
+      .from("assigned_tasks")
+      .update({ deleted_at, updated_at: now })
+      .eq("id", id);
+    if (trashError) {
+      return Response.json({ error: trashError.message }, { status: 500 });
+    }
+    return Response.json({ ok: true });
+  }
+
   // Task owners (non-admin) may pass va_id to target ANOTHER assignee's row, but only for
   // status-only updates (e.g., reviewing submitted work). Block everything else.
+  // Core metadata is no longer in this list — a VA who created and assigned the
+  // task can edit its fields like any other assignee (see the metadata note
+  // below); deleting it, and writing another assignee's log/notes, still aren't
+  // theirs to do.
   if (
     isTaskOwner &&
     !isAdminOrManager &&
-    (hasCoreMetadataUpdate ||
-      hasDeleteUpdate ||
+    (hasDeleteUpdate ||
       ((log_id !== undefined || notes !== undefined) && !isSelfTargetedAssigneeUpdate))
   ) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
@@ -623,9 +775,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ ok: true });
   }
 
-  if (!isAdminOrManager && hasMetadataUpdate) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  // A VA may edit the metadata of a task they're on — due date, dates, name,
+  // client detail, notes, link, category. Previously any metadata field at all
+  // was a flat 403 for non-admins, so a VA could set her hours (carved out
+  // above) but not move her own due date, and the bare "Forbidden" gave no clue
+  // why. Assignee membership is still checked immediately below; instructions
+  // are rejected earlier; and review_required keeps its own rules.
 
   if (!isAdminOrManager && !isTaskOwner) {
     const { data: assignedTask, error: assignedTaskError } = await supabase
@@ -657,9 +812,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .single();
 
     if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
-      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress", "submitted", "revision_needed"];
-      if (!allowedStatuses.includes(status)) {
-        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, in_progress, submitted, or revision_needed" }, { status: 403 });
+      if (!VA_STATUSES_UNDER_REVIEW.includes(status)) {
+        return Response.json({ error: VA_STATUS_UNDER_REVIEW_ERROR }, { status: 403 });
       }
     }
 
@@ -731,9 +885,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .single();
 
     if (!isAdminOrManager && status !== undefined && taskForReview?.review_required === true) {
-      const allowedStatuses: AssignedTaskStatus[] = ["pending", "on_queue", "in_progress", "submitted", "revision_needed"];
-      if (!allowedStatuses.includes(status)) {
-        return Response.json({ error: "Forbidden: task requires review — VA can only set pending, on_queue, in_progress, submitted, or revision_needed" }, { status: 403 });
+      if (!VA_STATUSES_UNDER_REVIEW.includes(status)) {
+        return Response.json({ error: VA_STATUS_UNDER_REVIEW_ERROR }, { status: 403 });
       }
     }
 
@@ -819,30 +972,58 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
     if (instructions !== undefined) updatePayload.instructions = instructions;
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
-    if (archived_at !== undefined) updatePayload.archived_at = archived_at;
-    if (deleted_at !== undefined) updatePayload.deleted_at = deleted_at;
-    // Same lock rule as the PUT path: answering locks, and re-answering a
-    // locked task needs the Admin/Manager/CEO/Founder tier. Reachable here by
-    // a permission-granted Staff account, which the lock is meant to stop.
-    if (review_required !== undefined) {
-      const { data: reviewState } = await adminSupabase
+    // Append, never replace — read the current text and add to the end, so two
+    // people adding notes can't wipe each other's and the assigner's original
+    // wording always survives. Attributed, because an unattributed line
+    // appearing in the assigner's own instructions is worse than no note.
+    if (typeof instructions_append === "string" && instructions_append.trim()) {
+      const { data: current } = await adminSupabase
         .from("assigned_tasks")
-        .select("review_required_locked")
+        .select("instructions")
         .eq("id", id)
         .single();
-      if (reviewState?.review_required_locked && !canChangeLockedReview(profile)) {
-        return Response.json(
-          { error: "Forbidden: Review Required is locked. Only Admin, Manager, CEO, or Founder can change it." },
-          { status: 403 }
-        );
+      const { data: author } = await adminSupabase
+        .from("profiles")
+        .select("full_name, username")
+        .eq("id", user.id)
+        .single();
+      const who = author?.full_name || author?.username || "Unknown";
+      const stamp = new Date(now).toISOString().slice(0, 10);
+      const addition = `[${stamp} — ${who}] ${instructions_append.trim()}`;
+      const existing = (current?.instructions ?? "").trimEnd();
+      updatePayload.instructions = existing ? `${existing}\n\n${addition}` : addition;
+    }
+    if (planned_minutes !== undefined) updatePayload.planned_minutes = planned_minutes;
+    if (archived_at !== undefined) updatePayload.archived_at = archived_at;
+    if (deleted_at !== undefined) updatePayload.deleted_at = deleted_at;
+    // Same lock rule as the PUT path: only Yes locks, and undoing a locked Yes
+    // needs the Admin/Manager/CEO/Founder tier. Reachable here by a
+    // permission-granted Staff account, which the lock is meant to stop.
+    if (review_required !== undefined) {
+      const { data: reviewRow } = await adminSupabase
+        .from("assigned_tasks")
+        .select(REVIEW_LOCK_SELECT)
+        .eq("id", id)
+        .single();
+      if (isReviewLocked(reviewRow) && !canChangeLockedReview(profile)) {
+        return Response.json({ error: REVIEW_LOCKED_ERROR }, { status: 403 });
       }
       updatePayload.review_required = Boolean(review_required);
-      updatePayload.review_required_locked = true;
+      updatePayload.review_required_locked = Boolean(review_required);
     }
 
-    // Only reachable when isAdminOrManager is true (see the guard above), so
-    // the service-role client is safe here — and necessary, since a
-    // permission-granted plain VA wouldn't pass RLS on the session client.
+    // Same weekly-budget rule as the other write paths.
+    if (start_time && end_time) {
+      const rejection = await rejectIfOverWeeklyBudget(adminSupabase, id, start_time, end_time);
+      if (rejection) return Response.json({ error: rejection }, { status: 403 });
+    }
+
+    // Reachable by an admin/manager, or by a VA on a task they're an assignee
+    // of or own — the guards above establish which. The service-role client is
+    // necessary either way, since neither a permission-granted plain VA nor an
+    // ordinary assignee passes RLS on the session client for this write. What
+    // a VA is allowed to change is bounded by those guards, not by RLS: they
+    // never reach here with instructions or a locked review answer in hand.
     const { error: taskError } = await adminSupabase
       .from("assigned_tasks")
       .update(updatePayload)

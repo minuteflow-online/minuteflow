@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactElement, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
@@ -146,16 +146,6 @@ type VATaskRow = {
   };
 };
 
-type AttachmentRow = {
-  id: number;
-  filename: string;
-  storage_path: string;
-  file_size: number | null;
-  mime_type: string | null;
-  uploaded_by: string | null;
-  uploaded_at: string;
-  url: string | null;
-};
 
 type FormObjective = {
   id: number;
@@ -330,12 +320,6 @@ function formatCreatedAt(value: string | null) {
   return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function formatFileSize(bytes: number | null): string {
-  if (!bytes) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function sortTasks(tasks: VATaskRow[]) {
   return [...tasks].sort((a, b) => {
@@ -451,28 +435,26 @@ export default function TaskListPage() {
   const [panelStatus, setPanelStatus] = useState<AssignedTaskStatus>("pending");
   const [panelReviewRequired, setPanelReviewRequired] = useState(false);
   const [panelSaving, setPanelSaving] = useState(false);
-  const [panelUploadSaving, setPanelUploadSaving] = useState(false);
   const [panelMsg, setPanelMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [projectModalId, setProjectModalId] = useState<string | null>(null);
-  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [panelScreenshots, setPanelScreenshots] = useState<TaskScreenshot[]>([]);
   const [panelSignedUrls, setPanelSignedUrls] = useState<Record<number, string>>({});
   const [panelScreenshotsLoading, setPanelScreenshotsLoading] = useState(false);
   const [lightboxUrls, setLightboxUrls] = useState<string[] | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
-  const [pendingCreateFiles, setPendingCreateFiles] = useState<File[]>([]);
-  const [createUploadSaving, setCreateUploadSaving] = useState(false);
   const [createTaskMode, setCreateTaskMode] = useState<"time_based" | "output_based">("time_based");
   const activeLogIdRef = useRef<number | null>(null);
-  const panelAttachmentInputRef = useRef<HTMLInputElement | null>(null);
-  const createAttachmentInputRef = useRef<HTMLInputElement | null>(null);
   const taskEditorRef = useRef<TaskEditorHandle | null>(null);
   const captureWorkerRef = useRef<Worker | null>(null);
   const silentCaptureRef = useRef<((logId: number, screenshotType: "start" | "progress") => Promise<boolean>) | null>(
     null
   );
-  const taskViewOptions = currentRole === "va" ? (["active", "archived"] as const) : (["active", "archived", "trash"] as const);
+  // Trash is no longer admin-only. A VA who mis-creates a task needs a way to
+  // get rid of it, and needs to see where it went — it's the same deleted_at
+  // column the admin trash reads, so both views show the same rows. Restore is
+  // open too, since trashing by accident deserves an undo. Permanent delete
+  // stays admin-only.
+  const taskViewOptions = ["active", "archived", "trash"] as const;
 
   useEffect(() => {
     setSelectedTaskIds([]);
@@ -650,29 +632,6 @@ export default function TaskListPage() {
   const canShowAvailableTasks = isPerTaskVa || canSeeAvailableTasks;
   const canShowHourlyPool = isAdmin || (currentRole === "va" && !isPerTaskVa);
 
-  const fetchAttachments = useCallback(async (taskId: number) => {
-    setAttachmentsLoading(true);
-    setAttachments([]);
-    try {
-      const res = await fetch(`/api/assigned-tasks/${taskId}/attachments`, { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      const raw = Array.isArray(json) ? json : json.attachments ?? [];
-      setAttachments(
-        raw.map((row: AttachmentRow) => ({
-          ...row,
-          file_size: row.file_size ?? null,
-          mime_type: row.mime_type ?? null,
-          uploaded_by: row.uploaded_by ?? null,
-          url: row.url ?? null,
-        }))
-      );
-    } catch {
-      setAttachments([]);
-    } finally {
-      setAttachmentsLoading(false);
-    }
-  }, []);
 
   const fetchPanelScreenshots = useCallback(async (taskId: number, taskName: string) => {
     setPanelScreenshotsLoading(true);
@@ -1040,7 +999,12 @@ export default function TaskListPage() {
     return Array.from(options).sort();
   }, [formTasksByProject, tasks]);
 
-  const panelCanEditFields = Boolean(selectedTask) && isAdmin && !profileLoading;
+  // No longer admin-only. A VA can edit the metadata of a task they're on, so
+  // gating the whole form on isAdmin left them staring at a read-only panel and
+  // sent them to the Calendar to change a due date. The real boundary is the
+  // API, which checks assignee membership and refuses instructions and a locked
+  // review answer from a VA — the form doesn't need to guess at it.
+  const panelCanEditFields = Boolean(selectedTask) && !profileLoading;
 
   const panelAssignedByOptions = useMemo(() => {
     if (assignedByProfiles.length > 0) return assignedByProfiles;
@@ -1498,20 +1462,13 @@ export default function TaskListPage() {
     setSelectedTask(null);
     setPanelStatus("pending");
     setPanelSaving(false);
-    setPanelUploadSaving(false);
     setPanelMsg(null);
-    setAttachments([]);
-    setAttachmentsLoading(false);
     setIsCreating(true);
-    setPendingCreateFiles([]);
-    setCreateUploadSaving(false);
     setCreateTaskMode("time_based");
   }, []);
 
   const closeCreate = useCallback(() => {
     setIsCreating(false);
-    setPendingCreateFiles([]);
-    setCreateUploadSaving(false);
   }, []);
 
   const openPanel = useCallback(
@@ -1520,17 +1477,13 @@ export default function TaskListPage() {
       setSelectedTask(task);
       setPanelStatus(task.status);
       setPanelReviewRequired(Boolean(task.assigned_tasks.review_required));
-      setPanelUploadSaving(false);
       setPanelMsg(null);
-      setAttachments([]);
       setPanelScreenshots([]);
       setPanelSignedUrls({});
-      setAttachmentsLoading(true);
       setPanelScreenshotsLoading(true);
-      await fetchAttachments(task.assigned_tasks.id);
       await fetchPanelScreenshots(task.assigned_tasks.id, task.assigned_tasks.task_name ?? "");
     },
-    [closeCreate, fetchAttachments, fetchPanelScreenshots]
+    [closeCreate, fetchPanelScreenshots]
   );
 
   // Refreshes the task list and re-syncs the open panel after TaskEditor
@@ -1548,10 +1501,7 @@ export default function TaskListPage() {
     setSelectedTask(null);
     setPanelStatus("pending");
     setPanelSaving(false);
-    setPanelUploadSaving(false);
     setPanelMsg(null);
-    setAttachments([]);
-    setAttachmentsLoading(false);
     setPanelScreenshots([]);
     setPanelSignedUrls({});
     setPanelScreenshotsLoading(false);
@@ -1559,30 +1509,11 @@ export default function TaskListPage() {
     setLightboxIndex(0);
   }, []);
 
-  // TaskEditor's onSaved callback for the Create Task panel — uploads any
-  // files picked before the task existed, then transitions to the detail panel.
+  // TaskEditor's onSaved callback for the Create Task panel. Attachments are
+  // TaskEditor's own business now, so this only handles the transition.
   const handleTaskCreated = useCallback(
     async (task: { id: number; [key: string]: unknown }) => {
       const newTaskId = task.id;
-      const attachmentsBase = createTaskMode === "output_based" ? "/api/fixed-pay-tasks" : "/api/assigned-tasks";
-
-      if (pendingCreateFiles.length > 0) {
-        setCreateUploadSaving(true);
-        for (const file of pendingCreateFiles) {
-          const formData = new FormData();
-          formData.append("file", file);
-          try {
-            await fetch(`${attachmentsBase}/${newTaskId}/attachments`, {
-              method: "POST",
-              body: formData,
-            });
-          } catch {
-            // best-effort — don't block task creation if an upload fails
-          }
-        }
-        setCreateUploadSaving(false);
-        setPendingCreateFiles([]);
-      }
 
       // Output Based tasks live in fixed_pay_tasks, not this page's
       // assigned_tasks-scoped list — nothing to look up or open here, the
@@ -1600,7 +1531,7 @@ export default function TaskListPage() {
         closeCreate();
       }
     },
-    [closeCreate, fetchTasks, openPanel, pendingCreateFiles, createTaskMode]
+    [closeCreate, fetchTasks, openPanel, createTaskMode]
   );
 
   const handleClaimedTaskRefresh = useCallback(async () => {
@@ -1767,66 +1698,6 @@ export default function TaskListPage() {
     }
   }, [panelCanEditFields, handleSavePanel, closePanel]);
 
-  const handleAttachmentUpload = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.target.files ?? []);
-      event.target.value = "";
-      if (files.length === 0 || !selectedTask) return;
-
-      setPanelUploadSaving(true);
-      setPanelMsg(null);
-
-      try {
-        let uploadedCount = 0;
-        let failureMessage: string | null = null;
-
-        for (const file of files) {
-          const formData = new FormData();
-          formData.append("file", file);
-
-          const res = await fetch(`/api/assigned-tasks/${selectedTask.assigned_tasks.id}/attachments`, {
-            method: "POST",
-            body: formData,
-          });
-
-          if (!res.ok) {
-            let message = `HTTP ${res.status}`;
-            try {
-              const data = await res.json();
-              if (data?.error) message = data.error;
-            } catch {
-              // ignore JSON parsing errors
-            }
-            failureMessage = `${file.name}: ${message}`;
-            break;
-          }
-
-          uploadedCount += 1;
-        }
-
-        await fetchAttachments(selectedTask.assigned_tasks.id);
-        if (failureMessage) {
-          setPanelMsg({
-            type: "err",
-            text:
-              uploadedCount > 0
-                ? `Uploaded ${uploadedCount} file${uploadedCount === 1 ? "" : "s"} before an error. ${failureMessage}`
-                : failureMessage,
-          });
-        } else {
-          setPanelMsg({
-            type: "ok",
-            text: uploadedCount === 1 ? "Attachment uploaded." : `${uploadedCount} attachments uploaded.`,
-          });
-        }
-      } catch (err) {
-        setPanelMsg({ type: "err", text: err instanceof Error ? err.message : "Unable to upload file right now." });
-      } finally {
-        setPanelUploadSaving(false);
-      }
-    },
-    [fetchAttachments, selectedTask]
-  );
 
   const patchTaskVisibility = useCallback(
     async (taskId: number, payload: Record<string, string | null>) => {
@@ -2253,15 +2124,17 @@ export default function TaskListPage() {
                     >
                       Archive
                     </button>
-                    {currentRole !== "va" && (
-                      <button
-                        type="button"
-                        onClick={() => void handleBulkTrash()}
-                        className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
-                      >
-                        Trash
-                      </button>
-                    )}
+                    {/* Open to VAs now. Trashing is reversible — it sets
+                        deleted_at, and Restore in the Trash view undoes it — so
+                        it's the safe half of deleting. Permanent delete is still
+                        admin-only. */}
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkTrash()}
+                      className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
+                    >
+                      Trash
+                    </button>
                   </>
                 )}
                 {(taskView === "archived" || taskView === "trash") && (
@@ -2704,58 +2577,6 @@ export default function TaskListPage() {
                 teamMembers={panelAssignedByOptions}
                 onCancel={closeCreate}
                 onSaved={(task) => void handleTaskCreated(task)}
-                attachmentsExtra={
-                  <div>
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
-                      <button
-                        type="button"
-                        onClick={() => createAttachmentInputRef.current?.click()}
-                        className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment"
-                      >
-                        Attach File
-                      </button>
-                      <input
-                        ref={createAttachmentInputRef}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => {
-                          const picked = Array.from(e.target.files ?? []);
-                          e.target.value = "";
-                          if (picked.length > 0) setPendingCreateFiles((prev) => [...prev, ...picked]);
-                        }}
-                      />
-                    </div>
-                    {pendingCreateFiles.length === 0 ? (
-                      <p className="py-2 text-[12px] text-stone/50">No files selected — will upload after task is created.</p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {pendingCreateFiles.map((file, idx) => (
-                          <div key={idx} className="flex items-center gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
-                            <svg className="h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                              <polyline points="14 2 14 8 20 8" />
-                            </svg>
-                            <span className="min-w-0 flex-1 truncate text-[12px] text-walnut">{file.name}</span>
-                            <button
-                              type="button"
-                              onClick={() => setPendingCreateFiles((prev) => prev.filter((_, i) => i !== idx))}
-                              className="shrink-0 text-stone/50 hover:text-terracotta"
-                              aria-label="Remove file"
-                            >
-                              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <line x1="18" y1="6" x2="6" y2="18" />
-                                <line x1="6" y1="6" x2="18" y2="18" />
-                              </svg>
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {createUploadSaving && <p className="mt-1 text-[11px] text-stone">Uploading files...</p>}
-                  </div>
-                }
               />
             </div>
           </div>
@@ -2790,6 +2611,11 @@ export default function TaskListPage() {
                 </div>
               ) : (
                 <TaskEditor
+                  // Keyed on the task id: TaskEditor seeds its fields with
+                  // useState, which only runs on mount, so without this the
+                  // panel kept the previously-selected task's form state and a
+                  // save wrote those values over the task now open.
+                  key={selectedTask.assigned_tasks.id}
                   ref={taskEditorRef}
                   mode="time_based"
                   editingTaskId={selectedTask.assigned_tasks.id}
@@ -2806,72 +2632,6 @@ export default function TaskListPage() {
                   hideFooter
                   onCancel={closePanel}
                   onSaved={() => void handleMetadataSaved()}
-                  attachmentsExtra={
-                    <div>
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <label className="block text-[11px] font-semibold uppercase tracking-wide text-stone">Attachments</label>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => panelAttachmentInputRef.current?.click()}
-                            disabled={panelUploadSaving}
-                            className="cursor-pointer rounded-lg border border-sand bg-white px-3 py-1.5 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {panelUploadSaving ? "Uploading..." : "Attach File"}
-                          </button>
-                          <input
-                            ref={panelAttachmentInputRef}
-                            type="file"
-                            multiple
-                            className="hidden"
-                            onChange={(e) => void handleAttachmentUpload(e)}
-                          />
-                        </div>
-                      </div>
-                      {attachmentsLoading ? (
-                        <div className="flex items-center gap-2 py-3 text-[12px] text-stone">
-                          <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                          </svg>
-                          Loading attachments...
-                        </div>
-                      ) : attachments.length === 0 ? (
-                        <p className="py-2 text-[12px] text-stone/50">No attachments.</p>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {attachments.map((att) => (
-                            <div key={att.id} className="flex items-start gap-2 rounded-lg border border-sand bg-parchment/40 px-3 py-2">
-                              <svg className="mt-0.5 h-3.5 w-3.5 shrink-0 text-stone" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                              </svg>
-                              <div className="min-w-0 flex-1">
-                                {att.url ? (
-                                  <a
-                                    href={att.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="block truncate text-[12px] text-terracotta hover:underline"
-                                    title={att.filename}
-                                  >
-                                    {att.filename}
-                                  </a>
-                                ) : (
-                                  <span className="block truncate text-[12px] text-walnut" title={att.filename}>
-                                    {att.filename}
-                                  </span>
-                                )}
-                                <div className="mt-0.5 text-[10px] text-stone">
-                                  {formatFileSize(att.file_size)}
-                                  {att.mime_type ? ` · ${att.mime_type}` : ""}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  }
                 />
               )}
 

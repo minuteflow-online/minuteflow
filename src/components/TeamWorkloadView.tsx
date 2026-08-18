@@ -6,10 +6,12 @@ import {
   getDateInTimezone,
   addDaysToDateStr,
   formatDayLabel,
-  localDateOf,
+  orgDateOf,
   formatTimeRange,
   normalizeAssignedRows,
   categoryBlockClasses,
+  reanchorToDate,
+  orgWallClockToUtc,
 } from "@/lib/taskSchedule";
 
 type TeamMemberOption = { id: string; full_name: string; username: string };
@@ -71,16 +73,22 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
     setEditingBlockId(task.id);
     setFormTaskName(task.task_name);
     setFormAccount(task.account || "");
-    setFormStart(new Date(task.start_time).toTimeString().slice(0, 5));
-    setFormEnd(new Date(task.end_time).toTimeString().slice(0, 5));
+    // Reanchored before render, so these are naive org wall-clock strings —
+    // slice rather than re-parsing through Date, which would re-interpret them
+    // in the viewer's own zone.
+    setFormStart(task.start_time.slice(11, 16));
+    setFormEnd(task.end_time.slice(11, 16));
     setShowForm(true);
   };
 
   const saveBlock = async () => {
     if (!editingBlockId || formEnd <= formStart) return;
     setSavingBlock(true);
-    const startIso = new Date(`${selectedDate}T${formStart}:00`).toISOString();
-    const endIso = new Date(`${selectedDate}T${formEnd}:00`).toISOString();
+    // Org wall clock in, same as the Calendar's own form — parsing these
+    // browser-locally stored a Manila admin's 9am as 9am Manila (= 9pm
+    // Eastern the day before).
+    const startIso = orgWallClockToUtc(selectedDate, formStart);
+    const endIso = orgWallClockToUtc(selectedDate, formEnd);
     try {
       await fetch(`/api/assigned-tasks/${editingBlockId}`, {
         method: "PATCH",
@@ -94,17 +102,8 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
     }
   };
 
-  const removeFromCalendar = async () => {
-    if (!editingBlockId) return;
-    await fetch(`/api/assigned-tasks/${editingBlockId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ start_time: null, end_time: null }),
-    });
-    setShowForm(false);
-    await fetchSchedules();
-  };
-
+  // "Remove from Calendar" used to live here too — removed with its button
+  // rather than left as dead code, matching the day/week calendar.
   return (
     <div className="rounded-xl border border-sand bg-white p-4">
       <div className="mb-3 flex items-center justify-between">
@@ -133,13 +132,18 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {teamMembers.map((m) => {
-            const dayTasks = (schedules[m.id] ?? [])
-              .filter((t) => t.start_time && t.end_time && localDateOf(t.start_time) === selectedDate)
+            const rawDayTasks = (schedules[m.id] ?? [])
+              .filter((t) => t.start_time && t.end_time && orgDateOf(t.start_time) === selectedDate)
               .sort((a, b) => (a.start_time! < b.start_time! ? -1 : 1));
-            const totalMinutes = dayTasks.reduce(
+            // Totals come off the real instants, so a block running past
+            // midnight still measures its true length.
+            const totalMinutes = rawDayTasks.reduce(
               (sum, t) => sum + (new Date(t.end_time!).getTime() - new Date(t.start_time!).getTime()) / 60000,
               0
             );
+            // Display only: reanchoring yields the org wall clock, so this card
+            // reads the same hours for a Manila admin and an Eastern one.
+            const dayTasks = rawDayTasks.map((t) => reanchorToDate(t, selectedDate));
             const hrs = Math.floor(totalMinutes / 60);
             const mins = Math.round(totalMinutes % 60);
             const loadClass =
@@ -235,13 +239,6 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
               )}
 
               <div className="flex gap-3 pt-2">
-                <button
-                  onClick={removeFromCalendar}
-                  title="Clears the time, but keeps the task itself — manage it from Assignment."
-                  className="px-3 py-2 rounded-lg bg-red-50 text-red-500 border border-red-200 text-[12px] font-semibold cursor-pointer hover:bg-red-100 transition-colors"
-                >
-                  Remove from Calendar
-                </button>
                 <button
                   onClick={() => setShowForm(false)}
                   className="flex-1 py-2 rounded-lg bg-parchment text-walnut border border-sand text-[12px] font-semibold cursor-pointer transition-all hover:bg-sand hover:text-espresso"

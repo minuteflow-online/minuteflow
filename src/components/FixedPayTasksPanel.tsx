@@ -940,7 +940,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     />
                   ) : (
                     <TaskEditor
-                      key="fixed_pay"
+                      // Task id in the key — a shared key kept the previous
+                      // task's form state and saved it onto the next one.
+                      key={panelMode === "edit" ? `fixed_pay-${selectedTask?.id ?? "none"}` : "fixed_pay-create"}
                       mode="output_based"
                       editingTaskId={panelMode === "edit" ? selectedTask?.id ?? null : null}
                       initialTask={panelMode === "edit" ? (selectedTask as unknown as Record<string, unknown>) : null}

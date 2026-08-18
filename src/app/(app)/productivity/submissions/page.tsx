@@ -537,9 +537,25 @@ export default function SubmissionsPage() {
  * new marker is introduced — the legend is the contract.
  */
 function SubmissionsLegend() {
+  // Collapsed by default. A key is worth reading once and then rarely again,
+  // so leaving it open permanently adds noise to every single visit.
+  const [open, setOpen] = useState(false);
+
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-sand bg-parchment/30 px-3 py-2">
-      <span className="text-[10px] font-bold uppercase tracking-wide text-walnut">Key</span>
+    <div className="mb-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 rounded-lg border border-sand bg-parchment/30 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-walnut transition-colors hover:bg-parchment/60"
+      >
+        Key
+        <svg width="8" height="8" viewBox="0 0 12 12" className={`transition-transform ${open ? "rotate-90" : ""}`}>
+          <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl border border-sand bg-parchment/30 px-3 py-2">
 
       <span className="flex items-center gap-1.5 text-[11px] text-stone">
         <RevisionBadge count={1} />
@@ -575,6 +591,8 @@ function SubmissionsLegend() {
           </span>
         ))}
       </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -744,7 +762,7 @@ function ThreadCard({
   const resubmissions = Math.max(0, submissions.length - 1);
   const submissionIndex = new Map(submissions.map((s, i) => [s.id, i]));
 
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [noteMode, setNoteMode] = useState<null | "revision" | "note">(null);
 

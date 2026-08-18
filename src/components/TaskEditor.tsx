@@ -1,10 +1,10 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { countWords } from "@/lib/utils";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { createClient } from "@/lib/supabase/client";
-import { CATEGORY_OPTIONS, autoCategoryForTask } from "@/lib/taskSchedule";
+import { autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay, parseDurationToMinutes, formatMinutesInput } from "@/lib/taskSchedule";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -51,6 +51,25 @@ function computeHourlyEquivalent(durationValue: string, unit: "hours" | "minutes
   if (!Number.isFinite(raw) || raw <= 0 || hourlyRate == null) return null;
   const hours = unit === "hours" ? raw : raw / 60;
   return hours * hourlyRate;
+}
+
+// Durations people actually pick, coarsest sensible steps: quarter-hours up to
+// two hours, then half-hours to a full shift. A dropdown rather than a text box
+// — nobody should have to learn that "1h 30m" parses and "1.5 hrs" might not.
+const DURATION_CHOICES = [15, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480];
+
+type TaskAttachment = {
+  id: number;
+  filename: string;
+  file_size: number | null;
+  url: string | null;
+};
+
+function formatFileSize(bytes: number | null): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function computeQuantityTotal(unitRate: string, quantity: string): number | null {
@@ -106,6 +125,67 @@ export interface TaskEditorHandle {
 
 const inputClass = "w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white disabled:bg-parchment/40 disabled:text-stone";
 const labelClass = "mb-1 block text-[11px] font-bold uppercase tracking-wider text-amber";
+
+/**
+ * Pick a duration instead of typing one. Stores the same shorthand string the
+ * free-text box used ("1h 30m"), so nothing downstream changes — this is purely
+ * how the value gets chosen.
+ *
+ * A task saved before this existed can hold a duration that isn't one of the
+ * presets; that value is folded into the list rather than silently snapped to
+ * the nearest one, so opening an old task and saving it can't quietly change
+ * how long it was.
+ */
+function DurationSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  disabled?: boolean;
+}) {
+  const currentMinutes = parseDurationToMinutes(value);
+  const choices =
+    currentMinutes != null && !DURATION_CHOICES.includes(currentMinutes)
+      ? [...DURATION_CHOICES, currentMinutes].sort((a, b) => a - b)
+      : DURATION_CHOICES;
+
+  return (
+    <select
+      value={currentMinutes != null ? String(currentMinutes) : ""}
+      onChange={(e) => onChange(e.target.value ? formatMinutesInput(Number(e.target.value)) : "")}
+      disabled={disabled}
+      className={inputClass}
+    >
+      <option value="">Not set</option>
+      {choices.map((minutes) => (
+        <option key={minutes} value={minutes}>
+          {formatMinutesInput(minutes)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Explanation on demand, next to the label it explains.
+ *
+ * The form used to carry this as a paragraph under every field. Read once, it
+ * is noise on every visit after — and a form that is mostly grey prose is hard
+ * to scan for the bit you actually came to change. Rules that are genuinely
+ * non-obvious live here; anything self-evident was dropped rather than moved.
+ */
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <span className="cursor-help text-[11px] text-stone/60">ⓘ</span>
+      <span className="pointer-events-none absolute left-0 top-full z-50 mt-1 w-56 rounded-lg border border-sand bg-white px-3 py-2 text-[10px] leading-snug text-espresso opacity-0 shadow-md transition-opacity group-hover:opacity-100">
+        {text}
+      </span>
+    </span>
+  );
+}
 
 function ClientMemoFormatTooltip() {
   return (
@@ -173,13 +253,55 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   }, []);
 
   // Schedule
-  const [startDate, setStartDate] = useState((initialTask?.start_date as string) ?? defaultDate ?? "");
+  //
+  // The saved hours have to be read back out of initialTask, not just defaulted.
+  // Only the Calendar passes defaultStartTime/defaultEndTime; every other call
+  // site (Assignment panel, admin Task Assignments, VA Projects) passes neither,
+  // so the inputs opened on 09:00–10:00 for a task that already had hours — and
+  // because the Add-to-Calendar box was still ticked, saving any unrelated field
+  // wrote those defaults straight over the real times.
+  //
+  // Read on the ORG (Eastern) wall clock, matching the save path below. Both
+  // directions must use the same clock or the form drifts — reading locally
+  // while writing org time would show a Manila VA an hour she never picked.
+  // It also matches what the Calendar grid renders, so the block and the form
+  // agree. Round trip is exact: open a task, save without touching the hours,
+  // and the stored instant is unchanged, for every viewer.
+  const initialStartTime = initialTask?.start_time as string | null | undefined;
+  const initialEndTime = initialTask?.end_time as string | null | undefined;
+  const [startDate, setStartDate] = useState(
+    (initialTask?.start_date as string) ||
+      (initialStartTime ? orgDateOf(initialStartTime) : "") ||
+      defaultDate ||
+      ""
+  );
   const [dueDate, setDueDate] = useState((initialTask?.due_date as string) ?? "");
   const [dueTime, setDueTime] = useState((initialTask?.due_time as string) ?? "");
   const [endDate, setEndDate] = useState((initialTask?.end_date as string) ?? "");
-  const [hasSchedule, setHasSchedule] = useState(Boolean(initialTask?.start_time) || Boolean(defaultStartTime));
-  const [startTime, setStartTime] = useState(defaultStartTime ?? "09:00");
-  const [endTime, setEndTime] = useState(defaultEndTime ?? "10:00");
+  // How long the task takes when it doesn't need a particular slot — the
+  // alternative to specific hours, not an addition to them.
+  const initialPlannedMinutes = initialTask?.planned_minutes as number | null | undefined;
+  const [plannedDuration, setPlannedDuration] = useState(
+    initialPlannedMinutes != null ? formatMinutesInput(Number(initialPlannedMinutes)) : ""
+  );
+  // A task that already has an answer keeps it. This used to be
+  // `initialStartTime || defaultStartTime`, which let the CALLER's default win:
+  // openScheduleExisting passes defaultStartTime="09:00", so opening a
+  // duration-only task from the Hours tab or the Unscheduled list landed on the
+  // hours tab with the duration hidden — and saving then ran
+  // `planned_minutes = hasSchedule ? null : …` and wiped it. Editing a duration
+  // appeared to do nothing because the save was clearing it and booking 9-10am
+  // instead. defaultStartTime now only decides for a task with neither.
+  const [hasSchedule, setHasSchedule] = useState(
+    initialStartTime ? true : initialPlannedMinutes != null ? false : Boolean(defaultStartTime)
+  );
+  const parsedPlannedMinutes = parseDurationToMinutes(plannedDuration);
+  const [startTime, setStartTime] = useState(
+    initialStartTime ? timeOfDay(initialStartTime).slice(0, 5) : defaultStartTime ?? "09:00"
+  );
+  const [endTime, setEndTime] = useState(
+    initialEndTime ? timeOfDay(initialEndTime).slice(0, 5) : defaultEndTime ?? "10:00"
+  );
 
   // Details
   const [taskDetail, setTaskDetail] = useState((initialTask?.task_detail as string) ?? "");
@@ -187,6 +309,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [link, setLink] = useState((initialTask?.link as string) ?? "");
   const [instructions, setInstructions] = useState((initialTask?.instructions as string) ?? "");
   const [instructionsLocked, setInstructionsLocked] = useState(Boolean(initialTask?.instructions_locked));
+  // A VA can add to instructions but not rewrite them — the server rejects
+  // `instructions` from a non-admin outright and only accepts this append.
+  const [instructionsAppend, setInstructionsAppend] = useState("");
   const [todos, setTodos] = useState<TaskTodo[]>([]);
   const [todosLoading, setTodosLoading] = useState(false);
   const [newTodoText, setNewTodoText] = useState("");
@@ -194,6 +319,102 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [screenshots, setScreenshots] = useState<Array<{ id: number; url: string | null; screenshot_type: string | null }>>([]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
+
+  // Attachments live in the editor rather than being handed in by each caller.
+  // As a prop, only the Assignment panel ever supplied them, so the Calendar,
+  // the admin Task Assignments tab, VA Projects and the Fixed Pay panels had no
+  // way to attach a file at all — the same form, missing a field, depending on
+  // where you opened it from.
+  const attachmentsBase = mode === "time_based" ? "/api/assigned-tasks" : "/api/fixed-pay-tasks";
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+
+  const loadAttachments = useCallback(
+    async (taskId: number) => {
+      setAttachmentsLoading(true);
+      try {
+        const res = await fetch(`${attachmentsBase}/${taskId}/attachments`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const raw = Array.isArray(json) ? json : json.attachments ?? [];
+        setAttachments(
+          raw.map((r: Partial<TaskAttachment> & { id: number; filename: string }) => ({
+            id: r.id,
+            filename: r.filename,
+            file_size: r.file_size ?? null,
+            url: r.url ?? null,
+          }))
+        );
+      } catch {
+        setAttachments([]);
+      } finally {
+        setAttachmentsLoading(false);
+      }
+    },
+    [attachmentsBase]
+  );
+
+  useEffect(() => {
+    if (!editingTaskId) return;
+    void loadAttachments(editingTaskId);
+  }, [editingTaskId, loadAttachments]);
+
+  /** Upload straight away when the task exists; hold otherwise (see handleSubmit). */
+  const handleFilesPicked = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      if (!editingTaskId) {
+        setPendingFiles((prev) => [...prev, ...files]);
+        return;
+      }
+      setUploading(true);
+      try {
+        for (const file of files) {
+          const form = new FormData();
+          form.append("file", file);
+          await fetch(`${attachmentsBase}/${editingTaskId}/attachments`, { method: "POST", body: form });
+        }
+        await loadAttachments(editingTaskId);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [editingTaskId, attachmentsBase, loadAttachments]
+  );
+
+  /** Files picked before the task existed, uploaded once it does. */
+  const flushPendingFiles = useCallback(
+    async (taskId: number) => {
+      if (pendingFiles.length === 0) return;
+      setUploading(true);
+      try {
+        for (const file of pendingFiles) {
+          const form = new FormData();
+          form.append("file", file);
+          await fetch(`${attachmentsBase}/${taskId}/attachments`, { method: "POST", body: form });
+        }
+        setPendingFiles([]);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [pendingFiles, attachmentsBase]
+  );
+
+  const handleDeleteAttachment = useCallback(
+    async (attachmentId: number) => {
+      if (!editingTaskId) return;
+      if (!confirm("Delete this attachment? This cannot be undone.")) return;
+      await fetch(`${attachmentsBase}/${editingTaskId}/attachments?attachmentId=${attachmentId}`, {
+        method: "DELETE",
+      });
+      await loadAttachments(editingTaskId);
+    },
+    [editingTaskId, attachmentsBase, loadAttachments]
+  );
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Accordion behavior for the Basics/Details/Attachments/Assignment/Rate/
@@ -218,16 +439,22 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const linkedProjectId = lockedProjectId ?? linkedProjectIdState;
   const [parentTaskId, setParentTaskId] = useState(initialTask?.parent_task_id != null ? String(initialTask.parent_task_id) : "");
   // Review Required is a required Yes/No, not a checkbox — "" means nobody has
-  // answered yet. review_required_locked is the record of having been answered:
-  // tasks that predate the rule carry locked=false, so they keep whatever value
-  // they were saved with and stay editable until someone answers deliberately.
-  const reviewLocked = Boolean(initialTask?.review_required_locked);
+  // answered yet.
+  //
+  // Only YES locks. Saying a task needs review is the commitment worth
+  // protecting: a VA shouldn't be able to quietly take it back and skip the
+  // review. NO is not a commitment — it stays freely changeable, so anyone can
+  // still escalate a task to Yes later. The lock is deliberately one-way, and
+  // `&& review_required` keeps that true even for a row locked at No by the
+  // earlier version of this rule.
+  const reviewLocked =
+    Boolean(initialTask?.review_required_locked) && Boolean(initialTask?.review_required);
   const [reviewRequired, setReviewRequired] = useState<"" | "yes" | "no">(
     isEditing ? (initialTask?.review_required ? "yes" : "no") : ""
   );
-  // Only the Admin/Manager/CEO/Founder tier may change an answer once locked.
-  // The server enforces the same rule — this just avoids offering a control
-  // that would be rejected.
+  // Only the Admin/Manager/CEO/Founder tier may undo a locked Yes. The server
+  // enforces the same rule — this just avoids offering a control that would be
+  // rejected.
   const [viewerRole, setViewerRole] = useState<string | null>(null);
   const reviewEditable = !reviewLocked || canChangeLockedReview({ role: viewerRole });
   // Pay type is no longer a field — time-based and output-based tasks have
@@ -265,16 +492,20 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // The viewer's own role, for the locked-Review-Required check. Fetched here
   // rather than threaded down as a prop because TaskEditor has eight call
   // sites and only three of them already hold the role.
+  // Keyed off the authenticated session rather than the currentUserId prop:
+  // several call sites pass `currentUserId ?? ""`, and an empty id skipped the
+  // fetch entirely, leaving viewerRole null — which read as "not in the tier"
+  // and disabled the control for everyone, founders included. That is why a
+  // locked task appeared unchangeable by anyone at all.
   useEffect(() => {
-    if (!currentUserId) return;
     const supabase = createClient();
-    void supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", currentUserId)
-      .single()
-      .then(({ data }) => setViewerRole((data?.role as string) ?? null));
-  }, [currentUserId]);
+    void (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+      setViewerRole((data?.role as string) ?? null);
+    })();
+  }, []);
 
   useEffect(() => {
     fetch("/api/projects?mine=true", { cache: "no-store" })
@@ -474,12 +705,21 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           start_date: startDate || null,
           end_date: endDate || null,
           assigned_by: assignedBy || currentUserId || null,
-          instructions: instructions.trim() || null,
-          instructions_locked: instructionsLocked,
           pay_type: payType,
           project_id: linkedProjectId || null,
           parent_task_id: parentTaskId ? Number(parentTaskId) : null,
         };
+
+        // Instructions are the assigner's. Sending them from a VA is a hard 403
+        // server-side, and it would take the whole save down with it — so they
+        // go in only for admins/managers, and a VA's contribution rides along
+        // as an append instead.
+        if (isAdminOrManager) {
+          body.instructions = instructions.trim() || null;
+          body.instructions_locked = instructionsLocked;
+        } else if (instructionsAppend.trim()) {
+          body.instructions_append = instructionsAppend.trim();
+        }
 
         // Only sent when there's an actual answer, and only when the viewer is
         // allowed to give one — omitting it leaves the stored value and its
@@ -491,13 +731,24 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         // Work-span hours only ever anchor to startDate — due_date has its own
         // independent due_time field (below), so it never borrows this pair.
+        //
+        // The times are read as ORG (Eastern) wall clock, not the browser's:
+        // the Calendar grid these are entered on is an Eastern grid, so "11:00"
+        // means 11am Eastern for a Manila VA exactly as it does for an Eastern
+        // admin. Parsing them browser-locally is what shifted VA blocks by
+        // their UTC offset and pushed them off the visible grid.
         if (hasSchedule && startDate && startTime && endTime) {
-          body.start_time = new Date(`${startDate}T${startTime}:00`).toISOString();
-          body.end_time = new Date(`${startDate}T${endTime}:00`).toISOString();
+          body.start_time = orgWallClockToUtc(startDate, startTime);
+          body.end_time = orgWallClockToUtc(startDate, endTime);
         } else if (hasSchedule === false) {
           body.start_time = null;
           body.end_time = null;
         }
+
+        // Specific hours and a bare duration are alternatives — with hours set,
+        // the block's own length is the duration, so storing one alongside it
+        // would double-count in the Hours tab's total.
+        body.planned_minutes = hasSchedule ? null : parsedPlannedMinutes;
 
         const effectiveVaId = isAdminOrManager ? vaId : currentUserId;
 
@@ -543,11 +794,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               await addTodo(task.id, text);
             }
           }
+          await flushPendingFiles(task.id);
         }
       } else {
         const body: Record<string, unknown> = {
           task_name: taskName.trim(),
           account: account || null,
+          project: project || null,
           category: category || null,
           rate: Number(rate),
           start_date: startDate || null,
@@ -558,6 +811,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           link: link.trim() || null,
           instructions: instructions.trim() || null,
           project_id: linkedProjectId || null,
+          // Output Based tasks have no hours to compete with, so this is sent
+          // unconditionally rather than gated on hasSchedule the way the
+          // time-based path is.
+          planned_minutes: parsedPlannedMinutes,
         };
         if (isAdminOrManager) {
           body.assigned_to = vaId || null;
@@ -588,19 +845,53 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     }
   }, [
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
-    assignedBy, currentUserId, instructions, instructionsLocked, reviewRequired, reviewEditable, payType, linkedProjectId,
+    assignedBy, currentUserId, instructions, instructionsLocked, instructionsAppend, reviewRequired, reviewEditable, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
+    // Without this the callback keeps the duration from the render it was built
+    // in, so typing a duration and saving immediately wrote the previous value
+    // (usually null) — the field looked filled in and still saved empty.
+    parsedPlannedMinutes,
     pendingTodoTexts, readOnly,
   ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
+
+  // What's still required, per section. These sections start collapsed, so an
+  // empty required field was invisible and the only symptom was a Save button
+  // that refused to work with no explanation. Each section names its own gap in
+  // its header, and the footer lists them together.
+  const needsTaskName = !taskName.trim();
+  const needsClientDetail = !taskDetail.trim();
+  const needsReviewAnswer = mode === "time_based" && !isEditing && !reviewRequired;
+  const needsRate = mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)));
+
+  // Section badges say what kind of gap it is, not which field — the field
+  // itself goes amber, so naming it twice was redundant. Basics is entirely
+  // required, so it says so outright.
+  const missingBasics = needsTaskName ? "Required block" : null;
+  const missingDetails = needsClientDetail ? "Required field/s inside" : null;
+  const missingAssignment = needsReviewAnswer ? "Required field/s inside" : null;
+  const missingRate = needsRate ? "Required field/s inside" : null;
+
+  // The footer still names them, since that's the "why won't this save" spot.
+  const missingRequired = [
+    needsTaskName ? "Task Name" : null,
+    needsClientDetail ? "Client Detail" : null,
+    needsReviewAnswer ? "Review Required" : null,
+    needsRate ? "Final Rate" : null,
+  ].filter((m): m is string => Boolean(m));
+
+  // An unfilled required input reads amber — a prompt, not an error. Terracotta
+  // is kept for the things that have actually gone wrong.
+  const requiredInputClass = (filled: boolean) =>
+    filled ? inputClass : `${inputClass} border-terracotta bg-terracotta-soft/40`;
 
   const assignToOptions = teamMembers;
   const assignByOptions = teamMembers;
 
   return (
     <div className="space-y-3">
-      <Section title="Basics" {...accordionProps("Basics")}>
+      <Section title="Basics" {...accordionProps("Basics")} warning={missingBasics}>
         <div>
           <label className={labelClass}>Account</label>
           <select
@@ -653,7 +944,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 applyAutoCategory(account, project, value);
               }}
               disabled={readOnly}
-              className={inputClass}
+              className={requiredInputClass(!needsTaskName)}
             >
               <option value="">Select task...</option>
               {taskOptionsForObjective.map((t) => (
@@ -661,21 +952,22 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               ))}
             </select>
           ) : (
-            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} disabled={readOnly} placeholder="Task name" className={inputClass} />
+            <input value={taskName} onChange={(e) => setTaskName(e.target.value)} disabled={readOnly} placeholder="Task name" className={requiredInputClass(!needsTaskName)} />
           )}
         </div>
 
         <div>
-          <label className={labelClass}>Category</label>
-          <select value={category} onChange={(e) => { setCategory(e.target.value); setCategoryAutoSet(false); }} disabled={readOnly} className={inputClass}>
-            {CATEGORY_OPTIONS.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
+          <label className={`${labelClass} flex items-center gap-1.5`}>Category<InfoTip text="Set automatically from Account, Objective and Task Name." /></label>
+          {/* Derived, not chosen — autoCategoryForTask sets it from Account,
+              Objective and Task Name, and every task-creation surface applies
+              the same rule. Leaving it editable meant a hand-picked value could
+              silently disagree with the rule, and get overwritten anyway the
+              next time any of the three inputs changed. */}
+          <input value={category} readOnly disabled className={inputClass} />
         </div>
       </Section>
 
-      <Section title="Details" {...accordionProps("Details")}>
+      <Section title="Details" {...accordionProps("Details")} warning={missingDetails}>
         <div>
           <div className="mb-1 flex items-center gap-1.5">
             <label className="block text-[11px] font-bold uppercase tracking-wide text-amber">
@@ -689,7 +981,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             rows={2}
             disabled={readOnly}
             placeholder="Client-visible memo"
-            className={`${inputClass} resize-none`}
+            className={`${requiredInputClass(!needsClientDetail)} resize-none`}
           />
           <p className="mt-1 text-[10px] text-stone">
             {Math.max(0, CLIENT_MEMO_WORD_LIMIT - countWords(taskDetail))} words remaining — this is what carries over to the client invoice/report.
@@ -698,8 +990,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         {supportsTodos && (
           <div>
-            <label className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-amber">To-Do List</label>
-            <p className="mb-1.5 text-[10px] text-stone">Internal only — tracks sub-steps and time per item, shows in internal reports. Doesn&apos;t affect the client memo above.</p>
+            <label className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-amber">To-Do List<InfoTip text="Internal only — tracks sub-steps and time per item, and shows in internal reports. Doesn't affect the client memo." /></label>
             {!isEditing && (
               <p className="mb-1.5 text-[10px] text-stone">These save with the task once you click Create Task.</p>
             )}
@@ -768,11 +1059,37 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Instructions</label>
-          <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} disabled={readOnly} className={`${inputClass} resize-none`} />
-          <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
-            <input type="checkbox" checked={instructionsLocked} onChange={(e) => setInstructionsLocked(e.target.checked)} disabled={readOnly} />
-            Locked
-          </label>
+          {isAdminOrManager ? (
+            <>
+              <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} disabled={readOnly} className={`${inputClass} resize-none`} />
+              <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
+                <input type="checkbox" checked={instructionsLocked} onChange={(e) => setInstructionsLocked(e.target.checked)} disabled={readOnly} />
+                Locked
+              </label>
+            </>
+          ) : (
+            <>
+              {instructions.trim() ? (
+                <p className="whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+                  {instructions}
+                </p>
+              ) : (
+                <p className="text-[12px] text-stone/50">No instructions yet.</p>
+              )}
+              {!readOnly && (
+                <div className="mt-2">
+                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Add to Instructions</label>
+                  <textarea
+                    value={instructionsAppend}
+                    onChange={(e) => setInstructionsAppend(e.target.value)}
+                    rows={2}
+                    placeholder="Add a note or question — this is added below, nothing above is changed."
+                    className={`${inputClass} resize-none`}
+                  />
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {!isEditing && isAdminOrManager && (
@@ -788,6 +1105,81 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       <Section title="Attachments & Files" {...accordionProps("Attachments & Files")}>
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label className={`${labelClass} mb-0`}>Attachments</label>
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={() => attachmentInputRef.current?.click()}
+                disabled={uploading}
+                className="rounded-lg border border-sand bg-white px-3 py-1 text-[11px] font-semibold text-espresso transition-colors hover:bg-parchment disabled:opacity-50"
+              >
+                {uploading ? "Uploading..." : "Attach File"}
+              </button>
+            )}
+            <input
+              ref={attachmentInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                e.target.value = "";
+                void handleFilesPicked(picked);
+              }}
+            />
+          </div>
+
+          {attachmentsLoading ? (
+            <p className="text-[12px] text-stone">Loading...</p>
+          ) : attachments.length === 0 && pendingFiles.length === 0 ? (
+            <p className="text-[12px] text-stone/50">No attachments.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {attachments.map((a) => (
+                <div key={a.id} className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-white px-2.5 py-1.5">
+                  <span className="min-w-0">
+                    {a.url ? (
+                      <a href={a.url} target="_blank" rel="noreferrer" className="block truncate text-[12px] text-terracotta hover:underline">
+                        {a.filename}
+                      </a>
+                    ) : (
+                      <span className="block truncate text-[12px] text-espresso">{a.filename}</span>
+                    )}
+                    {a.file_size != null && <span className="text-[10px] text-stone">{formatFileSize(a.file_size)}</span>}
+                  </span>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteAttachment(a.id)}
+                      className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+              {/* Held until the task exists — uploaded by handleSubmit. */}
+              {pendingFiles.map((file, i) => (
+                <div key={`${file.name}-${i}`} className="flex items-center justify-between gap-2 rounded-lg border border-sand bg-parchment/40 px-2.5 py-1.5">
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12px] text-walnut">{file.name}</span>
+                    <span className="text-[10px] text-stone">{formatFileSize(file.size)} · uploads when you create the task</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="shrink-0 text-[11px] font-semibold text-terracotta hover:underline"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {attachmentsExtra}
 
         <div>
@@ -806,7 +1198,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         )}
       </Section>
 
-      <Section title="Assignment" {...accordionProps("Assignment")}>
+      <Section title="Assignment" {...accordionProps("Assignment")} warning={missingAssignment}>
         {manageAssignment && (
           <div>
             <label className={labelClass}>Assign To</label>
@@ -842,7 +1234,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           ) : (
             <>
               <div>
-                <label className={labelClass}>Link to Objective</label>
+                <label className={`${labelClass} flex items-center gap-1.5`}>Link to Objective<InfoTip text="A task links to an Objective or an Operation, not both — picking one clears the other." /></label>
                 <select
                   value={linkedObjectiveId}
                   onChange={(e) => setLinkedProjectId(e.target.value)}
@@ -870,7 +1262,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   ))}
                 </select>
               </div>
-              <p className="text-[10px] text-stone">A task links to one or the other — picking here clears the other field.</p>
             </>
           )}
           {mode === "time_based" && linkedProjectId && parentTaskOptions.length > 0 && (
@@ -885,8 +1276,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         {mode === "time_based" && (
           <div>
-            <label className={labelClass}>
+            <label className={`${labelClass} flex items-center gap-1.5`}>
               Review Required {!isEditing && <span className="text-terracotta">*</span>}
+              <InfoTip text="Yes locks — only Admin, Manager, CEO, or Founder can undo it. No stays changeable." />
             </label>
             <div className="flex gap-2">
               {([["yes", "Yes"], ["no", "No"]] as const).map(([value, label]) => (
@@ -898,6 +1290,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors disabled:opacity-50 ${
                     reviewRequired === value
                       ? "bg-sage text-white"
+                      : needsReviewAnswer
+                      ? // Unanswered and required — amber, like the other
+                        // required fields waiting on input.
+                        "border border-terracotta bg-terracotta-soft/40 text-terracotta hover:bg-terracotta-soft"
                       : "bg-stone/10 text-stone hover:bg-stone/20"
                   }`}
                 >
@@ -905,21 +1301,15 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 </button>
               ))}
             </div>
-            {reviewLocked ? (
-              <p className="mt-1 text-[10px] text-stone">
-                {reviewEditable
-                  ? "Answered and locked — you can change it because of your role."
-                  : "Answered and locked — only Admin, Manager, CEO, or Founder can change it."}
-              </p>
-            ) : (
-              <p className="mt-1 text-[10px] text-stone">Locks once answered.</p>
+            {reviewLocked && !reviewEditable && (
+              <p className="mt-1 text-[10px] text-stone">Locked at Yes.</p>
             )}
           </div>
         )}
       </Section>
 
       {mode === "output_based" && (
-        <Section title="Rate" {...accordionProps("Rate")}>
+        <Section title="Rate" {...accordionProps("Rate")} warning={missingRate}>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Unit Rate</label>
@@ -1006,14 +1396,29 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
           <div>
             <label className={labelClass}>Final Rate</label>
-            <input value={rate} onChange={(e) => setRate(e.target.value)} disabled={readOnly} placeholder="0.00" className={inputClass} />
+            <input value={rate} onChange={(e) => setRate(e.target.value)} disabled={readOnly} placeholder="0.00" className={requiredInputClass(!needsRate)} />
           </div>
         </Section>
       )}
 
       <Section title="Schedule" {...accordionProps("Schedule")}>
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Work span (optional) — its own hours make the daily time block on the Calendar</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">
+            {/* Tooltip rather than prose, per the form's new pattern — but the
+                text still has to split by mode: Output Based work has no hours
+                to land on the grid, so promising a "daily block" would be a lie
+                on that half of the form. */}
+            <span className="flex items-center gap-1.5">
+              Work span (optional)
+              <InfoTip
+                text={
+                  mode === "time_based"
+                    ? "The days this task runs across. Below, choose whether it takes specific hours on the Calendar or just a duration."
+                    : "The days this task runs across on the Calendar. Output Based work is paid per output, so it doesn't take a time slot."
+                }
+              />
+            </span>
+          </p>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Start Date</label>
@@ -1025,30 +1430,100 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             </div>
           </div>
 
-          <label className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-walnut">
-            <input type="checkbox" checked={hasSchedule} onChange={(e) => setHasSchedule(e.target.checked)} disabled={readOnly} />
-            Add to Calendar (specific hours)
-          </label>
-          {hasSchedule && (
+          {/* Specific hours are a time-based-only field: output-based tasks are
+              stored in fixed_pay_tasks, which has start_date/due_date/end_date
+              but no start_time/end_time columns, so the output-based save path
+              has nowhere to put them. Offering the inputs anyway meant an admin
+              could set 11am–12pm on a Per Task VA's block and watch the hours
+              vanish — the task came back as an untimed pill instead. */}
+          {mode === "time_based" ? (
             <>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Start Time</label>
-                  <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={readOnly} className={inputClass} />
-                </div>
-                <div className="flex-1">
-                  <label className="mb-1 block text-[10px] font-semibold text-walnut">End Time</label>
-                  <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={readOnly} className={inputClass} />
-                </div>
+              {/* Two named tabs rather than a checkbox. As a checkbox, the
+                  duration option only existed in the UNCHECKED state, so nobody
+                  who left it checked ever discovered it — the choice between
+                  "a slot on the calendar" and "just how long it takes" was
+                  invisible. Both are named now, so it reads as the either/or it
+                  actually is. hasSchedule is still the underlying state, so the
+                  save path is unchanged: true writes start_time/end_time, false
+                  writes planned_minutes. */}
+              <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                {([
+                  [true, "Add hours to calendar"],
+                  [false, "Add duration"],
+                ] as const).map(([wantsHours, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => {
+                      setHasSchedule(wantsHours);
+                      // The two are alternatives, not extras: specific hours
+                      // already say how long the task takes, so keeping a
+                      // separate duration around would let the Hours tab count
+                      // it twice.
+                      if (wantsHours) setPlannedDuration("");
+                    }}
+                    disabled={readOnly}
+                    className={`flex-1 px-3 py-1.5 transition-colors disabled:opacity-50 ${
+                      hasSchedule === wantsHours ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-              {scheduleHelperText && <p className="text-[11px] text-stone">{scheduleHelperText}</p>}
-              {!startDate && <p className="text-[11px] text-terracotta">Set a Start Date above so these hours have a day to block.</p>}
+
+              {!hasSchedule && (
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration</label>
+                  <DurationSelect value={plannedDuration} onChange={setPlannedDuration} disabled={readOnly} />
+                  <p className="mt-1 text-[10px] text-stone">
+                    {parsedPlannedMinutes != null
+                      ? `Counts toward the day's total on the Calendar's Hours tab, without taking a slot on the grid.`
+                      : "How long this takes, when it doesn't need a particular time. Leave empty if it doesn't matter."}
+                  </p>
+                </div>
+              )}
+              {hasSchedule && (
+                <>
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[10px] font-semibold text-walnut">Start Time</label>
+                      <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={readOnly} className={inputClass} />
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-1 block text-[10px] font-semibold text-walnut">End Time</label>
+                      <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={readOnly} className={inputClass} />
+                    </div>
+                  </div>
+                  {scheduleHelperText && <p className="text-[11px] text-stone">{scheduleHelperText}</p>}
+                  {!startDate && <p className="text-[11px] text-terracotta">Set a Start Date above so these hours have a day to block.</p>}
+                </>
+              )}
             </>
+          ) : (
+            // Output Based tasks get the duration half of the pair but not the
+            // hours half: fixed_pay_tasks has no start_time/end_time to write a
+            // slot into, but it does carry planned_minutes, and "how long this
+            // takes" is just as real a question for per-output work. No tabs
+            // here — with only one of the two available, a single-option tab
+            // strip would be noise.
+            <div>
+              <p className="mb-1.5 text-[11px] text-stone">
+                Paid per output, so this doesn&apos;t take a time slot — the dates above put it on the Calendar.
+              </p>
+              <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration</label>
+              <DurationSelect value={plannedDuration} onChange={setPlannedDuration} disabled={readOnly} />
+              <p className="mt-1 text-[10px] text-stone">
+                {parsedPlannedMinutes != null
+                  ? `${parsedPlannedMinutes} minutes — counts toward the day's total on the Calendar's Hours tab.`
+                  : "How long this takes. Leave empty if it doesn't matter."}
+              </p>
+            </div>
           )}
         </div>
 
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline — unrelated to the work span above, its own single time</p>
+          <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline<InfoTip text="Separate from the work span above — a single moment, not a range." /></p>
           <div>
             <label className={labelClass}>Due Date</label>
             <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={readOnly} className={inputClass} />
@@ -1057,7 +1532,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             <div>
               <label className="mb-1 block text-[10px] font-semibold text-walnut">Due Time (optional)</label>
               <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} disabled={readOnly} className={inputClass} />
-              <p className="mt-1 text-[10px] text-stone">Shows this deadline on the Calendar at this time — doesn&apos;t count toward blocked hours.</p>
             </div>
           )}
         </div>
@@ -1119,6 +1593,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               >
                 {saving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
               </button>
+              {/* Only when the button is actually blocked. The sections already
+                  flag themselves and the fields go terracotta, so this is the
+                  last resort for "why won't this save", not a running notice. */}
+              {missingRequired.length > 0 && (
+                <InfoTip text={`Still needed: ${missingRequired.join(", ")}. The section holding each one is marked.`} />
+              )}
               <button onClick={onCancel} className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors">
                 Cancel
               </button>

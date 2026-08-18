@@ -1114,7 +1114,9 @@ export default function FixedPayTasksTab() {
                 </div>
               )}
               <TaskEditor
-                key={panelMode === "create" ? createTaskMode : "edit"}
+                // Task id in the key — a shared "edit" key kept the previous
+                // task's form state and saved it onto the next one.
+                key={panelMode === "create" ? createTaskMode : `edit-${selectedTask?.id ?? "none"}`}
                 ref={taskEditorRef}
                 mode={panelMode === "create" ? createTaskMode : "output_based"}
                 editingTaskId={panelMode === "edit" ? selectedTask?.id ?? null : null}

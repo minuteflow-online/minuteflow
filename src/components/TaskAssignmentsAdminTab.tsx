@@ -14,6 +14,7 @@ import type {
 import { normalizePosition } from "@/types/database";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
+import { parseDurationToMinutes } from "@/lib/taskSchedule";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
@@ -101,6 +102,8 @@ interface CsvRow {
   task_detail: string;
   due_date: string;
   va_usernames: string[];
+  /** Optional 7th column, appended so existing 6-column files still import. */
+  planned_duration: string;
   _valid: boolean;
   _error?: string;
 }
@@ -260,7 +263,7 @@ function parseCsv(text: string, activeProfiles: Profile[]): CsvRow[] {
     }
     fields.push(current.trim());
 
-    const [task_name = "", account = "", project = "", task_detail = "", due_date = "", va_raw = ""] = fields;
+    const [task_name = "", account = "", project = "", task_detail = "", due_date = "", va_raw = "", duration_raw = ""] = fields;
 
     const va_usernames = va_raw
       .split(",")
@@ -279,6 +282,7 @@ function parseCsv(text: string, activeProfiles: Profile[]): CsvRow[] {
       task_detail: task_detail.trim(),
       due_date: due_date.trim(),
       va_usernames,
+      planned_duration: duration_raw.trim(),
       _valid: valid,
     };
 
@@ -1186,6 +1190,7 @@ export default function TaskAssignmentsAdminTab({
         project: row.project || null,
         task_detail: row.task_detail || null,
         due_date: row.due_date || null,
+        planned_minutes: parseDurationToMinutes(row.planned_duration),
         va_ids: assignee_ids,
       };
 
@@ -2093,6 +2098,10 @@ export default function TaskAssignmentsAdminTab({
             <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
 
               <TaskEditor
+                // Keyed on the task id — TaskEditor seeds its fields on mount
+                // only, so a shared key let one task's form state carry over to
+                // the next and be saved onto it.
+                key={selectedTask ? `edit-${selectedTask.id}` : "create"}
                 ref={taskEditorRef}
                 mode="time_based"
                 editingTaskId={selectedTask ? selectedTask.id : null}
@@ -2538,7 +2547,7 @@ function CsvModal({
               First row must be the header. Columns in order:
             </p>
             <code className="block text-[11px] bg-white border border-sand rounded px-3 py-2 text-bark font-mono">
-              task_name, account, project, task_detail, due_date, va_usernames
+              task_name, account, project, task_detail, due_date, va_usernames, duration
             </code>
             <ul className="text-[11px] text-stone space-y-1 pl-4 list-disc">
               <li><strong>task_name</strong> — required</li>
@@ -2546,6 +2555,7 @@ function CsvModal({
               <li><strong>project</strong> — optional</li>
               <li><strong>task_detail</strong> — optional short description</li>
               <li><strong>due_date</strong> — optional, format YYYY-MM-DD</li>
+              <li><strong>duration</strong> — optional, how long it takes (2h, 90m, 1h 30m). Older 6-column files still import.</li>
               <li>
                 <strong>va_usernames</strong> — optional, comma-separated VA usernames
                 inside quotes. E.g.{" "}

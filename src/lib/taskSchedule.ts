@@ -10,6 +10,7 @@ export type RawTask = {
   due_time: string | null;
   start_date: string | null;
   end_date: string | null;
+  planned_minutes: number | null;
   start_time: string | null;
   end_time: string | null;
   status: string;
@@ -84,31 +85,72 @@ export function formatDayLabel(dateStr: string): string {
   return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-// Local (browser) calendar date of a stored instant — matches how start/end times
-// are constructed (see Calendar's saveBlock) so encode/decode stay consistent.
-export function localDateOf(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+// The whole calendar runs on ORG time (Eastern), not the viewer's browser
+// timezone — a Manila VA and an Eastern admin look at the same grid and mean
+// the same hour by "11am". Every function here that turns an instant into a
+// day or an hour reads it in org time, and every time the user types is
+// interpreted as org time on the way in (see orgWallClockToUtc).
+export const ORG_TIMEZONE = "America/New_York";
 
-// "HH:MM:SS" — always Eastern time, regardless of the viewer's browser
-// timezone. Counterpart to localDateOf; used to re-anchor a multi-day span's
-// time-of-day onto a different calendar day (see reanchorToDate below).
-export function timeOfDay(iso: string): string {
-  const d = new Date(iso);
+// Wall-clock parts of an instant as seen in `tz`.
+function partsInTz(iso: string, tz: string): Record<string, string> {
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
+    timeZone: tz,
     hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  }).formatToParts(d);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
-  const hour = get("hour") === "24" ? "00" : get("hour");
-  return `${hour}:${get("minute")}:${get("second")}`;
+  }).formatToParts(new Date(iso));
+  const out: Record<string, string> = {};
+  for (const p of parts) if (p.type !== "literal") out[p.type] = p.value;
+  // Intl renders midnight as "24" in some zones; normalize back to 00.
+  if (out.hour === "24") out.hour = "00";
+  return out;
+}
+
+// Which calendar day a stored instant falls on IN ORG TIME — the day its hour
+// block belongs to on the grid. Was previously the browser's local date, which
+// put a Manila VA's block on a different day than an Eastern admin saw for the
+// very same task.
+//
+// Takes a real instant (a UTC timestamp from the database). Do NOT pass it an
+// already-reanchored value — those are naive org wall-clock strings with no
+// zone, and re-converting one shifts it. Slice those directly instead.
+export function orgDateOf(iso: string, tz: string = ORG_TIMEZONE): string {
+  const p = partsInTz(iso, tz);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+// "HH:MM:SS" — the org-timezone wall clock, regardless of the viewer's browser
+// timezone. Counterpart to orgDateOf; used to re-anchor a multi-day span's
+// time-of-day onto a different calendar day (see reanchorToDate below).
+export function timeOfDay(iso: string, tz: string = ORG_TIMEZONE): string {
+  const p = partsInTz(iso, tz);
+  return `${p.hour}:${p.minute}:${p.second}`;
+}
+
+// "YYYY-MM-DD" + "HH:MM" as typed on an org-time calendar → the UTC instant to
+// store. THIS is the direction that was broken: the form built its timestamp
+// with `new Date("2026-08-18T11:00")`, which the browser reads in ITS OWN zone,
+// so a Manila VA entering 11am stored 11am Manila (= 11pm Eastern the day
+// before) and her block landed off the bottom of the 6am–9pm Eastern grid.
+export function orgWallClockToUtc(dateStr: string, timeStr: string, tz: string = ORG_TIMEZONE): string {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const [hour, minute] = timeStr.split(":").map(Number);
+  // Start from the wall clock read as if it were UTC, then subtract however far
+  // that guess lands from the target zone. One correction is enough: zone
+  // offsets shift by at most an hour or two and the guess is already within
+  // a day, so re-reading the corrected instant cannot cross another boundary.
+  const guess = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  const p = partsInTz(new Date(guess).toISOString(), tz);
+  const asSeenInTz = Date.UTC(
+    Number(p.year), Number(p.month) - 1, Number(p.day),
+    Number(p.hour), Number(p.minute), Number(p.second), 0
+  );
+  return new Date(guess - (asSeenInTz - guess)).toISOString();
 }
 
 // Inclusive date-range membership. A missing/earlier endDate collapses the
@@ -120,9 +162,15 @@ export function isDateInSpan(dateStr: string, startDate: string, endDate: string
 }
 
 // Re-anchors a task's start_time/end_time onto dateStr, keeping the original
-// Eastern time-of-day — this is what turns a single start_time/end_time pair
-// into a "daily window" applied across a multi-day span. Identity transform
-// when dateStr already matches the task's own anchor day.
+// ORG time-of-day — this is what turns a single start_time/end_time pair into
+// a "daily window" applied across a multi-day span. Identity transform when
+// dateStr already matches the task's own anchor day.
+//
+// The result is a NAIVE "YYYY-MM-DDTHH:MM:SS" org wall clock, not an instant.
+// That is deliberate: `new Date(naive).getHours()` parses and reads in the same
+// browser zone, so it returns the org hour unchanged in every timezone, which
+// is what lets blockPosition/formatTimeRange stay zone-agnostic. Never feed one
+// back into orgDateOf/timeOfDay.
 export function reanchorToDate(task: RawTask, dateStr: string): RawTask {
   if (!task.start_time || !task.end_time) return task;
   return {
@@ -255,6 +303,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
           account: (nested.account as string | null) ?? null,
           due_date: (nested.due_date as string | null) ?? null,
           due_time: (nested.due_time as string | null) ?? null,
+          planned_minutes: (nested.planned_minutes as number | null) ?? null,
           start_date: (nested.start_date as string | null) ?? null,
           end_date: (nested.end_date as string | null) ?? null,
           start_time: (nested.start_time as string | null) ?? null,
@@ -275,6 +324,7 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
         account: (row.account as string | null) ?? null,
         due_date: (row.due_date as string | null) ?? null,
         due_time: (row.due_time as string | null) ?? null,
+        planned_minutes: (row.planned_minutes as number | null) ?? null,
         start_date: (row.start_date as string | null) ?? null,
         end_date: (row.end_date as string | null) ?? null,
         start_time: (row.start_time as string | null) ?? null,
@@ -288,4 +338,43 @@ export function normalizeAssignedRows(rawRows: Array<Record<string, unknown>>, c
       };
     })
     .filter((t): t is RawTask => Boolean(t.id && t.task_name));
+}
+
+/**
+ * "2h", "90m", "1h 30m", "1.5h", "45" -> minutes. Null when it can't be read,
+ * which is also how an empty box reads, so the caller treats both as "not set".
+ * Deliberately forgiving about how people actually type a duration.
+ *
+ * Lives here rather than in TaskEditor because the recurring-template form has
+ * its own hand-rolled fields and needs to read durations identically — two
+ * parsers would drift, and "2h" meaning different things on two screens is
+ * exactly the kind of divergence that's hard to notice.
+ */
+export function parseDurationToMinutes(input: string): number | null {
+  const text = input.trim().toLowerCase();
+  if (!text) return null;
+  const hm = text.match(/^(\d+(?:\.\d+)?)\s*h(?:ours?)?(?:\s*(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?)?$/);
+  if (hm) {
+    const minutes = Math.round(Number(hm[1]) * 60 + (hm[2] ? Number(hm[2]) : 0));
+    return minutes > 0 ? minutes : null;
+  }
+  const m = text.match(/^(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?$/);
+  if (m) {
+    const minutes = Math.round(Number(m[1]));
+    return minutes > 0 ? minutes : null;
+  }
+  const bare = text.match(/^(\d+(?:\.\d+)?)$/);
+  if (bare) {
+    const minutes = Math.round(Number(bare[1]));
+    return minutes > 0 ? minutes : null;
+  }
+  return null;
+}
+
+/** Minutes back to the shorthand the field accepts, for prefilling. */
+export function formatMinutesInput(minutes: number): string {
+  const hrs = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hrs === 0) return `${mins}m`;
+  return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`;
 }
