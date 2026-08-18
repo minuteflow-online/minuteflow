@@ -1,7 +1,13 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
+import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
+
+/** Matches the VPS crontab interval. Used to fire the missed-clock-out alert
+ *  once, on the first run that sees a session go stale, rather than every run. */
+const CRON_INTERVAL_MS = 10 * 60 * 1000;
 
 // How long a session heartbeat (sessions.updated_at, refreshed every 60s while a tab
 // is open) must be stale before we consider the session *possibly* idle. This is used
@@ -68,6 +74,36 @@ export async function GET(request: NextRequest) {
       `idle-timeout cron (REPORT-ONLY, no action taken): ${candidates.length} session(s) with a stale heartbeat`,
       candidates
     );
+  }
+
+  // Alert on a likely missed clock-out. This cron runs every 10 minutes, so
+  // alerting on every stale session would repeat the same name indefinitely.
+  // Only the first detection window fires: heartbeats that went stale within
+  // the last cron interval, which each session passes through exactly once.
+  const freshlyStale = candidates.filter((c) => {
+    const age = Date.now() - new Date(c.last_heartbeat).getTime();
+    return age >= STALE_THRESHOLD_MS && age < STALE_THRESHOLD_MS + CRON_INTERVAL_MS;
+  });
+
+  if (freshlyStale.length > 0 && telegramEnabled("submissions")) {
+    for (const c of freshlyStale) {
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("full_name, username")
+        .eq("id", c.user_id)
+        .single();
+      const who = prof?.full_name || prof?.username || "Someone";
+      const since = new Date(c.last_heartbeat).toLocaleTimeString("en-US", {
+        timeZone: ORG_TIMEZONE,
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+      await sendTelegram(
+        "submissions",
+        `⚠️ <b>${esc(who)}</b> may have missed a clock-out — still clocked in with a task, no activity since ${since} ET`
+      );
+    }
   }
 
   return Response.json({ mode: "report-only", stopped: 0, candidates });
