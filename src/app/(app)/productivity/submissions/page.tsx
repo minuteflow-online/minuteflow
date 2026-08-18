@@ -317,6 +317,37 @@ export default function SubmissionsPage() {
     [load]
   );
 
+  /** Trashes or restores every submission on one task, from the card header. */
+  const trashThread = useCallback(
+    async (thread: Thread, restore: boolean) => {
+      const count = thread.items.length;
+      if (
+        !restore &&
+        !confirm(
+          `Move ${count} submission${count === 1 ? "" : "s"} on this task to trash?
+
+They can be restored from the Trash view.`
+        )
+      ) {
+        return;
+      }
+      setBusyId(thread.latest.id);
+      try {
+        for (const item of thread.items) {
+          if (!item.task) continue;
+          await fetch(
+            `/api/assigned-tasks/${item.task.id}/submissions?submissionId=${item.id}${restore ? "&restore=1" : ""}`,
+            { method: "DELETE" }
+          );
+        }
+        await load();
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load]
+  );
+
   /** Permanently removes everything in the trash. Founder only, and final. */
   const emptyTrash = useCallback(async () => {
     const count = items.length;
@@ -550,45 +581,7 @@ This cannot be undone.`
           Work Submitted
         </h1>
 
-        {canReview && (
-          <button
-            onClick={() => setShowTrash((v) => !v)}
-            className={`rounded-lg border px-3 py-1 text-[11px] font-semibold transition-colors ${
-              showTrash
-                ? "border-terracotta/40 bg-terracotta-soft text-terracotta"
-                : "border-sand bg-white text-stone hover:text-espresso"
-            }`}
-          >
-            {showTrash ? "Viewing trash" : "Trash"}
-          </button>
-        )}
 
-        {/* Founder only, and only while looking at the trash — the single
-            irreversible action in this feature. */}
-        {showTrash && canEmptyTrash && items.length > 0 && (
-          <button
-            onClick={() => void emptyTrash()}
-            className="rounded-lg border border-terracotta/40 bg-terracotta px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840]"
-          >
-            Empty trash
-          </button>
-        )}
-
-        <div className="inline-flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
-          {OWNER_MODES.map((mode) => (
-            <button
-              key={mode.value}
-              onClick={() => setOwnerMode(mode.value)}
-              className={`rounded-md px-3 py-1 text-[11px] font-semibold transition-colors ${
-                ownerMode === mode.value
-                  ? "bg-white text-espresso shadow-sm"
-                  : "text-stone hover:text-espresso"
-              }`}
-            >
-              {mode.label}
-            </button>
-          ))}
-        </div>
 
         <div className="inline-flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
           {(["timeline", "calendar"] as ViewMode[]).map((mode) => (
@@ -609,6 +602,25 @@ This cannot be undone.`
           bordered rows for one button was most of the page's dead space. */}
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-sand bg-white px-3 py-2">
         <SubmissionsLegend />
+
+        {/* Whose submissions is a filter like any other, so it sits with them
+            rather than as a third tab strip competing with the view toggle. */}
+        <select
+          value={ownerMode}
+          onChange={(e) => setOwnerMode(e.target.value as OwnerMode)}
+          className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
+        >
+          {OWNER_MODES.map((mode) => (
+            <option key={mode.value} value={mode.value}>
+              {mode.label}
+            </option>
+          ))}
+        </select>
+
+        {/* Three groups, lightly ruled apart: what you're looking at, how it's
+            narrowed, and the actions. Ten chips in an undivided row read as one
+            undifferentiated mass. */}
+        <span className="mx-0.5 h-5 w-px shrink-0 bg-sand" aria-hidden="true" />
         {seesAll && (
           <MultiSelectFilter
             allLabel="All VAs"
@@ -664,6 +676,30 @@ This cannot be undone.`
           options={clients.map((c) => ({ value: c.id, label: c.name }))}
         />
 
+        <span className="mx-0.5 h-5 w-px shrink-0 bg-sand" aria-hidden="true" />
+
+        {canReview && (
+          <button
+            onClick={() => setShowTrash((v) => !v)}
+            className={`rounded-lg border px-2 py-1 text-[11px] font-semibold transition-colors ${
+              showTrash
+                ? "border-terracotta/40 bg-terracotta-soft text-terracotta"
+                : "border-sand bg-white text-stone hover:text-espresso"
+            }`}
+          >
+            {showTrash ? "Viewing trash" : "Trash"}
+          </button>
+        )}
+
+        {showTrash && canEmptyTrash && items.length > 0 && (
+          <button
+            onClick={() => void emptyTrash()}
+            className="rounded-lg border border-terracotta/40 bg-terracotta px-2 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#a85840]"
+          >
+            Empty trash
+          </button>
+        )}
+
         <span className="ml-auto text-[11px] text-stone">
           {loading ? "Loading..." : `${submissionCount} submission${submissionCount === 1 ? "" : "s"}`}
         </span>
@@ -682,6 +718,7 @@ This cannot be undone.`
           reviewState={reviewState}
           showTrash={showTrash}
           onTrash={trashSubmission}
+          onTrashThread={trashThread}
         />
       ) : (
         <CalendarView
@@ -997,6 +1034,7 @@ function ThreadCard({
   timezone,
   trashed,
   onTrash,
+  onTrashThread,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -1010,6 +1048,7 @@ function ThreadCard({
   timezone: string;
   trashed: boolean;
   onTrash: (item: FeedItem, restore: boolean) => void;
+  onTrashThread: (thread: Thread, restore: boolean) => void;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -1071,6 +1110,21 @@ function ThreadCard({
             {scopeLabel(head)}
           </span>
         </button>
+
+        {canReview && (
+          <button
+            onClick={() => onTrashThread(thread, trashed)}
+            disabled={busy}
+            className="shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta disabled:opacity-50"
+            title={
+              trashed
+                ? "Restore every submission on this task"
+                : "Move this task's submissions to trash"
+            }
+          >
+            {trashed ? "Restore" : "Trash"}
+          </button>
+        )}
 
         {totalMs > 0 && (
           <span
@@ -1223,6 +1277,7 @@ function TimelineView({
   reviewState,
   showTrash,
   onTrash,
+  onTrashThread,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -1235,6 +1290,7 @@ function TimelineView({
   reviewState: Record<string, string>;
   showTrash: boolean;
   onTrash: (item: FeedItem, restore: boolean) => void;
+  onTrashThread: (thread: Thread, restore: boolean) => void;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -1270,6 +1326,7 @@ function TimelineView({
                 timezone={orgTimezone}
                 trashed={showTrash}
                 onTrash={onTrash}
+                onTrashThread={onTrashThread}
               />
             ))}
         </DayGroup>
