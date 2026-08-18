@@ -105,6 +105,21 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // The warn-then-close flow needs two profile columns that may not have been
+  // added yet. Probe once and fall back to report-only rather than throwing:
+  // a missing migration should make this cron quiet, not broken.
+  const { error: columnsError } = await supabase
+    .from("profiles")
+    .select("telegram_chat_id, idle_warned_at")
+    .limit(1);
+  if (columnsError) {
+    console.warn(
+      "idle-timeout: warn/close disabled — profiles needs telegram_chat_id and idle_warned_at",
+      columnsError.message
+    );
+    return Response.json({ mode: "report-only", reason: "missing columns", candidates });
+  }
+
   // Anyone who came back clears their warning, so the grace period always
   // measures one uninterrupted stretch of silence rather than accumulating
   // across the day.

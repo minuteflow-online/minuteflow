@@ -6,6 +6,7 @@ import {
   submissionSummary,
   type SubmissionMessageType,
 } from "@/lib/submissions";
+import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -228,7 +229,7 @@ export async function POST(request: Request, { params }: RouteContext) {
 
   const { data: task, error: taskError } = await admin
     .from("assigned_tasks")
-    .select("id, category, review_required")
+    .select("id, category, review_required, task_name, account, project")
     .eq("id", id)
     .single();
   if (taskError || !task) {
@@ -348,6 +349,29 @@ export async function POST(request: Request, { params }: RouteContext) {
       .from("assigned_tasks")
       .update({ status: autoStatus, updated_at: stamp })
       .eq("id", id);
+  }
+
+  // Telegram alert for work a reviewer is expected to look at. Auto-outcome
+  // submissions are skipped: they close on submit and never enter the queue,
+  // so pinging about them is noise. Best-effort — the submission is already
+  // committed and must not fail on a Telegram problem.
+  if (messageType === "submission" && !autoStatus && telegramEnabled("submissions")) {
+    const { data: prof } = await admin
+      .from("profiles")
+      .select("full_name, username")
+      .eq("id", user.id)
+      .single();
+    const who = prof?.full_name || prof?.username || "A VA";
+    const where = [task.account, task.project].filter(Boolean).join(" / ");
+
+    const lines = [
+      `📤 <b>New submission</b> from ${esc(who)}`,
+      `Task: ${esc(task.task_name ?? "a task")}`,
+    ];
+    if (where) lines.push(`Project: ${esc(where)}`);
+    lines.push("", "Review: https://minuteflow.click/admin");
+
+    await sendTelegram("submissions", lines.join("\n"));
   }
 
   const [withFiles] = await withAttachments(admin, [submission as never]);
