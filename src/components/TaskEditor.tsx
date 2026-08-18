@@ -461,8 +461,26 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // select both let the creator pick a starting status other than the default).
   const [initialStatus, setInitialStatus] = useState(mode === "time_based" ? "pending" : "open");
   const [assignedBy, setAssignedBy] = useState((initialTask?.assigned_by as string) ?? currentUserId);
-  const initialVaId = initialTask?.assigned_task_assignees?.[0]?.va_id ?? (initialTask?.assigned_to as string) ?? defaultVaId ?? (isAdminOrManager ? "" : currentUserId);
-  const [vaId, setVaId] = useState(initialVaId);
+  // Several assignees, not one. assigned_tasks has always supported a set of
+  // them via assigned_task_assignees — the form just offered a single select, so
+  // a meeting for four people had to be created four times. Every assignee sees
+  // the task on their own calendar, so assigning IS the invitation: give it
+  // hours and the block appears for all of them.
+  //
+  // Seeded from every existing assignee, which is what makes it safe to send
+  // va_ids on an edit. The single select could not, since it only knew about
+  // the first one and saving would have dropped the rest.
+  const initialVaIds: string[] = (() => {
+    const fromAssignees = (initialTask?.assigned_task_assignees ?? [])
+      .map((a) => a.va_id)
+      .filter(Boolean);
+    if (fromAssignees.length > 0) return fromAssignees;
+    const single = (initialTask?.assigned_to as string) ?? defaultVaId ?? (isAdminOrManager ? "" : currentUserId);
+    return single ? [single] : [];
+  })();
+  const [vaIds, setVaIds] = useState<string[]>(initialVaIds);
+  const toggleVaId = (id: string) =>
+    setVaIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
   const [linkedProjectIdState, setLinkedProjectId] = useState((initialTask?.project_id as string) ?? defaultLinkedProjectId ?? "");
   const linkedProjectId = lockedProjectId ?? linkedProjectIdState;
   const [parentTaskId, setParentTaskId] = useState(initialTask?.parent_task_id != null ? String(initialTask.parent_task_id) : "");
@@ -725,6 +743,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     // Computed from the primitives rather than reading the derived
     // needsSchedule, which is declared further down the component body — this
     // closure would then depend on a binding that isn't in its dependency list.
+    // Shared by both branches: time-based writes a set of assignees, output-based
+    // has one column and takes the first.
+    const effectiveVaIds = isAdminOrManager ? vaIds : [currentUserId].filter(Boolean);
+
     if (mode === "time_based") {
       const rangeGiven = hasSchedule && Boolean(startDate) && Boolean(startTime) && Boolean(endTime);
       if (!rangeGiven && parsedPlannedMinutes == null) {
@@ -806,14 +828,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         // would double-count in the Hours tab's total.
         body.planned_minutes = hasSchedule ? null : parsedPlannedMinutes;
 
-        const effectiveVaId = isAdminOrManager ? vaId : currentUserId;
 
         if (isEditing && editingTaskId) {
-          // va_ids intentionally omitted here — assigned_tasks supports
-          // multiple assignees (collaborative tasks) but this form's Assign
-          // To is a single-select, so reconciling va_ids on every metadata
-          // save would silently drop collaborators (or unassign entirely).
-          // Reassignment stays disabled during edit; see the Assign To field.
+          // va_ids rides along with the edit now. It used to be omitted
+          // because the single select only knew the first assignee, so a
+          // metadata save would have dropped the rest. The picker is seeded
+          // from all of them, so what it sends is the whole set.
+          if (isAdminOrManager && manageAssignment) body.va_ids = effectiveVaIds;
           if (isAdminOrManager) {
             const res = await fetch(`/api/assigned-tasks/${editingTaskId}`, {
               method: "PUT",
@@ -835,7 +856,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           }
         } else {
           body.initial_status = isAdminOrManager ? initialStatus : "pending";
-          if (manageAssignment && effectiveVaId) body.va_ids = [effectiveVaId];
+          if (manageAssignment && effectiveVaIds.length > 0) body.va_ids = effectiveVaIds;
           const res = await fetch("/api/assigned-tasks", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -872,7 +893,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           planned_minutes: null,
         };
         if (isAdminOrManager) {
-          body.assigned_to = vaId || null;
+          // fixed_pay_tasks has a single assigned_to column rather than a
+          // join table, so an output-based task takes the first pick.
+          body.assigned_to = effectiveVaIds[0] || null;
           body.assigned_by = assignedBy || null;
           if (!isEditing) body.status = initialStatus;
         }
@@ -901,7 +924,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   }, [
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
     assignedBy, currentUserId, instructions, instructionsLocked, instructionsAppend, reviewRequired, reviewEditable, payType, linkedProjectId,
-    parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
+    parentTaskId, isAdminOrManager, vaIds, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
     // Without this the callback keeps the duration from the render it was built
     // in, so typing a duration and saving immediately wrote the previous value
     // (usually null) — the field looked filled in and still saved empty.
@@ -1279,20 +1302,44 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       <Section title="Assignment" {...accordionProps("assignment")} warning={missingAssignment}>
         {manageAssignment && (
           <div>
-            <label className={labelClass}>Assign To</label>
-            <select
-              value={isAdminOrManager ? vaId : currentUserId}
-              onChange={(e) => setVaId(e.target.value)}
-              disabled={!isAdminOrManager || isEditing || readOnly}
-              className={inputClass}
-            >
-              <option value="">Unassigned</option>
-              {assignToOptions.map((m) => (
-                <option key={m.id} value={m.id}>{m.full_name || m.username}</option>
-              ))}
-            </select>
-            {isEditing && isAdminOrManager && (
-              <p className="mt-1 text-[10px] text-stone">Reassign this task from Assignment's task list — a task can have more than one assignee.</p>
+            <label className={`${labelClass} flex items-center gap-1.5`}>
+              Assign To
+              <InfoTip text="Pick everyone involved. Each of them gets the task on their own calendar, so a task with hours blocks the time for all of them." />
+            </label>
+            {!isAdminOrManager ? (
+              // A VA only ever assigns to themselves, so there's no list to offer.
+              <input value="You" readOnly disabled className={inputClass} />
+            ) : assignToOptions.length === 0 ? (
+              <p className="text-[12px] text-stone/60">No team members to assign.</p>
+            ) : (
+              <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-sand bg-white p-1.5">
+                {assignToOptions.map((m) => (
+                  <label
+                    key={m.id}
+                    className={`flex items-center gap-2 rounded px-1.5 py-1 text-[12px] transition-colors ${
+                      readOnly ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-cream"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={vaIds.includes(m.id)}
+                      onChange={() => toggleVaId(m.id)}
+                      disabled={readOnly}
+                      className="accent-terracotta"
+                    />
+                    <span className="truncate text-espresso">{m.full_name || m.username}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {isAdminOrManager && (
+              <p className="mt-1 text-[10px] text-stone">
+                {vaIds.length === 0
+                  ? "Unassigned"
+                  : `${vaIds.length} assigned${
+                      mode === "output_based" && vaIds.length > 1 ? " — output-based keeps the first only" : ""
+                    }`}
+              </p>
             )}
           </div>
         )}
