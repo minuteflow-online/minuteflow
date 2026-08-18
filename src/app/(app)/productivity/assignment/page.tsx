@@ -1230,16 +1230,16 @@ export default function TaskListPage() {
   function DateModeToggle({ mode, setMode }: { mode: "any" | "has" | "none"; setMode: (m: "any" | "has" | "none") => void }) {
     return (
       <div>
-        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Has a date</label>
+        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Date</label>
         <div className="inline-flex w-full rounded-lg border border-sand bg-parchment/40 p-1 text-[11px] font-semibold">
-          {(["any", "has", "none"] as const).map((m) => (
+          {(["any", "none", "has"] as const).map((m) => (
             <button
               key={m}
               type="button"
               onClick={() => setMode(m)}
               className={`flex-1 rounded-md px-2 py-1 transition-colors ${mode === m ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
             >
-              {m === "any" ? "Any" : m === "has" ? "Has date" : "No date"}
+              {m === "any" ? "All" : m === "none" ? "Empty" : "Filled"}
             </button>
           ))}
         </div>
