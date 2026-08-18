@@ -443,6 +443,18 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   );
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
+  // Accordion behavior for the Basics/Details/Attachments/Assignment/Rate/
+  // Schedule/Screenshots Sections below — opening one closes whichever was
+  // open, so only one is expanded at a time. Keyed by a stable id passed
+  // separately from each Section's `title` (its display label) — a shared or
+  // renamed title can't silently merge or break two Sections' open state,
+  // since the id and the label are never the same value.
+  const [openSectionId, setOpenSectionId] = useState<string | null>(null);
+  const accordionProps = (id: string) => ({
+    open: openSectionId === id,
+    onToggle: () => setOpenSectionId((prev) => (prev === id ? null : id)),
+  });
+
   // Assignment
   // Initial status — create-only, admin/manager-only (matches the pre-consolidation
   // forms: TaskAssignmentsAdminTab's Status select and FixedPayTasksTab's Status
@@ -945,7 +957,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   return (
     <div className="space-y-3">
-      <Section title="Basics" warning={missingBasics}>
+      <Section title="Basics" {...accordionProps("basics")} warning={missingBasics}>
         <div>
           <label className={labelClass}>Account</label>
           <select
@@ -1033,7 +1045,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
       </Section>
 
-      <Section title="Details" warning={missingDetails}>
+      <Section title="Details" {...accordionProps("details")} warning={missingDetails}>
         <div>
           <div className="mb-1 flex items-center gap-1.5">
             <label className="block text-[11px] font-bold uppercase tracking-wide text-amber">
@@ -1170,7 +1182,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         )}
       </Section>
 
-      <Section title="Attachments & Files">
+      <Section title="Attachments & Files" {...accordionProps("attachments")}>
         <div>
           <div className="mb-1 flex items-center justify-between gap-2">
             <label className={`${labelClass} mb-0`}>Attachments</label>
@@ -1264,7 +1276,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         )}
       </Section>
 
-      <Section title="Assignment" warning={missingAssignment}>
+      <Section title="Assignment" {...accordionProps("assignment")} warning={missingAssignment}>
         {manageAssignment && (
           <div>
             <label className={labelClass}>Assign To</label>
@@ -1385,7 +1397,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       {mode === "output_based" && (
-        <Section title="Rate" warning={missingRate}>
+        <Section title="Rate" {...accordionProps("rate")} warning={missingRate}>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className={labelClass}>Unit Rate</label>
@@ -1477,7 +1489,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
-      <Section title="Schedule" warning={missingSchedule}>
+      <Section title="Schedule" {...accordionProps("schedule")} warning={missingSchedule}>
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">
             {/* Tooltip rather than prose, per the form's new pattern — but the
@@ -1622,7 +1634,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       </Section>
 
       {supportsTodos && (
-        <Section title="Screenshots">
+        <Section title="Screenshots" {...accordionProps("screenshots")}>
           {!editingTaskId ? (
             <p className="text-[12px] text-stone/50">Screenshots are captured while working on the task — none yet.</p>
           ) : screenshotsLoading ? (

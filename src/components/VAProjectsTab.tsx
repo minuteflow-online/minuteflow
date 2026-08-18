@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
+import SubtaskBoardView from "@/components/SubtaskBoardView";
+import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
 import type { Profile, Project, ProjectKind } from "@/types/database";
 
 interface VAProjectsTabProps {
@@ -11,7 +13,7 @@ interface VAProjectsTabProps {
   kind: ProjectKind;
 }
 
-interface SubtaskRow {
+export interface SubtaskRow {
   id: number;
   task_name: string;
   due_date: string | null;
@@ -88,6 +90,9 @@ function StatusBadge({ status }: { status: string }) {
 
 const KIND_LABEL: Record<ProjectKind, string> = { objective: "Objective", operation: "Operation" };
 
+// Statuses counted as "done" for the "Where They Are" completed/total figure.
+const DONE_STATUSES = new Set(["completed", "approved", "paid"]);
+
 export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin = false, kind }: VAProjectsTabProps) {
   const kindLabel = KIND_LABEL[kind];
   const [projects, setProjects] = useState<Project[]>([]);
@@ -96,6 +101,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [objectiveOptions, setObjectiveOptions] = useState<Project[]>([]);
 
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  // Lighter default view (Figma reference, docs/objective-foundation-feature.md):
+  // Objective Details form is hidden until requested, rather than shown by default.
+  // Local/testing-only per Neil — not boss-approved as the permanent default yet.
+  const [showDetails, setShowDetails] = useState(false);
+  const [subtaskView, setSubtaskView] = useState<"list" | "board">("list");
+  // "Add Subtask" form collapsed by default (Figma correction) — same
+  // show-on-demand pattern as showDetails above.
+  const [showAddSubtask, setShowAddSubtask] = useState(false);
   const [editName, setEditName] = useState("");
   const [editAccount, setEditAccount] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -125,6 +138,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [subtasks, setSubtasks] = useState<SubtaskRow[]>([]);
   const [subtasksLoading, setSubtasksLoading] = useState(false);
   const [addFormKey, setAddFormKey] = useState(0);
+  // Surfaced when a Board View drag's status update fails and gets rolled
+  // back — otherwise a failed drag just silently snaps the card back with no
+  // explanation, unlike the list-view edit form's editSubError.
+  const [boardStatusError, setBoardStatusError] = useState<string | null>(null);
 
   const [editingSubId, setEditingSubId] = useState<number | null>(null);
   const [editStatus, setEditStatus] = useState("pending");
@@ -203,6 +220,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setSubtasks([]);
     setAddFormKey((k) => k + 1);
     setEditingSubId(null);
+    setShowDetails(false);
+    setSubtaskView("list");
+    setShowAddSubtask(false);
+    setBoardStatusError(null);
     void fetchSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -424,6 +445,34 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     }
   };
 
+  // Board View drag-and-drop: dropping a card into a column updates the task's
+  // status via the same PATCH endpoint the list-view edit form uses. Optimistic
+  // update with rollback on failure so a drag doesn't silently do nothing.
+  //
+  // Rollback targets only the one subtask that failed (via a functional
+  // setSubtasks, not a whole-array `previous` snapshot) — a whole-array
+  // snapshot taken at call time goes stale the moment a second drag starts
+  // before the first one's fetch resolves, so failing the first drag would
+  // revert the second one's already-applied change too.
+  const handleBoardStatusChange = async (subtaskId: number, status: string) => {
+    const previousStatus = subtasks.find((t) => t.id === subtaskId)?.status;
+    setBoardStatusError(null);
+    setSubtasks((prev) => prev.map((t) => (t.id === subtaskId ? { ...t, status } : t)));
+    try {
+      const res = await fetch(`/api/assigned-tasks/${subtaskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      if (previousStatus !== undefined) {
+        setSubtasks((prev) => prev.map((t) => (t.id === subtaskId ? { ...t, status: previousStatus } : t)));
+      }
+      setBoardStatusError("Couldn't update that task's status — try again.");
+    }
+  };
+
   const objectiveNameById = new Map(objectiveOptions.map((o) => [o.id, o.name]));
 
   const openCreateForm = (parentId: string) => {
@@ -440,6 +489,23 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setCreateLinkedObjectiveId("");
     setCreateError(null);
   };
+
+  // "Where they are" — per assigned VA, completed/total on the selected node's own
+  // subtasks. Scoped to this node only (not nested sub-objectives): each sub-objective
+  // is browsed as its own node with its own subtasks, so this already works per
+  // sub-objective without needing to roll up the whole tree.
+  const vaProgress = useMemo(() => {
+    return editVaIds
+      .map((vaId) => {
+        const profile = activeProfiles.find((p) => p.id === vaId);
+        const tasks = subtasks.filter(
+          (t) => t.status !== "cancelled" && (t.assigned_task_assignees ?? []).some((a) => a.va_id === vaId)
+        );
+        const completed = tasks.filter((t) => DONE_STATUSES.has(t.status)).length;
+        return { vaId, name: profile ? profileLabel(profile) : vaId, total: tasks.length, completed };
+      })
+      .filter((p) => p.total > 0);
+  }, [editVaIds, activeProfiles, subtasks]);
 
   const renderNode = (project: Project, depth: number) => {
     const children = childrenByParent.get(project.id) ?? [];
@@ -506,29 +572,319 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     );
   };
 
+  // Subtasks card — shared between the normal detail layout (List View, narrow
+  // column) and the Board View full-width takeover below, so the two never drift.
+  const renderSubtasksCard = () => {
+    if (!selectedProject) return null;
+    return (
+      <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Subtasks</h4>
+          <div className="flex items-center gap-2">
+            {subtasksLoading && (
+              <span className="text-[11px] text-stone">Loading...</span>
+            )}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setSubtaskView("list")}
+                className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                  subtaskView === "list"
+                    ? "bg-sage text-white"
+                    : "bg-stone/10 text-stone hover:bg-stone/20"
+                }`}
+              >
+                List View
+              </button>
+              <button
+                onClick={() => setSubtaskView("board")}
+                className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                  subtaskView === "board"
+                    ? "bg-sage text-white"
+                    : "bg-stone/10 text-stone hover:bg-stone/20"
+                }`}
+              >
+                Board View
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {!subtasksLoading && subtaskView === "list" && subtasks.length === 0 && (
+          <p className="text-[12px] text-stone/70">No subtasks yet. Add one below.</p>
+        )}
+
+        {subtaskView === "board" && boardStatusError && (
+          <p className="text-[11px] text-red-600">{boardStatusError}</p>
+        )}
+
+        {subtaskView === "board" && (
+          <SubtaskBoardView
+            subtasks={subtasks}
+            editingSubId={editingSubId}
+            onOpenEdit={openSubtaskEdit}
+            onStatusChange={handleBoardStatusChange}
+            formatDate={formatDate}
+            StatusBadge={StatusBadge}
+            activeProfiles={activeProfiles}
+          />
+        )}
+
+        {subtaskView === "board" && editingSubId != null && (() => {
+          const sub = subtasks.find((s) => s.id === editingSubId);
+          if (!sub) return null;
+          return (
+            <div className="space-y-3 rounded-lg border border-sand bg-parchment p-3">
+              <TaskEditor
+                // Sub id in the key — this is the one Board View edit
+                // instance (a fixed JSX position, not one per card, unlike
+                // the list-view edit form below), so without a key that
+                // changes with the subtask, switching which card is being
+                // edited (clicking a different one without cancelling first)
+                // doesn't remount TaskEditor: its useState-seeded fields keep
+                // the previous subtask's values while editingTaskId silently
+                // moves to the new one, and Save would write the old data
+                // onto the new subtask's id.
+                key={`board-edit-${sub.id}`}
+                ref={editTaskEditorRef}
+                mode="time_based"
+                editingTaskId={sub.id}
+                initialTask={sub as unknown as Record<string, unknown>}
+                currentUserId={currentUserId}
+                isAdminOrManager={isAdmin}
+                teamMembers={activeProfiles}
+                lockedProjectId={selectedProject.id}
+                hideFooter
+                onCancel={() => setEditingSubId(null)}
+                onSaved={() => {}}
+              />
+
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                  Status
+                </label>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value)}
+                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                >
+                  {STATUS_OPTIONS.map((s) => (
+                    <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                  ))}
+                </select>
+              </div>
+
+              {editSubError && (
+                <p className="text-[11px] text-red-600">{editSubError}</p>
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void handleSaveSubEdit()}
+                  disabled={savingSub}
+                  className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+                >
+                  {savingSub ? "Saving..." : "Save"}
+                </button>
+                <button
+                  onClick={() => setEditingSubId(null)}
+                  className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+        {subtaskView === "list" && subtasks.length > 0 && (
+          <div className="space-y-1.5">
+            {subtasks.map((sub) => {
+              // Shared with SubtaskBoardView.tsx (src/lib/subtaskDisplay.ts) —
+              // keep the two views in sync instead of drifting.
+              const names = subtaskAssigneeNames(sub.assigned_task_assignees, activeProfiles);
+              const isEditing = editingSubId === sub.id;
+
+              return (
+                <div key={sub.id} className="space-y-1">
+                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
+                    <StatusBadge status={sub.status} />
+                    <span className="flex-1 text-[13px] font-semibold text-espresso leading-tight truncate">
+                      {sub.task_name}
+                    </span>
+                    {(sub.project || sub.category) && (
+                      <span className="text-[11px] text-stone shrink-0 hidden sm:block">
+                        {sub.project ?? sub.category}
+                      </span>
+                    )}
+                    {names && (
+                      <span className="text-[11px] text-stone shrink-0 hidden sm:block">
+                        {names}
+                      </span>
+                    )}
+                    {sub.account && (
+                      <span className="text-[11px] text-stone shrink-0 hidden md:block">
+                        {sub.account}
+                      </span>
+                    )}
+                    {sub.due_date && (
+                      <span className="text-[11px] text-stone shrink-0 hidden md:block">
+                        Due: {formatDate(sub.due_date)}
+                      </span>
+                    )}
+                    {sub.created_at && (
+                      <span className="text-[11px] text-stone/60 shrink-0 hidden lg:block">
+                        {sub.created_by_profile?.full_name || sub.created_by_profile?.username
+                          ? `${sub.created_by_profile.full_name || sub.created_by_profile.username} · `
+                          : ""}
+                        {formatDate(sub.created_at)}
+                      </span>
+                    )}
+                    {sub.pay_type && (
+                      <span className="text-[11px] text-stone capitalize shrink-0 hidden lg:block">
+                        {sub.pay_type.replace(/_/g, " ")}
+                      </span>
+                    )}
+                    <button
+                      onClick={() => (isEditing ? setEditingSubId(null) : openSubtaskEdit(sub))}
+                      className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
+                    >
+                      {isEditing ? "Cancel" : "Edit"}
+                    </button>
+                  </div>
+
+                  {/* Inline edit form */}
+                  {isEditing && (
+                    <div className="ml-3 space-y-3 rounded-lg border border-sand bg-parchment p-3">
+                      <TaskEditor
+                        ref={editTaskEditorRef}
+                        mode="time_based"
+                        editingTaskId={sub.id}
+                        initialTask={sub as unknown as Record<string, unknown>}
+                        currentUserId={currentUserId}
+                        isAdminOrManager={isAdmin}
+                        teamMembers={activeProfiles}
+                        lockedProjectId={selectedProject.id}
+                        hideFooter
+                        onCancel={() => setEditingSubId(null)}
+                        onSaved={() => {}}
+                      />
+
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                          Status
+                        </label>
+                        <select
+                          value={editStatus}
+                          onChange={(e) => setEditStatus(e.target.value)}
+                          className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
+                        >
+                          {STATUS_OPTIONS.map((s) => (
+                            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {editSubError && (
+                        <p className="text-[11px] text-red-600">{editSubError}</p>
+                      )}
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => void handleSaveSubEdit()}
+                          disabled={savingSub}
+                          className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+                        >
+                          {savingSub ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          onClick={() => setEditingSubId(null)}
+                          className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Add subtask form — collapsed by default (Figma correction), same
+            show-on-demand pattern as the Objective Details toggle. */}
+        <div className="border-t border-sand pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Add Subtask</p>
+            <button
+              onClick={() => setShowAddSubtask((v) => !v)}
+              className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+            >
+              {showAddSubtask ? "Cancel" : "+ Add Subtask"}
+            </button>
+          </div>
+          {showAddSubtask && (
+            <TaskEditor
+              key={addFormKey}
+              mode="time_based"
+              editingTaskId={null}
+              initialTask={{ account: selectedProject.account ?? null }}
+              currentUserId={currentUserId}
+              isAdminOrManager={isAdmin}
+              teamMembers={activeProfiles}
+              lockedProjectId={selectedProject.id}
+              onCancel={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
+              onSaved={() => { handleSubtaskCreated(); setShowAddSubtask(false); }}
+            />
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Board View is a full-width takeover (Figma correction) — sidebar and the
+  // Objective details/Where They Are panel hide entirely while it's active.
+  const isBoardTakeover = Boolean(selectedProject) && !showCreate && subtaskView === "board";
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="text-sm font-semibold text-walnut">My {kindLabel}s</h3>
-          <p className="text-xs text-stone">
-            {kind === "objective"
-              ? "Nest goals and projects, then add subtasks assigned to VAs."
-              : "Recurring, day-to-day work — optionally linked to the Objective it supports."}
-          </p>
+      {!isBoardTakeover && (
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-semibold text-walnut">My {kindLabel}s</h3>
+            <p className="text-xs text-stone">
+              {kind === "objective"
+                ? "Nest goals and projects, then add subtasks assigned to VAs."
+                : "Recurring, day-to-day work — optionally linked to the Objective it supports."}
+            </p>
+          </div>
+          <button
+            onClick={() => openCreateForm("")}
+            className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            New {kindLabel}
+          </button>
         </div>
-        <button
-          onClick={() => openCreateForm("")}
-          className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
-        >
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          New {kindLabel}
-        </button>
-      </div>
+      )}
 
+      {selectedProject && subtaskView === "board" && !showCreate ? (
+        /* ── Board View full-width takeover (Figma correction): sidebar and the
+             Objective details/Where They Are panel hide entirely; just a back
+             button + the board at full width. ──────────────────────────────── */
+        <div className="space-y-4">
+          <button
+            onClick={() => setSubtaskView("list")}
+            className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-espresso hover:text-terracotta transition-colors cursor-pointer"
+          >
+            <span aria-hidden="true">←</span> {selectedProject.name}
+          </button>
+          {renderSubtasksCard()}
+        </div>
+      ) : (
       <div className="flex gap-4 items-start">
         {/* ── Left panel: project tree ─────────────────────────────────────────── */}
         <div className="w-72 shrink-0 space-y-2">
@@ -711,7 +1067,54 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           {/* Selected project detail */}
           {selectedProject && !showCreate && (
             <div className="space-y-4">
-              {/* Project edit card */}
+              {/* Where They Are card */}
+              {vaProgress.length > 0 && (
+                <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
+                  <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Where They Are</h4>
+                  <div className="space-y-3">
+                    {vaProgress.map(({ vaId, name, total, completed }) => {
+                      const pct = Math.round((completed / total) * 100);
+                      return (
+                        <div key={vaId} className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[12px] font-semibold text-espresso truncate">{name}</span>
+                            <span className="text-[11px] text-stone shrink-0">
+                              {completed} of {total} completed · {pct}%
+                            </span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-parchment">
+                            <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Objective name + lighter default view (Figma reference) — Details
+                  form is opened on demand instead of shown by default. */}
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  <h3 className="text-base font-bold text-espresso truncate">{selectedProject.name}</h3>
+                  <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border shrink-0 ${
+                    selectedProject.is_active
+                      ? "bg-sage-soft text-sage border-sage/20"
+                      : "bg-stone/10 text-stone border-stone/20"
+                  }`}>
+                    {selectedProject.is_active ? "Active" : "Inactive"}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setShowDetails((v) => !v)}
+                  className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
+                >
+                  {showDetails ? `Hide ${kindLabel} Details` : `${kindLabel} Details`}
+                </button>
+              </div>
+
+              {/* Project edit card — hidden by default, opened via the button above */}
+              {showDetails && (
               <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-4">
                 <div className="flex items-center justify-between gap-2">
                   <h4 className="text-[13px] font-bold text-espresso">{kindLabel} Details</h4>
@@ -873,157 +1276,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   {savingEdit ? "Saving..." : "Save Changes"}
                 </button>
               </div>
+              )}
 
-              {/* Subtasks card */}
-              <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Subtasks</h4>
-                  {subtasksLoading && (
-                    <span className="text-[11px] text-stone">Loading...</span>
-                  )}
-                </div>
-
-                {!subtasksLoading && subtasks.length === 0 && (
-                  <p className="text-[12px] text-stone/70">No subtasks yet. Add one below.</p>
-                )}
-
-                {subtasks.length > 0 && (
-                  <div className="space-y-1.5">
-                    {subtasks.map((sub) => {
-                      const assignees = sub.assigned_task_assignees ?? [];
-                      const assigneeNames = assignees
-                        .map((a) => a.profiles?.full_name || a.profiles?.username || a.va_id)
-                        .join(", ");
-                      const isEditing = editingSubId === sub.id;
-
-                      return (
-                        <div key={sub.id} className="space-y-1">
-                          <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
-                            <StatusBadge status={sub.status} />
-                            <span className="flex-1 text-[13px] font-semibold text-espresso leading-tight truncate">
-                              {sub.task_name}
-                            </span>
-                            {(sub.project || sub.category) && (
-                              <span className="text-[11px] text-stone shrink-0 hidden sm:block">
-                                {sub.project ?? sub.category}
-                              </span>
-                            )}
-                            {assigneeNames && (
-                              <span className="text-[11px] text-stone shrink-0 hidden sm:block">
-                                {assigneeNames}
-                              </span>
-                            )}
-                            {sub.account && (
-                              <span className="text-[11px] text-stone shrink-0 hidden md:block">
-                                {sub.account}
-                              </span>
-                            )}
-                            {sub.due_date && (
-                              <span className="text-[11px] text-stone shrink-0 hidden md:block">
-                                Due: {formatDate(sub.due_date)}
-                              </span>
-                            )}
-                            {sub.created_at && (
-                              <span className="text-[11px] text-stone/60 shrink-0 hidden lg:block">
-                                {sub.created_by_profile?.full_name || sub.created_by_profile?.username
-                                  ? `${sub.created_by_profile.full_name || sub.created_by_profile.username} · `
-                                  : ""}
-                                {formatDate(sub.created_at)}
-                              </span>
-                            )}
-                            {sub.pay_type && (
-                              <span className="text-[11px] text-stone capitalize shrink-0 hidden lg:block">
-                                {sub.pay_type.replace(/_/g, " ")}
-                              </span>
-                            )}
-                            <button
-                              onClick={() => (isEditing ? setEditingSubId(null) : openSubtaskEdit(sub))}
-                              className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
-                            >
-                              {isEditing ? "Cancel" : "Edit"}
-                            </button>
-                          </div>
-
-                          {/* Inline edit form */}
-                          {isEditing && (
-                            <div className="ml-3 space-y-3 rounded-lg border border-sand bg-parchment p-3">
-                              <TaskEditor
-                                // Task id in the key, so expanding a different
-                                // subtask remounts the form instead of carrying
-                                // the last one's field values into it.
-                                key={`edit-${sub.id}`}
-                                ref={editTaskEditorRef}
-                                mode="time_based"
-                                editingTaskId={sub.id}
-                                initialTask={sub as unknown as Record<string, unknown>}
-                                currentUserId={currentUserId}
-                                isAdminOrManager={isAdmin}
-                                teamMembers={activeProfiles}
-                                lockedProjectId={selectedProject.id}
-                                hideFooter
-                                onCancel={() => setEditingSubId(null)}
-                                onSaved={() => {}}
-                              />
-
-                              <div>
-                                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                                  Status
-                                </label>
-                                <select
-                                  value={editStatus}
-                                  onChange={(e) => setEditStatus(e.target.value)}
-                                  className="w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] outline-none focus:border-terracotta bg-white"
-                                >
-                                  {STATUS_OPTIONS.map((s) => (
-                                    <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              {editSubError && (
-                                <p className="text-[11px] text-red-600">{editSubError}</p>
-                              )}
-
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => void handleSaveSubEdit()}
-                                  disabled={savingSub}
-                                  className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
-                                >
-                                  {savingSub ? "Saving..." : "Save"}
-                                </button>
-                                <button
-                                  onClick={() => setEditingSubId(null)}
-                                  className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Add subtask form */}
-                <div className="border-t border-sand pt-4 space-y-3">
-                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Add Subtask</p>
-                  <TaskEditor
-                    key={addFormKey}
-                    mode="time_based"
-                    editingTaskId={null}
-                    initialTask={{ account: selectedProject.account ?? null }}
-                    currentUserId={currentUserId}
-                    isAdminOrManager={isAdmin}
-                    teamMembers={activeProfiles}
-                    lockedProjectId={selectedProject.id}
-                    onCancel={() => setAddFormKey((k) => k + 1)}
-                    onSaved={handleSubtaskCreated}
-                  />
-                </div>
-              </div>
+              {renderSubtasksCard()}
             </div>
           )}
 
@@ -1036,6 +1291,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
