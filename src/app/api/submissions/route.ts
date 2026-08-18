@@ -58,16 +58,14 @@ export async function GET(request: Request) {
     .select(
       "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, " +
         "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
-        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, projects(id, name, kind))"
+        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
     )
     // The whole thread, not just submissions: revision notes, approvals and
     // added notes all belong in the timeline alongside the work.
     .not("assigned_task_id", "is", null)
     .order("created_at", { ascending: false });
 
-  if (!isAdminEquivalent) {
-    query = query.eq("user_id", user.id);
-  } else if (va && va !== "all") {
+  if (isAdminEquivalent && va && va !== "all") {
     query = query.eq("user_id", va);
   }
 
@@ -88,6 +86,8 @@ export async function GET(request: Request) {
       status: string | null;
       category: string | null;
       review_required: boolean | null;
+      assigned_by: string | null;
+      assigned_by_profile?: { id: string; full_name: string | null; username: string | null } | null;
       due_date: string | null;
       due_time: string | null;
       end_date: string | null;
@@ -101,6 +101,17 @@ export async function GET(request: Request) {
   // is the absence of a project link, which PostgREST can't express as a
   // filter on the embedded projects row.
   let rows = (data ?? []) as unknown as Row[];
+
+  // Everyone can open this page. Someone without admin access sees their own
+  // submissions plus anything submitted on a task they assigned — assigned_by
+  // is the person who reviews it, so they need to see what's waiting on them.
+  // Filtered here rather than in the query because it's an OR across an
+  // embedded table, which PostgREST can't express.
+  if (!isAdminEquivalent) {
+    rows = rows.filter(
+      (r) => r.user_id === user.id || r.assigned_tasks?.assigned_by === user.id
+    );
+  }
 
   if (projectId && projectId !== "all") {
     rows = rows.filter((r) => r.assigned_tasks?.project_id === projectId);
@@ -279,6 +290,9 @@ export async function GET(request: Request) {
             status: task.status,
             category: task.category,
             review_required: task.review_required,
+            assigned_by: task.assigned_by,
+            assigned_by_name:
+              task.assigned_by_profile?.full_name ?? task.assigned_by_profile?.username ?? null,
             due_date: task.due_date,
             due_time: task.due_time,
             end_date: task.end_date,

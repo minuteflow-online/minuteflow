@@ -38,6 +38,8 @@ type FeedItem = {
     status: string | null;
     category: string | null;
     review_required: boolean | null;
+    assigned_by: string | null;
+    assigned_by_name: string | null;
     due_date: string | null;
     due_time: string | null;
     end_date: string | null;
@@ -51,6 +53,18 @@ type Thread = { taskId: number; items: FeedItem[]; latest: FeedItem };
 type TeamMember = { id: string; full_name: string; username: string };
 
 type ViewMode = "timeline" | "calendar";
+
+/**
+ * Whose submissions to show. Everyone has both sides: work they turned in,
+ * and work turned in on tasks they assigned — assigned_by is the reviewer.
+ */
+type OwnerMode = "all" | "mine" | "to_me";
+
+const OWNER_MODES: Array<{ value: OwnerMode; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "mine", label: "My submissions" },
+  { value: "to_me", label: "Submitted to me" },
+];
 
 /** The three review outcomes a reviewer can append to a thread. */
 type ReviewOutcome = "approval" | "revision" | "approval_reversed";
@@ -162,6 +176,9 @@ export default function SubmissionsPage() {
   const [orgTimezone, setOrgTimezone] = useState("UTC");
 
   const [view, setView] = useState<ViewMode>("timeline");
+  const [ownerMode, setOwnerMode] = useState<OwnerMode>("all");
+  const [currentUserId, setCurrentUserId] = useState("");
+  const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
   // Every filter is multi-select; an empty set means "all".
   const [vaFilter, setVaFilter] = useState<Set<string>>(new Set());
   const [scopeFilter, setScopeFilter] = useState<Set<string>>(new Set());
@@ -185,6 +202,11 @@ export default function SubmissionsPage() {
 
   useEffect(() => {
     (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) setCurrentUserId(user.id);
+
       const { data: org } = await supabase
         .from("organization_settings")
         .select("timezone")
@@ -345,6 +367,16 @@ export default function SubmissionsPage() {
       rows = rows.filter((r) => r.task?.project_id && projectFilter.has(r.task.project_id));
     }
 
+    if (ownerMode === "mine") {
+      rows = rows.filter((r) => r.user_id === currentUserId);
+    } else if (ownerMode === "to_me") {
+      rows = rows.filter((r) => r.task?.assigned_by === currentUserId);
+    }
+
+    if (assignedByFilter.size > 0) {
+      rows = rows.filter((r) => r.task?.assigned_by && assignedByFilter.has(r.task.assigned_by));
+    }
+
     if (categoryFilter.size > 0) {
       rows = rows.filter((r) => categoryFilter.has((r.task?.category ?? "").trim()));
     }
@@ -364,7 +396,7 @@ export default function SubmissionsPage() {
     }
 
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, accountsByClient]);
+  }, [items, vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -385,6 +417,17 @@ export default function SubmissionsPage() {
   // Which revision round each submission belongs to — its position in its
   // task's thread. The calendar shows loose submissions rather than threads, so
   // each chip needs to carry its own round marker.
+  // Built from the loaded rows rather than the full staff list, so the filter
+  // only ever offers people who actually assigned something here.
+  const assignerOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const item of items) {
+      const id = item.task?.assigned_by;
+      if (id && !seen.has(id)) seen.set(id, item.task?.assigned_by_name || "Unknown");
+    }
+    return Array.from(seen, ([value, label]) => ({ value, label }));
+  }, [items]);
+
   // The thread carries notes and reviews too, so the headline count has to
   // exclude them or it stops meaning "work turned in".
   const submissionCount = useMemo(
@@ -457,6 +500,22 @@ export default function SubmissionsPage() {
         </div>
 
         <div className="inline-flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
+          {OWNER_MODES.map((mode) => (
+            <button
+              key={mode.value}
+              onClick={() => setOwnerMode(mode.value)}
+              className={`rounded-md px-3 py-1 text-[11px] font-semibold transition-colors ${
+                ownerMode === mode.value
+                  ? "bg-white text-espresso shadow-sm"
+                  : "text-stone hover:text-espresso"
+              }`}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="inline-flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
           {(["timeline", "calendar"] as ViewMode[]).map((mode) => (
             <button
               key={mode}
@@ -497,6 +556,17 @@ export default function SubmissionsPage() {
           onChange={setProjectFilter}
           options={projectOptions.map((p) => ({ value: p.id, label: p.name }))}
         />
+
+        {/* Admin and above only. Everyone else has the My submissions /
+            Submitted to me switch, which covers the same ground for one person. */}
+        {canReview && (
+          <MultiSelectFilter
+            allLabel="All assigners"
+            selected={assignedByFilter}
+            onChange={setAssignedByFilter}
+            options={assignerOptions}
+          />
+        )}
 
         <MultiSelectFilter
           allLabel="All categories"
@@ -894,6 +964,7 @@ function ThreadCard({
       <div className="mt-0.5 pl-[18px] text-[11px] text-stone/80">
         {head.task?.account ?? "—"}
         {head.task?.project_name ? ` · ${head.task.project_name}` : ""}
+        {head.task?.assigned_by_name ? ` · reviewer: ${head.task.assigned_by_name}` : ""}
         {!expanded &&
           ` · ${thread.items.length} submission${thread.items.length === 1 ? "" : "s"}`}
       </div>
