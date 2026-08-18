@@ -17,7 +17,7 @@ const VA_EDITABLE_STATUSES = new Set(["open", "pending", "on_queue", "in_progres
 // locked so a VA can't retroactively change what they're being paid for.
 const VA_EDITABLE_FIELDS = new Set(["task_name", "account", "category", "project", "project_id", "rate", "task_detail", "task_notes", "link", "instructions", "start_date", "due_date", "end_date", "planned_minutes"]);
 const TASK_SELECT =
-  "id, task_name, account, category, project, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
+  "id, task_name, account, category, project, project_id, rate, is_active, archived_at, deleted_at, task_detail, task_notes, link, instructions, instructions_locked, status, start_date, due_date, end_date, planned_minutes, review_required, assigned_to, assigned_by, claimed_by, claimed_at, created_by, created_at, updated_at, projects(id, name)";
 
 type ProfileSummary = { id: string; full_name: string; username: string };
 
