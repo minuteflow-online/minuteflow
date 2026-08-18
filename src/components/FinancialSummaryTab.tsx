@@ -327,7 +327,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     const rangeStart = `${startDate}T00:00:00.000Z`;
     const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes, paystubSnapRes, projExpRes] = await Promise.all([
+    const [accRes, profileRes, logRes, vaPayRes, clientPayRes, expRes, vaFixedRes, fixedPayTasksRes, paystubSnapRes, projExpRes] = await Promise.all([
       fetch("/api/accounts"),
       supabase
         .from("profiles")
@@ -368,6 +368,19 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .eq("billing_type", "fixed")
         .gt("rate", 0)
         .eq("assignment_type", "include"),
+      // Output Based tasks created through the current TaskEditor flow (as
+      // opposed to the legacy va_task_assignments above) — same "only counts
+      // once approved" rule applies, via status === "completed" (this table
+      // has no literal "approved" status; completed is where a reviewer
+      // signs off). Cancelled tasks are excluded outright — nothing is ever
+      // owed on those, not even a "pending" figure.
+      supabase
+        .from("fixed_pay_tasks")
+        .select("assigned_to, task_name, account, project, rate, status")
+        .not("assigned_to", "is", null)
+        .gt("rate", 0)
+        .is("deleted_at", null)
+        .neq("status", "cancelled"),
       // Custom paystub line items sent for pay periods overlapping the range
       supabase
         .from("paystub_snapshots")
@@ -411,6 +424,20 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
     // Parse VA fixed assignments into flat structure
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rawFixed = (vaFixedRes.data ?? []) as any[];
+    // Output Based tasks from the current fixed_pay_tasks flow, merged in
+    // alongside the legacy va_task_assignments rows below — same shape, same
+    // "earned means approved" rule the downstream calc already applies.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawFixedPayTasks = (fixedPayTasksRes.data ?? []) as any[];
+    const parsedFixedPayTasks: VaFixedAssignment[] = rawFixedPayTasks.map((row) => ({
+      va_id: row.assigned_to,
+      task_name: row.task_name ?? "Unknown Task",
+      account: row.account ?? null,
+      project_name: row.project ?? null,
+      rate: Number(row.rate),
+      task_library_id: 0,
+      status: row.status === "completed" ? "approved" : "not_started",
+    }));
     const parsedFixed: VaFixedAssignment[] = rawFixed.map((row) => {
       const pta = row.project_task_assignments;
       const lib = pta?.task_library;
@@ -425,7 +452,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         status: row.status ?? "not_started",
       };
     });
-    setVaFixedAssignments(parsedFixed);
+    setVaFixedAssignments([...parsedFixed, ...parsedFixedPayTasks]);
 
     // Flatten custom paystub line items per VA. Older snapshots stored
     // { label, amount } only — normalized to rate = amount, quantity = 1.
