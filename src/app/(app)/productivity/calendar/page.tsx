@@ -1799,16 +1799,14 @@ export default function ProductivityCalendarPage() {
                             <span className="text-[12px] font-semibold text-espresso">{formatDuration(totalMinutes)}</span>
                           </span>
                         </button>
-                        {rows.map((row) => (
+                        <div className="space-y-1 p-2">{rows.map((row) => (
                           <div
                             key={`${row.source}-${row.id}`}
-                            className="flex items-center justify-between gap-3 px-3 py-1.5 pl-5"
+                            className={`flex items-center justify-between gap-3 rounded-md border px-2 py-1.5 shadow-sm ${categoryBlockClasses(row.category)}`}
                           >
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span className={`h-2 w-2 shrink-0 rounded-full ${categoryDotClass(row.category ?? "")}`} />
-                              <span className="min-w-0">
-                              <span className="block truncate text-[12px] text-espresso">{row.name}</span>
-                              <span className="block truncate text-[10px] text-stone">
+                            <span className="min-w-0">
+                              <span className="block truncate text-[12px] font-semibold">{row.name}</span>
+                              <span className="block truncate text-[10px] opacity-80">
                                 {row.account}
                                 {row.source === "fixed"
                                   ? row.account
@@ -1816,13 +1814,12 @@ export default function ProductivityCalendarPage() {
                                     : "Output Based"
                                   : !row.timed && (row.account ? " · no set time" : "No set time")}
                               </span>
-                              </span>
                             </span>
-                            <span className="shrink-0 text-[11px] font-semibold text-walnut">
+                            <span className="shrink-0 text-[11px] font-semibold">
                               {formatDuration(row.minutes)}
                             </span>
                           </div>
-                        ))}
+                        ))}</div>
                       </div>
                     );
                   })}
@@ -2058,7 +2055,7 @@ export default function ProductivityCalendarPage() {
                     Nothing blocked on this day yet.
                   </p>
                 ) : (
-                  <div className="divide-y divide-sand">
+                  <div className="space-y-1.5 p-2">
                     {dayDurations.rows.map((row) => (
                       <button
                         // assigned_tasks and fixed_pay_tasks number their rows
@@ -2078,17 +2075,18 @@ export default function ProductivityCalendarPage() {
                           const task = daySchedule.find((t) => t.id === row.id);
                           if (task) void openScheduleExisting(task, selectedDate);
                         }}
-                        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors ${
-                          row.source === "fixed" ? "cursor-default" : "hover:bg-cream cursor-pointer"
+                        className={`flex w-full items-center justify-between gap-3 rounded-md border px-2 py-1.5 text-left shadow-sm transition-opacity ${categoryBlockClasses(row.category)} ${
+                          row.source === "fixed" ? "cursor-default" : "hover:opacity-90 cursor-pointer"
                         }`}
                       >
-                        <span className="flex min-w-0 items-center gap-2">
-                          {/* Same category colour the grid blocks and month dots
-                              use, so a task is recognisable wherever it shows. */}
-                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${categoryDotClass(row.category ?? "")}`} />
-                          <span className="min-w-0">
-                          <span className="block truncate text-[13px] font-semibold text-espresso">{row.name}</span>
-                          <span className="block truncate text-[10px] text-stone">
+                        <span className="min-w-0">
+                          {/* Styled as the grid block itself, not a dot beside
+                              neutral text — the same task reads the same way in
+                              either view. Colours come from categoryBlockClasses,
+                              so the secondary line rides the block's own text
+                              colour at reduced opacity rather than fighting it. */}
+                          <span className="block truncate text-[13px] font-semibold">{row.name}</span>
+                          <span className="block truncate text-[10px] opacity-80">
                             {row.account}
                             {/* Output Based rows count toward the total but have
                                 no hour block to open, so they say what they are
@@ -2099,9 +2097,8 @@ export default function ProductivityCalendarPage() {
                                 : "Output Based"
                               : !row.timed && (row.account ? " · no set time" : "No set time")}
                           </span>
-                          </span>
                         </span>
-                        <span className="shrink-0 text-[12px] font-semibold text-walnut">
+                        <span className="shrink-0 text-[12px] font-semibold">
                           {formatDuration(row.minutes)}
                         </span>
                       </button>
