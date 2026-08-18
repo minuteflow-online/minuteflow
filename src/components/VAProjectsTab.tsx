@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
+import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
 import type { Profile, Project, ProjectKind } from "@/types/database";
 
 interface VAProjectsTabProps {
@@ -137,6 +138,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [subtasks, setSubtasks] = useState<SubtaskRow[]>([]);
   const [subtasksLoading, setSubtasksLoading] = useState(false);
   const [addFormKey, setAddFormKey] = useState(0);
+  // Surfaced when a Board View drag's status update fails and gets rolled
+  // back — otherwise a failed drag just silently snaps the card back with no
+  // explanation, unlike the list-view edit form's editSubError.
+  const [boardStatusError, setBoardStatusError] = useState<string | null>(null);
 
   const [editingSubId, setEditingSubId] = useState<number | null>(null);
   const [editStatus, setEditStatus] = useState("pending");
@@ -218,6 +223,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setShowDetails(false);
     setSubtaskView("list");
     setShowAddSubtask(false);
+    setBoardStatusError(null);
     void fetchSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -442,8 +448,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // Board View drag-and-drop: dropping a card into a column updates the task's
   // status via the same PATCH endpoint the list-view edit form uses. Optimistic
   // update with rollback on failure so a drag doesn't silently do nothing.
+  //
+  // Rollback targets only the one subtask that failed (via a functional
+  // setSubtasks, not a whole-array `previous` snapshot) — a whole-array
+  // snapshot taken at call time goes stale the moment a second drag starts
+  // before the first one's fetch resolves, so failing the first drag would
+  // revert the second one's already-applied change too.
   const handleBoardStatusChange = async (subtaskId: number, status: string) => {
-    const previous = subtasks;
+    const previousStatus = subtasks.find((t) => t.id === subtaskId)?.status;
+    setBoardStatusError(null);
     setSubtasks((prev) => prev.map((t) => (t.id === subtaskId ? { ...t, status } : t)));
     try {
       const res = await fetch(`/api/assigned-tasks/${subtaskId}`, {
@@ -453,7 +466,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch {
-      setSubtasks(previous);
+      if (previousStatus !== undefined) {
+        setSubtasks((prev) => prev.map((t) => (t.id === subtaskId ? { ...t, status: previousStatus } : t)));
+      }
+      setBoardStatusError("Couldn't update that task's status — try again.");
     }
   };
 
@@ -597,6 +613,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           <p className="text-[12px] text-stone/70">No subtasks yet. Add one below.</p>
         )}
 
+        {subtaskView === "board" && boardStatusError && (
+          <p className="text-[11px] text-red-600">{boardStatusError}</p>
+        )}
+
         {subtaskView === "board" && (
           <SubtaskBoardView
             subtasks={subtasks}
@@ -615,6 +635,16 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           return (
             <div className="space-y-3 rounded-lg border border-sand bg-parchment p-3">
               <TaskEditor
+                // Sub id in the key — this is the one Board View edit
+                // instance (a fixed JSX position, not one per card, unlike
+                // the list-view edit form below), so without a key that
+                // changes with the subtask, switching which card is being
+                // edited (clicking a different one without cancelling first)
+                // doesn't remount TaskEditor: its useState-seeded fields keep
+                // the previous subtask's values while editingTaskId silently
+                // moves to the new one, and Save would write the old data
+                // onto the new subtask's id.
+                key={`board-edit-${sub.id}`}
                 ref={editTaskEditorRef}
                 mode="time_based"
                 editingTaskId={sub.id}
@@ -669,10 +699,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
         {subtaskView === "list" && subtasks.length > 0 && (
           <div className="space-y-1.5">
             {subtasks.map((sub) => {
-              const assignees = sub.assigned_task_assignees ?? [];
-              const assigneeNames = assignees
-                .map((a) => a.profiles?.full_name || a.profiles?.username || a.va_id)
-                .join(", ");
+              // Shared with SubtaskBoardView.tsx (src/lib/subtaskDisplay.ts) —
+              // keep the two views in sync instead of drifting.
+              const names = subtaskAssigneeNames(sub.assigned_task_assignees, activeProfiles);
               const isEditing = editingSubId === sub.id;
 
               return (
@@ -687,9 +716,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                         {sub.project ?? sub.category}
                       </span>
                     )}
-                    {assigneeNames && (
+                    {names && (
                       <span className="text-[11px] text-stone shrink-0 hidden sm:block">
-                        {assigneeNames}
+                        {names}
                       </span>
                     )}
                     {sub.account && (

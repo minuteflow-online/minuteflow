@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
+import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { weeklyBudgetRejectionForAssignees } from "@/lib/scheduleBudget";
 
 export const dynamic = "force-dynamic";
@@ -184,11 +185,12 @@ export async function GET(request: Request) {
     return Response.json({ tasks: submittedTasks });
   }
 
-  const isAdminOrManager =
-    profile?.role === "admin" || profile?.role === "manager";
   // Permission-granted plain VAs get the same task-management access as an
   // admin/manager here, without touching role or RLS — see adminPermissions.ts.
-  const isPermitted = isAdminOrManager || hasAdminPermission(profile, "task_management");
+  // hasBroadAdminAccess (not a hand-rolled role check) so this stays correct
+  // for coordinator/specialist/ceo/founder too, not just admin/manager — see
+  // the isPermittedPost comment below for the bug this shape used to hide.
+  const isPermitted = hasBroadAdminAccess(profile) || hasAdminPermission(profile, "task_management");
 
   // VA fetching subtasks for a specific project: return tasks in admin-compatible format
   // so VAProjectsTab gets the same structure as admin's ProjectsManager.
@@ -443,19 +445,18 @@ export async function POST(request: Request) {
     .eq("id", user.id)
     .single();
 
-  const isAdminOrManagerPost =
-    profile?.role === "admin" || profile?.role === "manager";
   const isVaPost = profile?.role === "va";
-  const isPermittedPost = isAdminOrManagerPost || hasAdminPermission(profile, "task_management");
+  // hasBroadAdminAccess (admin, manager, coordinator, specialist, ceo,
+  // founder) plus permission-granted plain VAs can create tasks; a plain
+  // "va" role can too, but only ever self-assigns (see va_ids below).
+  // This used to be a hand-rolled `role === "admin" || role === "manager"`
+  // check instead of hasBroadAdminAccess, so every role hasBroadAdminAccess
+  // covers other than admin/manager (coordinator, specialist, ceo, founder)
+  // 403'd here before ever reaching the broader hasAdminPermission check —
+  // calling the shared helper directly instead of re-deriving it locally is
+  // what keeps this from drifting out of sync again.
+  const isPermittedPost = hasBroadAdminAccess(profile) || hasAdminPermission(profile, "task_management");
 
-  // Mirrors the GET handler's isPermitted check above: broad-admin-access
-  // roles (admin, manager, coordinator, specialist, ceo, founder — see
-  // hasBroadAdminAccess) and permission-granted plain VAs can create tasks;
-  // a plain "va" role can too, but only ever self-assigns (see va_ids below).
-  // Previously this checked isAdminOrManagerPost instead of isPermittedPost,
-  // so every role added by hasBroadAdminAccess other than admin/manager
-  // (coordinator, specialist, ceo, founder) 403'd here before ever reaching
-  // that broader check.
   if (!isPermittedPost && !isVaPost) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }

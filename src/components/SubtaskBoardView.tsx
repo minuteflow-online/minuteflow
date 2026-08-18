@@ -8,8 +8,9 @@
 // that file for the still-open questions on revision_needed / on_queue / paid /
 // cancelled placement.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { BOARD_COLUMNS, columnForStatus } from "@/lib/subtaskStatusColumns";
+import { assigneeNames } from "@/lib/subtaskDisplay";
 import type { Profile } from "@/types/database";
 import type { SubtaskRow } from "@/components/VAProjectsTab";
 
@@ -23,12 +24,6 @@ interface SubtaskBoardViewProps {
   activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
 }
 
-function assigneeNames(sub: SubtaskRow): string {
-  return (sub.assigned_task_assignees ?? [])
-    .map((a) => a.profiles?.full_name || a.profiles?.username || a.va_id)
-    .join(", ");
-}
-
 export default function SubtaskBoardView({
   subtasks,
   editingSubId,
@@ -36,29 +31,50 @@ export default function SubtaskBoardView({
   onStatusChange,
   formatDate,
   StatusBadge,
+  activeProfiles,
 }: SubtaskBoardViewProps) {
   const [dragSubId, setDragSubId] = useState<number | null>(null);
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
 
-  const subtasksByColumn = new Map<string, SubtaskRow[]>();
-  for (const col of BOARD_COLUMNS) subtasksByColumn.set(col.key, []);
-  for (const sub of subtasks) {
-    const col = columnForStatus(sub.status);
-    if (col) subtasksByColumn.get(col.key)!.push(sub);
-  }
-
+  // One pass over `subtasks` builds both the column grouping and the
+  // reference list, so dragging (which re-renders this component on every
+  // dragover via dragOverCol/dragSubId, unrelated to `subtasks` itself)
+  // doesn't re-scan and re-call columnForStatus for every subtask twice.
+  //
   // Reference list mirrors the columns exactly — "same subtasks in one place
-  // regardless of column," per the Figma spec, not a superset. Anything excluded
-  // from the columns (currently paid/cancelled, see subtaskStatusColumns.ts) is
-  // excluded here too, so nothing shows up in the list without a matching column.
-  const boardSubtasks = subtasks.filter((sub) => columnForStatus(sub.status));
+  // regardless of column," per the Figma spec, not a superset. Anything
+  // excluded from the columns (currently paid/cancelled, see
+  // subtaskStatusColumns.ts) is excluded here too — surfaced below via
+  // `hiddenCount` instead of just vanishing with no trace.
+  const { subtasksByColumn, boardSubtasks, hiddenCount } = useMemo(() => {
+    const byColumn = new Map<string, SubtaskRow[]>();
+    for (const col of BOARD_COLUMNS) byColumn.set(col.key, []);
+    const inBoard: SubtaskRow[] = [];
+    let hidden = 0;
+    for (const sub of subtasks) {
+      const col = columnForStatus(sub.status);
+      if (col) {
+        byColumn.get(col.key)!.push(sub);
+        inBoard.push(sub);
+      } else {
+        hidden += 1;
+      }
+    }
+    return { subtasksByColumn: byColumn, boardSubtasks: inBoard, hiddenCount: hidden };
+  }, [subtasks]);
 
   const handleDrop = (colKey: string) => {
     setDragOverCol(null);
     if (dragSubId == null) return;
     const col = BOARD_COLUMNS.find((c) => c.key === colKey);
     const sub = subtasks.find((s) => s.id === dragSubId);
-    if (!col || !sub || sub.status === col.dropStatus) {
+    // Compare by the card's current COLUMN, not its literal status, so
+    // releasing a card back inside the column it's already in (e.g. an
+    // on_queue or unassigned card dropped anywhere in Pending, which holds
+    // three different statuses under one dropStatus) doesn't silently
+    // rewrite its status just because it isn't byte-identical to dropStatus.
+    const sourceCol = sub ? columnForStatus(sub.status) : undefined;
+    if (!col || !sub || sourceCol?.key === col.key) {
       setDragSubId(null);
       return;
     }
@@ -72,8 +88,13 @@ export default function SubtaskBoardView({
       <div className="w-56 shrink-0 space-y-2">
         <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Subtasks</p>
         <div className="space-y-1.5 max-h-[560px] overflow-y-auto pr-1">
-          {boardSubtasks.length === 0 && (
+          {boardSubtasks.length === 0 && hiddenCount === 0 && (
             <p className="text-[11px] text-stone/70">No subtasks yet.</p>
+          )}
+          {hiddenCount > 0 && (
+            <p className="text-[11px] text-stone/70">
+              {hiddenCount} hidden (paid/cancelled) — see List View
+            </p>
           )}
           {boardSubtasks.map((sub) => (
             <button
@@ -139,11 +160,15 @@ export default function SubtaskBoardView({
                         </span>
                         <StatusBadge status={sub.status} />
                       </div>
-                      {assigneeNames(sub) && (
-                        <div className="text-[11px] text-stone/80">{assigneeNames(sub)}</div>
-                      )}
+                      {(() => {
+                        const names = assigneeNames(sub.assigned_task_assignees, activeProfiles);
+                        return names && <div className="text-[11px] text-stone/80">{names}</div>;
+                      })()}
                       <div className="flex items-center justify-between gap-2 text-[11px] text-stone/80">
-                        <span>{sub.account ?? sub.project ?? sub.category ?? ""}</span>
+                        {/* Account AND project/category, like the list view shows both —
+                            not one OR the other, so this card can't show less than List View
+                            does for the same subtask. */}
+                        <span>{[sub.account, sub.project ?? sub.category].filter(Boolean).join(" · ")}</span>
                         {sub.due_date && <span>Due: {formatDate(sub.due_date)}</span>}
                       </div>
                     </div>
