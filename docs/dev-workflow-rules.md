@@ -17,6 +17,42 @@ This is a **human-in-the-loop** session. Neil reviews every step before it's com
 Claude Code should pause and show its work at natural checkpoints rather than completing
 an entire feature unsupervised.
 
+## Automation directive (from Toni) — and its hard limits
+Toni wants routine work automated with AI: syncing, testing, verification, lint/build
+checks — all of that should happen without waiting on manual triggers each time. **But
+automation applies only to routine, reversible, non-destructive work.** The boundaries
+below are not inefficiencies to optimize away — they are deliberate safety gates that
+stay in place regardless of how much else gets automated. Confirmed directly by Toni:
+*"don't push on main, don't touch anything in main, just do what is asked and intended
+to do"* and *"never touch anything confidential or do anything destructive."*
+
+## Hard boundaries — absolute, never automated, no exceptions
+These apply even under full automation. If a task seems to require crossing one of
+these, stop and ask a human — do not find a workaround, do not "just this once," do
+not assume urgency justifies it.
+
+1. **`main` is read-only from this workflow.** Never push to it, never merge into it,
+   never edit it directly, never run anything against it that isn't a plain
+   `git pull` (read-only sync). Merging *from* `main` into a feature branch is fine
+   (per the sync rule above) — the boundary is one-directional: information flows
+   from `main` into feature branches, never the other way, and never automatically.
+2. **Never push any branch, or open a PR, without an explicit human "go ahead" in that
+   session.** Local commits are always fine and can happen freely — pushing is not.
+3. **Never touch anything confidential or destructive.** This explicitly includes:
+   - Supabase schema, migrations, RLS policies, or raw SQL against the live database
+   - `.env` files, secrets, API keys, tokens, credentials of any kind
+   - Vercel/deployment configuration, environment variable scopes (Production/Preview/
+     Development) — even just changing a variable's *scope* counts as touching a
+     secret, not just editing its value
+   - Deleting data, deleting files outside the declared task scope, or any action that
+     can't be trivially undone with `git revert`/`git reset`
+   - `CLAUDE.md` / `AGENTS.md` (belong to a different, retired automation system —
+     leave them alone regardless)
+4. **"Automate the routine stuff" means:** syncing with `main`, running lint/build/
+   type-checks, writing and running tests, verifying UI behavior (once a safe test
+   account exists), drafting diffs and commits locally. It does **not** mean removing
+   the human checkpoint before anything in the Hard Boundaries list above happens.
+
 ## Non-negotiable rules
 1. **Never touch `main` directly.** Confirm the current branch with `git status` before
    writing any file. If not on the expected feature branch, stop and say so.
@@ -49,19 +85,33 @@ an entire feature unsupervised.
    what changed.
 6. Commit locally with a clear message. Stop. Wait for the next instruction.
 
-## Keeping your branch in sync with `main` (do this often)
+## Keeping your branch in sync with `main` (mandatory — do this first, every session)
 
 Since teammates — including Toni directly — push real work to `main` regularly, your
 branch can fall behind fast. Stale branches lead to wasted work (see: the Submissions
-feature, already built on `main` before this branch found out). Sync **before starting
-any new task**, and periodically during longer sessions.
+feature, already built on `main` before this branch found out). **This is not
+optional or occasional — it is the first thing to do in every single session, before
+reading any other file or writing any code.**
+
+### The rule
+1. At the very start of a session, before anything else: run the quick check below.
+2. If `main` has moved ahead, **do the sync automatically** — don't ask permission
+   first, just do it and report what came in afterward. This has become routine and
+   low-risk; treat it like checking `git status`, not like a decision that needs
+   sign-off.
+3. **Exception — stop and ask if the merge produces actual conflicts** (git will
+   clearly say "Unmerged paths" / "CONFLICT"). Conflicts are the one case that needs a
+   human decision — don't attempt to resolve them alone.
+4. After syncing, briefly summarize what came in from `main` (commit messages, files
+   touched) so the person knows what changed, especially anything that overlaps with
+   what they're about to work on.
 
 ### Quick check — is `main` ahead of you?
 ```powershell
 git fetch origin
 git log main..origin/main --oneline
 ```
-Empty output = you're already caught up, skip the rest. Non-empty = new commits exist,
+Empty output = already caught up, skip the rest. Non-empty = new commits exist,
 proceed below. (If a pager opens, press `q` to exit.)
 
 ### Sync routine
@@ -73,23 +123,16 @@ git merge main
 ```
 - If this opens an editor for a merge commit message, just save and exit with the
   default message (`Esc` then `:wq` then `Enter` in Vim), or avoid the editor entirely
-  next time by committing with `git commit --no-edit` if it stops mid-merge.
-- If merge conflicts appear (git will clearly list "Unmerged paths"), **stop and ask
-  before resolving** — don't guess on a conflict resolution alone.
+  by committing with `git commit --no-edit` if it stops mid-merge.
 - After merging, **restart the dev server** (`Ctrl+C`, then `npm run dev`) — hot reload
   can get confused by a large merge. If `package.json`/`package-lock.json` changed in
   the merge, run `npm install` first.
 
-### When to run this
-- At the start of every new work session, before writing any code.
-- Before starting a new feature/task, even mid-session.
-- Anytime you're about to ask "does X already exist?" — check `main` first, it might
-  already be answered.
-
-### Claude Code should do this too
-Add to the kickoff prompt (see `docs/claude-code-prompt-template.md`) — Claude Code
-should run the "quick check" above at the start of any session and flag it if `main`
-is ahead, rather than assuming the branch is current.
+### Claude Code must do this automatically
+This is now step 0 of every Claude Code session on this repo — before reading
+`docs/objective-foundation-feature.md` or any other file, before proposing a plan,
+before touching any code. See `docs/claude-code-prompt-template.md`, which has this
+built into the standard opening block.
 
 ## Reporting issues found along the way
 If something looks broken, inconsistent, or risky while working (e.g. a landmine like
