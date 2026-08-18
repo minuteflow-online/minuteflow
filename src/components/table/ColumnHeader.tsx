@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 type FilterOptionValue = string | number;
 
@@ -54,6 +55,41 @@ export default function ColumnHeader<T extends FilterOptionValue>({
       ? filterOptions.filter((opt) => opt.label.toLowerCase().includes(searchValue.toLowerCase()))
       : filterOptions ?? [];
 
+  // The popover renders via a portal at a viewport-relative fixed position
+  // instead of absolute-inside-the-header, so it can't get clipped by the
+  // table's own horizontal-scroll container when the column sits near the
+  // right edge (every filterable column can end up there in a wide table).
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
+  const POPOVER_WIDTH = customFilter ? 220 : 180;
+
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) {
+      setPopoverPos(null);
+      return;
+    }
+    const position = () => {
+      if (!buttonRef.current) return;
+      const rect = buttonRef.current.getBoundingClientRect();
+      const margin = 8;
+      const maxLeft = window.innerWidth - POPOVER_WIDTH - margin;
+      const left = Math.min(rect.left, Math.max(margin, maxLeft));
+      setPopoverPos({ top: rect.bottom + 4, left });
+    };
+    position();
+    window.addEventListener("resize", position);
+    return () => window.removeEventListener("resize", position);
+  }, [open, POPOVER_WIDTH]);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnScroll = () => setOpen(false);
+    // Capture phase so this fires for scroll on any ancestor (e.g. the
+    // table's own overflow-x-auto wrapper), not just window-level scroll.
+    window.addEventListener("scroll", closeOnScroll, true);
+    return () => window.removeEventListener("scroll", closeOnScroll, true);
+  }, [open]);
+
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -80,6 +116,7 @@ export default function ColumnHeader<T extends FilterOptionValue>({
         {hasFilter && (
           <div className="relative">
             <button
+              ref={buttonRef}
               type="button"
               onClick={() => setOpen((o) => !o)}
               className="flex h-5 w-5 items-center justify-center rounded text-terracotta hover:text-[#a85840]"
@@ -89,18 +126,25 @@ export default function ColumnHeader<T extends FilterOptionValue>({
                 <polyline points="6 9 12 15 18 9" />
               </svg>
             </button>
-            {open && customFilter && (
+            {open && popoverPos && customFilter && createPortal(
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-                <div className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-xl border border-sand bg-white p-3 normal-case shadow-lg">
+                <div
+                  className="fixed z-50 min-w-[220px] rounded-xl border border-sand bg-white p-3 normal-case shadow-lg"
+                  style={{ top: popoverPos.top, left: popoverPos.left }}
+                >
                   {customFilter(() => setOpen(false))}
                 </div>
-              </>
+              </>,
+              document.body
             )}
-            {open && !customFilter && filterOptions && onFilterChange && (
+            {open && popoverPos && !customFilter && filterOptions && onFilterChange && createPortal(
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-                <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-xl border border-sand bg-white py-1 normal-case shadow-lg">
+                <div
+                  className="fixed z-50 min-w-[180px] rounded-xl border border-sand bg-white py-1 normal-case shadow-lg"
+                  style={{ top: popoverPos.top, left: popoverPos.left }}
+                >
                   {searchable && onSearchChange && (
                     <div className="border-b border-sand px-3 py-2">
                       <input
@@ -142,7 +186,8 @@ export default function ColumnHeader<T extends FilterOptionValue>({
                     <div className="px-3 py-2 text-[12px] font-normal normal-case text-stone">No options found</div>
                   )}
                 </div>
-              </>
+              </>,
+              document.body
             )}
           </div>
         )}
