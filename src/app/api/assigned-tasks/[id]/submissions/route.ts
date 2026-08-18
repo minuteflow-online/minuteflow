@@ -335,6 +335,23 @@ export async function POST(request: Request, { params }: RouteContext) {
     }
   }
 
+  // Write the auto-outcome status here rather than leaving it to the caller.
+  // The browser still moves the status for a normal submission, but an auto
+  // outcome must not depend on it: a stale tab or a dropped response would
+  // leave the thread saying "auto approved" while the task sat in the review
+  // queue. Observed on task 313, which stayed `submitted` with no approval.
+  if (autoStatus) {
+    const stamp = new Date().toISOString();
+    await admin
+      .from("assigned_task_assignees")
+      .update({ status: autoStatus, updated_at: stamp })
+      .eq("assigned_task_id", id);
+    await admin
+      .from("assigned_tasks")
+      .update({ status: autoStatus, updated_at: stamp })
+      .eq("id", id);
+  }
+
   const [withFiles] = await withAttachments(admin, [submission as never]);
   return Response.json({ submission: withFiles, autoStatus }, { status: 201 });
 }
