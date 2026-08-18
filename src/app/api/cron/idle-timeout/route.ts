@@ -8,7 +8,11 @@ export const dynamic = "force-dynamic";
 /** How long after the warning DM a VA has to come back before the session is
  *  closed. Measured from profiles.idle_warned_at, so any heartbeat in between
  *  clears it and the countdown restarts from scratch. */
-const GRACE_MS = 15 * 60 * 1000;
+const GRACE_MS = 10 * 60 * 1000;
+
+/** Categories where going quiet is expected, not suspicious. Breaks are matched
+ *  separately via active_task.isBreak, which is how the break flow stores them. */
+const IDLE_EXEMPT_CATEGORIES = ["Personal", "Break"];
 
 // How long a session heartbeat (sessions.updated_at, refreshed every 60s while a tab
 // is open) must be stale before we consider the session *possibly* idle. This is used
@@ -73,14 +77,26 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: "Failed to query sessions" }, { status: 500 });
   }
 
-  const candidates = (staleSessions || []).map((s) => {
-    const activeTask = s.active_task as { logId?: string; start_time?: string } | null;
-    return {
-      user_id: s.user_id as string,
-      log_id: activeTask?.logId ? parseInt(activeTask.logId, 10) : null,
-      last_heartbeat: s.updated_at as string,
-    };
-  });
+  const candidates = (staleSessions || [])
+    .map((s) => {
+      const activeTask = s.active_task as {
+        logId?: string;
+        start_time?: string;
+        category?: string;
+        isBreak?: boolean;
+      } | null;
+      return {
+        user_id: s.user_id as string,
+        log_id: activeTask?.logId ? parseInt(activeTask.logId, 10) : null,
+        last_heartbeat: s.updated_at as string,
+        category: activeTask?.category ?? null,
+        isBreak: Boolean(activeTask?.isBreak),
+      };
+    })
+    // Being idle is the whole point of a break, and Personal time is time the
+    // VA is legitimately away from the screen. Only silence while a real task
+    // is running counts as unexplained.
+    .filter((c) => !c.isBreak && !IDLE_EXEMPT_CATEGORIES.includes(c.category ?? ""));
 
   if (candidates.length > 0) {
     console.log(
