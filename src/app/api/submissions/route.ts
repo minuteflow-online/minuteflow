@@ -226,7 +226,19 @@ export async function GET(request: Request) {
         latestByTask.set(entry.assigned_task_id, entry);
       }
     }
+    // A task marked complete is done regardless of where its thread ended —
+    // otherwise it keeps showing Approve/Revise after someone closed it out.
+    const completedTasks = new Set(
+      rows
+        .filter((r) => r.assigned_tasks?.status === "completed")
+        .map((r) => r.assigned_tasks!.id)
+    );
+
     for (const [taskId, entry] of latestByTask) {
+      if (completedTasks.has(taskId)) {
+        reviewState[taskId] = "completed";
+        continue;
+      }
       reviewState[taskId] =
         entry.message_type === "revision"
           ? "revision_requested"

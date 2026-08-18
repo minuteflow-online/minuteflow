@@ -86,6 +86,18 @@ const REVIEW_STATUS: Record<ReviewOutcome, AssignedTaskStatus> = {
   approval_reversed: "submitted",
 };
 
+/**
+ * Status filter options. These match the pills on the cards, so what you
+ * filter by is what you see labelled.
+ */
+const STATUS_OPTIONS = [
+  { value: "awaiting", label: "Review" },
+  { value: "revision_requested", label: "Revision" },
+  { value: "approved", label: "Approved" },
+  { value: "auto_approved", label: "Auto approved" },
+  { value: "completed", label: "Completed" },
+];
+
 const SCOPE_OPTIONS: Array<{ value: SubmissionScopeFilter; label: string }> = [
   { value: "all", label: "All work" },
   { value: "objective", label: "Objective" },
@@ -107,6 +119,7 @@ const REVIEW_STATE_PILL: Record<string, { label: string; className: string }> = 
   // Distinct from a human Approved: this task was flagged review_required =
   // false, so nobody looked at it. Worth being able to tell apart at a glance.
   auto_approved: { label: "Auto approved", className: "bg-sage-soft text-sage border-sage/20" },
+  completed: { label: "Completed", className: "bg-stone/10 text-stone border-stone/20" },
 };
 
 /** "1h 23m" / "45m" / "30s" — compact enough to sit inline on a badge row. */
@@ -182,6 +195,7 @@ export default function SubmissionsPage() {
   const [showTrash, setShowTrash] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   // Every filter is multi-select; an empty set means "all".
   const [vaFilter, setVaFilter] = useState<Set<string>>(new Set());
   const [scopeFilter, setScopeFilter] = useState<Set<string>>(new Set());
@@ -412,6 +426,36 @@ This cannot be undone.`
     [load]
   );
 
+  /**
+   * Closes a task out without approving it — for work that's finished but was
+   * never a review decision. The note keeps the thread honest about who ended it.
+   */
+  const completeTask = useCallback(
+    async (item: FeedItem) => {
+      if (!item.task) return;
+      setBusyId(item.id);
+      try {
+        await fetch(`/api/assigned-tasks/${item.task.id}/submissions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message_type: "comment", message: "Marked complete" }),
+        });
+        const moved = await setAssignedTaskStatus({
+          assignedTaskId: item.task.id,
+          status: "completed",
+          vaId: item.user_id,
+        });
+        if (!moved) {
+          alert("The note was recorded but the task status could not be updated.");
+        }
+        await load();
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load]
+  );
+
   /** Appends a note to a task's thread. Never edits — that's the whole point. */
   const addNote = useCallback(
     async (item: FeedItem, note: string) => {
@@ -475,6 +519,18 @@ This cannot be undone.`
       rows = rows.filter((r) => r.task?.assigned_by && assignedByFilter.has(r.task.assigned_by));
     }
 
+    if (statusFilter.size > 0) {
+      rows = rows.filter((r) => {
+        if (!r.task) return false;
+        const state = reviewState[String(r.task.id)] ?? "awaiting";
+        const key =
+          state === "approved" && r.task.review_required === false
+            ? "auto_approved"
+            : state;
+        return statusFilter.has(key);
+      });
+    }
+
     if (categoryFilter.size > 0) {
       rows = rows.filter((r) => categoryFilter.has((r.task?.category ?? "").trim()));
     }
@@ -494,7 +550,7 @@ This cannot be undone.`
     }
 
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter]);
+  }, [items, vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -669,6 +725,13 @@ This cannot be undone.`
         )}
 
         <MultiSelectFilter
+          allLabel="All statuses"
+          selected={statusFilter}
+          onChange={setStatusFilter}
+          options={STATUS_OPTIONS}
+        />
+
+        <MultiSelectFilter
           allLabel="All categories"
           selected={categoryFilter}
           onChange={setCategoryFilter}
@@ -752,6 +815,7 @@ This cannot be undone.`
           showTrash={showTrash}
           selectedTaskIds={selectedTaskIds}
           onSelectChange={handleSelectChange}
+          onComplete={completeTask}
         />
       ) : (
         <CalendarView
@@ -1052,6 +1116,7 @@ function ThreadCard({
   trashed,
   selected,
   onSelectChange,
+  onComplete,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -1066,6 +1131,7 @@ function ThreadCard({
   trashed: boolean;
   selected: boolean;
   onSelectChange: (taskId: number, checked: boolean) => void;
+  onComplete: (item: FeedItem) => void;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -1168,6 +1234,14 @@ function ThreadCard({
               className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
             >
               Revise
+            </button>
+            <button
+              onClick={() => onComplete(latest)}
+              disabled={busy}
+              className="rounded-lg bg-stone/10 px-2.5 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+              title="Close this out without an approval decision"
+            >
+              Complete
             </button>
           </div>
         ) : (
@@ -1288,6 +1362,7 @@ function TimelineView({
   showTrash,
   selectedTaskIds,
   onSelectChange,
+  onComplete,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -1301,6 +1376,7 @@ function TimelineView({
   showTrash: boolean;
   selectedTaskIds: Set<number>;
   onSelectChange: (taskId: number, checked: boolean) => void;
+  onComplete: (item: FeedItem) => void;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -1337,6 +1413,7 @@ function TimelineView({
                 trashed={showTrash}
                 selected={selectedTaskIds.has(thread.taskId)}
                 onSelectChange={onSelectChange}
+                onComplete={onComplete}
               />
             ))}
         </DayGroup>
