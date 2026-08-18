@@ -162,6 +162,12 @@ export default function ProductivityCalendarPage() {
 
   const [assignedTasksAll, setAssignedTasksAll] = useState<RawTask[]>([]);
   const [fixedItems, setFixedItems] = useState<DueItem[]>([]);
+  // Output Based tasks carry a duration but never an hour block, so they can't
+  // come through scheduledForDate. Held separately, one entry per task, and
+  // folded into the day's total by durationsForDate.
+  const [fixedDurations, setFixedDurations] = useState<
+    Array<{ taskId: number; name: string; account: string | null; category: string | null; status: string; minutes: number; date: string }>
+  >([]);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [daySchedule, setDaySchedule] = useState<RawTask[]>([]);
   const [loadingDay, setLoadingDay] = useState(false);
@@ -316,6 +322,7 @@ export default function ProductivityCalendarPage() {
         category: string | null;
         status: string;
         claimed_by: string | null;
+        planned_minutes: number | null;
       }>;
       let filtered = rows.filter((t) => t.due_date || t.start_date);
       if (!isAdminOrManager || scope === "__self__") {
@@ -353,8 +360,26 @@ export default function ProductivityCalendarPage() {
         return out;
       });
       setFixedItems(items);
+      // Durations are counted from the RAW rows, not the span-expanded items:
+      // a task running Mon-Fri produces five DueItems, and totalling those
+      // would count its estimate five times. One row, one anchor day — the day
+      // it starts, or its due date when that's all it has.
+      setFixedDurations(
+        filtered
+          .filter((t) => t.planned_minutes != null && t.planned_minutes > 0)
+          .map((t) => ({
+            taskId: t.id,
+            name: t.task_name,
+            account: t.account,
+            category: t.category,
+            status: t.status,
+            minutes: t.planned_minutes as number,
+            date: (t.start_date ?? t.due_date) as string,
+          }))
+      );
     } catch {
       setFixedItems([]);
+      setFixedDurations([]);
     }
   }, [userId, isAdminOrManager, scope]);
 
@@ -842,34 +867,66 @@ export default function ProductivityCalendarPage() {
   // Two sources, never both for one task: a block contributes its own length,
   // and a task with no block contributes planned_minutes. The editor clears one
   // when you set the other, so nothing is counted twice.
-  const dayDurations = useMemo(() => {
-    const blocked = scheduledForDate(selectedDate).map((t) => ({
-      id: t.id,
-      name: t.task_name,
-      account: t.account,
-      minutes: minutesOf(t),
-      timed: true,
-    }));
-    const blockedIds = new Set(blocked.map((r) => r.id));
-    const untimed = daySchedule
-      .filter(
-        (t) =>
-          !blockedIds.has(t.id) &&
-          t.planned_minutes != null &&
-          t.planned_minutes > 0 &&
-          (t.start_date === selectedDate || t.due_date === selectedDate) &&
-          taskPassesFilters(t)
-      )
-      .map((t) => ({
+  // Date-parameterised so Week and Month can ask the same question per day that
+  // the Day view asks about selectedDate — the Hours tab, the day badges and the
+  // budget all read from this one place rather than each re-deriving a total.
+  const durationsForDate = useCallback(
+    (dateStr: string) => {
+      const blocked = scheduledForDate(dateStr).map((t) => ({
         id: t.id,
         name: t.task_name,
         account: t.account,
-        minutes: t.planned_minutes as number,
-        timed: false,
+        minutes: minutesOf(t),
+        timed: true,
       }));
-    const rows = [...blocked, ...untimed].sort((a, b) => b.minutes - a.minutes);
-    return { rows, totalMinutes: rows.reduce((sum, r) => sum + r.minutes, 0) };
-  }, [scheduledForDate, selectedDate, daySchedule, taskPassesFilters]);
+      const blockedIds = new Set(blocked.map((r) => r.id));
+      const untimed = daySchedule
+        .filter(
+          (t) =>
+            !blockedIds.has(t.id) &&
+            t.planned_minutes != null &&
+            t.planned_minutes > 0 &&
+            (t.start_date === dateStr || t.due_date === dateStr) &&
+            taskPassesFilters(t)
+        )
+        .map((t) => ({
+          id: t.id,
+          name: t.task_name,
+          account: t.account,
+          minutes: t.planned_minutes as number,
+          timed: false,
+        }));
+      // Output Based work on this day. Same applied filters the due dots use —
+      // project and recurring don't apply to fixed-pay rows, so only source,
+      // status and category can exclude one.
+      const fixed = fixedDurations
+        .filter((f) => {
+          if (f.date !== dateStr) return false;
+          if (applied.source.size > 0 && !applied.source.has("fixed")) return false;
+          if (applied.status.size > 0 && !applied.status.has(f.status)) return false;
+          if (applied.category.size > 0 && !(f.category && applied.category.has(f.category))) return false;
+          return true;
+        })
+        .map((f) => ({
+          id: f.taskId,
+          name: f.name,
+          account: f.account,
+          minutes: f.minutes,
+          timed: false,
+          source: "fixed" as const,
+        }));
+
+      const rows = [
+        ...blocked.map((r) => ({ ...r, source: "assigned" as const })),
+        ...untimed.map((r) => ({ ...r, source: "assigned" as const })),
+        ...fixed,
+      ].sort((a, b) => b.minutes - a.minutes);
+      return { rows, totalMinutes: rows.reduce((sum, r) => sum + r.minutes, 0) };
+    },
+    [scheduledForDate, daySchedule, taskPassesFilters, fixedDurations, applied]
+  );
+
+  const dayDurations = useMemo(() => durationsForDate(selectedDate), [durationsForDate, selectedDate]);
 
   // The day's budget comes from the VA's shift in Team Management — shift_hours,
   // or the shift_start/shift_end span when that's how it's set. The badge counts
@@ -1683,8 +1740,11 @@ export default function ProductivityCalendarPage() {
                   <div className="divide-y divide-sand">
                     {dayDurations.rows.map((row) => (
                       <button
-                        key={row.id}
+                        // assigned_tasks and fixed_pay_tasks number their rows
+                        // independently, so the id alone isn't unique here.
+                        key={`${row.source}-${row.id}`}
                         type="button"
+                        disabled={row.source === "fixed"}
                         onClick={() => {
                           // Timed rows open through the block path (it needs the
                           // re-anchored copy); untimed ones have no block, so
@@ -1697,13 +1757,22 @@ export default function ProductivityCalendarPage() {
                           const task = daySchedule.find((t) => t.id === row.id);
                           if (task) void openScheduleExisting(task, selectedDate);
                         }}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-cream cursor-pointer"
+                        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors ${
+                          row.source === "fixed" ? "cursor-default" : "hover:bg-cream cursor-pointer"
+                        }`}
                       >
                         <span className="min-w-0">
                           <span className="block truncate text-[13px] font-semibold text-espresso">{row.name}</span>
                           <span className="block truncate text-[10px] text-stone">
                             {row.account}
-                            {!row.timed && (row.account ? " · no set time" : "No set time")}
+                            {/* Output Based rows count toward the total but have
+                                no hour block to open, so they say what they are
+                                rather than offering an edit that goes nowhere. */}
+                            {row.source === "fixed"
+                              ? row.account
+                                ? " · Output Based"
+                                : "Output Based"
+                              : !row.timed && (row.account ? " · no set time" : "No set time")}
                           </span>
                         </span>
                         <span className="shrink-0 text-[12px] font-semibold text-walnut">
