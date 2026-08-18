@@ -379,6 +379,10 @@ export default function TaskListPage() {
   const [filterDueEnd, setFilterDueEnd] = useState("");
   const [filterStartStart, setFilterStartStart] = useState("");
   const [filterStartEnd, setFilterStartEnd] = useState("");
+  // Independent of the range above — filter for tasks that have (or lack) any
+  // value in the field at all, regardless of what that value is.
+  const [filterDueDateMode, setFilterDueDateMode] = useState<"any" | "has" | "none">("any");
+  const [filterStartDateMode, setFilterStartDateMode] = useState<"any" | "has" | "none">("any");
   const [filterCreatedStart, setFilterCreatedStart] = useState("");
   const [filterCreatedEnd, setFilterCreatedEnd] = useState("");
   const [filterAssignedBy, setFilterAssignedBy] = useState<string[]>([]);
@@ -1090,11 +1094,16 @@ export default function TaskListPage() {
         if (!filterSubmittedBy.includes(vaName)) return false;
       }
       if (taskNameSearchLower && !detail.task_name.toLowerCase().includes(taskNameSearchLower)) return false;
+      if (filterDueDateMode === "has" && !dueTime) return false;
+      if (filterDueDateMode === "none" && dueTime) return false;
       if (start && (!dueTime || dueTime < start.getTime())) return false;
       if (end && (!dueTime || dueTime > end.getTime())) return false;
+
+      const sd = detail.start_date ? parseDueDateSafe(detail.start_date) : null;
+      const sdTime = sd && !Number.isNaN(sd.getTime()) ? sd.getTime() : null;
+      if (filterStartDateMode === "has" && !sdTime) return false;
+      if (filterStartDateMode === "none" && sdTime) return false;
       if (startFrom || startTo) {
-        const sd = detail.start_date ? parseDueDateSafe(detail.start_date) : null;
-        const sdTime = sd && !Number.isNaN(sd.getTime()) ? sd.getTime() : null;
         if (startFrom && (!sdTime || sdTime < startFrom.getTime())) return false;
         if (startTo && (!sdTime || sdTime > startTo.getTime())) return false;
       }
@@ -1109,7 +1118,7 @@ export default function TaskListPage() {
       }
       return true;
     });
-  }, [filterAccounts, filterDueEnd, filterDueStart, filterStartStart, filterStartEnd, filterCreatedStart, filterCreatedEnd, filterAssignedBy, filterProjects, filterOverdue, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks, activeView, objectiveProjectIds]);
+  }, [filterAccounts, filterDueEnd, filterDueStart, filterDueDateMode, filterStartStart, filterStartEnd, filterStartDateMode, filterCreatedStart, filterCreatedEnd, filterAssignedBy, filterProjects, filterOverdue, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks, activeView, objectiveProjectIds]);
 
   const avgAccuracy = useMemo(() => {
     const rows = filteredTasks.filter((t) => typeof t.accuracy_score === "number");
@@ -1218,16 +1227,39 @@ export default function TaskListPage() {
     setInlineEdit(null);
   }, []);
 
+  function DateModeToggle({ mode, setMode }: { mode: "any" | "has" | "none"; setMode: (m: "any" | "has" | "none") => void }) {
+    return (
+      <div>
+        <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Has a date</label>
+        <div className="inline-flex w-full rounded-lg border border-sand bg-parchment/40 p-1 text-[11px] font-semibold">
+          {(["any", "has", "none"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`flex-1 rounded-md px-2 py-1 transition-colors ${mode === m ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"}`}
+            >
+              {m === "any" ? "Any" : m === "has" ? "Has date" : "No date"}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   function DueDateRangeFilter({ close }: { close: () => void }) {
+    const noDate = filterDueDateMode === "none";
     return (
       <div className="space-y-3">
+        <DateModeToggle mode={filterDueDateMode} setMode={setFilterDueDateMode} />
         <div>
           <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
           <input
             type="date"
             value={filterDueStart}
             onChange={(e) => setFilterDueStart(e.target.value)}
-            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+            disabled={noDate}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta disabled:opacity-40"
           />
         </div>
         <div>
@@ -1236,20 +1268,22 @@ export default function TaskListPage() {
             type="date"
             value={filterDueEnd}
             onChange={(e) => setFilterDueEnd(e.target.value)}
-            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+            disabled={noDate}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta disabled:opacity-40"
           />
         </div>
-        <label className="flex cursor-pointer items-center gap-2 border-t border-sand pt-2 text-[12px] text-espresso">
+        <label className={`flex items-center gap-2 border-t border-sand pt-2 text-[12px] text-espresso ${noDate ? "opacity-40" : "cursor-pointer"}`}>
           <input
             type="checkbox"
             checked={filterOverdue}
+            disabled={noDate}
             onChange={(e) => setFilterOverdue(e.target.checked)}
             className="accent-terracotta"
           />
           Overdue only
         </label>
         <div className="flex items-center justify-between border-t border-sand pt-2">
-          <button type="button" onClick={() => { setFilterDueStart(""); setFilterDueEnd(""); setFilterOverdue(false); }} className="cursor-pointer text-[11px] text-stone hover:underline">
+          <button type="button" onClick={() => { setFilterDueStart(""); setFilterDueEnd(""); setFilterOverdue(false); setFilterDueDateMode("any"); }} className="cursor-pointer text-[11px] text-stone hover:underline">
             Clear
           </button>
           <button type="button" onClick={close} className="cursor-pointer text-[11px] font-semibold text-terracotta hover:underline">
@@ -1260,22 +1294,27 @@ export default function TaskListPage() {
     );
   }
 
-  function DateRangeFilter({ from, to, setFrom, setTo, close }: {
+  function DateRangeFilter({ from, to, setFrom, setTo, mode, setMode, close }: {
     from: string;
     to: string;
     setFrom: (v: string) => void;
     setTo: (v: string) => void;
+    mode?: "any" | "has" | "none";
+    setMode?: (m: "any" | "has" | "none") => void;
     close: () => void;
   }) {
+    const noDate = mode === "none";
     return (
       <div className="space-y-3">
+        {setMode && <DateModeToggle mode={mode ?? "any"} setMode={setMode} />}
         <div>
           <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">From</label>
           <input
             type="date"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
-            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+            disabled={noDate}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta disabled:opacity-40"
           />
         </div>
         <div>
@@ -1284,11 +1323,12 @@ export default function TaskListPage() {
             type="date"
             value={to}
             onChange={(e) => setTo(e.target.value)}
-            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta"
+            disabled={noDate}
+            className="w-full rounded-lg border border-sand px-2.5 py-1.5 text-[13px] outline-none focus:border-terracotta disabled:opacity-40"
           />
         </div>
         <div className="flex items-center justify-between border-t border-sand pt-2">
-          <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="cursor-pointer text-[11px] text-stone hover:underline">
+          <button type="button" onClick={() => { setFrom(""); setTo(""); setMode?.("any"); }} className="cursor-pointer text-[11px] text-stone hover:underline">
             Clear
           </button>
           <button type="button" onClick={close} className="cursor-pointer text-[11px] font-semibold text-terracotta hover:underline">
@@ -2040,7 +2080,7 @@ export default function TaskListPage() {
                 <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
                 <div className="flex items-center gap-2">
                   <ToolbarFilterDropdown label="Project" options={projectFilterOptions} selected={filterProjects} onChange={setFilterProjects} />
-                  {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || filterDueStart || filterDueEnd || filterStartStart || filterStartEnd || filterCreatedStart || filterCreatedEnd || filterOverdue || taskNameSearch) && (
+                  {(filterStatuses.length > 0 || filterAccounts.length > 0 || filterTaskNames.length > 0 || filterObjectives.length > 0 || filterSubmittedBy.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || filterDueStart || filterDueEnd || filterDueDateMode !== "any" || filterStartStart || filterStartEnd || filterStartDateMode !== "any" || filterCreatedStart || filterCreatedEnd || filterOverdue || taskNameSearch) && (
                     <button
                       type="button"
                       onClick={() => {
@@ -2053,8 +2093,10 @@ export default function TaskListPage() {
                         setFilterProjects([]);
                         setFilterDueStart("");
                         setFilterDueEnd("");
+                        setFilterDueDateMode("any");
                         setFilterStartStart("");
                         setFilterStartEnd("");
+                        setFilterStartDateMode("any");
                         setFilterCreatedStart("");
                         setFilterCreatedEnd("");
                         setFilterOverdue(false);
@@ -2279,9 +2321,9 @@ export default function TaskListPage() {
                             label="Start Date"
                             width={columnWidths.start_date}
                             onResize={(w) => setColumnWidth("start_date", w)}
-                            isFiltered={Boolean(filterStartStart || filterStartEnd)}
+                            isFiltered={Boolean(filterStartStart || filterStartEnd || filterStartDateMode !== "any")}
                             customFilter={(close) => (
-                              <DateRangeFilter from={filterStartStart} to={filterStartEnd} setFrom={setFilterStartStart} setTo={setFilterStartEnd} close={close} />
+                              <DateRangeFilter from={filterStartStart} to={filterStartEnd} setFrom={setFilterStartStart} setTo={setFilterStartEnd} mode={filterStartDateMode} setMode={setFilterStartDateMode} close={close} />
                             )}
                           />
                         )}
@@ -2290,7 +2332,7 @@ export default function TaskListPage() {
                             label="Due Date"
                             width={columnWidths.due_date}
                             onResize={(w) => setColumnWidth("due_date", w)}
-                            isFiltered={Boolean(filterDueStart || filterDueEnd || filterOverdue)}
+                            isFiltered={Boolean(filterDueStart || filterDueEnd || filterOverdue || filterDueDateMode !== "any")}
                             customFilter={(close) => <DueDateRangeFilter close={close} />}
                           />
                         )}
