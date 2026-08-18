@@ -100,6 +100,10 @@ const DUE_MARKER_ROW = 15;
 // on six empty hours and needs a scroll before anything is visible.
 const DEFAULT_SCROLL_HOUR = 6;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// Past about a month the columns are too narrow to read anything in, and every
+// extra day costs a full pass over the schedule. The range is clamped, and the
+// UI says so rather than silently showing a shorter span than was asked for.
+const RANGE_MAX_DAYS = 31;
 
 
 function formatDayShort(dateStr: string): { weekday: string; day: number } {
@@ -148,7 +152,12 @@ export default function ProductivityCalendarPage() {
   const todayStr = getDateInTimezone(orgTimezone);
   const isAdminOrManager = hasBroadAdminAccess({ role });
 
-  const [viewMode, setViewMode] = useUrlTab<"month" | "week" | "day">("view", "month", ["month", "week", "day"]);
+  const [viewMode, setViewMode] = useUrlTab<"month" | "week" | "day" | "range">("view", "month", ["month", "week", "day", "range"]);
+  // A custom span, for when the work you're looking at doesn't line up with a
+  // calendar week — a two-week push, or Thu-to-Tue. Defaults to the coming
+  // week so the view is never empty on arrival.
+  const [rangeStart, setRangeStart] = useState<string>("");
+  const [rangeEnd, setRangeEnd] = useState<string>("");
   const [scope, setScope] = useState<string>("__self__");
   // Multi-VA "compare" for Day view: pick several teammates and see each as its
   // own skinny column. Separate from `scope` (which drives the single grid).
@@ -413,7 +422,9 @@ export default function ProductivityCalendarPage() {
   }, [dayUserId, userId]);
 
   useEffect(() => {
-    if (viewMode === "day" || viewMode === "week") fetchDaySchedule();
+    // Range draws the same hour blocks Week and Day do, so it needs the same
+    // fetch — without this the grid renders empty until you visit another view.
+    if (viewMode === "day" || viewMode === "week" || viewMode === "range") fetchDaySchedule();
   }, [viewMode, fetchDaySchedule]);
 
   // Fetch a schedule per compared VA (Day view multi-column). Runs one active-
@@ -655,6 +666,23 @@ export default function ProductivityCalendarPage() {
     [monthYear, monthMonth]
   );
   const weekGrid = useMemo(() => buildWeekGrid(selectedDate), [selectedDate]);
+  // The days the custom range covers. Falls back to a week from selectedDate
+  // until both ends are picked, and is capped at RANGE_MAX_DAYS — past that the
+  // columns are too narrow to read and the render cost stops being worth it.
+  const rangeGrid = useMemo(() => {
+    const start = rangeStart || selectedDate;
+    const end = rangeEnd || addDaysToDateStr(start, 6);
+    if (end < start) return [start];
+    const days: string[] = [];
+    for (let cursor = start; cursor <= end && days.length < RANGE_MAX_DAYS; cursor = addDaysToDateStr(cursor, 1)) {
+      days.push(cursor);
+    }
+    return days;
+  }, [rangeStart, rangeEnd, selectedDate]);
+  const rangeTruncated = Boolean(
+    rangeStart && rangeEnd && rangeEnd >= rangeStart && rangeGrid.length === RANGE_MAX_DAYS &&
+      rangeGrid[rangeGrid.length - 1] < rangeEnd
+  );
   const weekLabel = useMemo(() => {
     const start = weekGrid[0];
     const end = weekGrid[6];
@@ -1172,6 +1200,107 @@ export default function ProductivityCalendarPage() {
   }
 
 
+  // The time grid, over ANY list of days. Week passes its seven; the custom
+  // range passes however many were picked. Extracted rather than copied so the
+  // two can't drift -- the block layout, the add-by-click and the overlap
+  // packing are fiddly enough that a second copy would rot.
+  const COLS = (n: number) => `48px repeat(${n}, minmax(96px, 1fr))`;
+  const renderTimeGrid = (dates: string[]) => (
+              <div className="overflow-x-auto">
+                <div className="grid" style={{ minWidth: Math.max(760, dates.length * 110), gridTemplateColumns: COLS(dates.length) }}>
+                  <div />
+                  {dates.map((dateStr) => {
+                    const { weekday, day } = formatDayShort(dateStr);
+                    const isToday = dateStr === todayStr;
+                    const badge = budgetBadgeFor(dateStr, "show");
+                    return (
+                      <button
+                        key={dateStr}
+                        type="button"
+                        onClick={() => openDay(dateStr)}
+                        className={`flex flex-col items-center gap-0.5 rounded-md py-1.5 text-center hover:bg-cream transition-colors cursor-pointer ${
+                          isToday ? "bg-terracotta-soft" : ""
+                        }`}
+                      >
+                        <span className="text-[9px] font-semibold text-walnut uppercase tracking-wide">{weekday}</span>
+                        <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
+                        {badge && (
+                          <span className={`rounded-full border px-1.5 text-[9px] font-semibold leading-tight ${budgetBadgeClass(badge)}`}>
+                            {badge.text}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+  
+                  <div ref={openAtWorkingHours} className={GRID_SCROLL_CLASS} style={{ gridColumn: `span ${dates.length + 1}` }}>
+                  <div className="relative grid" style={{ height: hours.length * HOUR_HEIGHT, gridTemplateColumns: COLS(dates.length) }}>
+                    {/* Hour labels */}
+                    <div className="relative">
+                      {hours.map((hour, i) => (
+                        <span
+                          key={hour}
+                          className="absolute left-0 w-12 pt-0.5 text-[10px] text-stone"
+                          style={{ top: i * HOUR_HEIGHT }}
+                        >
+                          {new Date(2000, 0, 1, hour).toLocaleTimeString("en-US", { hour: "numeric" })}
+                        </span>
+                      ))}
+                    </div>
+  
+                    {/* Day columns */}
+                    {dates.map((dateStr) => (
+                      <div key={dateStr} className="relative border-l border-sand">
+                        {hours.map((hour, i) => (
+                          <button
+                            key={hour}
+                            type="button"
+                            onClick={() => openAddBlock(hour, dateStr)}
+                            className="absolute left-0 right-0 border-t border-sand hover:bg-cream transition-colors cursor-pointer"
+                            style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                          />
+                        ))}
+                        <div className="pointer-events-none absolute inset-0">
+                          {(() => {
+                            const dayTasks = scheduledForDate(dateStr);
+                            const overlapLayout = computeOverlapLayout(dayTasks);
+                            return dayTasks.map((task) => {
+                              const { top, height } = blockPosition(task);
+                              // Due-date-driven blocks render fully opaque; start-date-driven
+                              // blocks (the default) stay at 70% opacity.
+                              const isDueBlock = dateStr === task.due_date && dateStr !== task.start_date;
+                              const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
+                              const label = spanLabel(task, dateStr);
+                              return (
+                                <button
+                                  key={task.id}
+                                  type="button"
+                                  onClick={() => openEditBlock(task)}
+                                  className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
+                                  style={{
+                                    top,
+                                    height,
+                                    left: `calc(2px + (100% - 4px) * ${col} / ${cols})`,
+                                    width: `calc((100% - 4px) / ${cols} - 2px)`,
+                                  }}
+                                >
+                                  <p className="truncate text-[9px] font-semibold leading-tight">
+                                    {label && <span className="opacity-70">[{label}] </span>}
+                                    {task.task_name}
+                                  </p>
+                                </button>
+                              );
+                            });
+                          })()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  </div>
+                </div>
+              </div>
+  );
+
   if (!ready) {
     return <div className="p-8 text-center text-xs text-stone">Loading calendar…</div>;
   }
@@ -1208,6 +1337,21 @@ export default function ProductivityCalendarPage() {
           >
             Day
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              // Seed the pickers from wherever you already are, so switching in
+              // shows the week around the current date rather than nothing.
+              if (!rangeStart) setRangeStart(selectedDate);
+              if (!rangeEnd) setRangeEnd(addDaysToDateStr(rangeStart || selectedDate, 6));
+              setViewMode("range");
+            }}
+            className={`px-3 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+              viewMode === "range" ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+            }`}
+          >
+            Range
+          </button>
 
           <span className="mx-1 h-4 w-px bg-sand" />
           <button
@@ -1224,6 +1368,29 @@ export default function ProductivityCalendarPage() {
             title="Jump to date"
             className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
           />
+
+          {/* Only in Range view — two more date boxes sitting next to "jump to
+              date" the rest of the time would just be three ambiguous inputs. */}
+          {viewMode === "range" && (
+            <span className="ml-1 flex items-center gap-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">From</span>
+              <input
+                type="date"
+                value={rangeStart}
+                max={rangeEnd || undefined}
+                onChange={(e) => setRangeStart(e.target.value)}
+                className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+              />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">To</span>
+              <input
+                type="date"
+                value={rangeEnd}
+                min={rangeStart || undefined}
+                onChange={(e) => setRangeEnd(e.target.value)}
+                className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+              />
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -1663,99 +1830,38 @@ export default function ProductivityCalendarPage() {
               )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <div className="grid min-w-[760px] grid-cols-[48px_repeat(7,1fr)]">
-                <div />
-                {weekGrid.map((dateStr) => {
-                  const { weekday, day } = formatDayShort(dateStr);
-                  const isToday = dateStr === todayStr;
-                  const badge = budgetBadgeFor(dateStr, "show");
-                  return (
-                    <button
-                      key={dateStr}
-                      type="button"
-                      onClick={() => openDay(dateStr)}
-                      className={`flex flex-col items-center gap-0.5 rounded-md py-1.5 text-center hover:bg-cream transition-colors cursor-pointer ${
-                        isToday ? "bg-terracotta-soft" : ""
-                      }`}
-                    >
-                      <span className="text-[9px] font-semibold text-walnut uppercase tracking-wide">{weekday}</span>
-                      <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
-                      {badge && (
-                        <span className={`rounded-full border px-1.5 text-[9px] font-semibold leading-tight ${budgetBadgeClass(badge)}`}>
-                          {badge.text}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+            renderTimeGrid(weekGrid)
+          )}
+        </div>
+      )}
 
-                <div ref={openAtWorkingHours} className={`col-span-8 ${GRID_SCROLL_CLASS}`}>
-                <div className="relative grid grid-cols-[48px_repeat(7,1fr)]" style={{ height: hours.length * HOUR_HEIGHT }}>
-                  {/* Hour labels */}
-                  <div className="relative">
-                    {hours.map((hour, i) => (
-                      <span
-                        key={hour}
-                        className="absolute left-0 w-12 pt-0.5 text-[10px] text-stone"
-                        style={{ top: i * HOUR_HEIGHT }}
-                      >
-                        {new Date(2000, 0, 1, hour).toLocaleTimeString("en-US", { hour: "numeric" })}
-                      </span>
-                    ))}
-                  </div>
+      {viewMode === "range" && (
+        <div className="rounded-xl border border-sand bg-white p-4">
+          <div className="mb-3 flex flex-col items-center gap-0.5">
+            <h2 className="text-sm font-bold text-espresso">
+              {formatDayLabel(rangeGrid[0])} – {formatDayLabel(rangeGrid[rangeGrid.length - 1])}
+            </h2>
+            <span className="text-[11px] text-stone">
+              {rangeGrid.length} day{rangeGrid.length === 1 ? "" : "s"} ·{" "}
+              {formatDuration(rangeGrid.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0))} blocked
+            </span>
+            {rangeTruncated && (
+              <span className="text-[11px] text-terracotta">
+                Showing the first {RANGE_MAX_DAYS} days — narrow the range to see the rest.
+              </span>
+            )}
+          </div>
 
-                  {/* Day columns */}
-                  {weekGrid.map((dateStr) => (
-                    <div key={dateStr} className="relative border-l border-sand">
-                      {hours.map((hour, i) => (
-                        <button
-                          key={hour}
-                          type="button"
-                          onClick={() => openAddBlock(hour, dateStr)}
-                          className="absolute left-0 right-0 border-t border-sand hover:bg-cream transition-colors cursor-pointer"
-                          style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
-                        />
-                      ))}
-                      <div className="pointer-events-none absolute inset-0">
-                        {(() => {
-                          const dayTasks = scheduledForDate(dateStr);
-                          const overlapLayout = computeOverlapLayout(dayTasks);
-                          return dayTasks.map((task) => {
-                            const { top, height } = blockPosition(task);
-                            // Due-date-driven blocks render fully opaque; start-date-driven
-                            // blocks (the default) stay at 70% opacity.
-                            const isDueBlock = dateStr === task.due_date && dateStr !== task.start_date;
-                            const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
-                            const label = spanLabel(task, dateStr);
-                            return (
-                              <button
-                                key={task.id}
-                                type="button"
-                                onClick={() => openEditBlock(task)}
-                                className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
-                                style={{
-                                  top,
-                                  height,
-                                  left: `calc(2px + (100% - 4px) * ${col} / ${cols})`,
-                                  width: `calc((100% - 4px) / ${cols} - 2px)`,
-                                }}
-                              >
-                                <p className="truncate text-[9px] font-semibold leading-tight">
-                                  {label && <span className="opacity-70">[{label}] </span>}
-                                  {task.task_name}
-                                </p>
-                              </button>
-                            );
-                          });
-                        })()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                </div>
-              </div>
-            </div>
+          {scope === "__all__" && isAdminOrManager && (
+            <p className="mb-3 text-[11px] text-stone">
+              Agency-wide view can&apos;t render every teammate&apos;s hour blocks at once — showing your own. Pick a teammate above to view or add blocks to theirs.
+            </p>
+          )}
+
+          {loadingDay ? (
+            <div className="py-8 text-center text-xs text-stone">Loading…</div>
+          ) : (
+            renderTimeGrid(rangeGrid)
           )}
         </div>
       )}
