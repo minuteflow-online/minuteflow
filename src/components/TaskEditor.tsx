@@ -90,6 +90,19 @@ export type TaskEditorInitialTask = Record<string, unknown> & {
 export interface TaskEditorProps {
   mode: "time_based" | "output_based";
   editingTaskId?: number | null;
+  /** Saves to recurring_task_templates instead of a task. The form is
+   *  otherwise identical — that is the point: the recurring panel used to be a
+   *  hand-written copy of this one, so every field added here had to be typed
+   *  in there too, and in practice never was. */
+  templateMode?: boolean;
+  /** Template being edited (uuid). Separate from editingTaskId, which is a
+   *  numeric task id. */
+  editingTemplateId?: string | null;
+  /** Repeat cadence, owned by the caller since only templates have one. */
+  recurrenceControl?: ReactNode;
+  /** Merged into the template payload — recurrence_type and is_active, which
+   *  belong to the caller’s controls rather than to the shared form. */
+  templateExtra?: Record<string, unknown>;
   initialTask?: TaskEditorInitialTask | null;
   currentUserId: string;
   isAdminOrManager: boolean;
@@ -233,6 +246,10 @@ function ClientMemoFormatTooltip() {
 const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEditor({
   mode,
   editingTaskId = null,
+  templateMode = false,
+  editingTemplateId = null,
+  recurrenceControl,
+  templateExtra,
   initialTask = null,
   currentUserId,
   isAdminOrManager,
@@ -251,7 +268,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   onCancel,
   onSaved,
 }: TaskEditorProps, ref) {
-  const isEditing = Boolean(editingTaskId);
+  const isEditing = Boolean(templateMode ? editingTemplateId : editingTaskId);
 
   // Basics
   const [account, setAccount] = useState((initialTask?.account as string) ?? "");
@@ -351,7 +368,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // the admin Task Assignments tab, VA Projects and the Fixed Pay panels had no
   // way to attach a file at all — the same form, missing a field, depending on
   // where you opened it from.
-  const attachmentsBase = mode === "time_based" ? "/api/assigned-tasks" : "/api/fixed-pay-tasks";
+  const attachmentsBase = templateMode
+    ? "/api/recurring-task-templates"
+    : mode === "time_based"
+    ? "/api/assigned-tasks"
+    : "/api/fixed-pay-tasks";
+  // Templates key attachments by uuid; tasks by numeric id.
+  const attachmentOwnerId: string | number | null = templateMode ? editingTemplateId : editingTaskId;
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -359,7 +382,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const attachmentInputRef = useRef<HTMLInputElement>(null);
 
   const loadAttachments = useCallback(
-    async (taskId: number) => {
+    async (taskId: string | number) => {
       setAttachmentsLoading(true);
       try {
         const res = await fetch(`${attachmentsBase}/${taskId}/attachments`, { cache: "no-store" });
@@ -384,15 +407,15 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   );
 
   useEffect(() => {
-    if (!editingTaskId) return;
-    void loadAttachments(editingTaskId);
-  }, [editingTaskId, loadAttachments]);
+    if (attachmentOwnerId == null) return;
+    void loadAttachments(attachmentOwnerId);
+  }, [attachmentOwnerId, loadAttachments]);
 
   /** Upload straight away when the task exists; hold otherwise (see handleSubmit). */
   const handleFilesPicked = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;
-      if (!editingTaskId) {
+      if (attachmentOwnerId == null) {
         setPendingFiles((prev) => [...prev, ...files]);
         return;
       }
@@ -401,19 +424,19 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         for (const file of files) {
           const form = new FormData();
           form.append("file", file);
-          await fetch(`${attachmentsBase}/${editingTaskId}/attachments`, { method: "POST", body: form });
+          await fetch(`${attachmentsBase}/${attachmentOwnerId}/attachments`, { method: "POST", body: form });
         }
-        await loadAttachments(editingTaskId);
+        await loadAttachments(attachmentOwnerId);
       } finally {
         setUploading(false);
       }
     },
-    [editingTaskId, attachmentsBase, loadAttachments]
+    [attachmentOwnerId, attachmentsBase, loadAttachments]
   );
 
   /** Files picked before the task existed, uploaded once it does. */
   const flushPendingFiles = useCallback(
-    async (taskId: number) => {
+    async (taskId: string | number) => {
       if (pendingFiles.length === 0) return;
       setUploading(true);
       try {
@@ -432,14 +455,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   const handleDeleteAttachment = useCallback(
     async (attachmentId: number) => {
-      if (!editingTaskId) return;
+      if (attachmentOwnerId == null) return;
       if (!confirm("Delete this attachment? This cannot be undone.")) return;
-      await fetch(`${attachmentsBase}/${editingTaskId}/attachments?attachmentId=${attachmentId}`, {
+      await fetch(`${attachmentsBase}/${attachmentOwnerId}/attachments?attachmentId=${attachmentId}`, {
         method: "DELETE",
       });
-      await loadAttachments(editingTaskId);
+      await loadAttachments(attachmentOwnerId);
     },
-    [editingTaskId, attachmentsBase, loadAttachments]
+    [attachmentOwnerId, attachmentsBase, loadAttachments]
   );
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
@@ -579,7 +602,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // memo/invoice. Available on create too, held as local pendingTodoTexts
   // until the task actually has an id, then flushed to real rows right
   // after creation (see handleSubmit).
-  const supportsTodos = mode === "time_based";
+  const supportsTodos = mode === "time_based" && !templateMode;
   const [pendingTodoTexts, setPendingTodoTexts] = useState<string[]>([]);
 
   useEffect(() => {
@@ -767,6 +790,55 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     setSaving(true);
     setError(null);
     try {
+      // Recurring template: same form, different table. Kept as its own branch
+      // rather than another `mode` so every mode check below stays about
+      // time-based vs output-based, which is what they actually mean.
+      if (templateMode) {
+        const payload: Record<string, unknown> = {
+          title: taskName.trim(),
+          task_name: taskName.trim(),
+          account: account || null,
+          project: project || null,
+          category: category || null,
+          description: taskDetail.trim() || null,
+          task_detail: taskDetail.trim() || null,
+          task_notes: taskNotes.trim() || null,
+          link: link.trim() || null,
+          instructions: instructions.trim() || null,
+          instructions_locked: instructionsLocked,
+          review_required: reviewRequired === "yes",
+          start_date: startDate || null,
+          end_date: endDate || null,
+          due_time: dueTime || null,
+          // Clock times, not instants — each occurrence supplies its own date.
+          start_time: hasSchedule && startTime ? startTime : null,
+          end_time: hasSchedule && endTime ? endTime : null,
+          planned_minutes: hasSchedule ? null : parsedPlannedMinutes,
+          project_id: linkedProjectId || null,
+          assigned_to_ids: isAdminOrManager ? vaIds : [currentUserId].filter(Boolean),
+          assigned_by: assignedBy || currentUserId || null,
+          pay_type: null,
+          ...templateExtra,
+        };
+
+        const res = await fetch(
+          editingTemplateId
+            ? `/api/recurring-task-templates?id=${editingTemplateId}`
+            : "/api/recurring-task-templates",
+          {
+            method: editingTemplateId ? "PATCH" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(editingTemplateId ? { id: editingTemplateId, ...payload } : payload),
+          }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const saved = data.template ?? {};
+        if (!editingTemplateId && saved.id) await flushPendingFiles(saved.id);
+        onSaved({ id: saved.id ?? 0, ...saved });
+        return;
+      }
+
       let task: { id: number; [key: string]: unknown };
 
       if (mode === "time_based") {
@@ -923,6 +995,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     }
   }, [
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
+    templateMode, editingTemplateId, templateExtra, flushPendingFiles,
     assignedBy, currentUserId, instructions, instructionsLocked, instructionsAppend, reviewRequired, reviewEditable, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaIds, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
     // Without this the callback keeps the duration from the render it was built
@@ -1193,7 +1266,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           )}
         </div>
 
-        {!isEditing && isAdminOrManager && (
+        {!templateMode && !isEditing && isAdminOrManager && (
           <div>
             <label className={labelClass}>Status</label>
             <select value={initialStatus} onChange={(e) => setInitialStatus(e.target.value)} disabled={readOnly} className={inputClass}>
@@ -1537,6 +1610,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       )}
 
       <Section title="Schedule" {...accordionProps("schedule")} warning={missingSchedule}>
+        {/* Repeat + Active — the one thing a template has that a task doesn’t. */}
+        {recurrenceControl}
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">
             {/* Tooltip rather than prose, per the form's new pattern — but the
