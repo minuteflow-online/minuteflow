@@ -352,6 +352,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [link, setLink] = useState((initialTask?.link as string) ?? "");
   const [instructions, setInstructions] = useState((initialTask?.instructions as string) ?? "");
   const [instructionsLocked, setInstructionsLocked] = useState(Boolean(initialTask?.instructions_locked));
+  // The lock as it was when the form opened. A lock that can be switched off
+  // again protects nothing, so once it is saved on, the checkbox is fixed and
+  // the wording is append-only from then on — for admins too.
+  const instructionsLockedAtLoad = Boolean(initialTask?.instructions_locked);
+  const instructionsEditable = !instructionsLockedAtLoad && isAdminOrManager;
+  const [showInstructionAdd, setShowInstructionAdd] = useState(false);
   // A VA can add to instructions but not rewrite them — the server rejects
   // `instructions` from a non-admin outright and only accepts this append.
   const [instructionsAppend, setInstructionsAppend] = useState("");
@@ -804,8 +810,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           task_detail: taskDetail.trim() || null,
           task_notes: taskNotes.trim() || null,
           link: link.trim() || null,
-          instructions: instructions.trim() || null,
-          instructions_locked: instructionsLocked,
+          ...(instructionsEditable
+            ? { instructions: instructions.trim() || null }
+            : instructionsAppend.trim()
+            ? { instructions_append: instructionsAppend.trim() }
+            : {}),
+          ...(instructionsLockedAtLoad ? {} : { instructions_locked: instructionsLocked }),
           review_required: reviewRequired === "yes",
           start_date: startDate || null,
           end_date: endDate || null,
@@ -864,12 +874,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         // server-side, and it would take the whole save down with it — so they
         // go in only for admins/managers, and a VA's contribution rides along
         // as an append instead.
-        if (isAdminOrManager) {
+        if (instructionsEditable) {
           body.instructions = instructions.trim() || null;
-          body.instructions_locked = instructionsLocked;
         } else if (instructionsAppend.trim()) {
           body.instructions_append = instructionsAppend.trim();
         }
+        // The lock itself is always sent: it is the one part a VA can set, and
+        // it only ever moves from off to on.
+        if (!instructionsLockedAtLoad) body.instructions_locked = instructionsLocked;
 
         // Only sent when there's an actual answer, and only when the viewer is
         // allowed to give one — omitting it leaves the stored value and its
@@ -995,7 +1007,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     }
   }, [
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
-    templateMode, editingTemplateId, templateExtra, flushPendingFiles,
+    templateMode, editingTemplateId, templateExtra, flushPendingFiles, instructionsEditable, instructionsLockedAtLoad,
     assignedBy, currentUserId, instructions, instructionsLocked, instructionsAppend, reviewRequired, reviewEditable, payType, linkedProjectId,
     parentTaskId, isAdminOrManager, vaIds, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
     // Without this the callback keeps the duration from the render it was built
@@ -1232,37 +1244,73 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         <div>
-          <label className={labelClass}>Instructions</label>
-          {isAdminOrManager ? (
-            <>
-              <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} disabled={readOnly} className={`${inputClass} resize-none`} />
-              <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
-                <input type="checkbox" checked={instructionsLocked} onChange={(e) => setInstructionsLocked(e.target.checked)} disabled={readOnly} />
-                Locked
-              </label>
-            </>
+          <label className={`${labelClass} flex items-center gap-1.5`}>
+            Instructions
+            <InfoTip text="Locking is one-way. Once locked the wording can't be edited or unlocked by anyone — notes get added on top instead, so nothing already agreed is rewritten." />
+          </label>
+          {instructionsEditable ? (
+            <textarea
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              rows={2}
+              disabled={readOnly}
+              className={`${inputClass} resize-none`}
+            />
+          ) : instructions.trim() ? (
+            <p className="whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+              {instructions}
+            </p>
           ) : (
-            <>
-              {instructions.trim() ? (
-                <p className="whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                  {instructions}
-                </p>
+            <p className="text-[12px] text-stone/50">No instructions yet.</p>
+          )}
+
+          {/* Everyone sees the lock, VAs included, and it only goes one way:
+              once saved locked it can't be cleared by anyone. That is what makes
+              it worth trusting — otherwise "locked" is just a checkbox. */}
+          <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
+            <input
+              type="checkbox"
+              checked={instructionsLocked}
+              onChange={(e) => setInstructionsLocked(e.target.checked)}
+              disabled={readOnly || instructionsLockedAtLoad}
+            />
+            Locked
+            {instructionsLockedAtLoad && <span className="text-[10px] text-stone">— can&apos;t be undone</span>}
+          </label>
+
+          {!readOnly && !instructionsEditable && (
+            <div className="mt-1">
+              {!showInstructionAdd ? (
+                <button
+                  type="button"
+                  onClick={() => setShowInstructionAdd(true)}
+                  className="text-[11px] font-semibold text-terracotta hover:underline"
+                >
+                  + Instruction
+                </button>
               ) : (
-                <p className="text-[12px] text-stone/50">No instructions yet.</p>
-              )}
-              {!readOnly && (
-                <div className="mt-2">
-                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Add to Instructions</label>
+                <div>
                   <textarea
                     value={instructionsAppend}
                     onChange={(e) => setInstructionsAppend(e.target.value)}
                     rows={2}
-                    placeholder="Add a note or question — this is added below, nothing above is changed."
+                    autoFocus
+                    placeholder="Add a note — it goes to the top, nothing below it changes."
                     className={`${inputClass} resize-none`}
                   />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowInstructionAdd(false);
+                      setInstructionsAppend("");
+                    }}
+                    className="mt-1 text-[11px] font-semibold text-stone hover:underline"
+                  >
+                    Cancel
+                  </button>
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
 

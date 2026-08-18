@@ -322,6 +322,29 @@ export async function PATCH(request: Request) {
   if (body.task_detail !== undefined) updates.task_detail = stringOrNull(body.task_detail);
   if (body.task_notes !== undefined) updates.task_notes = stringOrNull(body.task_notes);
   if (body.instructions !== undefined) updates.instructions = stringOrNull(body.instructions);
+  // Append-only edits, same as tasks: a locked template can still take a note,
+  // and it goes on top so it is the first thing read. Without this the append
+  // box on a template silently threw the note away.
+  if (typeof body.instructions_append === "string" && body.instructions_append.trim()) {
+    const appendClient = serviceClient();
+    const { data: currentTemplate } = await appendClient
+      .from("recurring_task_templates")
+      .select("instructions")
+      .eq("id", id)
+      .single();
+    const { data: author } = await appendClient
+      .from("profiles")
+      .select("full_name, username")
+      .eq("id", user.id)
+      .single();
+    const who = author?.full_name || author?.username || "Unknown";
+    const stamp = new Date().toISOString().slice(0, 10);
+    const addition = `[${stamp} — ${who}] ${body.instructions_append.trim()}`;
+    const existingText = (currentTemplate?.instructions ?? "").trim();
+    updates.instructions = existingText ? `${addition}
+
+${existingText}` : addition;
+  }
   if (body.instructions_locked !== undefined) updates.instructions_locked = booleanOrDefault(body.instructions_locked, false);
   if (body.planned_minutes !== undefined) updates.planned_minutes = numberOrNull(body.planned_minutes);
   if (body.start_date !== undefined) updates.start_date = stringOrNull(body.start_date);
