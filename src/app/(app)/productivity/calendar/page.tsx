@@ -935,7 +935,12 @@ export default function ProductivityCalendarPage() {
   //
   // Display only. It doesn't stop anyone booking past the budget; going over
   // just turns the badge terracotta.
-  const dayBudget = useMemo(() => {
+  //
+  // The shift itself doesn't vary by date, so it's resolved once and the
+  // per-date part is just that day's total subtracted from it. Week and Month
+  // ask this for every cell they draw, so keeping the profile lookup out of
+  // the per-date call matters.
+  const shiftBudgetMinutes = useMemo(() => {
     const member = teamMembers.find((m) => m.id === dayUserId);
     const budgetHours = member
       ? shiftHoursFromProfile({
@@ -944,10 +949,63 @@ export default function ProductivityCalendarPage() {
           shift_end: member.shift_end ?? null,
         })
       : null;
-    if (budgetHours == null) return null;
-    const budgetMinutes = Math.round(budgetHours * 60);
-    return { budgetMinutes, remainingMinutes: budgetMinutes - dayDurations.totalMinutes };
-  }, [teamMembers, dayUserId, dayDurations]);
+    return budgetHours == null ? null : Math.round(budgetHours * 60);
+  }, [teamMembers, dayUserId]);
+
+  const budgetForDate = useCallback(
+    (dateStr: string) => {
+      if (shiftBudgetMinutes == null) return null;
+      const usedMinutes = durationsForDate(dateStr).totalMinutes;
+      return {
+        budgetMinutes: shiftBudgetMinutes,
+        usedMinutes,
+        remainingMinutes: shiftBudgetMinutes - usedMinutes,
+      };
+    },
+    [shiftBudgetMinutes, durationsForDate]
+  );
+
+  const dayBudget = useMemo(
+    () =>
+      shiftBudgetMinutes == null
+        ? null
+        : {
+            budgetMinutes: shiftBudgetMinutes,
+            usedMinutes: dayDurations.totalMinutes,
+            remainingMinutes: shiftBudgetMinutes - dayDurations.totalMinutes,
+          },
+    [shiftBudgetMinutes, dayDurations]
+  );
+
+  // The Day view's badge, shrunk to fit a week column or a month cell. Says
+  // what's LEFT rather than what's booked, matching dayTotalLabel — the whole
+  // point of the shift budget is how much is still available to give.
+  //
+  // `whenEmpty` is what separates the two callers: a week has seven columns, so
+  // showing full capacity on an untouched day is useful; a month grid has
+  // forty-two, and badging every empty one is just noise.
+  const budgetBadgeFor = useCallback(
+    (dateStr: string, whenEmpty: "show" | "hide") => {
+      const usedMinutes = durationsForDate(dateStr).totalMinutes;
+      if (shiftBudgetMinutes == null) {
+        return usedMinutes > 0 ? { text: formatDuration(usedMinutes), over: false, warn: false } : null;
+      }
+      if (usedMinutes === 0 && whenEmpty === "hide") return null;
+      const remaining = shiftBudgetMinutes - usedMinutes;
+      if (remaining < 0) return { text: `${formatDuration(-remaining)} over`, over: true, warn: false };
+      const warn =
+        shiftBudgetMinutes > 0 && usedMinutes / shiftBudgetMinutes >= BUDGET_WARN_THRESHOLD;
+      return { text: `${formatDuration(remaining)} left`, over: false, warn };
+    },
+    [durationsForDate, shiftBudgetMinutes]
+  );
+
+  const budgetBadgeClass = (badge: { over: boolean; warn: boolean }) =>
+    badge.over
+      ? "bg-terracotta-soft text-terracotta border-terracotta/30"
+      : badge.warn
+      ? "bg-amber-soft text-amber border-amber/30"
+      : "bg-sage-soft text-sage border-sage/20";
 
   // Spent when nothing is left. Warned at BUDGET_WARN_THRESHOLD of the budget,
   // the same 90% the rest of the app warns at, so the day says "nearly full"
@@ -980,13 +1038,15 @@ export default function ProductivityCalendarPage() {
     const member = teamMembers.find((m) => m.id === dayUserId);
     const limitHours = member?.weekly_budget_limit ?? null;
     if (limitHours == null || limitHours <= 0) return null;
-    const usedMinutes = weekDates.reduce(
-      (sum, d) => sum + scheduledForDate(d).reduce((s, t) => s + minutesOf(t), 0),
-      0
-    );
+    // Counted through durationsForDate, the same way the day budget is. This
+    // used to sum only the hour BLOCKS, which meant duration-only work — and
+    // every Output Based task — drew nothing against the weekly limit even
+    // though it filled the day badge. The two budgets now measure the same
+    // thing, so a week can't quietly overrun on work the day view was counting.
+    const usedMinutes = weekDates.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0);
     const budgetMinutes = Math.round(limitHours * 60);
     return { budgetMinutes, usedMinutes, remainingMinutes: budgetMinutes - usedMinutes };
-  }, [teamMembers, dayUserId, weekDates, scheduledForDate]);
+  }, [teamMembers, dayUserId, weekDates, durationsForDate]);
 
   const weekBudgetSpent = Boolean(weekBudget && weekBudget.remainingMinutes <= 0);
 
@@ -1395,6 +1455,18 @@ export default function ProductivityCalendarPage() {
                       );
                     })()}
                   </div>
+                  {/* Only on days with something booked — badging all 42 cells
+                      would bury the dots this grid exists to show. Days outside
+                      the current month stay bare for the same reason. */}
+                  {isCurrentMonth && (() => {
+                    const badge = budgetBadgeFor(dateStr, "hide");
+                    if (!badge) return null;
+                    return (
+                      <div className={`mt-0.5 rounded-full border px-1 text-center text-[8px] font-semibold leading-tight ${budgetBadgeClass(badge)}`}>
+                        {badge.text}
+                      </div>
+                    );
+                  })()}
                   <div className="mt-1 space-y-1">
                     {/* Multi-day spans render as a bar; adjacent days line up into
                         a continuous line across the span. */}
@@ -1435,7 +1507,24 @@ export default function ProductivityCalendarPage() {
             >
               &larr;
             </button>
-            <h2 className="text-sm font-bold text-espresso">{weekLabel}</h2>
+            <div className="flex flex-col items-center gap-0.5">
+              <h2 className="text-sm font-bold text-espresso">{weekLabel}</h2>
+              {/* The weekly limit is the one that actually stops booking, so it
+                  gets the header slot the day total holds in the Day view. */}
+              {weekBudget && (
+                <span
+                  className={`text-[11px] font-bold px-2.5 py-[2px] rounded-full border ${
+                    weekBudget.remainingMinutes < 0
+                      ? "bg-terracotta-soft text-terracotta border-terracotta/30"
+                      : "bg-amber-soft text-amber border-amber/30"
+                  }`}
+                >
+                  {weekBudget.remainingMinutes < 0
+                    ? `${formatDuration(-weekBudget.remainingMinutes)} over ${formatDuration(weekBudget.budgetMinutes)} this week`
+                    : `${formatDuration(weekBudget.remainingMinutes)} left of ${formatDuration(weekBudget.budgetMinutes)} this week`}
+                </span>
+              )}
+            </div>
             <button
               type="button"
               onClick={goToNextWeek}
@@ -1460,6 +1549,7 @@ export default function ProductivityCalendarPage() {
                 {weekGrid.map((dateStr) => {
                   const { weekday, day } = formatDayShort(dateStr);
                   const isToday = dateStr === todayStr;
+                  const badge = budgetBadgeFor(dateStr, "show");
                   return (
                     <button
                       key={dateStr}
@@ -1471,6 +1561,11 @@ export default function ProductivityCalendarPage() {
                     >
                       <span className="text-[9px] font-semibold text-walnut uppercase tracking-wide">{weekday}</span>
                       <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
+                      {badge && (
+                        <span className={`rounded-full border px-1.5 text-[9px] font-semibold leading-tight ${budgetBadgeClass(badge)}`}>
+                          {badge.text}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
