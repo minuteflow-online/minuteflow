@@ -180,6 +180,9 @@ export default function ProductivityCalendarPage() {
   // Day view has two faces: the hour grid, and an Hours table that answers
   // "how long is each of these" without caring when they sit.
   const [dayTab, setDayTab] = useState<"grid" | "hours">("grid");
+  // Week gets the same Grid/Hours split as Day. Separate state so switching
+  // views doesn't drag one view's choice onto the other.
+  const [weekTab, setWeekTab] = useState<"grid" | "hours">("grid");
   const [limitNotice, setLimitNotice] = useState<string | null>(null);
   const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
   const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
@@ -876,6 +879,7 @@ export default function ProductivityCalendarPage() {
         id: t.id,
         name: t.task_name,
         account: t.account,
+        category: t.category,
         minutes: minutesOf(t),
         timed: true,
       }));
@@ -893,6 +897,7 @@ export default function ProductivityCalendarPage() {
           id: t.id,
           name: t.task_name,
           account: t.account,
+          category: t.category,
           minutes: t.planned_minutes as number,
           timed: false,
         }));
@@ -911,6 +916,7 @@ export default function ProductivityCalendarPage() {
           id: f.taskId,
           name: f.name,
           account: f.account,
+          category: f.category,
           minutes: f.minutes,
           timed: false,
           source: "fixed" as const,
@@ -1398,6 +1404,33 @@ export default function ProductivityCalendarPage() {
         </div>
       </div>
 
+      {/* Category legend. The grid, the month dots and the Hours lists are all
+          colour-coded, but nothing said what the colours meant — sits above the
+          calendar box so it reads once for whichever view is open. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-sand bg-white px-3 py-2">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-walnut">Categories</span>
+        {CATEGORY_OPTIONS.map((c) => (
+          <span key={c} className="flex items-center gap-1.5">
+            <span className={`h-2.5 w-2.5 rounded-full ${categoryDotClass(c)}`} />
+            <span className="text-[11px] text-espresso">{c}</span>
+          </span>
+        ))}
+        <span className="ml-auto flex items-center gap-3">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-stone" />
+            <span className="text-[10px] text-stone">Start date</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rotate-45 rounded-sm bg-stone" />
+            <span className="text-[10px] text-stone">Due date</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-4 rounded-sm bg-stone" />
+            <span className="text-[10px] text-stone">Spans days</span>
+          </span>
+        </span>
+      </div>
+
       {viewMode === "month" && (
         <div className="rounded-xl border border-sand bg-white p-4">
           <div className="mb-3 flex items-center justify-between">
@@ -1499,6 +1532,23 @@ export default function ProductivityCalendarPage() {
 
       {viewMode === "week" && (
         <div className="rounded-xl border border-sand bg-white p-4">
+          {/* Same control the Day view carries, in the same place — it switches
+              what the whole panel shows, so it sits above the date rather than
+              under it. */}
+          <div className="mb-3 mx-auto flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
+            {(["grid", "hours"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setWeekTab(tab)}
+                className={`px-4 py-1.5 transition-colors ${
+                  weekTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                }`}
+              >
+                {tab === "grid" ? "Grid" : "Hours"}
+              </button>
+            ))}
+          </div>
           <div className="mb-3 flex items-center justify-between">
             <button
               type="button"
@@ -1542,6 +1592,76 @@ export default function ProductivityCalendarPage() {
 
           {loadingDay ? (
             <div className="py-8 text-center text-xs text-stone">Loading…</div>
+          ) : weekTab === "hours" ? (
+            // The week's work as lengths rather than positions. Grouped by day
+            // rather than pooled into one list: "how is the week distributed"
+            // is the question a week view gets asked, and a flat sorted list
+            // answers a different one.
+            <div className="rounded-lg border border-sand overflow-hidden">
+              <div className="flex items-center justify-between gap-2 border-b border-sand bg-parchment px-3 py-2">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">Week total</span>
+                <span className="text-[13px] font-bold text-espresso">
+                  {formatDuration(weekGrid.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0))}
+                </span>
+              </div>
+              {weekGrid.every((d) => durationsForDate(d).rows.length === 0) ? (
+                <p className="px-3 py-6 text-center text-[12px] text-stone">Nothing blocked this week yet.</p>
+              ) : (
+                <div className="divide-y divide-sand">
+                  {weekGrid.map((dateStr) => {
+                    const { rows, totalMinutes } = durationsForDate(dateStr);
+                    if (rows.length === 0) return null;
+                    const { weekday, day } = formatDayShort(dateStr);
+                    const badge = budgetBadgeFor(dateStr, "hide");
+                    return (
+                      <div key={dateStr}>
+                        <button
+                          type="button"
+                          onClick={() => openDay(dateStr)}
+                          className="flex w-full items-center justify-between gap-2 bg-cream/50 px-3 py-1.5 text-left transition-colors hover:bg-cream cursor-pointer"
+                        >
+                          <span className="text-[11px] font-bold uppercase tracking-wide text-walnut">
+                            {weekday} {day}
+                          </span>
+                          <span className="flex items-center gap-2">
+                            {badge && (
+                              <span className={`rounded-full border px-1.5 text-[9px] font-semibold ${budgetBadgeClass(badge)}`}>
+                                {badge.text}
+                              </span>
+                            )}
+                            <span className="text-[12px] font-semibold text-espresso">{formatDuration(totalMinutes)}</span>
+                          </span>
+                        </button>
+                        {rows.map((row) => (
+                          <div
+                            key={`${row.source}-${row.id}`}
+                            className="flex items-center justify-between gap-3 px-3 py-1.5 pl-5"
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${categoryDotClass(row.category ?? "")}`} />
+                              <span className="min-w-0">
+                              <span className="block truncate text-[12px] text-espresso">{row.name}</span>
+                              <span className="block truncate text-[10px] text-stone">
+                                {row.account}
+                                {row.source === "fixed"
+                                  ? row.account
+                                    ? " · Output Based"
+                                    : "Output Based"
+                                  : !row.timed && (row.account ? " · no set time" : "No set time")}
+                              </span>
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-[11px] font-semibold text-walnut">
+                              {formatDuration(row.minutes)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <div className="grid min-w-[760px] grid-cols-[48px_repeat(7,1fr)]">
@@ -1856,7 +1976,11 @@ export default function ProductivityCalendarPage() {
                           row.source === "fixed" ? "cursor-default" : "hover:bg-cream cursor-pointer"
                         }`}
                       >
-                        <span className="min-w-0">
+                        <span className="flex min-w-0 items-center gap-2">
+                          {/* Same category colour the grid blocks and month dots
+                              use, so a task is recognisable wherever it shows. */}
+                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${categoryDotClass(row.category ?? "")}`} />
+                          <span className="min-w-0">
                           <span className="block truncate text-[13px] font-semibold text-espresso">{row.name}</span>
                           <span className="block truncate text-[10px] text-stone">
                             {row.account}
@@ -1868,6 +1992,7 @@ export default function ProductivityCalendarPage() {
                                 ? " · Output Based"
                                 : "Output Based"
                               : !row.timed && (row.account ? " · no set time" : "No set time")}
+                          </span>
                           </span>
                         </span>
                         <span className="shrink-0 text-[12px] font-semibold text-walnut">
@@ -2042,6 +2167,21 @@ export default function ProductivityCalendarPage() {
           </div>
 
           <div className="space-y-4 h-fit">
+          {/* Adding a block is about the DAY, not about the Unscheduled list —
+              but it used to sit as the last thing inside that card, which read
+              as an action on unscheduled items and left "Nothing unscheduled"
+              sitting directly above a button. At the head of the column it's
+              the first thing in reach and unambiguous about what it does. */}
+          <button
+            type="button"
+            onClick={() => openAddBlock(9)}
+            disabled={weekBudgetSpent}
+            title={weekBudgetSpent ? "Weekly limit reached — request more time to continue" : undefined}
+            className="w-full px-3 py-2 rounded-xl text-[12px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-sage"
+          >
+            {weekBudgetSpent ? "Weekly limit reached" : "+ Add Hour Block"}
+          </button>
+
           {/* Off today — a quiet card here rather than a banner across the top. */}
           {isAdminOrManager && offToday.length > 0 && (
             <div className="rounded-xl border border-sand bg-white p-3 h-fit">
@@ -2172,15 +2312,6 @@ export default function ProductivityCalendarPage() {
                     })}
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => openAddBlock(9)}
-                  disabled={weekBudgetSpent}
-                  title={weekBudgetSpent ? "Weekly limit reached — request more time to continue" : undefined}
-                  className="w-full px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-stone/10"
-                >
-                  {weekBudgetSpent ? "Weekly limit reached" : "+ Add Hour Block"}
-                </button>
               </>
             )}
           </div>

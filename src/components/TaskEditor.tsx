@@ -53,6 +53,11 @@ function computeHourlyEquivalent(durationValue: string, unit: "hours" | "minutes
   return hours * hourlyRate;
 }
 
+// Durations people actually pick, coarsest sensible steps: quarter-hours up to
+// two hours, then half-hours to a full shift. A dropdown rather than a text box
+// — nobody should have to learn that "1h 30m" parses and "1.5 hrs" might not.
+const DURATION_CHOICES = [15, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480];
+
 function computeQuantityTotal(unitRate: string, quantity: string): number | null {
   const rate = Number(unitRate);
   const qty = Number(quantity);
@@ -106,6 +111,48 @@ export interface TaskEditorHandle {
 
 const inputClass = "w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white disabled:bg-parchment/40 disabled:text-stone";
 const labelClass = "mb-1 block text-[11px] font-bold uppercase tracking-wider text-amber";
+
+/**
+ * Pick a duration instead of typing one. Stores the same shorthand string the
+ * free-text box used ("1h 30m"), so nothing downstream changes — this is purely
+ * how the value gets chosen.
+ *
+ * A task saved before this existed can hold a duration that isn't one of the
+ * presets; that value is folded into the list rather than silently snapped to
+ * the nearest one, so opening an old task and saving it can't quietly change
+ * how long it was.
+ */
+function DurationSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  disabled?: boolean;
+}) {
+  const currentMinutes = parseDurationToMinutes(value);
+  const choices =
+    currentMinutes != null && !DURATION_CHOICES.includes(currentMinutes)
+      ? [...DURATION_CHOICES, currentMinutes].sort((a, b) => a - b)
+      : DURATION_CHOICES;
+
+  return (
+    <select
+      value={currentMinutes != null ? String(currentMinutes) : ""}
+      onChange={(e) => onChange(e.target.value ? formatMinutesInput(Number(e.target.value)) : "")}
+      disabled={disabled}
+      className={inputClass}
+    >
+      <option value="">Not set</option>
+      {choices.map((minutes) => (
+        <option key={minutes} value={minutes}>
+          {formatMinutesInput(minutes)}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 function ClientMemoFormatTooltip() {
   return (
@@ -198,11 +245,22 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [dueDate, setDueDate] = useState((initialTask?.due_date as string) ?? "");
   const [dueTime, setDueTime] = useState((initialTask?.due_time as string) ?? "");
   const [endDate, setEndDate] = useState((initialTask?.end_date as string) ?? "");
-  const [hasSchedule, setHasSchedule] = useState(Boolean(initialStartTime) || Boolean(defaultStartTime));
   // How long the task takes when it doesn't need a particular slot — the
   // alternative to specific hours, not an addition to them.
+  const initialPlannedMinutes = initialTask?.planned_minutes as number | null | undefined;
   const [plannedDuration, setPlannedDuration] = useState(
-    initialTask?.planned_minutes != null ? formatMinutesInput(Number(initialTask.planned_minutes)) : ""
+    initialPlannedMinutes != null ? formatMinutesInput(Number(initialPlannedMinutes)) : ""
+  );
+  // A task that already has an answer keeps it. This used to be
+  // `initialStartTime || defaultStartTime`, which let the CALLER's default win:
+  // openScheduleExisting passes defaultStartTime="09:00", so opening a
+  // duration-only task from the Hours tab or the Unscheduled list landed on the
+  // hours tab with the duration hidden — and saving then ran
+  // `planned_minutes = hasSchedule ? null : …` and wiped it. Editing a duration
+  // appeared to do nothing because the save was clearing it and booking 9-10am
+  // instead. defaultStartTime now only decides for a task with neither.
+  const [hasSchedule, setHasSchedule] = useState(
+    initialStartTime ? true : initialPlannedMinutes != null ? false : Boolean(defaultStartTime)
   );
   const parsedPlannedMinutes = parseDurationToMinutes(plannedDuration);
   const [startTime, setStartTime] = useState(
@@ -1180,16 +1238,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               {!hasSchedule && (
                 <div>
                   <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration</label>
-                  <input
-                    value={plannedDuration}
-                    onChange={(e) => setPlannedDuration(e.target.value)}
-                    disabled={readOnly}
-                    placeholder="2h, 90m, 1h 30m"
-                    className={inputClass}
-                  />
+                  <DurationSelect value={plannedDuration} onChange={setPlannedDuration} disabled={readOnly} />
                   <p className="mt-1 text-[10px] text-stone">
                     {parsedPlannedMinutes != null
-                      ? `${parsedPlannedMinutes} minutes — counts toward the day's total on the Calendar's Hours tab, without taking a slot on the grid.`
+                      ? `Counts toward the day's total on the Calendar's Hours tab, without taking a slot on the grid.`
                       : "How long this takes, when it doesn't need a particular time. Leave empty if it doesn't matter."}
                   </p>
                 </div>
@@ -1223,13 +1275,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 Paid per output, so this doesn&apos;t take a time slot — the dates above put it on the Calendar.
               </p>
               <label className="mb-1 block text-[10px] font-semibold text-walnut">Duration</label>
-              <input
-                value={plannedDuration}
-                onChange={(e) => setPlannedDuration(e.target.value)}
-                disabled={readOnly}
-                placeholder="2h, 90m, 1h 30m"
-                className={inputClass}
-              />
+              <DurationSelect value={plannedDuration} onChange={setPlannedDuration} disabled={readOnly} />
               <p className="mt-1 text-[10px] text-stone">
                 {parsedPlannedMinutes != null
                   ? `${parsedPlannedMinutes} minutes — counts toward the day's total on the Calendar's Hours tab.`
