@@ -77,6 +77,10 @@ export interface Profile {
   // is their daily $ cap, monthly_budget_limit their monthly $ cap (same column,
   // unit follows from the VA's type — see isOutputBasedProfile in lib/budget.ts).
   // Null limits mean no cap is set for that VA.
+  // Which weekdays this member is scheduled for, 0 = Sunday .. 6 = Saturday.
+  // A day off has no daily budget; hours booked there draw on the weekly
+  // limit instead. Null/empty = no schedule set, every day counts.
+  work_days: number[] | null;
   shift_hours: number | null;
   shift_start: string | null;
   shift_end: string | null;

@@ -100,3 +100,55 @@ export function computeBudgetStatus(
     over: used >= effectiveLimit,
   };
 }
+
+// ── Work days ──────────────────────────────────────────────────────────
+//
+// Which weekdays a member is scheduled for, set per member in Team
+// Management. 0 = Sunday .. 6 = Saturday, matching Date#getUTCDay() and
+// orgWeekBounds() in lib/scheduleBudget so a date string maps to the same
+// weekday everywhere.
+//
+// A day off carries NO daily budget, but it is not blocked: hours booked
+// there come out of the weekly limit instead, which stays the only hard
+// stop (see weeklyBudgetRejection). Null/empty means no schedule has been
+// set for that member — every day counts, i.e. the behaviour before work
+// days existed.
+
+export const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+export const DEFAULT_WORK_DAYS = [1, 2, 3, 4, 5]; // Mon–Fri
+export const ALL_WEEK_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+export type WorkDayProfile = { work_days?: number[] | null };
+
+/** A member's scheduled weekdays, or all seven when none is configured. */
+export function workDaysFromProfile(profile: WorkDayProfile | null | undefined): number[] {
+  const days = profile?.work_days;
+  if (!days || days.length === 0) return ALL_WEEK_DAYS;
+  return days;
+}
+
+/** Weekday index (0-6) of an org-time "YYYY-MM-DD" date string. */
+export function weekdayOfOrgDate(orgDate: string): number {
+  return new Date(`${orgDate}T00:00:00Z`).getUTCDay();
+}
+
+/** Whether an org-time "YYYY-MM-DD" date falls on a day this member works. */
+export function isWorkDay(profile: WorkDayProfile | null | undefined, orgDate: string): boolean {
+  return workDaysFromProfile(profile).includes(weekdayOfOrgDate(orgDate));
+}
+
+/**
+ * "Mon–Fri" when the days form one unbroken run, otherwise a plain list
+ * ("Mon, Wed, Fri"). A run that wraps the week end falls through to the list
+ * form rather than reading backwards.
+ */
+export function formatWorkDays(days: number[]): string {
+  const sorted = [...new Set(days)].sort((a, b) => a - b);
+  if (sorted.length === 0) return "None";
+  if (sorted.length === 7) return "Every day";
+  if (sorted.length === 1) return WEEKDAY_SHORT[sorted[0]];
+  const contiguous = sorted.every((d, i) => i === 0 || d === sorted[i - 1] + 1);
+  return contiguous
+    ? `${WEEKDAY_SHORT[sorted[0]]}–${WEEKDAY_SHORT[sorted[sorted.length - 1]]}`
+    : sorted.map((d) => WEEKDAY_SHORT[d]).join(", ");
+}
