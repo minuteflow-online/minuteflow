@@ -218,26 +218,11 @@ export default function InvoiceViewClient({ token }: { token: string }) {
   // Separate time entries from expense line items
   const timeItems = lineItems.filter((li) => !li.expense_id);
 
-  // Detailed Time Allocation stays itemized: rows merge only when the task,
-  // deliverable, account AND client memo are all identical — an exact,
-  // letter-for-letter memo match. That still collapses the near-duplicate rows
-  // a task played across several to-dos produces (same task, same memo),
-  // without folding entries that describe different work into one row and
-  // dropping every memo but the first.
-  const timeGroupMap = new Map<string, LineItem & { quantity: number }>();
-  timeItems.forEach((li) => {
-    const key = `${li.description}||${li.project || ""}||${li.account_name || ""}||${li.client_memo || ""}`;
-    const existing = timeGroupMap.get(key);
-    if (existing) {
-      existing.quantity += Number(li.quantity);
-      if (li.service_date && (!existing.service_date || li.service_date < existing.service_date)) {
-        existing.service_date = li.service_date;
-      }
-    } else {
-      timeGroupMap.set(key, { ...li, quantity: Number(li.quantity) });
-    }
-  });
-  const groupedTimeItems = Array.from(timeGroupMap.values());
+  // Detailed Time Allocation is itemized: one row per entry, no summing.
+  // Every minute figure on this table has to be findable in the invoice's
+  // own line items — a merged row shows a number that appears nowhere in the
+  // source list, which is unreadable next to the builder and drops the memos
+  // of every entry but the first.
 
   // custom_line_items can come back as a non-empty JSON string, an empty
   // JSONB array ("[]"), or null depending on how the invoice was created —
@@ -679,7 +664,7 @@ export default function InvoiceViewClient({ token }: { token: string }) {
             <div className="bg-[#faf6f0] border-x border-[#e8e0d4] px-6 py-3">
               <div className="flex items-center justify-between">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52]">Detailed Time Allocation</div>
-                <div className="text-[10px] text-[#9e9080]">{groupedTimeItems.length} entries · {fmtHours(grossHours)} gross</div>
+                <div className="text-[10px] text-[#9e9080]">{timeItems.length} entries · {fmtHours(grossHours)} gross</div>
               </div>
             </div>
             <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl overflow-hidden">
@@ -693,7 +678,7 @@ export default function InvoiceViewClient({ token }: { token: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {groupedTimeItems.map((li, i) => (
+                  {timeItems.map((li, i) => (
                     <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-[#fafaf8]"}>
                       <td className="px-3 py-1.5 text-right text-[11px] font-semibold text-[#3d2b1f] border-b border-[#e8e0d4]">{Math.round(Number(li.quantity) * 60)}</td>
                       <td className="px-3 py-1.5 text-[11px] text-[#3d2b1f] border-b border-[#e8e0d4]">{li.description}</td>
