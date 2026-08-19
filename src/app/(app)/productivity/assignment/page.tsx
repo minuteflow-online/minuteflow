@@ -135,6 +135,7 @@ type VATaskRow = {
     instructions: string | null;
     instructions_locked: boolean;
     review_required: boolean;
+    review_required_locked?: boolean;
     revision_count: number;
     fixed_pay_task_id: number | null;
     fixed_pay_tasks?: { rate: number } | null;
@@ -205,6 +206,7 @@ type AdminTaskFlat = {
   start_time: string | null;
   end_time: string | null;
   review_required: boolean;
+  review_required_locked?: boolean;
   revision_count?: number;
   created_by: string | null;
   created_by_profile?: { id: string; full_name: string; username: string } | null;
@@ -517,6 +519,7 @@ export default function TaskListPage() {
                 instructions: task.instructions ?? null,
                 instructions_locked: Boolean(task.instructions_locked),
                 review_required: Boolean(task.review_required),
+                review_required_locked: Boolean(task.review_required_locked),
                 revision_count: task.revision_count ?? 0,
                 fixed_pay_task_id: task.fixed_pay_task_id ?? null,
                 fixed_pay_tasks: task.fixed_pay_tasks ?? null,
