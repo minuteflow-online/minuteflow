@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, PaymentAccountDetails } from "@/types/database";
 import AvatarUpload from "@/components/AvatarUpload";
+import WorkDaysPicker from "@/components/WorkDaysPicker";
+import { formatWorkDays, shiftHoursFromProfile, workDaysFromProfile } from "@/lib/budget";
 import { displayRole } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -118,6 +120,7 @@ export default function VAProfileTab({
   return (
     <div className="max-w-2xl space-y-5">
       <BasicInfoSection profile={profile} onSaved={onSaved} />
+      <ScheduleSection profile={profile} />
       <ExtendedInfoSection extProfile={extProfile} userId={userId} onRefresh={load} />
       <PaymentInfoSection profile={profile} onSaved={onSaved} />
       <LinksSection links={links} userId={userId} onRefresh={load} />
@@ -129,6 +132,42 @@ export default function VAProfileTab({
         currentUser={{ id: userId, name: profile.full_name }}
         onRefresh={load}
       />
+    </div>
+  );
+}
+
+// ── Schedule Section ───────────────────────────────────────────────────────
+
+// The same weekday control Team Management uses, read-only here: the schedule
+// decides where a VA's daily budget applies, so it stays the admin's to set.
+// Showing it in the portal answers "which days am I on?" without a message.
+
+function ScheduleSection({ profile }: { profile: Profile }) {
+  const days = workDaysFromProfile(profile);
+  const dailyHours = shiftHoursFromProfile(profile);
+
+  return (
+    <div className="rounded-xl border border-sand bg-white p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Schedule</h3>
+        <span className="text-[10px] font-semibold text-walnut">{formatWorkDays(days)}</span>
+      </div>
+
+      <WorkDaysPicker value={days} />
+
+      <div className="mt-3 space-y-1">
+        {dailyHours != null && (
+          <p className="text-[11px] text-bark">
+            {profile.shift_start && profile.shift_end
+              ? `${profile.shift_start}–${profile.shift_end} on a work day (${dailyHours.toFixed(2)}h).`
+              : `${dailyHours.toFixed(2)}h of daily budget on a work day.`}
+          </p>
+        )}
+        <p className="text-[11px] text-stone">
+          Time logged on a day off still counts — it comes out of your weekly budget instead.
+          Your schedule is set by your admin in Team Management.
+        </p>
+      </div>
     </div>
   );
 }

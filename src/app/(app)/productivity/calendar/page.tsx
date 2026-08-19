@@ -23,7 +23,7 @@ import {
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 import { normalizePosition } from "@/types/database";
-import { BUDGET_WARN_THRESHOLD, shiftHoursFromProfile, vaBudgetType } from "@/lib/budget";
+import { BUDGET_WARN_THRESHOLD, shiftHoursFromProfile, workDaysFromProfile, weekdayOfOrgDate, vaBudgetType } from "@/lib/budget";
 import { useUrlTab } from "@/hooks/useUrlTab";
 
 type TeamMember = {
@@ -34,6 +34,7 @@ type TeamMember = {
   position?: string | null;
   pay_rate_type?: string | null;
   can_see_available_tasks?: boolean | null;
+  work_days?: number[] | null;
   shift_hours?: number | null;
   shift_start?: string | null;
   shift_end?: string | null;
@@ -1034,30 +1035,50 @@ export default function ProductivityCalendarPage() {
     return budgetHours == null ? null : Math.round(budgetHours * 60);
   }, [teamMembers, dayUserId]);
 
-  const budgetForDate = useCallback(
-    (dateStr: string) => {
-      if (shiftBudgetMinutes == null) return null;
-      const usedMinutes = durationsForDate(dateStr).totalMinutes;
-      return {
-        budgetMinutes: shiftBudgetMinutes,
-        usedMinutes,
-        remainingMinutes: shiftBudgetMinutes - usedMinutes,
-      };
-    },
-    [shiftBudgetMinutes, durationsForDate]
+  // The days this VA is scheduled for, from Team Management. A day off is not
+  // blocked — it simply carries no daily budget of its own, so whatever is
+  // booked there shows as coming out of the week (which is the only hard stop).
+  const workDays = useMemo(
+    () => workDaysFromProfile(teamMembers.find((m) => m.id === dayUserId)),
+    [teamMembers, dayUserId]
   );
 
-  const dayBudget = useMemo(
-    () =>
-      shiftBudgetMinutes == null
-        ? null
-        : {
-            budgetMinutes: shiftBudgetMinutes,
-            usedMinutes: dayDurations.totalMinutes,
-            remainingMinutes: shiftBudgetMinutes - dayDurations.totalMinutes,
-          },
-    [shiftBudgetMinutes, dayDurations]
+  const isOffDay = useCallback(
+    (dateStr: string) => !workDays.includes(weekdayOfOrgDate(dateStr)),
+    [workDays]
   );
+
+  const budgetMinutesForDate = useCallback(
+    (dateStr: string) => (shiftBudgetMinutes == null ? null : isOffDay(dateStr) ? 0 : shiftBudgetMinutes),
+    [shiftBudgetMinutes, isOffDay]
+  );
+
+  const budgetForDate = useCallback(
+    (dateStr: string) => {
+      const budgetMinutes = budgetMinutesForDate(dateStr);
+      if (budgetMinutes == null) return null;
+      const usedMinutes = durationsForDate(dateStr).totalMinutes;
+      return {
+        budgetMinutes,
+        usedMinutes,
+        remainingMinutes: budgetMinutes - usedMinutes,
+      };
+    },
+    [budgetMinutesForDate, durationsForDate]
+  );
+
+  const dayBudget = useMemo(() => {
+    const budgetMinutes = budgetMinutesForDate(selectedDate);
+    return budgetMinutes == null
+      ? null
+      : {
+          budgetMinutes,
+          usedMinutes: dayDurations.totalMinutes,
+          remainingMinutes: budgetMinutes - dayDurations.totalMinutes,
+        };
+  }, [budgetMinutesForDate, selectedDate, dayDurations]);
+
+  const selectedIsOffDay = useMemo(() => isOffDay(selectedDate), [isOffDay, selectedDate]);
 
   // The Day view's badge, shrunk to fit a week column or a month cell. Says
   // what's LEFT rather than what's booked, matching dayTotalLabel — the whole
@@ -1073,17 +1094,26 @@ export default function ProductivityCalendarPage() {
         return usedMinutes > 0 ? { text: formatDuration(usedMinutes), over: false, warn: false } : null;
       }
       if (usedMinutes === 0 && whenEmpty === "hide") return null;
+      // A day off has no budget to be over, so it never reads as overspent —
+      // what's booked there is drawn from the week instead.
+      if (isOffDay(dateStr)) {
+        return usedMinutes > 0
+          ? { text: `${formatDuration(usedMinutes)} · off`, over: false, warn: false, off: true }
+          : { text: "Day off", over: false, warn: false, off: true };
+      }
       const remaining = shiftBudgetMinutes - usedMinutes;
       if (remaining < 0) return { text: `${formatDuration(-remaining)} over`, over: true, warn: false };
       const warn =
         shiftBudgetMinutes > 0 && usedMinutes / shiftBudgetMinutes >= BUDGET_WARN_THRESHOLD;
       return { text: `${formatDuration(remaining)} left`, over: false, warn };
     },
-    [durationsForDate, shiftBudgetMinutes]
+    [durationsForDate, shiftBudgetMinutes, isOffDay]
   );
 
-  const budgetBadgeClass = (badge: { over: boolean; warn: boolean }) =>
-    badge.over
+  const budgetBadgeClass = (badge: { over: boolean; warn: boolean; off?: boolean }) =>
+    badge.off
+      ? "bg-stone/10 text-stone border-stone/20"
+      : badge.over
       ? "bg-terracotta-soft text-terracotta border-terracotta/30"
       : badge.warn
       ? "bg-amber-soft text-amber border-amber/30"
@@ -1148,12 +1178,13 @@ export default function ProductivityCalendarPage() {
   }, [teamMembers, dayUserId, monthGrid, monthMonth, usedInPeriod, limitToUnit]);
 
   const dayTotalLabel = useMemo(() => {
+    if (selectedIsOffDay) return `${formatDuration(dayDurations.totalMinutes)} blocked · day off`;
     if (!dayBudget) return `${formatDuration(dayDurations.totalMinutes)} blocked`;
     if (dayBudget.remainingMinutes < 0) {
       return `${formatDuration(-dayBudget.remainingMinutes)} over ${formatDuration(dayBudget.budgetMinutes)}`;
     }
     return `${formatDuration(dayBudget.remainingMinutes)} left of ${formatDuration(dayBudget.budgetMinutes)}`;
-  }, [dayBudget, dayDurations]);
+  }, [dayBudget, dayDurations, selectedIsOffDay]);
   // Exclude items already rendered as an hour block for this date — once a task
   // has scheduled hours, it shouldn't also sit up top as an unscheduled-looking badge.
   //
@@ -2024,7 +2055,7 @@ export default function ProductivityCalendarPage() {
             )}
             {/* Sits above the grid so the reason a click did nothing is next to
                 the thing that was clicked. */}
-            {(limitNotice || weekBudgetSpent || dayBudgetSpent || dayBudgetWarning) && (
+            {(limitNotice || weekBudgetSpent || selectedIsOffDay || dayBudgetSpent || dayBudgetWarning) && (
               <div
                 className={`mb-3 rounded-lg border px-3 py-2 text-[12px] font-semibold ${
                   limitNotice || weekBudgetSpent
@@ -2035,6 +2066,8 @@ export default function ProductivityCalendarPage() {
                 {limitNotice ??
                   (weekBudgetSpent
                     ? "Weekly limit reached — request more time to continue."
+                    : selectedIsOffDay
+                    ? "Not a scheduled work day — anything booked here comes out of the weekly budget."
                     : dayBudgetSpent
                     ? "Daily limit reached — more time here comes out of the weekly budget."
                     : `Nearly full — ${formatDuration(dayBudget!.remainingMinutes)} left today.`)}
@@ -2055,7 +2088,9 @@ export default function ProductivityCalendarPage() {
                 </h2>
                 <span
                   className={`text-[13px] font-bold px-3 py-[3px] rounded-full border ${
-                    dayBudget && dayBudget.remainingMinutes < 0
+                    selectedIsOffDay
+                      ? "bg-stone/10 text-stone border-stone/20"
+                      : dayBudget && dayBudget.remainingMinutes < 0
                       ? "bg-terracotta-soft text-terracotta border-terracotta/30"
                       : "bg-amber-soft text-amber border-amber/30"
                   }`}
