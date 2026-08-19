@@ -33,7 +33,8 @@ const CONFIG = {
   // Max screenshots to upload per retry cycle (prevents Drive flooding)
   UPLOAD_BATCH_SIZE: 25,
 
-  // Screenshot cadence: one capture every 5 minutes for as long as a task runs.
+  // Screenshot cadence: one capture every 5 minutes for the whole time a VA is
+  // clocked in — not just while a task happens to be open.
   // This is the ONLY capture schedule — the app's in-page worker stands down
   // whenever the extension is installed, so a VA is never captured twice.
   CAPTURE_INTERVAL_MINUTES: 5,
@@ -44,7 +45,7 @@ const CONFIG = {
   IDLE_THRESHOLD_SECONDS: 300,
 
   // Extension version
-  VERSION: '1.2.0',
+  VERSION: '1.2.1',
 
   // API base
   API_BASE: 'https://minuteflow.click',
@@ -56,6 +57,7 @@ const CONFIG = {
 let pollingIntervalId = null;
 let heartbeatIntervalId = null;
 let currentTaskLogId = null; // The active time_log.id we're tracking
+let isClockedIn = false;     // Capture runs for the whole shift, not just while a task is open
 
 // ---------------------------------------------------------------------------
 // MinuteFlow URL Detection
@@ -619,6 +621,38 @@ async function captureAndUpload(screenshotType = 'manual', logId = null, capture
 // Capture Schedule
 // ---------------------------------------------------------------------------
 
+/**
+ * One scheduled slot. Every 5 minutes while the VA is clocked in, this produces
+ * exactly one row: a screenshot, or a marker saying why there isn't one.
+ *
+ * The 'no active task' case matters most. The schedule used to be cancelled the
+ * moment a task ended, so a VA who was clocked in but between tasks generated
+ * nothing at all — no screenshot, no marker, no way to tell that apart from the
+ * extension having crashed. That silence is the thing this exists to remove.
+ */
+async function runScheduledCapture() {
+  if (!isClockedIn) return; // Off the clock — nothing to account for.
+
+  if (currentTaskLogId) {
+    await captureLocalThenUpload('progress', currentTaskLogId);
+    return;
+  }
+
+  const session = await DB.getSession();
+  if (!session) return;
+
+  // The service worker restarts freely, so an in-memory null may just be lost
+  // state rather than a genuinely absent task. Ask the server before concluding.
+  const resolved = await fetchActiveLogIdFromDB(session.user.id);
+  if (resolved) {
+    currentTaskLogId = resolved;
+    await captureLocalThenUpload('progress', resolved);
+    return;
+  }
+
+  await queueMarker(session.user.id, null, 'Clocked in — no active task');
+}
+
 /** Start (or restart) the 5-minute capture alarm for the running task. */
 function startCaptureSchedule() {
   chrome.alarms.create('minuteflow-capture', {
@@ -642,9 +676,7 @@ function cancelCaptureSchedule() {
 // Handle all alarm fires in a single listener
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'minuteflow-capture') {
-    if (currentTaskLogId) {
-      await captureLocalThenUpload('progress', currentTaskLogId);
-    }
+    await runScheduledCapture();
     return;
   }
 
@@ -690,7 +722,9 @@ async function onTaskEnd(logId) {
   // End screenshot → goes to queue
   await captureLocalThenUpload('end', logId || currentTaskLogId);
 
-  cancelCaptureSchedule();
+  // Deliberately does NOT cancel the capture schedule. The VA is still on the
+  // clock between tasks, and stopping here is what produced hour-long stretches
+  // with no screenshots and no explanation. Clock-out cancels it instead.
   currentTaskLogId = null;
   await chrome.storage.local.remove('mf_active_log_id');
 }
@@ -866,7 +900,22 @@ function stopPolling() {
 
 let lastActiveTaskId = null;
 
+// Guards against overlapping runs: the 5s poll can fire again while a previous
+// run is still awaiting a capture, and two runs both driving a task transition
+// is how a single task switch produced three screenshots.
+let sessionCheckInFlight = false;
+
 async function checkSessionState() {
+  if (sessionCheckInFlight) return;
+  sessionCheckInFlight = true;
+  try {
+    await runSessionCheck();
+  } finally {
+    sessionCheckInFlight = false;
+  }
+}
+
+async function runSessionCheck() {
   const session = await DB.getSession();
   if (!session) return;
 
@@ -882,18 +931,34 @@ async function checkSessionState() {
     const taskLogId = activeTask ? (activeTask.logId || activeTask.log_id) : null;
     const parsedLogId = taskLogId ? parseInt(taskLogId, 10) || taskLogId : null;
 
+    // Capture spans the whole shift, so the schedule is driven by clocked-in
+    // state rather than by task transitions. A VA who has clocked in but not
+    // opened a task yet is still accounted for, and ending a task no longer
+    // leaves an unexplained silence until the next one starts.
+    const wasClockedIn = isClockedIn;
+    isClockedIn = !!userSession.clocked_in;
+    if (isClockedIn && !wasClockedIn) startCaptureSchedule();
+    if (!isClockedIn && wasClockedIn) cancelCaptureSchedule();
+
+    // lastActiveTaskId is claimed BEFORE awaiting the handlers, not after. Both
+    // onTaskEnd and onTaskStart capture and upload a screenshot, which takes
+    // seconds — and this poll runs every 5s. Assigning afterwards left the stale
+    // value visible to the next poll, which re-ran the same transition; that is
+    // where the duplicate start/end pairs 4-5 seconds apart came from.
     if (activeTask && parsedLogId) {
       if (parsedLogId !== lastActiveTaskId) {
-        if (lastActiveTaskId) {
-          await onTaskEnd(lastActiveTaskId);
-        }
+        const previous = lastActiveTaskId;
         lastActiveTaskId = parsedLogId;
+        if (previous) {
+          await onTaskEnd(previous);
+        }
         await onTaskStart(parsedLogId);
       }
     } else {
       if (lastActiveTaskId) {
-        await onTaskEnd(lastActiveTaskId);
+        const previous = lastActiveTaskId;
         lastActiveTaskId = null;
+        await onTaskEnd(previous);
       }
     }
   } catch (err) {
