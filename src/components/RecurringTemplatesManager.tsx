@@ -20,6 +20,14 @@ interface FormObjective {
   project_name: string;
 }
 
+/** A real Objective/Operation (`projects` row) — distinct from FormObjective
+ *  above, which is a legacy project_tags row with a numeric id. Do not mix
+ *  the two; see docs/operations-basecamp-feature.md. */
+interface LinkableOperation {
+  id: string;
+  name: string;
+}
+
 interface FormTask {
   id: number;
   task_name: string;
@@ -50,6 +58,12 @@ interface RecurringTemplatesManagerProps {
   onRefresh: () => void;
   vaMode?: boolean;
   currentUserId?: string;
+  /** Operations this template can link to, for the "Link to Operations" picker. */
+  operations?: LinkableOperation[];
+  /** Fixes project_id to this value and hides the picker — for the "Recurring"
+   *  section inside a selected Operation, where drifting to another Operation
+   *  (or none) would be a bug, not a choice. Mirrors TaskEditor's lockedProjectId. */
+  lockedOperationId?: string;
 }
 
 type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
@@ -58,6 +72,9 @@ interface FormState {
   account: string;
   objective_id: string;
   objective_custom: string;
+  /** Real Objective/Operation link (`projects.id`) — separate from
+   *  objective_id above, which is the legacy project_tags picker. */
+  operation_id: string;
   task_name_mode: string;
   task_name_custom: string;
   category: string;
@@ -151,11 +168,12 @@ function findTaskMatch(
   return tasks.find((task) => task.task_name === (template.title ?? template.task_name ?? "")) ?? null;
 }
 
-function defaultForm(): FormState {
+function defaultForm(lockedOperationId?: string): FormState {
   return {
     account: "",
     objective_id: "",
     objective_custom: "",
+    operation_id: lockedOperationId ?? "",
     task_name_mode: "",
     task_name_custom: "",
     category: "Task",
@@ -186,6 +204,7 @@ function templateToForm(
     account: template.account ?? "",
     objective_id: objectiveId,
     objective_custom: objectiveMatch ? "" : (template.project ?? template.description ?? ""),
+    operation_id: template.project_id ?? "",
     task_name_mode: taskMatch ? taskMatch.task_name : "__custom__",
     task_name_custom: taskMatch ? "" : (template.title ?? template.task_name ?? ""),
     category: template.category ?? "Task",
@@ -366,10 +385,12 @@ export default function RecurringTemplatesManager({
   onRefresh,
   vaMode,
   currentUserId,
+  operations = [],
+  lockedOperationId,
 }: RecurringTemplatesManagerProps) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<RecurringTaskTemplate | null>(null);
-  const [form, setForm] = useState<FormState>(defaultForm());
+  const [form, setForm] = useState<FormState>(defaultForm(lockedOperationId));
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
@@ -385,6 +406,11 @@ export default function RecurringTemplatesManager({
   const assignedBySorted = useMemo(
     () => [...assignedByOptions].sort((a, b) => profileLabel(a).localeCompare(profileLabel(b))),
     [assignedByOptions]
+  );
+
+  const operationNameById = useMemo(
+    () => new Map(operations.map((op) => [op.id, op.name])),
+    [operations]
   );
 
   const objectiveOptions = useMemo(() => {
@@ -474,7 +500,7 @@ export default function RecurringTemplatesManager({
 
   const openCreate = useCallback(() => {
     setEditingTemplate(null);
-    const initial = defaultForm();
+    const initial = defaultForm(lockedOperationId);
     if (vaMode && currentUserId) {
       initial.assigned_to_ids = [currentUserId];
     }
@@ -484,7 +510,7 @@ export default function RecurringTemplatesManager({
     setPendingFiles([]);
     if (pendingFileInputRef.current) pendingFileInputRef.current.value = "";
     setPanelOpen(true);
-  }, [vaMode, currentUserId]);
+  }, [vaMode, currentUserId, lockedOperationId]);
 
   const openEdit = useCallback(
     (template: RecurringTaskTemplate) => {
@@ -570,6 +596,7 @@ export default function RecurringTemplatesManager({
         assigned_to: form.assigned_to_ids[0] ?? null,
         account: form.account.trim() || null,
         project: objectiveName,
+        project_id: (lockedOperationId ?? form.operation_id) || null,
         category: form.category || null,
         pay_type: null,
         recurrence_type: form.recurrence_type,
@@ -619,13 +646,13 @@ export default function RecurringTemplatesManager({
       setNotice({ type: "success", text: editingTemplate ? "Template updated." : "Template created." });
       setPanelOpen(false);
       setEditingTemplate(null);
-      setForm(defaultForm());
+      setForm(defaultForm(lockedOperationId));
     } catch (error) {
       setNotice({ type: "error", text: error instanceof Error ? error.message : "Failed to save template." });
     } finally {
       setSaving(false);
     }
-  }, [editingTemplate, fetchAttachments, form, onRefresh, pendingFiles, selectedObjective]);
+  }, [editingTemplate, fetchAttachments, form, onRefresh, pendingFiles, selectedObjective, lockedOperationId]);
 
   const toggleActive = useCallback(
     async (template: RecurringTaskTemplate) => {
@@ -705,7 +732,8 @@ export default function RecurringTemplatesManager({
               <tr className="bg-parchment border-b border-sand">
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Task Name</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Account</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Objective</th>
+                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Project</th>
+                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Operation</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Detail</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Assigned To</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Status</th>
@@ -728,6 +756,9 @@ export default function RecurringTemplatesManager({
                     </td>
                     <td className="px-3 py-3 text-[13px] text-walnut">{template.account || "—"}</td>
                     <td className="px-3 py-3 text-[13px] text-walnut">{displayObjective(template)}</td>
+                    <td className="px-3 py-3 text-[13px] text-walnut">
+                      {template.project_id ? (operationNameById.get(template.project_id) ?? "Operation") : "—"}
+                    </td>
                     <td className="px-3 py-3 text-[13px] text-walnut">
                       <span className="block max-w-[240px] truncate" title={template.task_detail ?? template.description ?? ""}>
                         {template.task_detail ?? template.description ?? "—"}
@@ -830,7 +861,7 @@ export default function RecurringTemplatesManager({
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Objective</label>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Project</label>
                   {objectiveOptions.length > 0 ? (
                     <select
                       value={form.objective_id}
@@ -846,19 +877,19 @@ export default function RecurringTemplatesManager({
                       disabled={!form.account}
                       className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
                     >
-                      <option value="">{form.account ? "Select objective..." : "Select account first..."}</option>
+                      <option value="">{form.account ? "Select project..." : "Select account first..."}</option>
                       {objectiveOptions.map((objective) => (
                         <option key={objective.id} value={String(objective.id)}>
                           {objective.project_name}
                         </option>
                       ))}
-                      <option value="__custom__">Custom objective...</option>
+                      <option value="__custom__">Custom project...</option>
                     </select>
                   ) : (
                     <input
                       value={form.objective_custom}
                       onChange={(e) => setForm((prev) => ({ ...prev, objective_custom: e.target.value }))}
-                      placeholder="Objective name"
+                      placeholder="Project name"
                       disabled={!form.account}
                       className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
                     />
@@ -867,7 +898,7 @@ export default function RecurringTemplatesManager({
                     <input
                       value={form.objective_custom}
                       onChange={(e) => setForm((prev) => ({ ...prev, objective_custom: e.target.value }))}
-                      placeholder="Custom objective name"
+                      placeholder="Custom project name"
                       className="mt-2 w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta"
                     />
                   )}
@@ -893,7 +924,7 @@ export default function RecurringTemplatesManager({
                       disabled={!selectedObjective}
                       className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta disabled:bg-parchment disabled:opacity-60"
                     >
-                      <option value="">{selectedObjective ? "Select task..." : "Select objective first..."}</option>
+                      <option value="">{selectedObjective ? "Select task..." : "Select project first..."}</option>
                       {taskOptions.map((task) => (
                         <option key={task.id} value={task.task_name}>
                           {task.task_name}
@@ -1123,6 +1154,29 @@ export default function RecurringTemplatesManager({
                     </select>
                   </div>
                 )}
+
+                <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
+                  {lockedOperationId ? (
+                    <p className="text-[11px] text-stone">Scoped to this Operation — added here, so it can&apos;t be linked elsewhere.</p>
+                  ) : (
+                    <div>
+                      <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">Link to Operations</label>
+                      <select
+                        value={form.operation_id}
+                        onChange={(e) => setForm((prev) => ({ ...prev, operation_id: e.target.value }))}
+                        className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
+                      >
+                        <option value="">— None —</option>
+                        {operations.map((op) => (
+                          <option key={op.id} value={op.id}>{op.name}</option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-[10px] text-stone">
+                        Every task this template generates will appear under that Operation.
+                      </p>
+                    </div>
+                  )}
+                </div>
                 </Section>
 
                 <Section title="Schedule">

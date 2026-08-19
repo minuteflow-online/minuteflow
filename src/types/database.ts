@@ -585,6 +585,11 @@ export interface RecurringTaskTemplate {
   assigned_by: string | null;
   account: string | null;
   project: string | null;
+  /** The Objective/Operation this template belongs to (`projects.id`). Copied
+   *  onto every task the cron generates, which is what makes recurring work
+   *  show up under its Operation. `project` above is the legacy text tag and
+   *  is unrelated — see docs/operations-basecamp-feature.md. */
+  project_id: string | null;
   category: string | null;
   pay_type: string | null;
   recurrence_type: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'every_2_months' | 'every_3_months';

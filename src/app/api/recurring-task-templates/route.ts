@@ -188,6 +188,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const mineOnly = searchParams.get("mine") === "true";
+  const projectId = searchParams.get("projectId");
 
   const supabase = serviceClient();
   let query = supabase
@@ -200,6 +201,7 @@ export async function GET(request: Request) {
     // Admins also see only their own when ?mine=true (VA task-list context).
     query = query.contains("assigned_to_ids", [user.id]);
   }
+  if (projectId) query = query.eq("project_id", projectId);
 
   const { data, error } = await query;
 
@@ -258,6 +260,7 @@ export async function POST(request: Request) {
     assigned_by: stringOrNull(body.assigned_by) ?? user.id,
     account: stringOrNull(body.account),
     project: stringOrNull(body.project),
+    project_id: stringOrNull(body.project_id),
     category: stringOrNull(body.category),
     pay_type: stringOrNull(body.pay_type),
     recurrence_type,
@@ -325,6 +328,7 @@ export async function PATCH(request: Request) {
   if (body.assigned_by !== undefined) updates.assigned_by = stringOrNull(body.assigned_by);
   if (body.account !== undefined) updates.account = stringOrNull(body.account);
   if (body.project !== undefined) updates.project = stringOrNull(body.project);
+  if (body.project_id !== undefined) updates.project_id = stringOrNull(body.project_id);
   if (body.category !== undefined) updates.category = stringOrNull(body.category);
   if (body.pay_type !== undefined) updates.pay_type = stringOrNull(body.pay_type);
   if (body.recurrence_type) updates.recurrence_type = parseRecurrenceType(body.recurrence_type);

@@ -980,7 +980,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         <div>
-          <label className={labelClass}>Objective</label>
+          <label className={labelClass}>Project</label>
           <select
             value={project}
             onChange={(e) => {
@@ -992,7 +992,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             disabled={!account || readOnly}
             className={inputClass}
           >
-            <option value="">{account ? "Select objective..." : "Select account first..."}</option>
+            <option value="">{account ? "Select project..." : "Select account first..."}</option>
             {objectiveOptionsForAccount.map((p) => (
               <option key={p.id} value={p.project_name}>{p.project_name}</option>
             ))}

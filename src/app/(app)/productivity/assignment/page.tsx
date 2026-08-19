@@ -28,7 +28,7 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 200 },
   { key: "account", label: "Account", defaultWidth: 140 },
   { key: "assigned_by", label: "Assigned By", defaultWidth: 140 },
-  { key: "objective", label: "Objective", defaultWidth: 140 },
+  { key: "objective", label: "Project", defaultWidth: 140 },
   { key: "detail", label: "Client Detail", defaultWidth: 180 },
   { key: "status", label: "Status", defaultWidth: 150 },
   { key: "accuracy", label: "Accuracy", defaultWidth: 100 },
@@ -2284,7 +2284,7 @@ export default function TaskListPage() {
                         )}
                         {!hiddenColumns.has("objective") && (
                           <ColumnHeader
-                            label="Objective"
+                            label="Project"
                             width={columnWidths.objective}
                             onResize={(w) => setColumnWidth("objective", w)}
                             filterOptions={objectiveFilterOptions.map((v) => ({ value: v, label: v }))}

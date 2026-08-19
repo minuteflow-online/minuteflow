@@ -210,6 +210,11 @@ export default function ProductivityCalendarPage() {
   const [sourceFilter, setSourceFilter] = useState<Set<"assigned" | "fixed">>(new Set());
   const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
   const [projectFilter, setProjectFilter] = useState<Set<string>>(new Set());
+  // Kind-level quick filters ("Operations only" / "Objectives only") — derived
+  // from allProjects, not stored separately, so they stay in sync with
+  // whatever project checkboxes exist below.
+  const operationIds = useMemo(() => allProjects.filter((p) => p.kind === "operation").map((p) => p.id), [allProjects]);
+  const objectiveIds = useMemo(() => allProjects.filter((p) => p.kind !== "operation").map((p) => p.id), [allProjects]);
   const [recurringOnly, setRecurringOnly] = useState(false);
   const [dateTypeFilter, setDateTypeFilter] = useState<"all" | "start" | "due">("all");
   // Filters use a draft → Apply model: the checkboxes above are the DRAFT; the
@@ -1620,6 +1625,24 @@ export default function ProductivityCalendarPage() {
 
                 <div>
                   <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide mb-1">Project</p>
+                  <div className="flex gap-1 mb-2">
+                    {([
+                      { label: "All", isActive: projectFilter.size === 0, onClick: () => setProjectFilter(new Set()) },
+                      { label: "Operations only", isActive: operationIds.length > 0 && projectFilter.size === operationIds.length && operationIds.every((id) => projectFilter.has(id)), onClick: () => setProjectFilter(new Set(operationIds)) },
+                      { label: "Objectives only", isActive: objectiveIds.length > 0 && projectFilter.size === objectiveIds.length && objectiveIds.every((id) => projectFilter.has(id)), onClick: () => setProjectFilter(new Set(objectiveIds)) },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        onClick={opt.onClick}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                          opt.isActive ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                   <div className="flex flex-wrap gap-2 max-h-28 overflow-y-auto">
                     <label className="flex items-center gap-1 text-[11px] text-espresso">
                       <input

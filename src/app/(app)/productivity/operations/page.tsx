@@ -10,6 +10,7 @@ import type { RecurringTaskTemplate, UserRole } from "@/types/database";
 type TeamMember = { id: string; full_name: string; username: string };
 type FormObjective = { id: number; account: string | null; project_name: string };
 type FormTask = { id: number; task_name: string };
+type OperationOption = { id: string; name: string };
 
 export default function ProductivityOperationsPage() {
   const [userId, setUserId] = useState<string | null>(null);
@@ -25,6 +26,7 @@ export default function ProductivityOperationsPage() {
   const [formAccounts, setFormAccounts] = useState<string[]>([]);
   const [formProjects, setFormProjects] = useState<FormObjective[]>([]);
   const [formTasksByProject, setFormTasksByProject] = useState<Record<number, FormTask[]>>({});
+  const [operationOptions, setOperationOptions] = useState<OperationOption[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -50,6 +52,16 @@ export default function ProductivityOperationsPage() {
     fetch("/api/team-members")
       .then((r) => r.json())
       .then((d) => setTeamMembers(d.members ?? []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/projects?mine=true&kind=operation", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        type ProjectRow = { id: string; name: string };
+        setOperationOptions(((d.projects ?? []) as ProjectRow[]).map((p) => ({ id: p.id, name: p.name })));
+      })
       .catch(() => {});
   }, []);
 
@@ -130,6 +142,7 @@ export default function ProductivityOperationsPage() {
           onRefresh={fetchRecurringTemplates}
           currentUserId={userId}
           vaMode={role !== "admin"}
+          operations={operationOptions}
         />
       )}
     </div>

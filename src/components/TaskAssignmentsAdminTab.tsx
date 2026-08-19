@@ -25,7 +25,7 @@ import RevisionBadge from "@/components/RevisionBadge";
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 180 },
   { key: "account", label: "Account", defaultWidth: 130 },
-  { key: "objective", label: "Objective", defaultWidth: 130 },
+  { key: "objective", label: "Project", defaultWidth: 130 },
   { key: "detail", label: "Detail", defaultWidth: 180 },
   { key: "assigned_to", label: "Assigned To", defaultWidth: 160 },
   { key: "status", label: "Status", defaultWidth: 150 },
@@ -1546,7 +1546,7 @@ export default function TaskAssignmentsAdminTab({
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left w-8"></th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Task Name</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Account</th>
-                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Objective</th>
+                <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Project</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Detail</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Assigned To</th>
                 <th className="text-[11px] font-semibold text-walnut uppercase tracking-wider px-3 py-2.5 text-left">Status</th>
@@ -1642,7 +1642,7 @@ export default function TaskAssignmentsAdminTab({
                 )}
                 {!hiddenColumns.has("objective") && (
                   <ColumnHeader
-                    label="Objective"
+                    label="Project"
                     width={columnWidths.objective}
                     onResize={(w) => setColumnWidth("objective", w)}
                     filterOptions={objectiveFilterOptions.map((v) => ({ value: v, label: v }))}
