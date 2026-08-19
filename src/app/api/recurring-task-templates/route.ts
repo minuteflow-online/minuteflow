@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { generateForTemplate, type GeneratableTemplate } from "@/lib/recurringTasks";
 
 export const dynamic = "force-dynamic";
 
@@ -288,8 +289,14 @@ export async function POST(request: Request) {
     return Response.json({ error: error.message }, { status: 400 });
   }
 
+  // Fill in the occurrences right away rather than leaving the template inert
+  // until the nightly cron. Saving one used to produce nothing you could see —
+  // and if the start date was today, that day's task was skipped entirely,
+  // because the run for today had already happened hours earlier.
+  const generated = await generateForTemplate(supabase, data as GeneratableTemplate).catch(() => null);
+
   const templates = await decorateTemplates([data as TemplateRow], supabase);
-  return Response.json({ template: templates[0] }, { status: 201 });
+  return Response.json({ template: templates[0], generated: generated?.created ?? 0 }, { status: 201 });
 }
 
 export async function PATCH(request: Request) {
@@ -400,8 +407,15 @@ ${existingText}` : addition;
     return Response.json({ error: error.message }, { status: 400 });
   }
 
+  // Same top-up on edit — turning a paused template back on, or moving its
+  // start date earlier, should show up now rather than tonight. Idempotent, so
+  // an unrelated edit (a note, a link) creates nothing. Occurrences already
+  // generated keep the values they were created with; the change applies to
+  // days that had not been generated yet.
+  const generated = await generateForTemplate(supabase, data as GeneratableTemplate).catch(() => null);
+
   const templates = await decorateTemplates([data as TemplateRow], supabase);
-  return Response.json({ template: templates[0] });
+  return Response.json({ template: templates[0], generated: generated?.created ?? 0 });
 }
 
 export async function DELETE(request: Request) {
