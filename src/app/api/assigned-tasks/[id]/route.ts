@@ -608,11 +608,11 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 
   const now = new Date().toISOString();
 
-  // Instructions belong to whoever assigned the task — a VA can't rewrite or
-  // unlock them, which is the whole point of instructions_locked. They append
+  // Instructions belong to whoever assigned the task — a VA can't rewrite the
+  // wording, which is the whole point of instructions_locked. They append
   // instead, via instructions_append below, so a question or a note is added
   // without any of the original wording being lost.
-  if (!isAdminOrManager && (instructions !== undefined || instructions_locked !== undefined)) {
+  if (!isAdminOrManager && instructions !== undefined) {
     return Response.json(
       {
         error:
@@ -620,6 +620,27 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       },
       { status: 403 }
     );
+  }
+
+  // instructions_locked is one-way (see TaskEditor's instructionsLockedAtLoad):
+  // a VA is allowed to lock (false -> true) but never to unlock. TaskEditor
+  // always sends this field while the task is unlocked — even on a save that
+  // doesn't touch the checkbox — so blocking it outright for non-admins made
+  // every VA metadata save 403 on any task whose instructions weren't already
+  // locked, not just ones actually changing the lock. Only an explicit unlock
+  // attempt (false while the stored value is true) needs rejecting here.
+  if (!isAdminOrManager && instructions_locked === false) {
+    const { data: lockRow } = await adminSupabase
+      .from("assigned_tasks")
+      .select("instructions_locked")
+      .eq("id", id)
+      .single();
+    if (lockRow?.instructions_locked) {
+      return Response.json(
+        { error: "Forbidden: the instructions lock can't be undone." },
+        { status: 403 }
+      );
+    }
   }
 
   // VA-only: allow checking review_required (true) but never unchecking (false).
