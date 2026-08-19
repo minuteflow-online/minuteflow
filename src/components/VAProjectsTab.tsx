@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
+import ProjectMessageBoard from "@/components/ProjectMessageBoard";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
 
@@ -1311,6 +1312,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   {savingEdit ? "Saving..." : "Save Changes"}
                 </button>
               </div>
+              )}
+
+              {kind === "operation" && (
+                <ProjectMessageBoard projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
               )}
 
               {kind === "operation" && (
