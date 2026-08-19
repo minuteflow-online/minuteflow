@@ -2343,7 +2343,7 @@ function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdm
           <p className="mt-1 text-xs text-stone">
             {isAdmin
               ? "Bug reports and feature requests from the team will appear here."
-              : "Use \"New Report\" above — or the Bug / Idea button in the top bar."}
+              : "Use \"New Report\" above — or the Report Bug / Idea button in the top bar."}
           </p>
         </div>
       )}
