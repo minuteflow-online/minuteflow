@@ -16,8 +16,8 @@ export const REPORT_TYPE_LABEL: Record<ReportType, string> = {
 // Statuses are shared across both types (submitted → testing → fixed) so
 // filtering and the admin control stay single-path. Only the wording differs.
 export const REPORT_STATUS_LABEL: Record<ReportType, Record<string, string>> = {
-  bug: { submitted: "Submitted", testing: "Testing", fixed: "Fixed" },
-  feature: { submitted: "Submitted", testing: "In Review", fixed: "Shipped" },
+  bug: { submitted: "Submitted", testing: "Reviewing", fixed: "Fixed" },
+  feature: { submitted: "Submitted", testing: "Reviewing", fixed: "Shipped" },
 };
 
 export function BugIcon({ className }: { className?: string }) {
