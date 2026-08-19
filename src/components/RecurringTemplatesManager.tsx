@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import TaskEditor from "@/components/TaskEditor";
 import type { Profile, RecurringTaskTemplate } from "@/types/database";
+
+type LinkedProject = { id: string; name: string };
 
 interface FormObjective {
   id: number;
@@ -122,7 +124,7 @@ function displayAssignedTo(
     .join(", ");
 }
 
-function displayObjective(template: RecurringTaskTemplate) {
+function displayProject(template: RecurringTaskTemplate) {
   return template.project || template.description || template.task_detail || "—";
 }
 
@@ -144,6 +146,22 @@ export default function RecurringTemplatesManager({
   // Everything else on this panel is TaskEditor's own state.
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>("daily");
   const [isActive, setIsActive] = useState(true);
+
+  // Self-fetched, same as TaskEditor's own linkedProjects — just for resolving
+  // a template's project_id to a name in the table below. TaskEditor already
+  // has the real "Link to Operations"/"Link to Objective" pickers; this is
+  // only display, not another copy of that logic.
+  const [linkedProjects, setLinkedProjects] = useState<LinkedProject[]>([]);
+  useEffect(() => {
+    fetch("/api/projects?mine=true", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setLinkedProjects(d.projects ?? []))
+      .catch(() => {});
+  }, []);
+  const linkedProjectNameById = useMemo(
+    () => new Map(linkedProjects.map((p) => [p.id, p.name])),
+    [linkedProjects]
+  );
 
   const assigneeOptions = useMemo(
     () => [...activeProfiles].sort((a, b) => profileLabel(a).localeCompare(profileLabel(b))),
@@ -273,7 +291,8 @@ export default function RecurringTemplatesManager({
               <tr className="bg-parchment border-b border-sand">
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Task Name</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Account</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Objective</th>
+                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Project</th>
+                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Operation</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Detail</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Assigned To</th>
                 <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Status</th>
@@ -295,7 +314,10 @@ export default function RecurringTemplatesManager({
                       </button>
                     </td>
                     <td className="px-3 py-3 text-[13px] text-walnut">{template.account || "—"}</td>
-                    <td className="px-3 py-3 text-[13px] text-walnut">{displayObjective(template)}</td>
+                    <td className="px-3 py-3 text-[13px] text-walnut">{displayProject(template)}</td>
+                    <td className="px-3 py-3 text-[13px] text-walnut">
+                      {template.project_id ? linkedProjectNameById.get(template.project_id) ?? "—" : "—"}
+                    </td>
                     <td className="px-3 py-3 text-[13px] text-walnut">
                       <span className="block max-w-[240px] truncate" title={template.task_detail ?? template.description ?? ""}>
                         {template.task_detail ?? template.description ?? "—"}
