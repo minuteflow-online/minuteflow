@@ -62,6 +62,16 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [openComments, setOpenComments] = useState<Set<string>>(new Set());
 
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editMessageTitle, setEditMessageTitle] = useState("");
+  const [editMessageBody, setEditMessageBody] = useState("");
+  const [savingMessageEdit, setSavingMessageEdit] = useState(false);
+  const [editMessageError, setEditMessageError] = useState<string | null>(null);
+
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editCommentBody, setEditCommentBody] = useState("");
+  const [savingCommentEdit, setSavingCommentEdit] = useState(false);
+
   const fetchMessages = useCallback(async () => {
     setLoading(true);
     try {
@@ -132,6 +142,73 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
       if (!res.ok) throw new Error();
     } catch {
       setMessages(previous);
+    }
+  };
+
+  const startEditMessage = (message: Message) => {
+    setEditingMessageId(message.id);
+    setEditMessageTitle(message.title);
+    setEditMessageBody(message.body);
+    setEditMessageError(null);
+  };
+
+  const cancelEditMessage = () => {
+    setEditingMessageId(null);
+    setEditMessageError(null);
+  };
+
+  const handleSaveMessageEdit = async (messageId: string) => {
+    if (!editMessageTitle.trim() || !editMessageBody.trim()) {
+      setEditMessageError("Title and message are required.");
+      return;
+    }
+    setSavingMessageEdit(true);
+    setEditMessageError(null);
+    try {
+      const res = await fetch(`/api/project-messages?id=${messageId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: editMessageTitle.trim(), body: editMessageBody.trim() }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `HTTP ${res.status}`);
+      }
+      setEditingMessageId(null);
+      void fetchMessages();
+    } catch (e) {
+      setEditMessageError(e instanceof Error ? e.message : "Failed to save.");
+    } finally {
+      setSavingMessageEdit(false);
+    }
+  };
+
+  const startEditComment = (comment: Comment) => {
+    setEditingCommentId(comment.id);
+    setEditCommentBody(comment.body);
+  };
+
+  const cancelEditComment = () => {
+    setEditingCommentId(null);
+  };
+
+  const handleSaveCommentEdit = async (messageId: string, commentId: string) => {
+    const content = editCommentBody.trim();
+    if (!content) return;
+    setSavingCommentEdit(true);
+    try {
+      const res = await fetch(`/api/project-messages/${messageId}/comments?commentId=${commentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: content }),
+      });
+      if (!res.ok) throw new Error();
+      setEditingCommentId(null);
+      void fetchMessages();
+    } catch {
+      // leave edit mode open so the VA can retry
+    } finally {
+      setSavingCommentEdit(false);
     }
   };
 
@@ -229,42 +306,87 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
           {messages.map((message) => {
             const canEdit = isAdmin || message.author_id === currentUserId;
             const commentsOpen = openComments.has(message.id);
+            const isEditingMessage = editingMessageId === message.id;
             return (
               <div key={message.id} className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    {message.pinned && (
-                      <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0">
-                        Pinned
-                      </span>
-                    )}
-                    <span className="text-[13px] font-semibold text-espresso leading-tight truncate">{message.title}</span>
-                  </div>
-                  {canEdit && (
-                    <div className="flex items-center gap-2 shrink-0">
-                      {isAdmin && (
-                        <button
-                          type="button"
-                          onClick={() => void handleTogglePin(message)}
-                          className="text-[10px] font-semibold text-stone hover:text-espresso"
-                        >
-                          {message.pinned ? "Unpin" : "Pin"}
-                        </button>
-                      )}
+                {isEditingMessage ? (
+                  <div className="space-y-2">
+                    <input
+                      value={editMessageTitle}
+                      onChange={(e) => setEditMessageTitle(e.target.value)}
+                      placeholder="Title"
+                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                    />
+                    <textarea
+                      value={editMessageBody}
+                      onChange={(e) => setEditMessageBody(e.target.value)}
+                      rows={3}
+                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white resize-none"
+                    />
+                    {editMessageError && <p className="text-[11px] text-terracotta">{editMessageError}</p>}
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => void handleDeleteMessage(message.id)}
-                        className="text-[10px] font-semibold text-terracotta hover:text-terracotta/80"
+                        onClick={() => void handleSaveMessageEdit(message.id)}
+                        disabled={savingMessageEdit}
+                        className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
                       >
-                        Delete
+                        {savingMessageEdit ? "Saving…" : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelEditMessage}
+                        className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+                      >
+                        Cancel
                       </button>
                     </div>
-                  )}
-                </div>
-                <p className="whitespace-pre-wrap text-[12px] text-espresso leading-snug">{message.body}</p>
-                <p className="text-[10px] text-stone/80">
-                  {authorName(message.author)} · {formatWhen(message.created_at)}
-                </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {message.pinned && (
+                          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0">
+                            Pinned
+                          </span>
+                        )}
+                        <span className="text-[13px] font-semibold text-espresso leading-tight truncate">{message.title}</span>
+                      </div>
+                      {canEdit && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => void handleTogglePin(message)}
+                              className="text-[10px] font-semibold text-stone hover:text-espresso"
+                            >
+                              {message.pinned ? "Unpin" : "Pin"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => startEditMessage(message)}
+                            className="text-[10px] font-semibold text-stone hover:text-espresso"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteMessage(message.id)}
+                            className="text-[10px] font-semibold text-terracotta hover:text-terracotta/80"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <p className="whitespace-pre-wrap text-[12px] text-espresso leading-snug">{message.body}</p>
+                    <p className="text-[10px] text-stone/80">
+                      {authorName(message.author)} · {formatWhen(message.created_at)}
+                    </p>
+                  </>
+                )}
 
                 <button
                   type="button"
@@ -279,24 +401,66 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
                 {commentsOpen && (
                   <div className="mt-1 space-y-1.5 border-t border-sand pt-2">
                     {message.project_message_comments.map((comment) => {
-                      const canDeleteComment = isAdmin || comment.author_id === currentUserId;
+                      const canEditComment = isAdmin || comment.author_id === currentUserId;
+                      const isEditingComment = editingCommentId === comment.id;
                       return (
                         <div key={comment.id} className="rounded-lg bg-cream/40 px-2 py-1.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="whitespace-pre-wrap text-[12px] text-espresso leading-snug">{comment.body}</p>
-                            {canDeleteComment && (
-                              <button
-                                type="button"
-                                onClick={() => void handleDeleteComment(message.id, comment.id)}
-                                className="text-[10px] font-semibold text-terracotta hover:text-terracotta/80 shrink-0"
-                              >
-                                Delete
-                              </button>
-                            )}
-                          </div>
-                          <p className="mt-1 text-[10px] text-stone/80">
-                            {authorName(comment.author)} · {formatWhen(comment.created_at)}
-                          </p>
+                          {isEditingComment ? (
+                            <div className="space-y-1.5">
+                              <input
+                                value={editCommentBody}
+                                onChange={(e) => setEditCommentBody(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") void handleSaveCommentEdit(message.id, comment.id);
+                                }}
+                                className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleSaveCommentEdit(message.id, comment.id)}
+                                  disabled={savingCommentEdit}
+                                  className="text-[10px] font-semibold text-sage hover:text-sage/80 disabled:opacity-50"
+                                >
+                                  {savingCommentEdit ? "Saving…" : "Save"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelEditComment}
+                                  className="text-[10px] font-semibold text-stone hover:text-espresso"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="whitespace-pre-wrap text-[12px] text-espresso leading-snug">{comment.body}</p>
+                                {canEditComment && (
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => startEditComment(comment)}
+                                      className="text-[10px] font-semibold text-stone hover:text-espresso"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleDeleteComment(message.id, comment.id)}
+                                      className="text-[10px] font-semibold text-terracotta hover:text-terracotta/80"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              <p className="mt-1 text-[10px] text-stone/80">
+                                {authorName(comment.author)} · {formatWhen(comment.created_at)}
+                              </p>
+                            </>
+                          )}
                         </div>
                       );
                     })}
