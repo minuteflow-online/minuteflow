@@ -5,7 +5,7 @@
 // "let's see on operations first." Each tile opens full-width in place of
 // this grid; VAProjectsTab renders the back button and swaps the content.
 
-export type OperationTileKey = "message_board" | "recurring" | "subtasks";
+export type OperationTileKey = "message_board" | "recurring" | "subtasks" | "files";
 
 interface OperationTileGridProps {
   recurringCount: number;
@@ -41,6 +41,11 @@ export default function OperationTileGrid({ recurringCount, subtaskCount, onSele
       description: "The task list — List View or Board View.",
       count: subtaskCount,
       countLabel: subtaskCount === 1 ? "task" : "tasks",
+    },
+    {
+      key: "files",
+      title: "Docs & Files",
+      description: "Upload and share files for this Operation's team.",
     },
   ];
 
