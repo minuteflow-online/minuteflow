@@ -218,17 +218,18 @@ export default function InvoiceViewClient({ token }: { token: string }) {
   // Separate time entries from expense line items
   const timeItems = lineItems.filter((li) => !li.expense_id);
 
-  // Detailed Time Allocation groups by task, not by individual session/to-do —
-  // a task worked across multiple sessions (or played via several to-dos)
-  // should read as one row with the total time and the task's client memo,
-  // not one row per underlying time_logs entry.
+  // Detailed Time Allocation stays itemized: rows merge only when the task,
+  // deliverable, account AND client memo are all identical — an exact,
+  // letter-for-letter memo match. That still collapses the near-duplicate rows
+  // a task played across several to-dos produces (same task, same memo),
+  // without folding entries that describe different work into one row and
+  // dropping every memo but the first.
   const timeGroupMap = new Map<string, LineItem & { quantity: number }>();
   timeItems.forEach((li) => {
-    const key = `${li.description}||${li.project || ""}||${li.account_name || ""}`;
+    const key = `${li.description}||${li.project || ""}||${li.account_name || ""}||${li.client_memo || ""}`;
     const existing = timeGroupMap.get(key);
     if (existing) {
       existing.quantity += Number(li.quantity);
-      if (!existing.client_memo && li.client_memo) existing.client_memo = li.client_memo;
       if (li.service_date && (!existing.service_date || li.service_date < existing.service_date)) {
         existing.service_date = li.service_date;
       }
@@ -678,7 +679,7 @@ export default function InvoiceViewClient({ token }: { token: string }) {
             <div className="bg-[#faf6f0] border-x border-[#e8e0d4] px-6 py-3">
               <div className="flex items-center justify-between">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-[#6b5e52]">Detailed Time Allocation</div>
-                <div className="text-[10px] text-[#9e9080]">{groupedTimeItems.length} tasks · {fmtHours(grossHours)} gross</div>
+                <div className="text-[10px] text-[#9e9080]">{groupedTimeItems.length} entries · {fmtHours(grossHours)} gross</div>
               </div>
             </div>
             <div className="bg-white border-x border-b border-[#e8e0d4] rounded-b-xl overflow-hidden">
