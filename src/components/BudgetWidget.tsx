@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { shiftHoursFromProfile, computeBudgetStatus, vaBudgetType, type BudgetStatus } from "@/lib/budget";
+import { shiftHoursFromProfile, computeBudgetStatus, vaBudgetType, isWorkDay, type BudgetStatus } from "@/lib/budget";
+import { orgDateOf } from "@/lib/taskSchedule";
 import type { BudgetRequest } from "@/types/database";
 
 type BudgetProfile = {
+  work_days: number[] | null;
   position: string | null;
   pay_rate_type: string | null;
   shift_hours: number | null;
@@ -60,7 +62,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
       const [{ data: prof }, { data: logs }, reqRes] = await Promise.all([
         supabase
           .from("profiles")
-          .select("position, pay_rate_type, shift_hours, shift_start, shift_end, daily_budget_limit, weekly_budget_limit, monthly_budget_limit")
+          .select("position, pay_rate_type, work_days, shift_hours, shift_start, shift_end, daily_budget_limit, weekly_budget_limit, monthly_budget_limit")
           .eq("id", currentUserId)
           .single(),
         // Pull from whichever is earlier, week-start or month-start (a week
@@ -152,7 +154,16 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
   }, [requests]);
 
   const dailyLimit = profile ? (budgetType === "output_based" ? profile.daily_budget_limit : shiftHoursFromProfile(profile)) : null;
-  const dailyStatus: BudgetStatus | null = computeBudgetStatus(dailyLimit, dailyUsed, unit, approvedExtras.day);
+  // A day outside the schedule set in Team Management carries no daily budget
+  // of its own — work done on one is drawn from the weekly limit instead, so
+  // the daily section says that rather than counting down toward zero.
+  const todayIsWorkDay = profile ? isWorkDay(profile, orgDateOf(new Date().toISOString())) : true;
+  const dailyStatus: BudgetStatus | null = computeBudgetStatus(
+    todayIsWorkDay ? dailyLimit : null,
+    dailyUsed,
+    unit,
+    approvedExtras.day
+  );
   const weeklyStatus: BudgetStatus | null = computeBudgetStatus(profile?.weekly_budget_limit ?? null, weeklyUsed, unit, approvedExtras.week);
   const monthlyStatus: BudgetStatus | null = computeBudgetStatus(profile?.monthly_budget_limit ?? null, monthlyUsed, unit, approvedExtras.month);
 
@@ -201,12 +212,12 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
   const hasAnyLimit = Boolean(dailyStatus || weeklyStatus || monthlyStatus);
   if (!loading && !hasAnyLimit && !bare) return null;
 
-  function PeriodSection({ label, status, approvedExtra = 0, approvedWhen }: { label: string; status: BudgetStatus | null; approvedExtra?: number; approvedWhen?: string }) {
+  function PeriodSection({ label, status, approvedExtra = 0, approvedWhen, emptyNote }: { label: string; status: BudgetStatus | null; approvedExtra?: number; approvedWhen?: string; emptyNote?: string }) {
     if (!status) {
       return (
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wide text-walnut mb-1">{label}</p>
-          <p className="text-[11px] text-stone italic">No limit set.</p>
+          <p className="text-[11px] text-stone italic">{emptyNote ?? "No limit set."}</p>
         </div>
       );
     }
@@ -245,7 +256,17 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
         <p className="text-[11px] text-stone">Loading…</p>
       ) : hasAnyLimit ? (
         <>
-          <PeriodSection label="Daily Limit" status={dailyStatus} approvedExtra={approvedExtras.day} approvedWhen="approved today" />
+          <PeriodSection
+            label="Daily Limit"
+            status={dailyStatus}
+            approvedExtra={approvedExtras.day}
+            approvedWhen="approved today"
+            emptyNote={
+              !todayIsWorkDay
+                ? "Not a scheduled work day — today's time comes out of your weekly budget."
+                : undefined
+            }
+          />
           <div className="border-t border-parchment" />
           <PeriodSection label="Weekly Limit" status={weeklyStatus} approvedExtra={approvedExtras.week} approvedWhen="approved this week" />
           <div className="border-t border-parchment" />
