@@ -2148,6 +2148,9 @@ function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdm
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [typeFilter, setTypeFilter] = useState<"all" | ReportType>("all");
+  // Opens on Submitted — the reports nobody has picked up yet are the ones
+  // worth landing on.
+  const [statusFilter, setStatusFilter] = useState<"all" | BugReport["status"]>("submitted");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [statusUpdating, setStatusUpdating] = useState<Record<number, boolean>>({});
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -2181,13 +2184,18 @@ function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdm
     fetchReports();
   }, [fetchReports]);
 
-  const visibleReports = reports.filter(
+  // Type first, so the status counts describe the list you're actually looking
+  // at rather than the whole table.
+  const typeScopedReports = reports.filter(
     (r) => typeFilter === "all" || (r.report_type || "bug") === typeFilter
+  );
+  const visibleReports = typeScopedReports.filter(
+    (r) => statusFilter === "all" || r.status === statusFilter
   );
 
   return (
     <div className="space-y-6 max-w-2xl">
-      {/* New report + type filter */}
+      {/* New report + filters */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <button
           onClick={() => setShowForm(true)}
@@ -2215,6 +2223,35 @@ function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdm
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Status filter — opens on Submitted, so what still needs attention is
+          what you land on. */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mr-1">Status</p>
+        {([
+          { value: "submitted" as const, label: "Submitted" },
+          { value: "testing" as const,   label: "Reviewing" },
+          { value: "fixed" as const,     label: "Fixed" },
+          { value: "all" as const,       label: "All" },
+        ]).map(({ value, label }) => {
+          const count = value === "all"
+            ? typeScopedReports.length
+            : typeScopedReports.filter((r) => r.status === value).length;
+          return (
+            <button
+              key={value}
+              onClick={() => setStatusFilter(value)}
+              className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
+                statusFilter === value
+                  ? "bg-terracotta text-white"
+                  : "bg-stone/10 text-stone hover:bg-stone/20"
+              }`}
+            >
+              {label} ({count})
+            </button>
+          );
+        })}
       </div>
 
       {/* The same form the nav button opens — one code path for both entries */}
@@ -2337,13 +2374,19 @@ function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdm
               <path d="M12 16h.01" />
             </svg>
           </div>
+          {/* An empty list because of a filter is a different message from an
+              empty list because nothing has ever been reported. */}
           <p className="text-sm font-medium text-espresso">
-            {isAdmin ? "Nothing here yet" : "Nothing submitted yet"}
+            {reports.length > 0
+              ? "Nothing matches these filters"
+              : isAdmin ? "Nothing here yet" : "Nothing submitted yet"}
           </p>
           <p className="mt-1 text-xs text-stone">
-            {isAdmin
+            {reports.length > 0
+              ? "Try a different status — everything is under All."
+              : isAdmin
               ? "Bug reports and feature requests from the team will appear here."
-              : "Use \"New Report\" above — or the Bug / Idea button in the top bar."}
+              : "Use \"New Report\" above — or the Report Bug / Idea button in the top bar."}
           </p>
         </div>
       )}

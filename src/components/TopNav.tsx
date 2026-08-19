@@ -445,7 +445,7 @@ export default function TopNav({ user }: TopNavProps) {
               className="flex cursor-pointer items-center gap-1.5 rounded-full border border-terracotta/30 bg-terracotta-soft px-3 py-1.5 text-[11px] font-semibold text-terracotta transition-colors hover:bg-terracotta hover:text-white"
             >
               <BugIcon className="h-3.5 w-3.5 shrink-0" />
-              <span className="hidden sm:inline">Bug / Idea</span>
+              <span className="hidden sm:inline">Report Bug / Idea</span>
             </button>
 
             <div className="relative flex items-center gap-2 rounded-full bg-parchment py-1 pl-1 pr-3">
