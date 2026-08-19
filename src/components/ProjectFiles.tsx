@@ -49,12 +49,44 @@ function formatWhen(iso: string): string {
   });
 }
 
+type FileTypeFilter = "all" | "image" | "document" | "spreadsheet" | "other";
+
+const FILE_TYPE_OPTIONS: { key: FileTypeFilter; label: string }[] = [
+  { key: "all", label: "All Files" },
+  { key: "image", label: "Images" },
+  { key: "document", label: "Documents" },
+  { key: "spreadsheet", label: "Spreadsheets" },
+  { key: "other", label: "Other" },
+];
+
+/** Buckets a file's mime type into one of the filter categories above —
+ *  broad on purpose (e.g. any text/* counts as a Document) since this is a
+ *  filter, not a precise classifier. */
+function fileTypeOf(mime: string | null): Exclude<FileTypeFilter, "all"> {
+  if (!mime) return "other";
+  if (mime.startsWith("image/")) return "image";
+  if (mime.includes("sheet") || mime.includes("excel") || mime === "text/csv") return "spreadsheet";
+  if (mime === "application/pdf" || mime.startsWith("text/") || mime.includes("word") || mime.includes("document")) {
+    return "document";
+  }
+  return "other";
+}
+
 export default function ProjectFiles({ projectId, currentUserId, isAdmin }: ProjectFilesProps) {
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<FileTypeFilter>("all");
+
+  const filteredFiles = files.filter((file) => {
+    if (typeFilter !== "all" && fileTypeOf(file.mime_type) !== typeFilter) return false;
+    if (search.trim() && !file.filename.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    return true;
+  });
 
   const fetchFiles = useCallback(async () => {
     setLoading(true);
@@ -134,13 +166,40 @@ export default function ProjectFiles({ projectId, currentUserId, isAdmin }: Proj
 
       {error && <p className="text-[11px] text-terracotta">{error}</p>}
 
+      {files.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap gap-1">
+            {FILE_TYPE_OPTIONS.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => setTypeFilter(opt.key)}
+                className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                  typeFilter === opt.key ? "bg-sage text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filter by filename…"
+            className="ml-auto min-w-[140px] flex-1 rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+          />
+        </div>
+      )}
+
       {loading ? (
         <p className="text-[12px] text-stone">Loading…</p>
       ) : files.length === 0 ? (
         <p className="text-[12px] text-stone/70">No files yet.</p>
+      ) : filteredFiles.length === 0 ? (
+        <p className="text-[12px] text-stone/70">No files match this filter.</p>
       ) : (
         <div className="space-y-1.5">
-          {files.map((file) => {
+          {filteredFiles.map((file) => {
             const canDelete = isAdmin || file.uploaded_by === currentUserId;
             return (
               <div
