@@ -1130,9 +1130,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             >
               <option value="">
                 {!project
-                  ? "Select an objective first..."
+                  ? "Select a project first..."
                   : taskOptionsForObjective.length === 0
-                  ? "No tasks set up for this objective"
+                  ? "No tasks set up for this project"
                   : "Select task..."}
               </option>
               {taskOptionsForObjective.map((t) => (
@@ -1143,9 +1143,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         <div>
-          <label className={`${labelClass} flex items-center gap-1.5`}>Category<InfoTip text="Set automatically from Account, Objective and Task Name." /></label>
+          <label className={`${labelClass} flex items-center gap-1.5`}>Category<InfoTip text="Set automatically from Account, Project and Task Name." /></label>
           {/* Derived, not chosen — autoCategoryForTask sets it from Account,
-              Objective and Task Name, and every task-creation surface applies
+              Project and Task Name, and every task-creation surface applies
               the same rule. Leaving it editable meant a hand-picked value could
               silently disagree with the rule, and get overwritten anyway the
               next time any of the three inputs changed. */}
