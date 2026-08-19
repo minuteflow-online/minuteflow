@@ -990,8 +990,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       const who = author?.full_name || author?.username || "Unknown";
       const stamp = new Date(now).toISOString().slice(0, 10);
       const addition = `[${stamp} — ${who}] ${instructions_append.trim()}`;
-      const existing = (current?.instructions ?? "").trimEnd();
-      updatePayload.instructions = existing ? `${existing}\n\n${addition}` : addition;
+      // Newest first: the point of a note is that someone reads it, and the
+      // bottom of a long instruction block is where things go unread.
+      const existing = (current?.instructions ?? "").trim();
+      updatePayload.instructions = existing ? `${addition}
+
+${existing}` : addition;
     }
     if (planned_minutes !== undefined) updatePayload.planned_minutes = planned_minutes;
     if (archived_at !== undefined) updatePayload.archived_at = archived_at;

@@ -90,6 +90,19 @@ export type TaskEditorInitialTask = Record<string, unknown> & {
 export interface TaskEditorProps {
   mode: "time_based" | "output_based";
   editingTaskId?: number | null;
+  /** Saves to recurring_task_templates instead of a task. The form is
+   *  otherwise identical — that is the point: the recurring panel used to be a
+   *  hand-written copy of this one, so every field added here had to be typed
+   *  in there too, and in practice never was. */
+  templateMode?: boolean;
+  /** Template being edited (uuid). Separate from editingTaskId, which is a
+   *  numeric task id. */
+  editingTemplateId?: string | null;
+  /** Repeat cadence, owned by the caller since only templates have one. */
+  recurrenceControl?: ReactNode;
+  /** Merged into the template payload — recurrence_type and is_active, which
+   *  belong to the caller’s controls rather than to the shared form. */
+  templateExtra?: Record<string, unknown>;
   initialTask?: TaskEditorInitialTask | null;
   currentUserId: string;
   isAdminOrManager: boolean;
@@ -233,6 +246,10 @@ function ClientMemoFormatTooltip() {
 const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEditor({
   mode,
   editingTaskId = null,
+  templateMode = false,
+  editingTemplateId = null,
+  recurrenceControl,
+  templateExtra,
   initialTask = null,
   currentUserId,
   isAdminOrManager,
@@ -251,7 +268,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   onCancel,
   onSaved,
 }: TaskEditorProps, ref) {
-  const isEditing = Boolean(editingTaskId);
+  const isEditing = Boolean(templateMode ? editingTemplateId : editingTaskId);
 
   // Basics
   const [account, setAccount] = useState((initialTask?.account as string) ?? "");
@@ -335,6 +352,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [link, setLink] = useState((initialTask?.link as string) ?? "");
   const [instructions, setInstructions] = useState((initialTask?.instructions as string) ?? "");
   const [instructionsLocked, setInstructionsLocked] = useState(Boolean(initialTask?.instructions_locked));
+  // The lock as it was when the form opened. A lock that can be switched off
+  // again protects nothing, so once it is saved on, the checkbox is fixed and
+  // the wording is append-only from then on — for admins too.
+  const instructionsLockedAtLoad = Boolean(initialTask?.instructions_locked);
+  const instructionsEditable = !instructionsLockedAtLoad && isAdminOrManager;
+  const [showInstructionAdd, setShowInstructionAdd] = useState(false);
   // A VA can add to instructions but not rewrite them — the server rejects
   // `instructions` from a non-admin outright and only accepts this append.
   const [instructionsAppend, setInstructionsAppend] = useState("");
@@ -351,7 +374,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // the admin Task Assignments tab, VA Projects and the Fixed Pay panels had no
   // way to attach a file at all — the same form, missing a field, depending on
   // where you opened it from.
-  const attachmentsBase = mode === "time_based" ? "/api/assigned-tasks" : "/api/fixed-pay-tasks";
+  const attachmentsBase = templateMode
+    ? "/api/recurring-task-templates"
+    : mode === "time_based"
+    ? "/api/assigned-tasks"
+    : "/api/fixed-pay-tasks";
+  // Templates key attachments by uuid; tasks by numeric id.
+  const attachmentOwnerId: string | number | null = templateMode ? editingTemplateId : editingTaskId;
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -359,7 +388,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const attachmentInputRef = useRef<HTMLInputElement>(null);
 
   const loadAttachments = useCallback(
-    async (taskId: number) => {
+    async (taskId: string | number) => {
       setAttachmentsLoading(true);
       try {
         const res = await fetch(`${attachmentsBase}/${taskId}/attachments`, { cache: "no-store" });
@@ -384,15 +413,15 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   );
 
   useEffect(() => {
-    if (!editingTaskId) return;
-    void loadAttachments(editingTaskId);
-  }, [editingTaskId, loadAttachments]);
+    if (attachmentOwnerId == null) return;
+    void loadAttachments(attachmentOwnerId);
+  }, [attachmentOwnerId, loadAttachments]);
 
   /** Upload straight away when the task exists; hold otherwise (see handleSubmit). */
   const handleFilesPicked = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;
-      if (!editingTaskId) {
+      if (attachmentOwnerId == null) {
         setPendingFiles((prev) => [...prev, ...files]);
         return;
       }
@@ -401,19 +430,19 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         for (const file of files) {
           const form = new FormData();
           form.append("file", file);
-          await fetch(`${attachmentsBase}/${editingTaskId}/attachments`, { method: "POST", body: form });
+          await fetch(`${attachmentsBase}/${attachmentOwnerId}/attachments`, { method: "POST", body: form });
         }
-        await loadAttachments(editingTaskId);
+        await loadAttachments(attachmentOwnerId);
       } finally {
         setUploading(false);
       }
     },
-    [editingTaskId, attachmentsBase, loadAttachments]
+    [attachmentOwnerId, attachmentsBase, loadAttachments]
   );
 
   /** Files picked before the task existed, uploaded once it does. */
   const flushPendingFiles = useCallback(
-    async (taskId: number) => {
+    async (taskId: string | number) => {
       if (pendingFiles.length === 0) return;
       setUploading(true);
       try {
@@ -432,14 +461,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
   const handleDeleteAttachment = useCallback(
     async (attachmentId: number) => {
-      if (!editingTaskId) return;
+      if (attachmentOwnerId == null) return;
       if (!confirm("Delete this attachment? This cannot be undone.")) return;
-      await fetch(`${attachmentsBase}/${editingTaskId}/attachments?attachmentId=${attachmentId}`, {
+      await fetch(`${attachmentsBase}/${attachmentOwnerId}/attachments?attachmentId=${attachmentId}`, {
         method: "DELETE",
       });
-      await loadAttachments(editingTaskId);
+      await loadAttachments(attachmentOwnerId);
     },
-    [editingTaskId, attachmentsBase, loadAttachments]
+    [attachmentOwnerId, attachmentsBase, loadAttachments]
   );
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
@@ -461,8 +490,26 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // select both let the creator pick a starting status other than the default).
   const [initialStatus, setInitialStatus] = useState(mode === "time_based" ? "pending" : "open");
   const [assignedBy, setAssignedBy] = useState((initialTask?.assigned_by as string) ?? currentUserId);
-  const initialVaId = initialTask?.assigned_task_assignees?.[0]?.va_id ?? (initialTask?.assigned_to as string) ?? defaultVaId ?? (isAdminOrManager ? "" : currentUserId);
-  const [vaId, setVaId] = useState(initialVaId);
+  // Several assignees, not one. assigned_tasks has always supported a set of
+  // them via assigned_task_assignees — the form just offered a single select, so
+  // a meeting for four people had to be created four times. Every assignee sees
+  // the task on their own calendar, so assigning IS the invitation: give it
+  // hours and the block appears for all of them.
+  //
+  // Seeded from every existing assignee, which is what makes it safe to send
+  // va_ids on an edit. The single select could not, since it only knew about
+  // the first one and saving would have dropped the rest.
+  const initialVaIds: string[] = (() => {
+    const fromAssignees = (initialTask?.assigned_task_assignees ?? [])
+      .map((a) => a.va_id)
+      .filter(Boolean);
+    if (fromAssignees.length > 0) return fromAssignees;
+    const single = (initialTask?.assigned_to as string) ?? defaultVaId ?? (isAdminOrManager ? "" : currentUserId);
+    return single ? [single] : [];
+  })();
+  const [vaIds, setVaIds] = useState<string[]>(initialVaIds);
+  const toggleVaId = (id: string) =>
+    setVaIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
   const [linkedProjectIdState, setLinkedProjectId] = useState((initialTask?.project_id as string) ?? defaultLinkedProjectId ?? "");
   const linkedProjectId = lockedProjectId ?? linkedProjectIdState;
   const [parentTaskId, setParentTaskId] = useState(initialTask?.parent_task_id != null ? String(initialTask.parent_task_id) : "");
@@ -561,7 +608,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // memo/invoice. Available on create too, held as local pendingTodoTexts
   // until the task actually has an id, then flushed to real rows right
   // after creation (see handleSubmit).
-  const supportsTodos = mode === "time_based";
+  const supportsTodos = mode === "time_based" && !templateMode;
   const [pendingTodoTexts, setPendingTodoTexts] = useState<string[]>([]);
 
   useEffect(() => {
@@ -725,6 +772,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     // Computed from the primitives rather than reading the derived
     // needsSchedule, which is declared further down the component body — this
     // closure would then depend on a binding that isn't in its dependency list.
+    // Shared by both branches: time-based writes a set of assignees, output-based
+    // has one column and takes the first.
+    const effectiveVaIds = isAdminOrManager ? vaIds : [currentUserId].filter(Boolean);
+
     if (mode === "time_based") {
       const rangeGiven = hasSchedule && Boolean(startDate) && Boolean(startTime) && Boolean(endTime);
       if (!rangeGiven && parsedPlannedMinutes == null) {
@@ -745,6 +796,59 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     setSaving(true);
     setError(null);
     try {
+      // Recurring template: same form, different table. Kept as its own branch
+      // rather than another `mode` so every mode check below stays about
+      // time-based vs output-based, which is what they actually mean.
+      if (templateMode) {
+        const payload: Record<string, unknown> = {
+          title: taskName.trim(),
+          task_name: taskName.trim(),
+          account: account || null,
+          project: project || null,
+          category: category || null,
+          description: taskDetail.trim() || null,
+          task_detail: taskDetail.trim() || null,
+          task_notes: taskNotes.trim() || null,
+          link: link.trim() || null,
+          ...(instructionsEditable
+            ? { instructions: instructions.trim() || null }
+            : instructionsAppend.trim()
+            ? { instructions_append: instructionsAppend.trim() }
+            : {}),
+          ...(instructionsLockedAtLoad ? {} : { instructions_locked: instructionsLocked }),
+          review_required: reviewRequired === "yes",
+          start_date: startDate || null,
+          end_date: endDate || null,
+          due_time: dueTime || null,
+          // Clock times, not instants — each occurrence supplies its own date.
+          start_time: hasSchedule && startTime ? startTime : null,
+          end_time: hasSchedule && endTime ? endTime : null,
+          planned_minutes: hasSchedule ? null : parsedPlannedMinutes,
+          project_id: linkedProjectId || null,
+          assigned_to_ids: isAdminOrManager ? vaIds : [currentUserId].filter(Boolean),
+          assigned_by: assignedBy || currentUserId || null,
+          pay_type: null,
+          ...templateExtra,
+        };
+
+        const res = await fetch(
+          editingTemplateId
+            ? `/api/recurring-task-templates?id=${editingTemplateId}`
+            : "/api/recurring-task-templates",
+          {
+            method: editingTemplateId ? "PATCH" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(editingTemplateId ? { id: editingTemplateId, ...payload } : payload),
+          }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const saved = data.template ?? {};
+        if (!editingTemplateId && saved.id) await flushPendingFiles(saved.id);
+        onSaved({ id: saved.id ?? 0, ...saved });
+        return;
+      }
+
       let task: { id: number; [key: string]: unknown };
 
       if (mode === "time_based") {
@@ -770,12 +874,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         // server-side, and it would take the whole save down with it — so they
         // go in only for admins/managers, and a VA's contribution rides along
         // as an append instead.
-        if (isAdminOrManager) {
+        if (instructionsEditable) {
           body.instructions = instructions.trim() || null;
-          body.instructions_locked = instructionsLocked;
         } else if (instructionsAppend.trim()) {
           body.instructions_append = instructionsAppend.trim();
         }
+        // The lock itself is always sent: it is the one part a VA can set, and
+        // it only ever moves from off to on.
+        if (!instructionsLockedAtLoad) body.instructions_locked = instructionsLocked;
 
         // Only sent when there's an actual answer, and only when the viewer is
         // allowed to give one — omitting it leaves the stored value and its
@@ -806,14 +912,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         // would double-count in the Hours tab's total.
         body.planned_minutes = hasSchedule ? null : parsedPlannedMinutes;
 
-        const effectiveVaId = isAdminOrManager ? vaId : currentUserId;
 
         if (isEditing && editingTaskId) {
-          // va_ids intentionally omitted here — assigned_tasks supports
-          // multiple assignees (collaborative tasks) but this form's Assign
-          // To is a single-select, so reconciling va_ids on every metadata
-          // save would silently drop collaborators (or unassign entirely).
-          // Reassignment stays disabled during edit; see the Assign To field.
+          // va_ids rides along with the edit now. It used to be omitted
+          // because the single select only knew the first assignee, so a
+          // metadata save would have dropped the rest. The picker is seeded
+          // from all of them, so what it sends is the whole set.
+          if (isAdminOrManager && manageAssignment) body.va_ids = effectiveVaIds;
           if (isAdminOrManager) {
             const res = await fetch(`/api/assigned-tasks/${editingTaskId}`, {
               method: "PUT",
@@ -835,7 +940,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           }
         } else {
           body.initial_status = isAdminOrManager ? initialStatus : "pending";
-          if (manageAssignment && effectiveVaId) body.va_ids = [effectiveVaId];
+          if (manageAssignment && effectiveVaIds.length > 0) body.va_ids = effectiveVaIds;
           const res = await fetch("/api/assigned-tasks", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -872,7 +977,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           planned_minutes: null,
         };
         if (isAdminOrManager) {
-          body.assigned_to = vaId || null;
+          // fixed_pay_tasks has a single assigned_to column rather than a
+          // join table, so an output-based task takes the first pick.
+          body.assigned_to = effectiveVaIds[0] || null;
           body.assigned_by = assignedBy || null;
           if (!isEditing) body.status = initialStatus;
         }
@@ -900,8 +1007,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     }
   }, [
     mode, taskName, account, project, category, taskDetail, taskNotes, link, dueDate, dueTime, startDate, endDate,
+    templateMode, editingTemplateId, templateExtra, flushPendingFiles, instructionsEditable, instructionsLockedAtLoad,
     assignedBy, currentUserId, instructions, instructionsLocked, instructionsAppend, reviewRequired, reviewEditable, payType, linkedProjectId,
-    parentTaskId, isAdminOrManager, vaId, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
+    parentTaskId, isAdminOrManager, vaIds, hasSchedule, startTime, endTime, rate, isEditing, editingTaskId, onSaved,
     // Without this the callback keeps the duration from the render it was built
     // in, so typing a duration and saving immediately wrote the previous value
     // (usually null) — the field looked filled in and still saved empty.
@@ -1136,41 +1244,77 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         <div>
-          <label className={labelClass}>Instructions</label>
-          {isAdminOrManager ? (
-            <>
-              <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={2} disabled={readOnly} className={`${inputClass} resize-none`} />
-              <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
-                <input type="checkbox" checked={instructionsLocked} onChange={(e) => setInstructionsLocked(e.target.checked)} disabled={readOnly} />
-                Locked
-              </label>
-            </>
+          <label className={`${labelClass} flex items-center gap-1.5`}>
+            Instructions
+            <InfoTip text="Locking is one-way. Once locked the wording can't be edited or unlocked by anyone — notes get added on top instead, so nothing already agreed is rewritten." />
+          </label>
+          {instructionsEditable ? (
+            <textarea
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              rows={2}
+              disabled={readOnly}
+              className={`${inputClass} resize-none`}
+            />
+          ) : instructions.trim() ? (
+            <p className="whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
+              {instructions}
+            </p>
           ) : (
-            <>
-              {instructions.trim() ? (
-                <p className="whitespace-pre-wrap rounded-lg border border-sand bg-parchment/40 px-3 py-2 text-[13px] text-espresso">
-                  {instructions}
-                </p>
+            <p className="text-[12px] text-stone/50">No instructions yet.</p>
+          )}
+
+          {/* Everyone sees the lock, VAs included, and it only goes one way:
+              once saved locked it can't be cleared by anyone. That is what makes
+              it worth trusting — otherwise "locked" is just a checkbox. */}
+          <label className="mt-1 flex items-center gap-1.5 text-[11px] text-espresso">
+            <input
+              type="checkbox"
+              checked={instructionsLocked}
+              onChange={(e) => setInstructionsLocked(e.target.checked)}
+              disabled={readOnly || instructionsLockedAtLoad}
+            />
+            Locked
+            {instructionsLockedAtLoad && <span className="text-[10px] text-stone">— can&apos;t be undone</span>}
+          </label>
+
+          {!readOnly && !instructionsEditable && (
+            <div className="mt-1">
+              {!showInstructionAdd ? (
+                <button
+                  type="button"
+                  onClick={() => setShowInstructionAdd(true)}
+                  className="text-[11px] font-semibold text-terracotta hover:underline"
+                >
+                  + Instruction
+                </button>
               ) : (
-                <p className="text-[12px] text-stone/50">No instructions yet.</p>
-              )}
-              {!readOnly && (
-                <div className="mt-2">
-                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Add to Instructions</label>
+                <div>
                   <textarea
                     value={instructionsAppend}
                     onChange={(e) => setInstructionsAppend(e.target.value)}
                     rows={2}
-                    placeholder="Add a note or question — this is added below, nothing above is changed."
+                    autoFocus
+                    placeholder="Add a note — it goes to the top, nothing below it changes."
                     className={`${inputClass} resize-none`}
                   />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowInstructionAdd(false);
+                      setInstructionsAppend("");
+                    }}
+                    className="mt-1 text-[11px] font-semibold text-stone hover:underline"
+                  >
+                    Cancel
+                  </button>
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
 
-        {!isEditing && isAdminOrManager && (
+        {!templateMode && !isEditing && isAdminOrManager && (
           <div>
             <label className={labelClass}>Status</label>
             <select value={initialStatus} onChange={(e) => setInitialStatus(e.target.value)} disabled={readOnly} className={inputClass}>
@@ -1279,20 +1423,44 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       <Section title="Assignment" {...accordionProps("assignment")} warning={missingAssignment}>
         {manageAssignment && (
           <div>
-            <label className={labelClass}>Assign To</label>
-            <select
-              value={isAdminOrManager ? vaId : currentUserId}
-              onChange={(e) => setVaId(e.target.value)}
-              disabled={!isAdminOrManager || isEditing || readOnly}
-              className={inputClass}
-            >
-              <option value="">Unassigned</option>
-              {assignToOptions.map((m) => (
-                <option key={m.id} value={m.id}>{m.full_name || m.username}</option>
-              ))}
-            </select>
-            {isEditing && isAdminOrManager && (
-              <p className="mt-1 text-[10px] text-stone">Reassign this task from Assignment's task list — a task can have more than one assignee.</p>
+            <label className={`${labelClass} flex items-center gap-1.5`}>
+              Assign To
+              <InfoTip text="Pick everyone involved. Each of them gets the task on their own calendar, so a task with hours blocks the time for all of them." />
+            </label>
+            {!isAdminOrManager ? (
+              // A VA only ever assigns to themselves, so there's no list to offer.
+              <input value="You" readOnly disabled className={inputClass} />
+            ) : assignToOptions.length === 0 ? (
+              <p className="text-[12px] text-stone/60">No team members to assign.</p>
+            ) : (
+              <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-lg border border-sand bg-white p-1.5">
+                {assignToOptions.map((m) => (
+                  <label
+                    key={m.id}
+                    className={`flex items-center gap-2 rounded px-1.5 py-1 text-[12px] transition-colors ${
+                      readOnly ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-cream"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={vaIds.includes(m.id)}
+                      onChange={() => toggleVaId(m.id)}
+                      disabled={readOnly}
+                      className="accent-terracotta"
+                    />
+                    <span className="truncate text-espresso">{m.full_name || m.username}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {isAdminOrManager && (
+              <p className="mt-1 text-[10px] text-stone">
+                {vaIds.length === 0
+                  ? "Unassigned"
+                  : `${vaIds.length} assigned${
+                      mode === "output_based" && vaIds.length > 1 ? " — output-based keeps the first only" : ""
+                    }`}
+              </p>
             )}
           </div>
         )}
@@ -1490,6 +1658,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       )}
 
       <Section title="Schedule" {...accordionProps("schedule")} warning={missingSchedule}>
+        {/* Repeat + Active — the one thing a template has that a task doesn’t. */}
+        {recurrenceControl}
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-stone">
             {/* Tooltip rather than prose, per the form's new pattern — but the

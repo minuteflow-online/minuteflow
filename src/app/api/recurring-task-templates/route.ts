@@ -261,6 +261,14 @@ export async function POST(request: Request) {
     account: stringOrNull(body.account),
     project: stringOrNull(body.project),
     project_id: stringOrNull(body.project_id),
+    link: stringOrNull(body.link),
+    // Clock times, not timestamps — the template says “9-10am” and the cron
+    // pairs that with each occurrence’s date.
+    start_time: stringOrNull(body.start_time),
+    end_time: stringOrNull(body.end_time),
+    due_time: stringOrNull(body.due_time),
+    end_date: stringOrNull(body.end_date),
+    review_required: booleanOrDefault(body.review_required, false),
     category: stringOrNull(body.category),
     pay_type: stringOrNull(body.pay_type),
     recurrence_type,
@@ -317,6 +325,29 @@ export async function PATCH(request: Request) {
   if (body.task_detail !== undefined) updates.task_detail = stringOrNull(body.task_detail);
   if (body.task_notes !== undefined) updates.task_notes = stringOrNull(body.task_notes);
   if (body.instructions !== undefined) updates.instructions = stringOrNull(body.instructions);
+  // Append-only edits, same as tasks: a locked template can still take a note,
+  // and it goes on top so it is the first thing read. Without this the append
+  // box on a template silently threw the note away.
+  if (typeof body.instructions_append === "string" && body.instructions_append.trim()) {
+    const appendClient = serviceClient();
+    const { data: currentTemplate } = await appendClient
+      .from("recurring_task_templates")
+      .select("instructions")
+      .eq("id", id)
+      .single();
+    const { data: author } = await appendClient
+      .from("profiles")
+      .select("full_name, username")
+      .eq("id", user.id)
+      .single();
+    const who = author?.full_name || author?.username || "Unknown";
+    const stamp = new Date().toISOString().slice(0, 10);
+    const addition = `[${stamp} — ${who}] ${body.instructions_append.trim()}`;
+    const existingText = (currentTemplate?.instructions ?? "").trim();
+    updates.instructions = existingText ? `${addition}
+
+${existingText}` : addition;
+  }
   if (body.instructions_locked !== undefined) updates.instructions_locked = booleanOrDefault(body.instructions_locked, false);
   if (body.planned_minutes !== undefined) updates.planned_minutes = numberOrNull(body.planned_minutes);
   if (body.start_date !== undefined) updates.start_date = stringOrNull(body.start_date);
@@ -330,6 +361,12 @@ export async function PATCH(request: Request) {
   if (body.project !== undefined) updates.project = stringOrNull(body.project);
   if (body.project_id !== undefined) updates.project_id = stringOrNull(body.project_id);
   if (body.category !== undefined) updates.category = stringOrNull(body.category);
+  if (body.link !== undefined) updates.link = stringOrNull(body.link);
+  if (body.start_time !== undefined) updates.start_time = stringOrNull(body.start_time);
+  if (body.end_time !== undefined) updates.end_time = stringOrNull(body.end_time);
+  if (body.due_time !== undefined) updates.due_time = stringOrNull(body.due_time);
+  if (body.end_date !== undefined) updates.end_date = stringOrNull(body.end_date);
+  if (body.review_required !== undefined) updates.review_required = booleanOrDefault(body.review_required, false);
   if (body.pay_type !== undefined) updates.pay_type = stringOrNull(body.pay_type);
   if (body.recurrence_type) updates.recurrence_type = parseRecurrenceType(body.recurrence_type);
   // Always clear recurrence_days — schedule is now driven by start_date + recurrence_type
