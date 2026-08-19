@@ -1698,7 +1698,7 @@ export default function ReportsPage() {
                   const pct = reportSummary.totalMs > 0 ? (cat.ms / reportSummary.totalMs) * 100 : 0;
                   return (
                     <div key={cat.name} className="flex items-center gap-2">
-                      <span className="text-[11px] text-espresso w-[90px] truncate">{cat.name}</span>
+                      <span className="text-[11px] text-espresso w-[128px] truncate">{cat.name}</span>
                       <div className="flex-1 h-1.5 rounded bg-parchment overflow-hidden">
                         <div className={`h-full rounded ${barColor}`} style={{ width: `${Math.max(pct, 2)}%` }} />
                       </div>
@@ -1706,7 +1706,27 @@ export default function ReportsPage() {
                     </div>
                   );
                 })}
-                {reportSummary.categories.length === 0 && (
+                {/* Untracked, unlike every row above it: the stretch after a task is
+                    submitted before the next one starts. Sized against totalMs so the
+                    bar reads on the same scale, though it is not part of that total. */}
+                {transitionMs > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-espresso w-[128px] truncate">From submit to task</span>
+                    <div className="flex-1 h-1.5 rounded bg-parchment overflow-hidden">
+                      <div
+                        className="h-full rounded bg-amber"
+                        style={{
+                          width: `${Math.max(
+                            reportSummary.totalMs > 0 ? (transitionMs / reportSummary.totalMs) * 100 : 0,
+                            2
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="text-[11px] font-semibold text-espresso w-[60px] text-right">{formatDuration(transitionMs)}</span>
+                  </div>
+                )}
+                {reportSummary.categories.length === 0 && transitionMs === 0 && (
                   <span className="text-[11px] text-bark">No data</span>
                 )}
               </div>
