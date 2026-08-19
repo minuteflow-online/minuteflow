@@ -45,11 +45,15 @@ export async function POST(request: NextRequest) {
     .single();
 
   const body = await request.json();
-  const { title, description, report_date, drive_file_ids } = body;
+  const { title, description, report_date, drive_file_ids, report_type } = body;
 
   if (!title?.trim() || !description?.trim()) {
     return Response.json({ error: "title and description are required" }, { status: 400 });
   }
+
+  // One endpoint serves both — anything that isn't an explicit feature request
+  // is a bug, which keeps older clients posting bugs exactly as before.
+  const reportType = report_type === "feature" ? "feature" : "bug";
 
   const { data, error } = await supabase
     .from("bug_reports")
@@ -57,6 +61,7 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       username: profile?.username || "",
       full_name: profile?.full_name || "",
+      report_type: reportType,
       title: title.trim(),
       description: description.trim(),
       report_date: report_date || new Date().toISOString().split("T")[0],
@@ -72,10 +77,11 @@ export async function POST(request: NextRequest) {
   if (telegramEnabled("bugs")) {
     const who = profile?.full_name || profile?.username || "Someone";
     const desc = description.trim();
+    const heading = reportType === "feature" ? "💡 <b>Feature request</b>" : "🐞 <b>Bug report</b>";
     await sendTelegram(
       "bugs",
       [
-        `🐞 <b>Bug report</b> from ${esc(who)}`,
+        `${heading} from ${esc(who)}`,
         esc(title.trim()),
         "",
         esc(desc.length > 400 ? desc.slice(0, 400) + "…" : desc),

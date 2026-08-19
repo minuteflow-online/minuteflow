@@ -7,6 +7,7 @@ import { signOut } from "@/app/actions/auth";
 import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
 import AvatarUpload from "@/components/AvatarUpload";
+import ReportIssueModal, { BugIcon } from "@/components/ReportIssueModal";
 
 const CLIENT_MEMO_WORD_LIMIT = 15;
 
@@ -88,7 +89,7 @@ function Clock() {
   if (!time) return null;
 
   return (
-    <span className="font-serif text-sm text-bark tabular-nums">{time}</span>
+    <span className="font-serif text-[11px] leading-none text-bark tabular-nums">{time}</span>
   );
 }
 
@@ -120,6 +121,10 @@ export default function TopNav({ user }: TopNavProps) {
 
   // Name-chip dropdown (Log out, upload photo)
   const [showUserMenu, setShowUserMenu] = useState(false);
+
+  // Bug report / feature request — one button, one modal, available from every
+  // page that renders the nav.
+  const [showReportModal, setShowReportModal] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null | undefined>(user.avatar_url);
 
   // Every top-level item is now visible to everyone — the one item that used
@@ -388,13 +393,16 @@ export default function TopNav({ user }: TopNavProps) {
     <>
       <header className="sticky top-0 z-50 border-b border-sand bg-white">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
-          {/* Left: Brand */}
-          <Link href="/dashboard" className="flex items-center gap-1">
-            <span className="font-serif text-xl font-bold text-ink">
-              Minute
-              <span className="italic text-terracotta">Flow</span>
-            </span>
-          </Link>
+          {/* Left: Brand, with the clock tucked underneath it */}
+          <div className="flex flex-col items-start gap-0.5">
+            <Link href="/dashboard" className="flex items-center gap-1">
+              <span className="font-serif text-xl font-bold leading-none text-ink">
+                Minute
+                <span className="italic text-terracotta">Flow</span>
+              </span>
+            </Link>
+            <Clock />
+          </div>
 
           {/* Center: Tab navigation */}
           <nav className="flex items-center gap-1">
@@ -428,9 +436,17 @@ export default function TopNav({ user }: TopNavProps) {
             )}
           </nav>
 
-          {/* Right: Clock, user chip (dropdown: upload photo, log out) */}
-          <div className="flex items-center gap-4">
-            <Clock />
+          {/* Right: Report button, user chip (dropdown: upload photo, log out) */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setShowReportModal(true)}
+              title="Report a bug or request a feature"
+              className="flex cursor-pointer items-center gap-1.5 rounded-full border border-terracotta/30 bg-terracotta-soft px-3 py-1.5 text-[11px] font-semibold text-terracotta transition-colors hover:bg-terracotta hover:text-white"
+            >
+              <BugIcon className="h-3.5 w-3.5 shrink-0" />
+              <span className="hidden sm:inline">Bug / Idea</span>
+            </button>
 
             <div className="relative flex items-center gap-2 rounded-full bg-parchment py-1 pl-1 pr-3">
               <AvatarUpload
@@ -479,6 +495,9 @@ export default function TopNav({ user }: TopNavProps) {
           </div>
         </div>
       </header>
+
+      {/* ─── Bug Report / Feature Request Modal ─── */}
+      <ReportIssueModal open={showReportModal} onClose={() => setShowReportModal(false)} />
 
       {/* ─── Close Task Before Logout Modal ─── */}
       {showCloseTaskModal && (
