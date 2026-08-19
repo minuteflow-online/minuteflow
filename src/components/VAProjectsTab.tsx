@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
 import ProjectMessageBoard from "@/components/ProjectMessageBoard";
+import OperationTileGrid, { type OperationTileKey } from "@/components/OperationTileGrid";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
 
@@ -165,6 +166,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(false);
 
+  // Phase 2 tile grid (Operations only) — null shows the tile grid, a key
+  // opens that tile full-width in its place. Resets to null whenever the
+  // selected Operation changes, same as showDetails/subtaskView below.
+  const [activeTile, setActiveTile] = useState<OperationTileKey | null>(null);
+
   const fetchProjects = useCallback(async () => {
     setLoading(true);
     try {
@@ -241,6 +247,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setShowAddSubtask(false);
     setBoardStatusError(null);
     setRecurringTemplates([]);
+    setActiveTile(null);
     void fetchSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
     if (kind === "operation") void fetchRecurringForProject(selectedProject.id);
@@ -1314,52 +1321,73 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               </div>
               )}
 
-              {kind === "operation" && (
-                <ProjectMessageBoard projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
-              )}
+              {kind === "operation" ? (
+                activeTile === null ? (
+                  <OperationTileGrid
+                    recurringCount={recurringTemplates.length}
+                    subtaskCount={subtasks.length}
+                    onSelect={setActiveTile}
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => setActiveTile(null)}
+                      className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-espresso hover:text-terracotta transition-colors cursor-pointer"
+                    >
+                      <span aria-hidden="true">←</span> {selectedProject.name}
+                    </button>
 
-              {kind === "operation" && (
-                <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Recurring</h3>
-                  </div>
-                  {recurringLoading ? (
-                    <p className="text-[12px] text-stone">Loading…</p>
-                  ) : recurringTemplates.length === 0 ? (
-                    <p className="text-[12px] text-stone/70">
-                      No recurring templates linked yet. Add one from the Recurring Templates tab and set
-                      &ldquo;Link to Operations&rdquo; to this Operation.
-                    </p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {recurringTemplates.map((template) => (
-                        <div
-                          key={template.id}
-                          className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="text-[13px] font-semibold text-espresso leading-tight">
-                              {template.title || template.task_name || "Untitled template"}
-                            </span>
-                            <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
-                              template.is_active
-                                ? "bg-sage-soft text-sage border-sage/20"
-                                : "bg-stone/10 text-stone border-stone/20"
-                            }`}>
-                              {template.is_active ? "Active" : "Paused"}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-stone/80">
-                            {RECURRENCE_LABEL[template.recurrence_type] ?? template.recurrence_type} · Starts {formatDate(template.start_date)}
-                          </div>
+                    {activeTile === "message_board" && (
+                      <ProjectMessageBoard projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
+                    )}
+
+                    {activeTile === "recurring" && (
+                      <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Recurring</h3>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+                        {recurringLoading ? (
+                          <p className="text-[12px] text-stone">Loading…</p>
+                        ) : recurringTemplates.length === 0 ? (
+                          <p className="text-[12px] text-stone/70">
+                            No recurring templates linked yet. Add one from the Recurring Templates tab and set
+                            &ldquo;Link to Operations&rdquo; to this Operation.
+                          </p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {recurringTemplates.map((template) => (
+                              <div
+                                key={template.id}
+                                className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="text-[13px] font-semibold text-espresso leading-tight">
+                                    {template.title || template.task_name || "Untitled template"}
+                                  </span>
+                                  <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
+                                    template.is_active
+                                      ? "bg-sage-soft text-sage border-sage/20"
+                                      : "bg-stone/10 text-stone border-stone/20"
+                                  }`}>
+                                    {template.is_active ? "Active" : "Paused"}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-stone/80">
+                                  {RECURRENCE_LABEL[template.recurrence_type] ?? template.recurrence_type} · Starts {formatDate(template.start_date)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
-              {renderSubtasksCard()}
+                    {activeTile === "subtasks" && renderSubtasksCard()}
+                  </div>
+                )
+              ) : (
+                renderSubtasksCard()
+              )}
             </div>
           )}
 
