@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
-import type { Profile, Project, ProjectKind } from "@/types/database";
+import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
 
 interface VAProjectsTabProps {
   activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
@@ -64,6 +64,15 @@ function formatDate(iso: string | null | undefined): string {
     return iso;
   }
 }
+
+const RECURRENCE_LABEL: Record<string, string> = {
+  daily: "Daily",
+  weekly: "Weekly",
+  biweekly: "Every 2 weeks",
+  monthly: "Monthly",
+  every_2_months: "Every 2 months",
+  every_3_months: "Every 3 months",
+};
 
 const STATUS_CLASSES: Record<string, string> = {
   on_queue: "bg-stone/10 text-stone border-stone/20",
@@ -149,6 +158,12 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [editSubError, setEditSubError] = useState<string | null>(null);
   const editTaskEditorRef = useRef<TaskEditorHandle | null>(null);
 
+  // Recurring templates linked to the selected Operation — the "Recurring"
+  // section below Subtasks. Objectives don't have this section (kind check
+  // at render time); the fetch itself is harmless either way.
+  const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
+  const [recurringLoading, setRecurringLoading] = useState(false);
+
   const fetchProjects = useCallback(async () => {
     setLoading(true);
     try {
@@ -224,8 +239,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setSubtaskView("list");
     setShowAddSubtask(false);
     setBoardStatusError(null);
+    setRecurringTemplates([]);
     void fetchSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
+    if (kind === "operation") void fetchRecurringForProject(selectedProject.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
 
@@ -251,6 +268,24 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       // ignore
     } finally {
       setSubtasksLoading(false);
+    }
+  }, []);
+
+  // No ?mine=true here on purpose: the API's own rule already matches "VAs see
+  // only what pertains to them, admins see all" — non-admins are filtered to
+  // their own assigned_to_ids server-side regardless, admins get every
+  // template on this Operation. See src/app/api/recurring-task-templates/route.ts.
+  const fetchRecurringForProject = useCallback(async (projectId: string) => {
+    setRecurringLoading(true);
+    try {
+      const res = await fetch(`/api/recurring-task-templates?projectId=${projectId}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const d = await res.json();
+      setRecurringTemplates(d.templates ?? []);
+    } catch {
+      // ignore
+    } finally {
+      setRecurringLoading(false);
     }
   }, []);
 
@@ -1276,6 +1311,47 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   {savingEdit ? "Saving..." : "Save Changes"}
                 </button>
               </div>
+              )}
+
+              {kind === "operation" && (
+                <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Recurring</h3>
+                  </div>
+                  {recurringLoading ? (
+                    <p className="text-[12px] text-stone">Loading…</p>
+                  ) : recurringTemplates.length === 0 ? (
+                    <p className="text-[12px] text-stone/70">
+                      No recurring templates linked yet. Add one from the Recurring Templates tab and set
+                      &ldquo;Link to Operations&rdquo; to this Operation.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {recurringTemplates.map((template) => (
+                        <div
+                          key={template.id}
+                          className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-[13px] font-semibold text-espresso leading-tight">
+                              {template.title || template.task_name || "Untitled template"}
+                            </span>
+                            <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
+                              template.is_active
+                                ? "bg-sage-soft text-sage border-sage/20"
+                                : "bg-stone/10 text-stone border-stone/20"
+                            }`}>
+                              {template.is_active ? "Active" : "Paused"}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-stone/80">
+                            {RECURRENCE_LABEL[template.recurrence_type] ?? template.recurrence_type} · Starts {formatDate(template.start_date)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
 
               {renderSubtasksCard()}

@@ -22,6 +22,7 @@ type TemplateRow = {
   assigned_by: string | null;
   account: string | null;
   project: string | null;
+  project_id: string | null;
   category: string | null;
   pay_type: string | null;
   recurrence_type: RecurrenceType;
@@ -192,6 +193,7 @@ async function handleCron(request: NextRequest) {
       .insert({
         account: template.account,
         project: template.project,
+        project_id: template.project_id ?? null,
         task_name: template.title,
         category: template.category,
         task_detail: template.task_detail ?? template.description,
