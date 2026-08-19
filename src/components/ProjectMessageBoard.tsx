@@ -36,6 +36,11 @@ interface ProjectMessageBoardProps {
   projectId: string;
   currentUserId: string;
   isAdmin: boolean;
+  // Controlled by the parent (VAProjectsTab) rather than owned here, so its
+  // own tile back button can hide itself while a post's thread is open —
+  // see the comment there for why.
+  activeMessageId: string | null;
+  onActiveMessageChange: (id: string | null) => void;
 }
 
 function authorName(a: Author): string {
@@ -82,7 +87,13 @@ function formatWhen(iso: string): string {
   });
 }
 
-export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin }: ProjectMessageBoardProps) {
+export default function ProjectMessageBoard({
+  projectId,
+  currentUserId,
+  isAdmin,
+  activeMessageId,
+  onActiveMessageChange,
+}: ProjectMessageBoardProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCompose, setShowCompose] = useState(false);
@@ -91,9 +102,8 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
-  // null = list view; a message id = that post's own thread page, full-width,
-  // matching Basecamp (click a post, it opens; a back link returns to the list).
-  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  // activeMessageId itself is a controlled prop now (see interface comment
+  // above) — null = list view; a message id = that post's own thread page.
 
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editMessageTitle, setEditMessageTitle] = useState("");
@@ -171,7 +181,7 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
     const previous = messages;
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
     // The thread this message belongs to no longer exists — back to the list.
-    setActiveMessageId((current) => (current === messageId ? null : current));
+    if (activeMessageId === messageId) onActiveMessageChange(null);
     try {
       const res = await fetch(`/api/project-messages?id=${messageId}`, { method: "DELETE" });
       if (!res.ok) throw new Error();
@@ -391,7 +401,7 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
       <div className="space-y-3">
         <button
           type="button"
-          onClick={() => setActiveMessageId(null)}
+          onClick={() => onActiveMessageChange(null)}
           className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-stone hover:text-espresso transition-colors cursor-pointer"
         >
           <span aria-hidden="true">←</span> Message Board
@@ -539,7 +549,7 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
               <button
                 key={message.id}
                 type="button"
-                onClick={() => setActiveMessageId(message.id)}
+                onClick={() => onActiveMessageChange(message.id)}
                 className="flex w-full flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors text-left cursor-pointer"
               >
                 <div className="flex items-center gap-1.5 min-w-0">
