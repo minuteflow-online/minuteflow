@@ -91,7 +91,9 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
-  const [openComments, setOpenComments] = useState<Set<string>>(new Set());
+  // null = list view; a message id = that post's own thread page, full-width,
+  // matching Basecamp (click a post, it opens; a back link returns to the list).
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
 
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editMessageTitle, setEditMessageTitle] = useState("");
@@ -168,6 +170,8 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
   const handleDeleteMessage = async (messageId: string) => {
     const previous = messages;
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    // The thread this message belongs to no longer exists — back to the list.
+    setActiveMessageId((current) => (current === messageId ? null : current));
     try {
       const res = await fetch(`/api/project-messages?id=${messageId}`, { method: "DELETE" });
       if (!res.ok) throw new Error();
@@ -243,15 +247,6 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
     }
   };
 
-  const toggleComments = (messageId: string) => {
-    setOpenComments((prev) => {
-      const next = new Set(prev);
-      if (next.has(messageId)) next.delete(messageId);
-      else next.add(messageId);
-      return next;
-    });
-  };
-
   const handlePostComment = async (messageId: string) => {
     const draft = (commentDrafts[messageId] ?? "").trim();
     if (!draft) return;
@@ -288,6 +283,210 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
     }
   };
 
+  const activeMessage = activeMessageId ? messages.find((m) => m.id === activeMessageId) ?? null : null;
+
+  // Comment thread — shared between the two views below (a comment can only
+  // ever be seen inside the open thread, never from the list).
+  const renderComments = (message: Message) => (
+    <div className="space-y-1.5 border-t border-sand pt-2">
+      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">
+        {message.project_message_comments.length === 0
+          ? "No comments yet"
+          : `${message.project_message_comments.length} comment${message.project_message_comments.length === 1 ? "" : "s"}`}
+      </p>
+      {message.project_message_comments.map((comment) => {
+        const canEditComment = isAdmin || comment.author_id === currentUserId;
+        const isEditingComment = editingCommentId === comment.id;
+        return (
+          <div key={comment.id} className="rounded-lg bg-cream/40 px-2 py-1.5">
+            {isEditingComment ? (
+              <div className="space-y-1.5">
+                <input
+                  value={editCommentBody}
+                  onChange={(e) => setEditCommentBody(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleSaveCommentEdit(message.id, comment.id);
+                  }}
+                  className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveCommentEdit(message.id, comment.id)}
+                    disabled={savingCommentEdit}
+                    className="text-[10px] font-semibold text-sage hover:text-sage/80 disabled:opacity-50"
+                  >
+                    {savingCommentEdit ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelEditComment}
+                    className="text-[10px] font-semibold text-stone hover:text-espresso"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="whitespace-pre-wrap text-[12px] text-espresso leading-snug">{comment.body}</p>
+                  {canEditComment && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => startEditComment(comment)}
+                        className="text-[10px] font-semibold text-stone hover:text-espresso"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteComment(message.id, comment.id)}
+                        className="text-[10px] font-semibold text-terracotta hover:text-terracotta/80"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <AuthorAvatar author={comment.author} size={16} />
+                  <p className="text-[10px] text-stone/80">
+                    {authorName(comment.author)} · {formatWhen(comment.created_at)}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })}
+      <div className="flex gap-1.5">
+        <input
+          value={commentDrafts[message.id] ?? ""}
+          onChange={(e) => setCommentDrafts((prev) => ({ ...prev, [message.id]: e.target.value }))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void handlePostComment(message.id);
+          }}
+          placeholder="Write a comment…"
+          className="flex-1 rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+        />
+        <button
+          type="button"
+          onClick={() => void handlePostComment(message.id)}
+          className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+        >
+          Reply
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── Thread view: one post, opened full — matches Basecamp's "click a
+  // message, it opens its own page" pattern. A back link returns to the list.
+  if (activeMessage) {
+    const canEdit = isAdmin || activeMessage.author_id === currentUserId;
+    const isEditingMessage = editingMessageId === activeMessage.id;
+    return (
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={() => setActiveMessageId(null)}
+          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-stone hover:text-espresso transition-colors cursor-pointer"
+        >
+          <span aria-hidden="true">←</span> Message Board
+        </button>
+
+        <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
+          {isEditingMessage ? (
+            <div className="space-y-2">
+              <input
+                value={editMessageTitle}
+                onChange={(e) => setEditMessageTitle(e.target.value)}
+                placeholder="Title"
+                className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+              />
+              <textarea
+                value={editMessageBody}
+                onChange={(e) => setEditMessageBody(e.target.value)}
+                rows={4}
+                className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white resize-none"
+              />
+              {editMessageError && <p className="text-[11px] text-terracotta">{editMessageError}</p>}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveMessageEdit(activeMessage.id)}
+                  disabled={savingMessageEdit}
+                  className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+                >
+                  {savingMessageEdit ? "Saving…" : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelEditMessage}
+                  className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {activeMessage.pinned && (
+                    <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0">
+                      Pinned
+                    </span>
+                  )}
+                  <h4 className="text-sm font-bold text-espresso leading-tight">{activeMessage.title}</h4>
+                </div>
+                {canEdit && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => void handleTogglePin(activeMessage)}
+                        className="text-[10px] font-semibold text-stone hover:text-espresso"
+                      >
+                        {activeMessage.pinned ? "Unpin" : "Pin"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => startEditMessage(activeMessage)}
+                      className="text-[10px] font-semibold text-stone hover:text-espresso"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteMessage(activeMessage.id)}
+                      className="text-[10px] font-semibold text-terracotta hover:text-terracotta/80"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+              <p className="whitespace-pre-wrap text-[13px] text-espresso leading-snug">{activeMessage.body}</p>
+              <div className="flex items-center gap-1.5">
+                <AuthorAvatar author={activeMessage.author} size={22} />
+                <p className="text-[10px] text-stone/80">
+                  {authorName(activeMessage.author)} · {formatWhen(activeMessage.created_at)}
+                </p>
+              </div>
+            </>
+          )}
+
+          {renderComments(activeMessage)}
+        </div>
+      </div>
+    );
+  }
+
+  // ── List view: every post as a clickable row, opening its thread on click.
   return (
     <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
       <div className="flex items-center justify-between">
@@ -335,193 +534,31 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
       ) : (
         <div className="space-y-2">
           {messages.map((message) => {
-            const canEdit = isAdmin || message.author_id === currentUserId;
-            const commentsOpen = openComments.has(message.id);
-            const isEditingMessage = editingMessageId === message.id;
+            const commentCount = message.project_message_comments.length;
             return (
-              <div key={message.id} className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white">
-                {isEditingMessage ? (
-                  <div className="space-y-2">
-                    <input
-                      value={editMessageTitle}
-                      onChange={(e) => setEditMessageTitle(e.target.value)}
-                      placeholder="Title"
-                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
-                    />
-                    <textarea
-                      value={editMessageBody}
-                      onChange={(e) => setEditMessageBody(e.target.value)}
-                      rows={3}
-                      className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white resize-none"
-                    />
-                    {editMessageError && <p className="text-[11px] text-terracotta">{editMessageError}</p>}
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveMessageEdit(message.id)}
-                        disabled={savingMessageEdit}
-                        className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
-                      >
-                        {savingMessageEdit ? "Saving…" : "Save"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={cancelEditMessage}
-                        className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        {message.pinned && (
-                          <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0">
-                            Pinned
-                          </span>
-                        )}
-                        <span className="text-[13px] font-semibold text-espresso leading-tight truncate">{message.title}</span>
-                      </div>
-                      {canEdit && (
-                        <div className="flex items-center gap-2 shrink-0">
-                          {isAdmin && (
-                            <button
-                              type="button"
-                              onClick={() => void handleTogglePin(message)}
-                              className="text-[10px] font-semibold text-stone hover:text-espresso"
-                            >
-                              {message.pinned ? "Unpin" : "Pin"}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => startEditMessage(message)}
-                            className="text-[10px] font-semibold text-stone hover:text-espresso"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteMessage(message.id)}
-                            className="text-[10px] font-semibold text-terracotta hover:text-terracotta/80"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    <p className="whitespace-pre-wrap text-[12px] text-espresso leading-snug">{message.body}</p>
-                    <div className="flex items-center gap-1.5">
-                      <AuthorAvatar author={message.author} size={20} />
-                      <p className="text-[10px] text-stone/80">
-                        {authorName(message.author)} · {formatWhen(message.created_at)}
-                      </p>
-                    </div>
-                  </>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => toggleComments(message.id)}
-                  className="mt-1 text-left text-[11px] font-semibold text-terracotta hover:underline w-fit"
-                >
-                  {message.project_message_comments.length === 0
-                    ? "Comment"
-                    : `${message.project_message_comments.length} comment${message.project_message_comments.length === 1 ? "" : "s"}`}
-                </button>
-
-                {commentsOpen && (
-                  <div className="mt-1 space-y-1.5 border-t border-sand pt-2">
-                    {message.project_message_comments.map((comment) => {
-                      const canEditComment = isAdmin || comment.author_id === currentUserId;
-                      const isEditingComment = editingCommentId === comment.id;
-                      return (
-                        <div key={comment.id} className="rounded-lg bg-cream/40 px-2 py-1.5">
-                          {isEditingComment ? (
-                            <div className="space-y-1.5">
-                              <input
-                                value={editCommentBody}
-                                onChange={(e) => setEditCommentBody(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") void handleSaveCommentEdit(message.id, comment.id);
-                                }}
-                                className="w-full rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-                              />
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => void handleSaveCommentEdit(message.id, comment.id)}
-                                  disabled={savingCommentEdit}
-                                  className="text-[10px] font-semibold text-sage hover:text-sage/80 disabled:opacity-50"
-                                >
-                                  {savingCommentEdit ? "Saving…" : "Save"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={cancelEditComment}
-                                  className="text-[10px] font-semibold text-stone hover:text-espresso"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <>
-                              <div className="flex items-start justify-between gap-2">
-                                <p className="whitespace-pre-wrap text-[12px] text-espresso leading-snug">{comment.body}</p>
-                                {canEditComment && (
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <button
-                                      type="button"
-                                      onClick={() => startEditComment(comment)}
-                                      className="text-[10px] font-semibold text-stone hover:text-espresso"
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => void handleDeleteComment(message.id, comment.id)}
-                                      className="text-[10px] font-semibold text-terracotta hover:text-terracotta/80"
-                                    >
-                                      Delete
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="mt-1 flex items-center gap-1.5">
-                                <AuthorAvatar author={comment.author} size={16} />
-                                <p className="text-[10px] text-stone/80">
-                                  {authorName(comment.author)} · {formatWhen(comment.created_at)}
-                                </p>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-                    <div className="flex gap-1.5">
-                      <input
-                        value={commentDrafts[message.id] ?? ""}
-                        onChange={(e) => setCommentDrafts((prev) => ({ ...prev, [message.id]: e.target.value }))}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") void handlePostComment(message.id);
-                        }}
-                        placeholder="Write a comment…"
-                        className="flex-1 rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handlePostComment(message.id)}
-                        className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
-                      >
-                        Reply
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <button
+                key={message.id}
+                type="button"
+                onClick={() => setActiveMessageId(message.id)}
+                className="flex w-full flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {message.pinned && (
+                    <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-50 text-amber-500 border border-amber-200 shrink-0">
+                      Pinned
+                    </span>
+                  )}
+                  <span className="text-[13px] font-semibold text-espresso leading-tight truncate">{message.title}</span>
+                </div>
+                <p className="truncate text-[12px] text-stone/80">{message.body}</p>
+                <div className="flex items-center gap-1.5">
+                  <AuthorAvatar author={message.author} size={18} />
+                  <p className="text-[10px] text-stone/80">
+                    {authorName(message.author)} · {formatWhen(message.created_at)}
+                    {commentCount > 0 && ` · ${commentCount} comment${commentCount === 1 ? "" : "s"}`}
+                  </p>
+                </div>
+              </button>
             );
           })}
         </div>
