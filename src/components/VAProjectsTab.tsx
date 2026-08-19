@@ -171,6 +171,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // opens that tile full-width in its place. Resets to null whenever the
   // selected Operation changes, same as showDetails/subtaskView below.
   const [activeTile, setActiveTile] = useState<OperationTileKey | null>(null);
+  // Owned here rather than inside ProjectMessageBoard so this component's own
+  // "← {name}" back button can hide itself while a post's thread is open —
+  // only ProjectMessageBoard's "← Message Board" button should show then,
+  // not both stacked.
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
 
   const fetchProjects = useCallback(async () => {
     setLoading(true);
@@ -249,6 +254,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setBoardStatusError(null);
     setRecurringTemplates([]);
     setActiveTile(null);
+    setActiveMessageId(null);
     void fetchSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
     if (kind === "operation") void fetchRecurringForProject(selectedProject.id);
@@ -1331,15 +1337,26 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   />
                 ) : (
                   <div className="space-y-3">
-                    <button
-                      onClick={() => setActiveTile(null)}
-                      className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-espresso hover:text-terracotta transition-colors cursor-pointer"
-                    >
-                      <span aria-hidden="true">←</span> {selectedProject.name}
-                    </button>
+                    {/* Hidden while a Message Board post is open — that view has its
+                        own "← Message Board" back button, and showing both stacked
+                        let you skip past the list straight to the tile grid. */}
+                    {!(activeTile === "message_board" && activeMessageId) && (
+                      <button
+                        onClick={() => setActiveTile(null)}
+                        className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-espresso hover:text-terracotta transition-colors cursor-pointer"
+                      >
+                        <span aria-hidden="true">←</span> {selectedProject.name}
+                      </button>
+                    )}
 
                     {activeTile === "message_board" && (
-                      <ProjectMessageBoard projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
+                      <ProjectMessageBoard
+                        projectId={selectedProject.id}
+                        currentUserId={currentUserId}
+                        isAdmin={isAdmin}
+                        activeMessageId={activeMessageId}
+                        onActiveMessageChange={setActiveMessageId}
+                      />
                     )}
 
                     {activeTile === "recurring" && (
