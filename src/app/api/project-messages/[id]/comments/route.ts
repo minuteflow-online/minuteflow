@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-const authorSelect = "id, full_name, username";
+const authorSelect = "id, full_name, username, avatar_url";
 
 async function requireUser() {
   const supabase = await createClient();

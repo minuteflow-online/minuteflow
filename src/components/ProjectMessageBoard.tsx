@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-type Author = { id: string; full_name: string; username: string } | null;
+type Author = { id: string; full_name: string; username: string; avatar_url: string | null } | null;
 
 interface Comment {
   id: string;
@@ -40,6 +40,37 @@ interface ProjectMessageBoardProps {
 
 function authorName(a: Author): string {
   return a?.full_name || a?.username || "Unknown";
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+/** Read-only version of AvatarUpload's circle — same photo-or-initials look,
+ *  no click-to-upload, since this shows *other* people's avatars in a feed. */
+function AuthorAvatar({ author, size = 24 }: { author: Author; size?: number }) {
+  const name = authorName(author);
+  return author?.avatar_url ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={author.avatar_url}
+      alt=""
+      className="shrink-0 rounded-full object-cover"
+      style={{ width: size, height: size }}
+    />
+  ) : (
+    <div
+      className="flex shrink-0 items-center justify-center rounded-full bg-terracotta font-bold text-white"
+      style={{ width: size, height: size, fontSize: size * 0.4 }}
+    >
+      {getInitials(name)}
+    </div>
+  );
 }
 
 function formatWhen(iso: string): string {
@@ -382,9 +413,12 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
                       )}
                     </div>
                     <p className="whitespace-pre-wrap text-[12px] text-espresso leading-snug">{message.body}</p>
-                    <p className="text-[10px] text-stone/80">
-                      {authorName(message.author)} · {formatWhen(message.created_at)}
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <AuthorAvatar author={message.author} size={20} />
+                      <p className="text-[10px] text-stone/80">
+                        {authorName(message.author)} · {formatWhen(message.created_at)}
+                      </p>
+                    </div>
                   </>
                 )}
 
@@ -456,9 +490,12 @@ export default function ProjectMessageBoard({ projectId, currentUserId, isAdmin 
                                   </div>
                                 )}
                               </div>
-                              <p className="mt-1 text-[10px] text-stone/80">
-                                {authorName(comment.author)} · {formatWhen(comment.created_at)}
-                              </p>
+                              <div className="mt-1 flex items-center gap-1.5">
+                                <AuthorAvatar author={comment.author} size={16} />
+                                <p className="text-[10px] text-stone/80">
+                                  {authorName(comment.author)} · {formatWhen(comment.created_at)}
+                                </p>
+                              </div>
                             </>
                           )}
                         </div>

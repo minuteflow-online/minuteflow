@@ -3,7 +3,7 @@ import { canAccessProject, serviceClient } from "@/lib/projectAccess";
 
 export const dynamic = "force-dynamic";
 
-const authorSelect = "id, full_name, username";
+const authorSelect = "id, full_name, username, avatar_url";
 
 async function requireUser() {
   const supabase = await createClient();
