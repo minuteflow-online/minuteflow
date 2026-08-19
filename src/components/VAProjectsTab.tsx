@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
 import ProjectMessageBoard from "@/components/ProjectMessageBoard";
+import ProjectFiles from "@/components/ProjectFiles";
 import OperationTileGrid, { type OperationTileKey } from "@/components/OperationTileGrid";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
@@ -1383,6 +1384,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     )}
 
                     {activeTile === "subtasks" && renderSubtasksCard()}
+
+                    {activeTile === "files" && (
+                      <ProjectFiles projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
+                    )}
                   </div>
                 )
               ) : (
