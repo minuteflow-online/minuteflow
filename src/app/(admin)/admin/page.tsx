@@ -145,11 +145,7 @@ type CapturedScreenshot = TaskScreenshot & {
   unchanged: boolean;
 };
 
-/**
- * One task's screenshots — the unit the Screenshots tab renders. The tab is a flat
- * list of these, newest task first; whose task it is and which day it ran are shown
- * on the card itself, since a time log belongs to exactly one VA on one day.
- */
+/** One task and the screenshots taken during it. */
 type ScreenshotTaskGroup = {
   key: string;
   userId: string;
@@ -157,6 +153,18 @@ type ScreenshotTaskGroup = {
   taskName: string;
   dateLabel: string;
   shots: CapturedScreenshot[];
+};
+
+/**
+ * One person's day: their name and the date stated once, then every task they
+ * worked in the order it happened — clock in at the top, clock out at the bottom.
+ */
+type ScreenshotPersonDay = {
+  key: string;
+  userId: string;
+  dateLabel: string;
+  tasks: ScreenshotTaskGroup[];
+  count: number;
 };
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
@@ -977,15 +985,15 @@ export default function AdminPage() {
   }, [allScreenshots, screenshotFilter]);
 
   /**
-   * One entry per task, newest task first — no day or VA nesting above it. A time
-   * log already pins down both the VA and the day, so those ride on the card.
-   * Shots run oldest-first inside a task, so a task reads as the sequence of work
-   * it was.
+   * Screenshots grouped into one block per person per day, each block listing that
+   * day's tasks in the order they happened — clock in first, clock out last — with
+   * the shots inside each task also running oldest to newest. The whole view reads
+   * forward in time, which is how a shift is actually reviewed.
    *
    * `orderedScreenshots` is the same set flattened in exactly the rendered order,
    * so the lightbox arrows walk the grid the way it looks on screen.
    */
-  const { screenshotTasks, orderedScreenshots } = useMemo(() => {
+  const { screenshotDays, orderedScreenshots } = useMemo(() => {
     const withCapture: CapturedScreenshot[] = filteredScreenshots.map((ss) => {
       const fromFilename = screenshotCaptureTime(ss.filename);
       return {
@@ -1037,11 +1045,30 @@ export default function AdminPage() {
         shot.unchanged = !!(shot.image_hash && prev?.image_hash && shot.image_hash === prev.image_hash);
       });
     });
-    const latest = (t: ScreenshotTaskGroup) =>
-      new Date(t.shots[t.shots.length - 1].captureTime).getTime();
-    tasks.sort((a, b) => latest(b) - latest(a));
 
-    return { screenshotTasks: tasks, orderedScreenshots: tasks.flatMap((t) => t.shots) };
+    const startedAt = (t: ScreenshotTaskGroup) => new Date(t.shots[0].captureTime).getTime();
+
+    const byPersonDay = new Map<string, ScreenshotPersonDay>();
+    tasks.forEach((t) => {
+      const key = `${t.userId}-${t.dateLabel}`;
+      if (!byPersonDay.has(key)) {
+        byPersonDay.set(key, { key, userId: t.userId, dateLabel: t.dateLabel, tasks: [], count: 0 });
+      }
+      const day = byPersonDay.get(key)!;
+      day.tasks.push(t);
+      day.count += t.shots.length;
+    });
+
+    const days = Array.from(byPersonDay.values());
+    // Within a day, forward in time. Across days, most recent block first so
+    // today is the first thing on screen.
+    days.forEach((d) => d.tasks.sort((a, b) => startedAt(a) - startedAt(b)));
+    days.sort((a, b) => startedAt(b.tasks[0]) - startedAt(a.tasks[0]));
+
+    return {
+      screenshotDays: days,
+      orderedScreenshots: days.flatMap((d) => d.tasks.flatMap((t) => t.shots)),
+    };
   }, [filteredScreenshots, screenshotLogMap, orgTimezone]);
 
   const activityEvents = useMemo(() => {
@@ -1706,7 +1733,7 @@ export default function AdminPage() {
             <ScreenshotsTab
               profiles={profiles}
               profileMap={profileMap}
-              screenshotTasks={screenshotTasks}
+              screenshotDays={screenshotDays}
               totalScreenshots={filteredScreenshots.length}
               screenshotFilter={screenshotFilter}
               setScreenshotFilter={setScreenshotFilter}
@@ -2127,7 +2154,7 @@ function OverviewTab({
 function ScreenshotsTab({
   profiles,
   profileMap,
-  screenshotTasks,
+  screenshotDays,
   totalScreenshots,
   screenshotFilter,
   setScreenshotFilter,
@@ -2144,7 +2171,7 @@ function ScreenshotsTab({
 }: {
   profiles: Profile[];
   profileMap: Map<string, Profile>;
-  screenshotTasks: ScreenshotTaskGroup[];
+  screenshotDays: ScreenshotPersonDay[];
   totalScreenshots: number;
   screenshotFilter: string;
   setScreenshotFilter: (v: string) => void;
@@ -2224,18 +2251,47 @@ function ScreenshotsTab({
             </p>
           </div>
         ) : (
-          /* One card per task, newest task first — screenshots inside run oldest to newest */
-          <div className="space-y-3">
-            {screenshotTasks.map((group) => (
-              <TaskScreenshotCard
-                key={group.key}
-                group={group}
-                profile={profileMap.get(group.userId) || null}
-                screenshotUrls={screenshotUrls}
-                setSelectedScreenshot={setSelectedScreenshot}
-                orgTimezone={orgTimezone}
-              />
-            ))}
+          /* One block per person per day; tasks inside run clock-in to clock-out */
+          <div className="space-y-5">
+            {screenshotDays.map((day) => {
+              const profile = profileMap.get(day.userId) || null;
+              return (
+                <div key={day.key} className="rounded-xl border border-sand bg-white p-4">
+                  {/* Name and date, stated once for the whole day */}
+                  <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-parchment pb-2.5">
+                    {profile && (
+                      <div
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white"
+                        style={{ backgroundColor: getAvatarColor(profile.id) }}
+                      >
+                        {getInitials(profile.full_name)}
+                      </div>
+                    )}
+                    <span className="text-[13px] font-semibold text-espresso">
+                      {profile?.full_name || "Unknown"}
+                    </span>
+                    <span className="text-[11px] text-bark">{day.dateLabel}</span>
+                    <span className="ml-auto text-[10px] text-stone">
+                      {day.count} screenshot{day.count !== 1 ? "s" : ""} across {day.tasks.length}{" "}
+                      task{day.tasks.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+
+                  <div className="space-y-4">
+                    {day.tasks.map((group) => (
+                      <TaskScreenshotCard
+                        key={group.key}
+                        group={group}
+                        vaName={profile?.full_name || "Unknown"}
+                        screenshotUrls={screenshotUrls}
+                        setSelectedScreenshot={setSelectedScreenshot}
+                        orgTimezone={orgTimezone}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -2250,64 +2306,50 @@ function ScreenshotsTab({
 // the browser only fetches what actually scrolls into view.
 function TaskScreenshotCard({
   group,
-  profile,
+  vaName,
   screenshotUrls,
   setSelectedScreenshot,
   orgTimezone,
 }: {
   group: ScreenshotTaskGroup;
-  profile: Profile | null;
+  vaName: string;
   screenshotUrls: Record<number, string>;
   setSelectedScreenshot: (ss: TaskScreenshot) => void;
   orgTimezone: string;
 }) {
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
-  const vaName = profile?.full_name || "Unknown";
   const unchangedCount = group.shots.filter((s) => s.unchanged).length;
   const noCaptureCount = group.shots.filter((s) => s.screenshot_type === "failed").length;
 
   return (
-    <div className="rounded-xl border border-sand bg-cream p-3">
-      {/* Task first — the VA and day it belongs to sit under it */}
-      <div className="mb-2.5">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-[13px] font-semibold text-espresso">{group.taskName}</span>
-          {group.log?.account && <span className="text-[10px] text-bark">{group.log.account}</span>}
-          {group.log?.category && (
-            <span className="rounded-full border border-sand bg-white px-2 py-[1px] text-[9px] font-semibold text-bark">
-              {group.log.category}
-            </span>
-          )}
-          <span className="ml-auto text-[10px] text-stone">
-            {formatCaptureTime(first.captureTime, orgTimezone)}
-            {group.shots.length > 1 && ` – ${formatCaptureTime(last.captureTime, orgTimezone)}`}
-            {" · "}
-            {group.shots.length} shot{group.shots.length !== 1 ? "s" : ""}
+    <div>
+      {/* Task name and its time span. Whose day this is and which date sits on the
+          block header above, so it isn't repeated for every task. */}
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-[12px] font-semibold text-espresso">{group.taskName}</span>
+        {group.log?.account && <span className="text-[10px] text-bark">{group.log.account}</span>}
+        {group.log?.category && (
+          <span className="rounded-full border border-sand bg-white px-2 py-[1px] text-[9px] font-semibold text-bark">
+            {group.log.category}
           </span>
-        </div>
-        <div className="mt-1.5 flex items-center gap-2">
-          {profile && (
-            <div
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-white"
-              style={{ backgroundColor: getAvatarColor(profile.id) }}
-            >
-              {getInitials(profile.full_name)}
-            </div>
-          )}
-          <span className="text-[11px] font-medium text-walnut">{vaName}</span>
-          <span className="text-[10px] text-stone">{group.dateLabel}</span>
-          {unchangedCount > 0 && (
-            <span className="rounded-full border border-amber/20 bg-amber-soft px-2 py-[1px] text-[9px] font-semibold text-amber">
-              {unchangedCount} unchanged
-            </span>
-          )}
-          {noCaptureCount > 0 && (
-            <span className="rounded-full border border-stone/20 bg-stone/10 px-2 py-[1px] text-[9px] font-semibold text-stone">
-              {noCaptureCount} idle/no capture
-            </span>
-          )}
-        </div>
+        )}
+        {unchangedCount > 0 && (
+          <span className="rounded-full border border-amber/20 bg-amber-soft px-2 py-[1px] text-[9px] font-semibold text-amber">
+            {unchangedCount} unchanged
+          </span>
+        )}
+        {noCaptureCount > 0 && (
+          <span className="rounded-full border border-stone/20 bg-stone/10 px-2 py-[1px] text-[9px] font-semibold text-stone">
+            {noCaptureCount} idle/no capture
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-stone">
+          {formatCaptureTime(first.captureTime, orgTimezone)}
+          {group.shots.length > 1 && ` – ${formatCaptureTime(last.captureTime, orgTimezone)}`}
+          {" · "}
+          {group.shots.length} shot{group.shots.length !== 1 ? "s" : ""}
+        </span>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
