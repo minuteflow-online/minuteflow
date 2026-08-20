@@ -262,7 +262,7 @@ export async function GET(request: NextRequest) {
       await emailIdleWarning(c.user_id, who);
       await sendTelegram(
         "submissions",
-        `⏰ <b>${esc(who)}</b> — emailed about inactivity on your session. Please check your email.`
+        `📧 <b>${esc(who)}</b> — email sent. Topic: Activity`
       );
       continue;
     }
@@ -304,18 +304,14 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Telegram carries only the notice, not the detail: enough for the team to
-  // see it happened and for the VA to know an email is waiting.
+  // Name plus a bare topic label, nothing more. Spelling out the reason in a
+  // room the whole team is in gives away exactly what the email was meant to
+  // keep private. "Activity" covers both the warning and the close, so the
+  // chat does not reveal which stage this person reached either.
   if (closed.length > 0 && telegramEnabled("submissions")) {
-    const at = new Date().toLocaleTimeString("en-US", {
-      timeZone: ORG_TIMEZONE,
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
     await sendTelegram(
       "submissions",
-      `⚠️ <b>Clocked out</b> — ${esc(closed.join(", "))} at ${at} ET after no activity through the warning period. Details have been emailed.`
+      `📧 <b>${esc(closed.join(", "))}</b> — email sent. Topic: Activity`
     );
   }
 

@@ -172,12 +172,13 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Notice only. Screenshots stopping is time-sensitive, so it belongs
-      // somewhere seen quickly — but the specifics stay in the email.
+      // Notice only, and deliberately silent on the reason. Naming the problem
+      // here would tell the whole team whose setup is broken; the nudge is
+      // enough to get them into the email that explains it.
       if (telegramEnabled("submissions")) {
         await sendTelegram(
           "submissions",
-          `📷 <b>${esc(vaName)}</b> — emailed about screenshot uploads failing. Please check your email.`
+          `📧 <b>${esc(vaName)}</b> — email sent. Topic: Screenshot`
         );
       }
     }
