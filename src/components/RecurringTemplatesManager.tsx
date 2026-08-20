@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import TaskEditor from "@/components/TaskEditor";
+import { orgWallClockToUtc } from "@/lib/taskSchedule";
 import type { Profile, RecurringTaskTemplate } from "@/types/database";
 
 type LinkedProject = { id: string; name: string };
@@ -174,15 +175,31 @@ export default function RecurringTemplatesManager({
   );
 
   // TaskEditor reads a task-shaped row, and a template is close enough to hand
-  // it one directly — the column names line up on both sides.
+  // it one directly — the column names line up on both sides. One exception:
+  // a template's start_time/end_time are bare clock times ("09:00", no date —
+  // each occurrence supplies its own), while TaskEditor always treats
+  // initialTask.start_time/end_time as a full instant and runs them through
+  // timeOfDay()/orgDateOf() unconditionally (src/lib/taskSchedule.ts). Handing
+  // a bare "09:00" to `new Date("09:00")` produces an Invalid Date, and
+  // formatToParts() on that throws — crashing the editor the instant you open
+  // an existing template with a schedule set. Fixed by re-anchoring the clock
+  // time onto a real date with the same conversion TaskEditor itself uses when
+  // *saving* a task's hours (orgWallClockToUtc) — timeOfDay() then correctly
+  // reads the same "HH:MM" back out on the other end. The anchor date doesn't
+  // matter beyond being valid; only the time-of-day round-trips.
   const templateAsInitialTask = useMemo(() => {
     if (!editingTemplate) return null;
     const row = editingTemplate as unknown as Record<string, unknown>;
+    const anchorDate = editingTemplate.start_date || new Date().toISOString().slice(0, 10);
+    const toInstant = (clockTime: string | null | undefined) =>
+      clockTime ? orgWallClockToUtc(anchorDate, clockTime) : clockTime;
     return {
       ...row,
       task_name: editingTemplate.title ?? editingTemplate.task_name ?? "",
       task_detail: editingTemplate.task_detail ?? editingTemplate.description ?? "",
       assigned_task_assignees: templateAssignedToIds(editingTemplate).map((va_id) => ({ va_id })),
+      start_time: toInstant(editingTemplate.start_time),
+      end_time: toInstant(editingTemplate.end_time),
     } as Record<string, unknown>;
   }, [editingTemplate]);
 

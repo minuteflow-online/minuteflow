@@ -584,6 +584,16 @@ export interface RecurringTaskTemplate {
   instructions_locked?: boolean;
   planned_minutes?: number | null;
   start_date?: string | null;
+  /** Bare "HH:MM(:SS)" clock time, not a full instant — each occurrence
+   *  supplies its own date. Not directly interchangeable with AssignedTask's
+   *  start_time/end_time, which are full timestamps; see the conversion in
+   *  RecurringTemplatesManager.tsx's templateAsInitialTask. */
+  start_time?: string | null;
+  end_time?: string | null;
+  end_date?: string | null;
+  due_time?: string | null;
+  link?: string | null;
+  review_required?: boolean;
   assigned_to: string | null;
   assigned_to_ids?: string[] | null;
   assigned_by: string | null;
