@@ -13,11 +13,10 @@ import type { AssignedTaskStatus } from "@/types/database";
  * something to gate submitting on.
  */
 const CHECKLIST = [
-  { key: "instructions", label: "Instructions reviewed" },
-  // Reading the brief and following it are separate claims, and the second
-  // is the one that gets disputed when work comes back.
+  // Ticking this already asserts the instructions were read, so a separate
+  // "Instructions reviewed" item was the same claim twice.
   { key: "compliant", label: "Complies with instructions" },
-  { key: "included", label: "Everything requested is included" },
+  { key: "included", label: "Complete submission" },
   { key: "proofread", label: "Proofread" },
 ] as const;
 
@@ -217,7 +216,7 @@ export default function SubmitWorkModal({
                   />
                   <span className="text-[11px] leading-snug text-espresso">
                     {item.label}
-                    {item.key === "instructions" && instructions?.trim() && (
+                    {item.key === "compliant" && instructions?.trim() && (
                       <span className="mt-0.5 block whitespace-pre-wrap text-[10px] text-stone">
                         {instructions}
                       </span>
