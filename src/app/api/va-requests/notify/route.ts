@@ -61,7 +61,7 @@ export async function POST(request: Request) {
   if (req.user_id !== user.id) return Response.json({ error: "Forbidden" }, { status: 403 });
 
   const resendKey = process.env.RESEND_API_KEY;
-  const tgOn = telegramEnabled("submissions");
+  const tgOn = telegramEnabled("financial");
   // Either channel suffices. This previously bailed when Resend was unset,
   // which would have silently disabled the Telegram alert as well.
   if (!resendKey && !tgOn) return Response.json({ ok: false, reason: "no notification channel configured" });
@@ -116,7 +116,12 @@ export async function POST(request: Request) {
     }
   }
 
-  // Telegram — carries the same one-tap approval links, so a request can be
+  // Telegram — the financial chat, not the submissions one. These carry time
+  // off, shift changes and pay questions, and the submissions chat now has VAs
+  // in it so the team can cheer each other's work. One person's pay question
+  // does not belong in front of the whole team.
+  //
+  // Carries the same one-tap approval links as the email, so a request can be
   // actioned from the phone without opening the admin panel.
   if (tgOn) {
     const lines = [`🔔 <b>${tgEsc(typeLabel)} request</b> from ${tgEsc(vaName)}`];
@@ -126,7 +131,7 @@ export async function POST(request: Request) {
     if (req.message) lines.push("", tgEsc(req.message));
     lines.push("", `<a href="${link("approve")}">✓ Approve</a>  •  <a href="${link("decline")}">✋ Decline</a>`);
     if (req.type === "schedule_change") lines.push(`<a href="${link("propose")}">🕑 Propose new time</a>`);
-    await sendTelegram("submissions", lines.join("\n"));
+    await sendTelegram("financial", lines.join("\n"));
   }
 
   return Response.json({ ok: true, to: emails });
