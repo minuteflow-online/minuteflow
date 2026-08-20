@@ -17,6 +17,7 @@ type TgUpdate = {
 const TARGETS = [
   { env: "TELEGRAM_SUBMISSIONS_CHAT_ID", label: "Submissions, requests, clock-ins, extension" },
   { env: "TELEGRAM_BUGS_CHAT_ID", label: "Bug reports" },
+  { env: "TELEGRAM_OPS_CHAT_ID", label: "Private ops — idle, forced clock-outs, screenshot failures" },
   { env: "TELEGRAM_BUDGET_CHAT_ID", label: "Financial" },
   { env: "TELEGRAM_BOARD_CHAT_ID", label: "Message board" },
 ];

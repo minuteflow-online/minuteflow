@@ -20,6 +20,72 @@ const IDLE_EXEMPT_CATEGORIES = ["Personal", "Break"];
 const STALE_THRESHOLD_MS = 15 * 60 * 1000;
 
 /**
+ * Emails the VA the record of their forced clock-out, copying admins so the
+ * same account of it exists on both sides.
+ *
+ * Best-effort throughout: the session is already closed, and a mail problem
+ * must not stop the cron finishing the rest of the run.
+ */
+async function emailForcedClockOut(
+  userId: string,
+  who: string,
+  closedAt: string
+): Promise<void> {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+
+  const supabase = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
+  try {
+    const { data: authData } = await supabase.auth.admin.getUserById(userId);
+    const vaEmail = authData?.user?.email;
+    if (!vaEmail) return;
+
+    const { data: admins } = await supabase.from("profiles").select("id").eq("role", "admin");
+    const cc: string[] = [];
+    for (const a of (admins ?? []) as { id: string }[]) {
+      const { data: adminAuth } = await supabase.auth.admin.getUserById(a.id);
+      if (adminAuth?.user?.email) cc.push(adminAuth.user.email);
+    }
+
+    const at = new Date(closedAt).toLocaleString("en-US", {
+      timeZone: ORG_TIMEZONE,
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "MinuteFlow <noreply@minuteflow.click>",
+        to: [vaEmail],
+        ...(cc.length > 0 ? { cc } : {}),
+        subject: "You were clocked out for inactivity",
+        html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
+          <h2 style="color:#c2694f">Clocked out automatically</h2>
+          <p>Hi ${who},</p>
+          <p>MinuteFlow ended your session at <strong>${at} ET</strong>. There was no activity for
+          ${Math.round(STALE_THRESHOLD_MS / 60000)} minutes, a warning was posted, and nothing changed
+          in the ${Math.round(GRACE_MS / 60000)} minutes that followed.</p>
+          <p>Your open task was closed at that time. Any work done after it stopped recording is not
+          in your log.</p>
+          <p style="background:#f3ede4;padding:10px 12px;border-radius:8px">If you were working and
+          this is wrong, tell Toni — the time can be corrected.</p>
+          <p style="color:#b5a898;font-size:12px">Sent automatically by MinuteFlow.</p>
+        </div>`,
+      }),
+    });
+  } catch (err) {
+    console.error("idle-timeout: forced clock-out email failed", err);
+  }
+}
+
+/**
  * GET /api/cron/idle-timeout
  *
  * Warn-then-close, reinstated 2026-08-18 at Toni's request. Read the history
@@ -43,10 +109,12 @@ const STALE_THRESHOLD_MS = 15 * 60 * 1000;
  *     heartbeat in between clears the warning and nothing further happens.
  *   - The trigger is the session heartbeat, not the extension. The old guard
  *     failed precisely because it trusted extension state.
- *   - Both the warning and the close go to the shared submissions chat, which
- *     the whole team is in. That reaches the VA without per-person Telegram
- *     links, lets a teammate nudge them before the close lands, and makes a
- *     wrong close visible the same day instead of at payroll.
+ *   - Both messages go to the private ops chat, not the team chat. Being named
+ *     in front of everyone for going quiet is a different thing from being seen
+ *     submitting work.
+ *   - The VA gets the detail by email, admins copied, so both sides hold the
+ *     same record and a wrong close is arguable the same day rather than at
+ *     payroll.
  *
  * Requires profiles.idle_warned_at.
  *
@@ -154,7 +222,7 @@ export async function GET(request: NextRequest) {
       await supabase.from("profiles").update({ idle_warned_at: new Date().toISOString() }).eq("id", c.user_id);
       warned.push(who);
       await sendTelegram(
-        "submissions",
+        "ops",
         [
           `⏰ <b>${esc(who)} — are you still there?</b>`,
           "",
@@ -194,13 +262,17 @@ export async function GET(request: NextRequest) {
         .eq("user_id", c.user_id);
       await supabase.from("profiles").update({ idle_warned_at: null }).eq("id", c.user_id);
       closed.push(who);
+
+      // The detail goes to the VA by email — what was closed, when, and how to
+      // get it corrected. That is a record they keep, rather than a line in a
+      // group chat that scrolls away.
+      await emailForcedClockOut(c.user_id, who, now);
     }
   }
 
-  // One message for the whole run rather than one per person, announced in the
-  // same chat that carried the warning so the two read as a sequence. A wrong
-  // close needs to be visible the same day, not discovered at payroll.
-  if (closed.length > 0 && telegramEnabled("submissions")) {
+  // Telegram carries only the notice, not the detail: enough for the team to
+  // see it happened and for the VA to know an email is waiting.
+  if (closed.length > 0 && telegramEnabled("ops")) {
     const at = new Date().toLocaleTimeString("en-US", {
       timeZone: ORG_TIMEZONE,
       hour: "numeric",
@@ -208,8 +280,8 @@ export async function GET(request: NextRequest) {
       hour12: true,
     });
     await sendTelegram(
-      "submissions",
-      `⚠️ <b>Forced clock-out</b> — ${esc(closed.join(", "))} at ${at} ET after no activity through the warning period.`
+      "ops",
+      `⚠️ <b>Clocked out</b> — ${esc(closed.join(", "))} at ${at} ET after no activity through the warning period. Details have been emailed.`
     );
   }
 

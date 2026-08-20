@@ -124,9 +124,9 @@ export async function POST(request: NextRequest) {
 
       // Telegram as well as email. Screenshots stopping is time-sensitive —
       // an email seen hours later is a lost day of captures.
-      if (telegramEnabled("submissions")) {
+      if (telegramEnabled("ops")) {
         await sendTelegram(
-          "submissions",
+          "ops",
           [
             `📷 <b>Screenshots failing</b> — ${esc(vaName)}`,
             "3 uploads in a row did not reach Drive. Captures are queued locally and will resume on their own once the connection is back.",

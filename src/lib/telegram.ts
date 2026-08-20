@@ -30,11 +30,19 @@
 //   "board"       → TELEGRAM_BOARD_CHAT_ID ONLY. No fallback either — board
 //                   posts are conversation, not alerts, and would drown an ops
 //                   group that people are meant to be able to skim.
+//   "ops"         → TELEGRAM_OPS_CHAT_ID, falling back to the financial chat.
+//                   Anything that singles a person out: idle warnings, forced
+//                   clock-outs, screenshot failures. These went to the
+//                   submissions chat until the team was added to it — being
+//                   named in front of everyone for going quiet is a different
+//                   thing from being seen submitting work. The fallback is a
+//                   private chat on purpose, so this can never leak into a
+//                   group by simply forgetting to set a variable.
 //
 // Adding a category later is one entry here plus one env var; pointing an
 // existing category at a different group is an env change with no code at all.
 
-export type TelegramTopic = "financial" | "submissions" | "bugs" | "board";
+export type TelegramTopic = "financial" | "submissions" | "bugs" | "board" | "ops";
 
 /** Which audience a message is for. Picks the bot, not the destination. */
 export type TelegramBot = "internal" | "va" | "client";
@@ -65,6 +73,8 @@ function chatIdFor(topic: TelegramTopic): string | undefined {
       return submissions;
     case "bugs":
       return process.env.TELEGRAM_BUGS_CHAT_ID || submissions;
+    case "ops":
+      return process.env.TELEGRAM_OPS_CHAT_ID || process.env.TELEGRAM_BUDGET_CHAT_ID;
   }
 }
 
