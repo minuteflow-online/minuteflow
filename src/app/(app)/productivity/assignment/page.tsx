@@ -372,6 +372,8 @@ export default function TaskListPage() {
   const [error, setError] = useState<string | null>(null);
   const [taskView, setTaskView] = useUrlTab<"active" | "archived" | "trash">("status", "active", ["active", "archived", "trash"]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
+  const TASKS_PAGE_SIZE = 10;
+  const [currentPage, setCurrentPage] = useState(1);
   const [filterStatuses, setFilterStatuses] = useState<AssignedTaskStatus[]>([]);
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
   const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
@@ -1125,6 +1127,23 @@ export default function TaskListPage() {
     });
   }, [filterAccounts, filterDueEnd, filterDueStart, filterDueDateMode, filterStartStart, filterStartEnd, filterStartDateMode, filterCreatedStart, filterCreatedEnd, filterAssignedBy, filterProjects, filterOverdue, filterObjectives, filterStatuses, filterSubmittedBy, filterTaskNames, taskNameSearch, tasks, activeView, objectiveProjectIds]);
 
+  // Pagination over the already-filtered list — everything's fetched into
+  // `tasks` up front, so this is just slicing an array already in memory, not
+  // a separate fetch. currentPage clamps against totalPages at render time
+  // (via pageCount below) rather than resetting via effect, so an in-place
+  // edit that refetches the same data doesn't jump you back to page 1 — only
+  // an actual change in how many tasks match does.
+  const totalPages = Math.max(1, Math.ceil(filteredTasks.length / TASKS_PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageTasks = useMemo(
+    () => filteredTasks.slice((safePage - 1) * TASKS_PAGE_SIZE, safePage * TASKS_PAGE_SIZE),
+    [filteredTasks, safePage]
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filteredTasks.length]);
+
   const avgAccuracy = useMemo(() => {
     const rows = filteredTasks.filter((t) => typeof t.accuracy_score === "number");
     if (rows.length === 0) return null;
@@ -1132,7 +1151,10 @@ export default function TaskListPage() {
   }, [filteredTasks]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
-  const allFilteredTasksSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
+  // Scoped to the current page, not every filtered task — matches its own
+  // "Select all visible tasks" label once there's more than one page; a VA
+  // shouldn't have off-screen rows silently selected by this checkbox.
+  const allFilteredTasksSelected = pageTasks.length > 0 && pageTasks.every((task) => selectedTaskIdSet.has(task.id));
 
   const toggleTaskSelection = useCallback((taskId: number) => {
     setSelectedTaskIds((prev) => (prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]));
@@ -1140,16 +1162,16 @@ export default function TaskListPage() {
 
   const toggleAllFilteredTasks = useCallback(() => {
     setSelectedTaskIds((prev) => {
-      if (filteredTasks.length === 0) return prev;
-      const filteredIds = filteredTasks.map((task) => task.id);
-      const filteredIdSet = new Set(filteredIds);
-      const allSelected = filteredIds.every((id) => prev.includes(id));
+      if (pageTasks.length === 0) return prev;
+      const pageIds = pageTasks.map((task) => task.id);
+      const pageIdSet = new Set(pageIds);
+      const allSelected = pageIds.every((id) => prev.includes(id));
       if (allSelected) {
-        return prev.filter((id) => !filteredIdSet.has(id));
+        return prev.filter((id) => !pageIdSet.has(id));
       }
-      return Array.from(new Set([...prev, ...filteredIds]));
+      return Array.from(new Set([...prev, ...pageIds]));
     });
-  }, [filteredTasks]);
+  }, [pageTasks]);
 
   const startInlineEdit = useCallback(
     (e: React.MouseEvent, taskId: number, field: InlineEditField, value: string) => {
@@ -2237,6 +2259,7 @@ export default function TaskListPage() {
                   No assigned tasks found.
                 </div>
               ) : (
+                <>
                 <div className="overflow-x-auto rounded-xl border border-sand bg-white shadow-sm">
                   <table className="w-max min-w-full table-fixed">
                     <thead>
@@ -2358,7 +2381,7 @@ export default function TaskListPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredTasks.map((task) => {
+                      {pageTasks.map((task) => {
                         const detail = task.assigned_tasks;
                         const due = formatDueDate(detail.due_date);
                         const start = formatDueDate(detail.start_date);
@@ -2565,6 +2588,35 @@ export default function TaskListPage() {
                     </tbody>
                   </table>
                 </div>
+                {totalPages > 1 && (
+                  <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-stone">
+                    <span>
+                      Showing {(safePage - 1) * TASKS_PAGE_SIZE + 1}–{Math.min(safePage * TASKS_PAGE_SIZE, filteredTasks.length)} of {filteredTasks.length}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        disabled={safePage <= 1}
+                        className="rounded-lg bg-stone/10 px-3 py-1 font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Prev
+                      </button>
+                      <span className="font-semibold text-espresso">
+                        Page {safePage} of {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        disabled={safePage >= totalPages}
+                        className="rounded-lg bg-stone/10 px-3 py-1 font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+                </>
               )}
             </>
           )}
