@@ -372,7 +372,7 @@ export default function TaskListPage() {
   const [error, setError] = useState<string | null>(null);
   const [taskView, setTaskView] = useUrlTab<"active" | "archived" | "trash">("status", "active", ["active", "archived", "trash"]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
-  const TASKS_PAGE_SIZE = 50;
+  const TASKS_PAGE_SIZE = 15;
   const [currentPage, setCurrentPage] = useState(1);
   const [filterStatuses, setFilterStatuses] = useState<AssignedTaskStatus[]>([]);
   const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
