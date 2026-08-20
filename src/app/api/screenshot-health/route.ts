@@ -16,7 +16,7 @@ import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
 import { refreshGoogleToken, getValidAccessToken } from "@/lib/google-token";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
-import { EXTENSION_MIN_VERSION, EXTENSION_STORE_URL, isVersionOlder } from "@/lib/extensionVersion";
+import { EXTENSION_LATEST_VERSION, EXTENSION_STORE_URL, isVersionOlder } from "@/lib/extensionVersion";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -191,7 +191,7 @@ export async function GET(request: NextRequest) {
       .select("user_id, extension_version");
 
     const behind = (statuses ?? []).filter(
-      (s) => s.extension_version && isVersionOlder(s.extension_version as string, EXTENSION_MIN_VERSION)
+      (s) => s.extension_version && isVersionOlder(s.extension_version as string, EXTENSION_LATEST_VERSION)
     );
 
     if (behind.length > 0) {
@@ -210,7 +210,7 @@ export async function GET(request: NextRequest) {
       await sendTelegram(
         "submissions",
         [
-          `🧩 <b>Extension update available</b> — v${esc(EXTENSION_MIN_VERSION)}`,
+          `🧩 <b>Extension update available</b> — v${esc(EXTENSION_LATEST_VERSION)}`,
           "",
           "Still on an older build:",
           ...outdated.map((line) => `• ${esc(line)}`),

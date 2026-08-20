@@ -9,6 +9,17 @@
 export const EXTENSION_MIN_VERSION = "1.2.0";
 
 /**
+ * The newest build published to the store — keep in step with
+ * extension/manifest.json.
+ *
+ * Separate from EXTENSION_MIN_VERSION on purpose. This one is only used to
+ * report who has not picked up the latest yet, so bumping it is harmless.
+ * EXTENSION_MIN_VERSION is the hard floor that makes VAs see a reinstall
+ * prompt, so it should only move when a build is genuinely required.
+ */
+export const EXTENSION_LATEST_VERSION = "1.2.1";
+
+/**
  * The Chrome Web Store listing. This is where VAs should install from: a store
  * install auto-updates itself, while the load-unpacked route on /install goes
  * stale the moment a new version ships and has to be redone by hand.
