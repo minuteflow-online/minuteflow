@@ -215,12 +215,9 @@ async function blobToDataUrl(blob) {
 const inFlightUploads = new Set();
 
 /**
- * Remove a single item from the local queue by its ID.
- * Called after a confirmed successful upload to Drive.
- *
- * Serialised through queueWriteLock: this is a read-modify-write of the whole
- * queue, so two removals resolving together would each write back a snapshot
- * taken before the other, resurrecting an item that was already uploaded.
+ * Serialises every read-modify-write of the queue. Two writers resolving together
+ * would each store a snapshot taken before the other, resurrecting an item that had
+ * already been uploaded and removed.
  */
 let queueWriteLock = Promise.resolve();
 
@@ -230,6 +227,28 @@ function withQueueLock(fn) {
   return run;
 }
 
+/**
+ * Move a failed item to the end of the queue and count the attempt, so the next
+ * drain works on different items. Nothing is discarded: a screenshot that cannot
+ * upload yet (offline, server down) still gets its turn on a later cycle.
+ */
+async function rotateToBackOfQueue(itemId) {
+  return withQueueLock(async () => {
+    const stored = await chrome.storage.local.get('mf_screenshot_queue');
+    const queue = stored.mf_screenshot_queue || [];
+    const at = queue.findIndex(i => i.id === itemId);
+    if (at === -1) return;
+    const [item] = queue.splice(at, 1);
+    item.attempts = (item.attempts || 0) + 1;
+    queue.push(item);
+    await chrome.storage.local.set({ mf_screenshot_queue: queue });
+  });
+}
+
+/**
+ * Remove a single item from the local queue by its ID.
+ * Called after a confirmed successful upload to Drive.
+ */
 async function removeFromQueue(itemId) {
   return withQueueLock(async () => {
     const stored = await chrome.storage.local.get('mf_screenshot_queue');
@@ -507,6 +526,13 @@ async function drainUploadQueue() {
     if (ok) {
       successCount++;
       uploadedToday++;
+    } else {
+      // A failure sends the item to the BACK of the queue rather than leaving it
+      // at the front. An item that can never succeed — a screenshot whose time log
+      // was deleted, say — otherwise occupies a batch slot on every cycle and
+      // blocks everything behind it indefinitely. That is what stalled uploads for
+      // hours: a handful of dead items at the head, and a queue that never moved.
+      await rotateToBackOfQueue(item.id);
     }
   }
 
