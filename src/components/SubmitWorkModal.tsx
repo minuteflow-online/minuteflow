@@ -16,7 +16,7 @@ const CHECKLIST = [
   { key: "instructions", label: "Instructions reviewed" },
   // Reading the brief and following it are separate claims, and the second
   // is the one that gets disputed when work comes back.
-  { key: "compliant", label: "Compliant based on instructions" },
+  { key: "compliant", label: "Complies with instructions" },
   { key: "included", label: "Everything requested is included" },
   { key: "proofread", label: "Proofread" },
 ] as const;
