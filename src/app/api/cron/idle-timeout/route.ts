@@ -19,6 +19,76 @@ const IDLE_EXEMPT_CATEGORIES = ["Personal", "Break"];
 // for REPORTING ONLY — see the note below.
 const STALE_THRESHOLD_MS = 15 * 60 * 1000;
 
+/** Resolves a user's login email plus every admin's, for the to/cc pair these
+ *  notices use. Returns nulls rather than throwing — a mail lookup problem must
+ *  not stop the cron finishing its run. */
+async function recipientsFor(
+  userId: string
+): Promise<{ to: string | null; cc: string[] }> {
+  const supabase = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+  try {
+    const { data: authData } = await supabase.auth.admin.getUserById(userId);
+    const { data: admins } = await supabase.from("profiles").select("id").eq("role", "admin");
+    const cc: string[] = [];
+    for (const a of (admins ?? []) as { id: string }[]) {
+      const { data: adminAuth } = await supabase.auth.admin.getUserById(a.id);
+      if (adminAuth?.user?.email) cc.push(adminAuth.user.email);
+    }
+    return { to: authData?.user?.email ?? null, cc };
+  } catch (err) {
+    console.error("idle-timeout: recipient lookup failed", err);
+    return { to: null, cc: [] };
+  }
+}
+
+/** Fire-and-forget Resend send. Everything here is a courtesy notice; a mail
+ *  failure must never change what the cron did to the session. */
+async function sendMail(to: string, cc: string[], subject: string, html: string): Promise<void> {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) return;
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "MinuteFlow <noreply@minuteflow.click>",
+        to: [to],
+        ...(cc.length > 0 ? { cc } : {}),
+        subject,
+        html,
+      }),
+    });
+  } catch (err) {
+    console.error("idle-timeout: email failed", err);
+  }
+}
+
+/** Warns the VA that their session has gone quiet and what happens next. */
+async function emailIdleWarning(userId: string, who: string): Promise<void> {
+  const { to, cc } = await recipientsFor(userId);
+  if (!to) return;
+  await sendMail(
+    to,
+    cc,
+    "Your MinuteFlow session has gone quiet",
+    `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
+      <h2 style="color:#b8860b">Are you still working?</h2>
+      <p>Hi ${who},</p>
+      <p>MinuteFlow has not seen any activity on your session for
+      <strong>${Math.round(STALE_THRESHOLD_MS / 60000)} minutes</strong>, and a task is still running.</p>
+      <p>If you are still working, open MinuteFlow and your time keeps recording as normal.</p>
+      <p style="background:#f5ecd0;padding:10px 12px;border-radius:8px">If nothing changes in the next
+      <strong>${Math.round(GRACE_MS / 60000)} minutes</strong>, your session will be clocked out
+      automatically and the open task closed.</p>
+      <p style="color:#b5a898;font-size:12px">Sent automatically by MinuteFlow.</p>
+    </div>`
+  );
+}
+
 /**
  * Emails the VA the record of their forced clock-out, copying admins so the
  * same account of it exists on both sides.
@@ -26,63 +96,33 @@ const STALE_THRESHOLD_MS = 15 * 60 * 1000;
  * Best-effort throughout: the session is already closed, and a mail problem
  * must not stop the cron finishing the rest of the run.
  */
-async function emailForcedClockOut(
-  userId: string,
-  who: string,
-  closedAt: string
-): Promise<void> {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return;
+async function emailForcedClockOut(userId: string, who: string, closedAt: string): Promise<void> {
+  const { to, cc } = await recipientsFor(userId);
+  if (!to) return;
 
-  const supabase = createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
+  const at = new Date(closedAt).toLocaleString("en-US", {
+    timeZone: ORG_TIMEZONE,
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  await sendMail(
+    to,
+    cc,
+    "You were clocked out for inactivity",
+    `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
+      <h2 style="color:#c2694f">Clocked out automatically</h2>
+      <p>Hi ${who},</p>
+      <p>MinuteFlow ended your session at <strong>${at} ET</strong>. There was no activity for
+      ${Math.round(STALE_THRESHOLD_MS / 60000)} minutes, a warning was sent, and nothing changed
+      in the ${Math.round(GRACE_MS / 60000)} minutes that followed.</p>
+      <p>Your open task was closed at that time. Any work done after it stopped recording is not
+      in your log.</p>
+      <p style="background:#f3ede4;padding:10px 12px;border-radius:8px">If you were working and
+      this is wrong, tell Toni — the time can be corrected.</p>
+      <p style="color:#b5a898;font-size:12px">Sent automatically by MinuteFlow.</p>
+    </div>`
   );
-
-  try {
-    const { data: authData } = await supabase.auth.admin.getUserById(userId);
-    const vaEmail = authData?.user?.email;
-    if (!vaEmail) return;
-
-    const { data: admins } = await supabase.from("profiles").select("id").eq("role", "admin");
-    const cc: string[] = [];
-    for (const a of (admins ?? []) as { id: string }[]) {
-      const { data: adminAuth } = await supabase.auth.admin.getUserById(a.id);
-      if (adminAuth?.user?.email) cc.push(adminAuth.user.email);
-    }
-
-    const at = new Date(closedAt).toLocaleString("en-US", {
-      timeZone: ORG_TIMEZONE,
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-
-    await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: "MinuteFlow <noreply@minuteflow.click>",
-        to: [vaEmail],
-        ...(cc.length > 0 ? { cc } : {}),
-        subject: "You were clocked out for inactivity",
-        html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#3d3229">
-          <h2 style="color:#c2694f">Clocked out automatically</h2>
-          <p>Hi ${who},</p>
-          <p>MinuteFlow ended your session at <strong>${at} ET</strong>. There was no activity for
-          ${Math.round(STALE_THRESHOLD_MS / 60000)} minutes, a warning was posted, and nothing changed
-          in the ${Math.round(GRACE_MS / 60000)} minutes that followed.</p>
-          <p>Your open task was closed at that time. Any work done after it stopped recording is not
-          in your log.</p>
-          <p style="background:#f3ede4;padding:10px 12px;border-radius:8px">If you were working and
-          this is wrong, tell Toni — the time can be corrected.</p>
-          <p style="color:#b5a898;font-size:12px">Sent automatically by MinuteFlow.</p>
-        </div>`,
-      }),
-    });
-  } catch (err) {
-    console.error("idle-timeout: forced clock-out email failed", err);
-  }
 }
 
 /**
@@ -109,12 +149,10 @@ async function emailForcedClockOut(
  *     heartbeat in between clears the warning and nothing further happens.
  *   - The trigger is the session heartbeat, not the extension. The old guard
  *     failed precisely because it trusted extension state.
- *   - Both messages go to the private ops chat, not the team chat. Being named
- *     in front of everyone for going quiet is a different thing from being seen
- *     submitting work.
- *   - The VA gets the detail by email, admins copied, so both sides hold the
- *     same record and a wrong close is arguable the same day rather than at
- *     payroll.
+ *   - Detail goes by email to the VA with admins copied; the team chat only
+ *     carries a one-line notice that an email was sent. The person knows to
+ *     look and a teammate can nudge them, without the specifics of someone's
+ *     quiet stretch being posted in front of everyone.
  *
  * Requires profiles.idle_warned_at.
  *
@@ -214,21 +252,17 @@ export async function GET(request: NextRequest) {
 
     // First stale run for this stretch: warn only, never close.
     //
-    // The warning goes to the shared submissions chat rather than a private
-    // message. Everyone is in that chat, so it reaches the VA without needing
-    // per-person Telegram links, and a teammate who notices can nudge them
-    // before the clock-out lands.
+    // Detail by email, notice in the team chat. The chat line names the person
+    // and the subject so they know to look, and so a teammate can nudge them
+    // before the clock-out lands — but the specifics of someone's quiet stretch
+    // stay in their inbox rather than in front of everyone.
     if (!graceStarted) {
       await supabase.from("profiles").update({ idle_warned_at: new Date().toISOString() }).eq("id", c.user_id);
       warned.push(who);
+      await emailIdleWarning(c.user_id, who);
       await sendTelegram(
-        "ops",
-        [
-          `⏰ <b>${esc(who)} — are you still there?</b>`,
-          "",
-          `No activity on your session for ${Math.round(STALE_THRESHOLD_MS / 60000)} minutes. Open MinuteFlow to keep your time running.`,
-          `If nothing changes in the next ${Math.round(GRACE_MS / 60000)} minutes you will be clocked out automatically.`,
-        ].join("\n")
+        "submissions",
+        `⏰ <b>${esc(who)}</b> — emailed about inactivity on your session. Please check your email.`
       );
       continue;
     }
@@ -272,7 +306,7 @@ export async function GET(request: NextRequest) {
 
   // Telegram carries only the notice, not the detail: enough for the team to
   // see it happened and for the VA to know an email is waiting.
-  if (closed.length > 0 && telegramEnabled("ops")) {
+  if (closed.length > 0 && telegramEnabled("submissions")) {
     const at = new Date().toLocaleTimeString("en-US", {
       timeZone: ORG_TIMEZONE,
       hour: "numeric",
@@ -280,7 +314,7 @@ export async function GET(request: NextRequest) {
       hour12: true,
     });
     await sendTelegram(
-      "ops",
+      "submissions",
       `⚠️ <b>Clocked out</b> — ${esc(closed.join(", "))} at ${at} ET after no activity through the warning period. Details have been emailed.`
     );
   }

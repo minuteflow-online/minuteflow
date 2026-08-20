@@ -122,38 +122,29 @@ export async function POST(request: NextRequest) {
 
       const vaName = profile?.full_name || profile?.username || "A team member";
 
-      // Telegram as well as email. Screenshots stopping is time-sensitive —
-      // an email seen hours later is a lost day of captures.
-      if (telegramEnabled("ops")) {
-        await sendTelegram(
-          "ops",
-          [
-            `📷 <b>Screenshots failing</b> — ${esc(vaName)}`,
-            "3 uploads in a row did not reach Drive. Captures are queued locally and will resume on their own once the connection is back.",
-            "",
-            "Status: https://minuteflow.click/admin",
-          ].join("\n")
-        );
-      }
-
-      // Get all admin profile IDs. Guarded on the key because the Telegram
-      // send above no longer requires it — without this, an unset key would
-      // fall through to an unauthenticated Resend call.
-      const { data: adminProfiles } = RESEND_API_KEY
-        ? await supabase.from("profiles").select("id").eq("role", "admin")
-        : { data: null };
-
-      if (adminProfiles && adminProfiles.length > 0) {
-        // Get auth emails for admins
+      // Detail by email — to the VA, whose machine has to be looked at, with
+      // admins copied. The team chat only carries the notice, so nobody is
+      // described as broken in front of everyone.
+      if (RESEND_API_KEY) {
         const { data: authData } = await supabase.auth.admin.listUsers({ perPage: 1000 });
-        const adminIds = new Set(adminProfiles.map((p) => p.id));
+        const vaEmail = authData?.users.find((u) => u.id === userId)?.email ?? null;
+
+        const { data: adminProfiles } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("role", "admin");
+        const adminIds = new Set((adminProfiles ?? []).map((p) => p.id));
         const adminEmails =
           authData?.users
-            .filter((u) => adminIds.has(u.id) && u.email)
+            .filter((u) => adminIds.has(u.id) && u.email && u.email !== vaEmail)
             .map((u) => u.email as string) ?? [];
 
-        // Send alert to each admin
-        for (const email of adminEmails) {
+        // With no address for the VA the admins become the recipients, so the
+        // alert still goes somewhere rather than being dropped.
+        const to = vaEmail ? [vaEmail] : adminEmails;
+        const cc = vaEmail ? adminEmails : [];
+
+        if (to.length > 0) {
           await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: {
@@ -162,14 +153,16 @@ export async function POST(request: NextRequest) {
             },
             body: JSON.stringify({
               from: "MinuteFlow <noreply@minuteflow.click>",
-              to: [email],
-              subject: `⚠️ Screenshot Upload Issue — ${vaName}`,
+              to,
+              ...(cc.length > 0 ? { cc } : {}),
+              subject: `⚠️ Screenshot uploads failing — ${vaName}`,
               html: `
                 <div style="font-family:sans-serif;max-width:520px;margin:0 auto">
                   <h2 style="color:#c0392b">Screenshot Upload Alert</h2>
                   <p><strong>${vaName}</strong>'s MinuteFlow extension is having trouble uploading screenshots to Google Drive.</p>
-                  <p>There have been <strong>3 consecutive failed upload attempts</strong>. Screenshots are being saved locally on their computer and will upload automatically when the connection is restored.</p>
-                  <p>You can monitor their upload status on the <a href="https://minuteflow.click/admin">Admin Dashboard → Overview</a>.</p>
+                  <p>There have been <strong>3 consecutive failed upload attempts</strong>. Screenshots are being saved locally on that computer and will upload automatically when the connection is restored.</p>
+                  <p>If this keeps happening, check the internet connection and that the MinuteFlow extension is still enabled in Chrome.</p>
+                  <p>Upload status is on the <a href="https://minuteflow.click/admin">Admin Dashboard → Overview</a>.</p>
                   <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
                   <p style="color:#888;font-size:12px">This alert fires once per failure streak and resets automatically when uploads resume. — MinuteFlow</p>
                 </div>
@@ -177,6 +170,15 @@ export async function POST(request: NextRequest) {
             }),
           });
         }
+      }
+
+      // Notice only. Screenshots stopping is time-sensitive, so it belongs
+      // somewhere seen quickly — but the specifics stay in the email.
+      if (telegramEnabled("submissions")) {
+        await sendTelegram(
+          "submissions",
+          `📷 <b>${esc(vaName)}</b> — emailed about screenshot uploads failing. Please check your email.`
+        );
       }
     }
 
