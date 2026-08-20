@@ -4,6 +4,7 @@ import TopNav from "@/components/TopNav";
 import SceAlertBanner from "@/components/SceAlertBanner";
 import { ScreenCaptureProvider } from "@/contexts/ScreenCaptureProvider";
 import { SessionProvider } from "@/contexts/SessionContext";
+import { ToastProvider } from "@/contexts/ToastProvider";
 import type { UserRole } from "@/types/database";
 
 export default async function AppLayout({
@@ -32,7 +33,7 @@ export default async function AppLayout({
   const role: UserRole = profile?.role || "va";
 
   return (
-    <>
+    <ToastProvider>
       <TopNav user={{ full_name: fullName, role, department: profile?.department, admin_permissions: profile?.admin_permissions, avatar_url: profile?.avatar_url }} />
       <ScreenCaptureProvider>
         <SceAlertBanner />
@@ -42,6 +43,6 @@ export default async function AppLayout({
           </main>
         </SessionProvider>
       </ScreenCaptureProvider>
-    </>
+    </ToastProvider>
   );
 }

@@ -10,6 +10,8 @@ import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
 import Section from "@/components/ui/Section";
 import FixedPayTasksPanel from "@/components/FixedPayTasksPanel";
 import ProjectInfoModal from "@/components/ProjectInfoModal";
+import ConfirmModal from "@/components/ConfirmModal";
+import { useToast } from "@/contexts/ToastProvider";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import RecurringTemplatesManager from "@/components/RecurringTemplatesManager";
@@ -366,6 +368,16 @@ function renderTextWithLinks(text: string) {
 export default function TaskListPage() {
   const supabase = useMemo(() => createClient(), []);
   const { isActive, requestStream, captureFrame } = useScreenCapture();
+  const { showToast } = useToast();
+  // Pilot: toast on create/update/delete, confirmation modal before any
+  // delete-type action — permanent (Delete Forever, single or bulk) and the
+  // softer move-to-Trash alike, per Toni's "avoid accidental deletion" — even
+  // though Trash is recoverable via Restore, it still deserves a pause.
+  // null = no confirmation open. See ConfirmModal.tsx / ToastProvider.tsx.
+  const [pendingDelete, setPendingDelete] = useState<
+    { kind: "single-permanent"; taskId: number } | { kind: "bulk-permanent" } | { kind: "bulk-trash" } | null
+  >(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [tasks, setTasks] = useState<VATaskRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1562,7 +1574,8 @@ export default function TaskListPage() {
       const fresh = freshTasks.find((t) => t.id === current.id);
       return fresh ?? current;
     });
-  }, [fetchTasks]);
+    showToast("success", "Task updated");
+  }, [fetchTasks, showToast]);
 
   const closePanel = useCallback(() => {
     setSelectedTask(null);
@@ -1597,8 +1610,9 @@ export default function TaskListPage() {
       } else {
         closeCreate();
       }
+      showToast("success", "Task created");
     },
-    [closeCreate, fetchTasks, openPanel, createTaskMode]
+    [closeCreate, fetchTasks, openPanel, createTaskMode, showToast]
   );
 
   const handleClaimedTaskRefresh = useCallback(async () => {
@@ -1801,7 +1815,8 @@ export default function TaskListPage() {
     setSelectedTaskIds([]);
     if (selectedTask && assigneeIds.includes(selectedTask.id)) closePanel();
     await fetchTasks();
-  }, [assigneeIdsToTaskIds, closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds]);
+    showToast("success", `${taskIds.length} task${taskIds.length === 1 ? "" : "s"} moved to Trash`);
+  }, [assigneeIdsToTaskIds, closePanel, fetchTasks, patchTaskVisibility, selectedTask, selectedTaskIds, showToast]);
 
   const handleBulkRestore = useCallback(async () => {
     const assigneeIds = [...selectedTaskIds];
@@ -1820,7 +1835,8 @@ export default function TaskListPage() {
     setSelectedTaskIds([]);
     if (selectedTask && assigneeIds.includes(selectedTask.id)) closePanel();
     await fetchTasks();
-  }, [assigneeIdsToTaskIds, closePanel, fetchTasks, selectedTask, selectedTaskIds]);
+    showToast("success", `${taskIds.length} task${taskIds.length === 1 ? "" : "s"} deleted`);
+  }, [assigneeIdsToTaskIds, closePanel, fetchTasks, selectedTask, selectedTaskIds, showToast]);
 
   // Row-level handlers receive the actual assigned_tasks.id (not assignee row id)
   const handleRestoreTask = useCallback(async (taskId: number) => {
@@ -1834,7 +1850,29 @@ export default function TaskListPage() {
     await fetch(`/api/assigned-tasks/${taskId}`, { method: "DELETE" });
     if (selectedTask?.assigned_tasks.id === taskId) closePanel();
     await fetchTasks();
-  }, [closePanel, fetchTasks, selectedTask]);
+    showToast("success", "Task deleted");
+  }, [closePanel, fetchTasks, selectedTask, showToast]);
+
+  // Confirmation gate for both delete paths above — see pendingDelete's
+  // declaration near the top of the component.
+  const handleConfirmDelete = useCallback(async () => {
+    if (pendingDelete === null) return;
+    setDeleting(true);
+    try {
+      if (pendingDelete.kind === "bulk-permanent") {
+        await handleBulkPermanentDelete();
+      } else if (pendingDelete.kind === "bulk-trash") {
+        await handleBulkTrash();
+      } else {
+        await handlePermanentDeleteTask(pendingDelete.taskId);
+      }
+      setPendingDelete(null);
+    } catch {
+      showToast("error", "Failed to delete. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
+  }, [pendingDelete, handleBulkPermanentDelete, handleBulkTrash, handlePermanentDeleteTask, showToast]);
 
   return (
     <>
@@ -2199,7 +2237,7 @@ export default function TaskListPage() {
                         admin-only. */}
                     <button
                       type="button"
-                      onClick={() => void handleBulkTrash()}
+                      onClick={() => setPendingDelete({ kind: "bulk-trash" })}
                       className="rounded-lg border border-terracotta bg-terracotta px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#a85840]"
                     >
                       Trash
@@ -2218,7 +2256,7 @@ export default function TaskListPage() {
                 {taskView === "trash" && isAdmin && (
                   <button
                     type="button"
-                    onClick={() => void handleBulkPermanentDelete()}
+                    onClick={() => setPendingDelete({ kind: "bulk-permanent" })}
                     className="rounded-lg border border-red-300 bg-red-500 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-red-600"
                   >
                     Delete Forever
@@ -2573,7 +2611,7 @@ export default function TaskListPage() {
                                   {taskView === "trash" && isAdmin && (
                                     <button
                                       type="button"
-                                      onClick={() => void handlePermanentDeleteTask(task.assigned_tasks.id)}
+                                      onClick={() => setPendingDelete({ kind: "single-permanent", taskId: task.assigned_tasks.id })}
                                       className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-600 transition-colors hover:bg-red-100"
                                     >
                                       Delete Forever
@@ -2629,6 +2667,30 @@ export default function TaskListPage() {
         projectId={projectModalId}
         isOpen={Boolean(projectModalId)}
         onClose={() => setProjectModalId(null)}
+      />
+    )}
+
+    {pendingDelete !== null && (
+      <ConfirmModal
+        title={
+          pendingDelete.kind === "bulk-trash"
+            ? "Move selected tasks to Trash?"
+            : pendingDelete.kind === "bulk-permanent"
+            ? "Delete selected tasks?"
+            : "Delete this task?"
+        }
+        message={
+          pendingDelete.kind === "bulk-trash"
+            ? `Moves ${selectedTaskIds.length} task${selectedTaskIds.length === 1 ? "" : "s"} to Trash. You can restore ${selectedTaskIds.length === 1 ? "it" : "them"} from there.`
+            : pendingDelete.kind === "bulk-permanent"
+            ? `This permanently deletes ${selectedTaskIds.length} task${selectedTaskIds.length === 1 ? "" : "s"}. This cannot be undone.`
+            : "This permanently deletes the task. This cannot be undone."
+        }
+        confirmLabel={pendingDelete.kind === "bulk-trash" ? "Move to Trash" : "Delete Forever"}
+        danger={pendingDelete.kind !== "bulk-trash"}
+        confirming={deleting}
+        onConfirm={() => void handleConfirmDelete()}
+        onCancel={() => setPendingDelete(null)}
       />
     )}
 
