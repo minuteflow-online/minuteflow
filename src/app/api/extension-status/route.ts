@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
+import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +20,6 @@ function isNewerVersion(a: string, b: string): boolean {
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const RESEND_API_KEY = process.env.RESEND_API_KEY!;
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
-const TELEGRAM_GROUP_CHAT_ID = process.env.TELEGRAM_GROUP_CHAT_ID!;
 
 function createServiceClient() {
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -87,8 +86,13 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: upsertError.message }, { status: 500 });
     }
 
-    // Notify Telegram group only on genuine installs or upgrades (never on downgrades/same)
-    if (isUpgrade && TELEGRAM_BOT_TOKEN && TELEGRAM_GROUP_CHAT_ID) {
+    // Notify only on genuine installs or upgrades (never on downgrades/same).
+    //
+    // Posted directly to TELEGRAM_GROUP_CHAT_ID until now, which named a group
+    // the current bot is not a member of — so these sends failed silently.
+    // Going through the shared sender puts them in the submissions chat with
+    // the rest of the day-to-day operations alerts.
+    if (isUpgrade && telegramEnabled("submissions")) {
       const { data: profile } = await supabase
         .from("profiles")
         .select("full_name, username")
@@ -101,19 +105,14 @@ export async function POST(request: NextRequest) {
         ? `${previousVersion} → ${newVersion}`
         : `v${newVersion}`;
 
-      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: TELEGRAM_GROUP_CHAT_ID,
-          text: `🔌 *${vaName}* ${action} the MinuteFlow extension (${versionLine})`,
-          parse_mode: "Markdown",
-        }),
-      });
+      await sendTelegram(
+        "submissions",
+        `🔌 <b>${esc(vaName)}</b> ${action} the MinuteFlow extension (${esc(versionLine)})`
+      );
     }
 
     // Send admin alert exactly when failures hit 3 (once per streak — extension sends flag)
-    if (consecutiveFailures === 3 && RESEND_API_KEY) {
+    if (consecutiveFailures === 3) {
       // Get VA name
       const { data: profile } = await supabase
         .from("profiles")
@@ -123,11 +122,26 @@ export async function POST(request: NextRequest) {
 
       const vaName = profile?.full_name || profile?.username || "A team member";
 
-      // Get all admin profile IDs
-      const { data: adminProfiles } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("role", "admin");
+      // Telegram as well as email. Screenshots stopping is time-sensitive —
+      // an email seen hours later is a lost day of captures.
+      if (telegramEnabled("submissions")) {
+        await sendTelegram(
+          "submissions",
+          [
+            `📷 <b>Screenshots failing</b> — ${esc(vaName)}`,
+            "3 uploads in a row did not reach Drive. Captures are queued locally and will resume on their own once the connection is back.",
+            "",
+            "Status: https://minuteflow.click/admin",
+          ].join("\n")
+        );
+      }
+
+      // Get all admin profile IDs. Guarded on the key because the Telegram
+      // send above no longer requires it — without this, an unset key would
+      // fall through to an unauthenticated Resend call.
+      const { data: adminProfiles } = RESEND_API_KEY
+        ? await supabase.from("profiles").select("id").eq("role", "admin")
+        : { data: null };
 
       if (adminProfiles && adminProfiles.length > 0) {
         // Get auth emails for admins
