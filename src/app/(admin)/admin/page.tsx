@@ -2245,12 +2245,9 @@ function ScreenshotsTab({
 
 /* ── One task's screenshots ────────────────────────────────── */
 
-// Capture runs can pile hundreds of shots onto a single task, so a card shows a
-// window of them and expands on request rather than mounting every thumbnail.
-// The window is the MOST RECENT shots, not the first: showing the oldest made a
-// task that was still capturing look like it had stopped hours ago.
-const SHOTS_PER_TASK_PREVIEW = 12;
-
+// Every capture on the task is rendered — no windowing. At a 5-minute cadence a
+// full day on one task is roughly 96 thumbnails, and images are lazy-loaded, so
+// the browser only fetches what actually scrolls into view.
 function TaskScreenshotCard({
   group,
   profile,
@@ -2264,9 +2261,6 @@ function TaskScreenshotCard({
   setSelectedScreenshot: (ss: TaskScreenshot) => void;
   orgTimezone: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const hidden = group.shots.length - SHOTS_PER_TASK_PREVIEW;
-  const visible = expanded ? group.shots : group.shots.slice(-SHOTS_PER_TASK_PREVIEW);
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
   const vaName = profile?.full_name || "Unknown";
@@ -2317,7 +2311,7 @@ function TaskScreenshotCard({
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-        {visible.map((ss) => {
+        {group.shots.map((ss) => {
           const url = screenshotUrls[ss.id];
           const badge = screenshotTypeBadge(ss.screenshot_type);
           // A marker slot: no image was captured, and the row says why.
@@ -2376,17 +2370,6 @@ function TaskScreenshotCard({
           );
         })}
       </div>
-
-      {hidden > 0 && (
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="mt-3 rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20"
-        >
-          {expanded
-            ? "Show fewer"
-            : `Show ${hidden} earlier — newest ${SHOTS_PER_TASK_PREVIEW} shown`}
-        </button>
-      )}
     </div>
   );
 }
