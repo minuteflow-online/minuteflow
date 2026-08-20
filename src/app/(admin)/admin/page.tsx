@@ -2246,7 +2246,9 @@ function ScreenshotsTab({
 /* ── One task's screenshots ────────────────────────────────── */
 
 // Capture runs can pile hundreds of shots onto a single task, so a card shows a
-// first page and expands on request rather than mounting every thumbnail at once.
+// window of them and expands on request rather than mounting every thumbnail.
+// The window is the MOST RECENT shots, not the first: showing the oldest made a
+// task that was still capturing look like it had stopped hours ago.
 const SHOTS_PER_TASK_PREVIEW = 12;
 
 function TaskScreenshotCard({
@@ -2264,7 +2266,7 @@ function TaskScreenshotCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const hidden = group.shots.length - SHOTS_PER_TASK_PREVIEW;
-  const visible = expanded ? group.shots : group.shots.slice(0, SHOTS_PER_TASK_PREVIEW);
+  const visible = expanded ? group.shots : group.shots.slice(-SHOTS_PER_TASK_PREVIEW);
   const first = group.shots[0];
   const last = group.shots[group.shots.length - 1];
   const vaName = profile?.full_name || "Unknown";
@@ -2380,7 +2382,9 @@ function TaskScreenshotCard({
           onClick={() => setExpanded((v) => !v)}
           className="mt-3 rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20"
         >
-          {expanded ? "Show fewer" : `Show all ${group.shots.length}`}
+          {expanded
+            ? "Show fewer"
+            : `Show ${hidden} earlier — newest ${SHOTS_PER_TASK_PREVIEW} shown`}
         </button>
       )}
     </div>
