@@ -1,19 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { AssignedTaskStatus } from "@/types/database";
-import { fetchTodos, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 
 /**
- * Run before turning work in. The first two show real task data rather than
- * a bare label — a generic tick gets clicked without reading within a week,
- * whereas an unticked to-do listed in front of someone is a genuine check.
- * The last two are declarations, which is the point: when work comes back
- * incomplete, they ticked a box saying it wasn't.
+ * Run before turning work in. Instructions show the task's own text inline,
+ * since a bare label gets ticked without reading. The other two are
+ * declarations, which is the point: when work comes back incomplete, they
+ * ticked a box saying it wasn't.
+ *
+ * To-dos are deliberately absent — how a VA uses them is their own call, not
+ * something to gate submitting on.
  */
 const CHECKLIST = [
   { key: "instructions", label: "Instructions reviewed" },
-  { key: "todos", label: "To-dos complete" },
+  // Reading the brief and following it are separate claims, and the second
+  // is the one that gets disputed when work comes back.
+  { key: "compliant", label: "Compliant based on instructions" },
   { key: "included", label: "Everything requested is included" },
   { key: "proofread", label: "Proofread" },
 ] as const;
@@ -56,16 +59,6 @@ export default function SubmitWorkModal({
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [todos, setTodos] = useState<TaskTodo[]>([]);
-
-  useEffect(() => {
-    void fetchTodos(taskId).then(setTodos);
-  }, [taskId]);
-
-  // task_todos has no completed flag — `played` (time ever logged against it)
-  // is the only signal, so the hint says exactly that rather than implying
-  // the system knows an item is unfinished.
-  const untouchedTodos = todos.filter((t) => !t.played);
 
   const hasContent = Boolean(message.trim() || link.trim() || files.length > 0);
   const allChecked = CHECKLIST.every((c) => checked.has(c.key));
@@ -229,12 +222,7 @@ export default function SubmitWorkModal({
                         {instructions}
                       </span>
                     )}
-                    {item.key === "todos" && untouchedTodos.length > 0 && (
-                      <span className="mt-0.5 block text-[10px] text-terracotta">
-                        No time logged against{" "}
-                        {untouchedTodos.map((t) => todoLabel(t.sort_order)).join(", ")}
-                      </span>
-                    )}
+
                   </span>
                 </label>
               ))}
