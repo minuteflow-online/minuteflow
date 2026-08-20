@@ -1,11 +1,28 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AssignedTaskStatus } from "@/types/database";
+import { fetchTodos, todoLabel, type TaskTodo } from "@/lib/taskTodos";
+
+/**
+ * Run before turning work in. The first two show real task data rather than
+ * a bare label — a generic tick gets clicked without reading within a week,
+ * whereas an unticked to-do listed in front of someone is a genuine check.
+ * The last two are declarations, which is the point: when work comes back
+ * incomplete, they ticked a box saying it wasn't.
+ */
+const CHECKLIST = [
+  { key: "instructions", label: "Instructions reviewed" },
+  { key: "todos", label: "To-dos complete" },
+  { key: "included", label: "Everything requested is included" },
+  { key: "proofread", label: "Proofread" },
+] as const;
 
 interface SubmitWorkModalProps {
   taskId: number;
   taskName: string;
+  /** Shown inline under the first checklist item, so it's actually read. */
+  instructions?: string | null;
   onClose: () => void;
   /**
    * Called once the submission is saved. Receives the status the task should
@@ -28,6 +45,7 @@ interface SubmitWorkModalProps {
 export default function SubmitWorkModal({
   taskId,
   taskName,
+  instructions,
   onClose,
   onSubmitted,
 }: SubmitWorkModalProps) {
@@ -37,8 +55,21 @@ export default function SubmitWorkModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [todos, setTodos] = useState<TaskTodo[]>([]);
+
+  useEffect(() => {
+    void fetchTodos(taskId).then(setTodos);
+  }, [taskId]);
+
+  // task_todos has no completed flag — `played` (time ever logged against it)
+  // is the only signal, so the hint says exactly that rather than implying
+  // the system knows an item is unfinished.
+  const untouchedTodos = todos.filter((t) => !t.played);
 
   const hasContent = Boolean(message.trim() || link.trim() || files.length > 0);
+  const allChecked = CHECKLIST.every((c) => checked.has(c.key));
+  const canSubmit = hasContent && allChecked;
 
   const addFiles = (list: FileList | null) => {
     if (!list || list.length === 0) return;
@@ -56,7 +87,7 @@ export default function SubmitWorkModal({
   };
 
   const handleSubmit = async () => {
-    if (!hasContent || saving) return;
+    if (!canSubmit || saving) return;
     setSaving(true);
     setError("");
 
@@ -173,6 +204,43 @@ export default function SubmitWorkModal({
             />
           </div>
 
+          <div className="rounded-lg border border-sand bg-cream/40 p-2">
+            <label className={labelClass}>Before you submit</label>
+            <div className="space-y-1">
+              {CHECKLIST.map((item) => (
+                <label key={item.key} className="flex cursor-pointer items-start gap-2">
+                  <input
+                    type="checkbox"
+                    checked={checked.has(item.key)}
+                    onChange={(e) => {
+                      setChecked((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(item.key);
+                        else next.delete(item.key);
+                        return next;
+                      });
+                    }}
+                    className="mt-[2px] cursor-pointer accent-terracotta"
+                  />
+                  <span className="text-[11px] leading-snug text-espresso">
+                    {item.label}
+                    {item.key === "instructions" && instructions?.trim() && (
+                      <span className="mt-0.5 block whitespace-pre-wrap text-[10px] text-stone">
+                        {instructions}
+                      </span>
+                    )}
+                    {item.key === "todos" && untouchedTodos.length > 0 && (
+                      <span className="mt-0.5 block text-[10px] text-terracotta">
+                        No time logged against{" "}
+                        {untouchedTodos.map((t) => todoLabel(t.sort_order)).join(", ")}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
           <p className="rounded-lg border border-amber/20 bg-amber-soft px-2 py-1.5 text-[10px] leading-relaxed text-walnut">
             Once submitted this can&apos;t be edited. If something changes, add a note to the
             task instead — the record stays as submitted.
@@ -195,7 +263,7 @@ export default function SubmitWorkModal({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={!hasContent || saving}
+            disabled={!canSubmit || saving}
             className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
           >
             {saving ? "Submitting..." : "Submit"}

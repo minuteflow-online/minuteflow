@@ -380,6 +380,10 @@ export default function TaskListPage() {
   const [deleting, setDeleting] = useState(false);
 
   const [tasks, setTasks] = useState<VATaskRow[]>([]);
+  // Deep link from Productivity > Submissions: ?task=<id> opens that task's
+  // editor once the list has loaded. Runs once per id so re-selecting or
+  // closing the panel doesn't yank it back open.
+  const openedFromUrlRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [taskView, setTaskView] = useUrlTab<"active" | "archived" | "trash">("status", "active", ["active", "archived", "trash"]);
@@ -1078,6 +1082,16 @@ export default function TaskListPage() {
       ).sort((a, b) => a.localeCompare(b)),
     [tasks]
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || tasks.length === 0) return;
+    const wanted = new URLSearchParams(window.location.search).get("task");
+    if (!wanted || openedFromUrlRef.current === wanted) return;
+    const match = tasks.find((t) => String(t.assigned_tasks?.id ?? t.id) === wanted);
+    if (!match) return;
+    openedFromUrlRef.current = wanted;
+    setSelectedTask(match);
+  }, [tasks]);
 
   const filteredTasks = useMemo(() => {
     const start = filterDueStart ? parseDueDateSafe(filterDueStart) : null;

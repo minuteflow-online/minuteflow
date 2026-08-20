@@ -1205,6 +1205,18 @@ function ThreadCard({
           </span>
         </button>
 
+        {/* Straight into the real task editor rather than a second copy of it
+            embedded here. Outside the collapse button so it isn't a nested. */}
+        {head.task && (
+          <a
+            href={`/productivity/assignment?task=${head.task.id}`}
+            className="shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
+            title="Open this task"
+          >
+            Open task
+          </a>
+        )}
+
         {totalMs > 0 && (
           <span
             className="shrink-0 text-[11px] font-semibold tabular-nums text-walnut"
