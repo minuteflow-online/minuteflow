@@ -190,6 +190,10 @@ export async function GET(request: Request) {
   const mineOnly = searchParams.get("mine") === "true";
   const projectId = searchParams.get("projectId");
   const id = searchParams.get("id");
+  // Admin viewing a specific VA's templates — mirrors assigned-tasks' viewAsVa,
+  // used by the Recurring Templates "View" selector so admins can check what
+  // a given VA has set up without switching accounts.
+  const viewAsVa = searchParams.get("viewAsVa");
 
   const supabase = serviceClient();
 
@@ -211,11 +215,15 @@ export async function GET(request: Request) {
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (!isAdminEquivalent || mineOnly) {
+  if (isAdminEquivalent && viewAsVa) {
+    // Admin viewing one specific VA's templates.
+    query = query.contains("assigned_to_ids", [viewAsVa]);
+  } else if (!isAdminEquivalent || mineOnly) {
     // VAs always see only their own templates.
     // Admins also see only their own when ?mine=true (VA task-list context).
     query = query.contains("assigned_to_ids", [user.id]);
   }
+  // Admin with neither ?mine nor ?viewAsVa: no filter applied — everyone's templates.
   if (projectId) query = query.eq("project_id", projectId);
 
   const { data, error } = await query;
