@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { formatTenure } from "@/lib/utils";
 import WorkDaysPicker from "@/components/WorkDaysPicker";
 import { createClient } from "@/lib/supabase/client";
 import type { PaymentAccountDetails } from "@/types/database";
@@ -366,7 +367,7 @@ function PersonalInfoSection({
     { label: "Emergency Contact", key: "emergency_contact_name" },
     { label: "Emergency Phone", key: "emergency_contact_phone" },
     { label: "Birthday", key: "birthday", type: "date" },
-    { label: "Date Started", key: "date_started", type: "date" },
+    { label: "Team member since", key: "date_started", type: "date" },
   ];
 
   return (
@@ -395,6 +396,9 @@ function PersonalInfoSection({
                   onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
                   className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
                 />
+                {key === "date_started" && form.date_started && (
+                  <p className="mt-1 text-[10px] text-stone">Team member for {formatTenure(form.date_started)}.</p>
+                )}
               </div>
             ))}
           </div>
@@ -424,6 +428,12 @@ function PersonalInfoSection({
               </p>
             </div>
           ))}
+          {/* Derived from the date above, never stored — same helper the VA's
+              own portal reads, so the two can't disagree. */}
+          <div>
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Team member for</p>
+            <p className="text-[13px] text-espresso mt-0.5">{formatTenure(profile?.date_started)}</p>
+          </div>
         </div>
       )}
     </div>

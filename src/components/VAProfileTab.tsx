@@ -7,7 +7,7 @@ import AvatarUpload from "@/components/AvatarUpload";
 import WorkDaysPicker from "@/components/WorkDaysPicker";
 import BudgetWidget from "@/components/BudgetWidget";
 import { formatWorkDays, shiftHoursFromProfile, workDaysFromProfile, vaBudgetType } from "@/lib/budget";
-import { displayRole } from "@/lib/utils";
+import { displayRole, formatTenure } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -65,34 +65,6 @@ function formatDate(isoDate: string | null): string {
   if (!isoDate) return "—";
   const d = new Date(isoDate + "T12:00:00");
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-// Whole days between date_started and today. Counted off the calendar date
-// rather than elapsed milliseconds so a member who joined yesterday reads as
-// 1 day regardless of what time of day either end falls on.
-function daysSince(isoDate: string | null): number | null {
-  if (!isoDate) return null;
-  const started = new Date(isoDate + "T12:00:00");
-  if (Number.isNaN(started.getTime())) return null;
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
-  const days = Math.floor((today.getTime() - started.getTime()) / 86_400_000);
-  return days >= 0 ? days : null;
-}
-
-function formatTenure(isoDate: string | null): string {
-  const days = daysSince(isoDate);
-  if (days == null) return "—";
-  if (days === 0) return "Started today";
-  const years = Math.floor(days / 365);
-  const label = `${days.toLocaleString()} day${days === 1 ? "" : "s"}`;
-  // Past a year the raw day count stops being readable on its own.
-  if (years >= 1) {
-    const months = Math.floor((days - years * 365) / 30);
-    const rounded = [`${years}y`, months > 0 ? `${months}m` : null].filter(Boolean).join(" ");
-    return `${label} (${rounded})`;
-  }
-  return label;
 }
 
 function formatDateTime(iso: string): string {
@@ -605,18 +577,17 @@ function ExtendedInfoSection({
   ];
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Personal Info</h3>
-        {!editing && (
+    <CollapsibleCard title="Personal Info">
+      {!editing && (
+        <div className="flex justify-end mb-3">
           <button
             onClick={() => setEditing(true)}
             className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
           >
             Edit
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {editing ? (
         <div className="space-y-3">
@@ -663,7 +634,7 @@ function ExtendedInfoSection({
 
         </div>
       )}
-    </div>
+    </CollapsibleCard>
   );
 }
 
@@ -737,18 +708,17 @@ function PaymentInfoSection({
   const hasPayment = !!(pa.gcash?.number || pa.bank_transfer?.bank || pa.bank_deposit?.bank || pa.paypal?.email);
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Payment Information</h3>
-        {!editing && (
+    <CollapsibleCard title="Payment Information">
+      {!editing && (
+        <div className="flex justify-end mb-3">
           <button
             onClick={() => setEditing(true)}
             className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
           >
             Edit
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {!editing && (
         <>
@@ -888,7 +858,7 @@ function PaymentInfoSection({
           </div>
         </div>
       )}
-    </div>
+    </CollapsibleCard>
   );
 }
 
@@ -930,18 +900,17 @@ function LinksSection({
   };
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Links</h3>
-        {!showForm && (
+    <CollapsibleCard title="Links">
+      {!showForm && (
+        <div className="flex justify-end mb-3">
           <button
             onClick={() => setShowForm(true)}
             className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors"
           >
             + Add Link
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {showForm && (
         <div className="mb-3 rounded-lg border border-sand bg-parchment/30 p-3 space-y-2">
@@ -1009,7 +978,7 @@ function LinksSection({
           ))}
         </div>
       )}
-    </div>
+    </CollapsibleCard>
   );
 }
 
@@ -1064,8 +1033,7 @@ function FilesSection({
   };
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4">
-      <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide mb-3">Files</h3>
+    <CollapsibleCard title="Files">
 
       {uploadError && (
         <div className="mb-3 rounded-lg bg-terracotta-soft border border-terracotta/20 px-3 py-2 text-[12px] text-terracotta">
@@ -1148,7 +1116,7 @@ function FilesSection({
           {uploadingGeneral ? "Uploading…" : "Upload PDF"}
         </label>
       </div>
-    </div>
+    </CollapsibleCard>
   );
 }
 
@@ -1211,18 +1179,17 @@ function MilestonesSection({
   };
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Milestones</h3>
-        {!showForm && (
+    <CollapsibleCard title="Milestones">
+      {!showForm && (
+        <div className="flex justify-end mb-3">
           <button
             onClick={() => setShowForm(true)}
             className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors"
           >
             + Add Milestone
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {showForm && (
         <div className="mb-4 rounded-lg border border-sand bg-parchment/30 p-3 space-y-2">
@@ -1301,7 +1268,7 @@ function MilestonesSection({
           </table>
         </div>
       ) : null}
-    </div>
+    </CollapsibleCard>
   );
 }
 
@@ -1373,8 +1340,7 @@ function VANotesSection({
   };
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4">
-      <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide mb-3">Notes</h3>
+    <CollapsibleCard title="Notes">
       <div className="space-y-3">
         {VA_NOTE_GROUPS.map((group) => {
           const groupNotes = notes.filter((n) => n.visibility === group.key);
@@ -1460,6 +1426,6 @@ function VANotesSection({
           );
         })}
       </div>
-    </div>
+    </CollapsibleCard>
   );
 }

@@ -343,3 +343,34 @@ export function weekEnd(date?: Date): Date {
   end.setHours(23, 59, 59, 999);
   return end;
 }
+
+/**
+ * Whole days between a "YYYY-MM-DD" start date and today. Counted off the
+ * calendar date rather than elapsed milliseconds, so someone who started
+ * yesterday reads as 1 day whatever time of day either end falls on.
+ */
+export function daysSinceDate(isoDate: string | null | undefined): number | null {
+  if (!isoDate) return null;
+  const started = new Date(isoDate + "T12:00:00");
+  if (Number.isNaN(started.getTime())) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+  const days = Math.floor((today.getTime() - started.getTime()) / 86_400_000);
+  return days >= 0 ? days : null;
+}
+
+/** "942 days (2y 7m)" — how long someone has been on the team. */
+export function formatTenure(isoDate: string | null | undefined): string {
+  const days = daysSinceDate(isoDate);
+  if (days == null) return "—";
+  if (days === 0) return "Started today";
+  const label = `${days.toLocaleString()} day${days === 1 ? "" : "s"}`;
+  // Past a year the raw day count stops being readable on its own.
+  const years = Math.floor(days / 365);
+  if (years >= 1) {
+    const months = Math.floor((days - years * 365) / 30);
+    const rounded = [`${years}y`, months > 0 ? `${months}m` : null].filter(Boolean).join(" ");
+    return `${label} (${rounded})`;
+  }
+  return label;
+}
