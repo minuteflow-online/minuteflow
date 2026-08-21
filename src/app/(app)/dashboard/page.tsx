@@ -1086,7 +1086,7 @@ export default function DashboardPage() {
 
       // Create a "Planning" time_log entry so clock-in registers in activity log
       const clockInSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
-      const { data: sortingLog } = await supabase
+      const { data: sortingLog, error: logError } = await supabase
         .from("time_logs")
         .insert({
           user_id: userId,
@@ -1107,6 +1107,20 @@ export default function DashboardPage() {
         .select()
         .single();
 
+      // This row is where the shift's time lands, so losing it has to stop the
+      // clock-in. Marking the session clocked_in anyway leaves the banner
+      // saying "Clocked In Since 7:05" while nothing is being recorded, and the
+      // VA only finds out hours later when the day totals zero. Same guard as
+      // task start below.
+      if (logError || !sortingLog) {
+        alert(
+          "Couldn't clock you in: " +
+            (logError?.message || "unknown error") +
+            ". Please try again — nothing is being tracked right now."
+        );
+        return;
+      }
+
       const sortingTask: ActiveTask = {
         task_name: "Clock In",
         category: "Planning",
@@ -1118,7 +1132,7 @@ export default function DashboardPage() {
         start_time: now,
         end_time: null,
         duration_ms: 0,
-        logId: sortingLog?.id?.toString() || "",
+        logId: sortingLog.id.toString(),
         _startMs: Date.now(),
         billing_type: "hourly",
       };
@@ -1149,9 +1163,7 @@ export default function DashboardPage() {
           session_date: clockInSessionDate,
         } as Session));
         setActiveTask(sortingTask);
-        if (sortingLog) {
-          setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
-        }
+        setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
         await refreshSession();
 
         // Request notification permission at clock-in so off-tab alerts work
