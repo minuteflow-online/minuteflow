@@ -677,26 +677,49 @@ export default function TaskListPage() {
         )
       );
 
-      // Fallback for older tasks: find log_ids by matching user_id + task_name in time_logs,
-      // scoped by the assignment date to avoid mixing screenshots from repeated same-named tasks
-      const vaIds = Array.from(
+      // Name-matching is only for assignees with no log_id link; anyone with a real
+      // link is already covered above and must not be name-matched on top of it.
+      const linkedVaIds = new Set(
+        (assigneeRows ?? [])
+          .filter((row) => typeof row.log_id === "number")
+          .map((row) => row.va_id)
+      );
+      const unlinkedVaIds = Array.from(
         new Set(
           (assigneeRows ?? [])
             .map((row) => row.va_id)
             .filter((id): id is string => typeof id === "string")
         )
-      );
+      ).filter((id) => !linkedVaIds.has(id));
 
       let fallbackLogIds: number[] = [];
-      if (vaIds.length > 0 && taskName) {
-        // Match by user_id + task_name. No date filter — tasks are often assigned
-        // retroactively (after the VA already worked on them), so filtering by
-        // assigned_at would exclude all the real work logs and hide screenshots.
-        const { data: timeLogs } = await supabase
+      if (unlinkedVaIds.length > 0 && taskName) {
+        // Bounded to the task's own dates. Matching on name alone returned every
+        // screenshot a VA had ever logged under that name — months of unrelated work
+        // on a task covering a single day. Anchored on start/due date (or the day the
+        // task was created) and treated as one day unless an explicit end exists, so
+        // it can never reach into another day's screenshots.
+        const { data: taskRow } = await supabase
+          .from("assigned_tasks")
+          .select("start_date, end_date, due_date, created_at")
+          .eq("id", taskId)
+          .single();
+
+        const anchor =
+          taskRow?.start_date ??
+          taskRow?.due_date ??
+          (taskRow?.created_at ? String(taskRow.created_at).slice(0, 10) : null);
+        const to = taskRow?.end_date ?? taskRow?.due_date ?? anchor;
+
+        let query = supabase
           .from("time_logs")
           .select("id")
-          .in("user_id", vaIds)
+          .in("user_id", unlinkedVaIds)
           .eq("task_name", taskName);
+        if (anchor) query = query.gte("session_date", anchor);
+        if (to) query = query.lte("session_date", to);
+
+        const { data: timeLogs } = await query;
         fallbackLogIds = (timeLogs ?? []).map((row) => row.id as number);
       }
 
