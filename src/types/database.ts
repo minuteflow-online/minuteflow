@@ -80,6 +80,9 @@ export interface Profile {
   // Which weekdays this member is scheduled for, 0 = Sunday .. 6 = Saturday.
   // A day off has no daily budget; hours booked there draw on the weekly
   // limit instead. Null/empty = no schedule set, every day counts.
+  // When this person joined the team ("Team member since"). Distinct from
+  // created_at, which is when the account was made.
+  date_started: string | null;
   work_days: number[] | null;
   shift_hours: number | null;
   shift_start: string | null;

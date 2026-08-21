@@ -37,6 +37,7 @@ import {
   getTimezoneAbbr,
   displayRole,
   screenshotCaptureTime,
+  formatTenure,
 } from "@/lib/utils";
 import ProjectsTasksTab from "@/components/ProjectsTasksTab";
 import FinancialSummaryTab from "@/components/FinancialSummaryTab";
@@ -3838,6 +3839,21 @@ function TeamManagementTab({
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Joined</span>
                               <p className="mt-0.5 text-espresso font-medium">{new Date(p.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: orgTimezone })}</p>
+                            </div>
+                            {/* "Joined" above is account creation; this is when
+                                they actually started on the team, set in the
+                                Profile tab and in their own portal. */}
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Team member since</span>
+                              <p className="mt-0.5 text-espresso font-medium">
+                                {p.date_started
+                                  ? new Date(p.date_started + "T12:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+                                  : "—"}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Team member for</span>
+                              <p className="mt-0.5 text-espresso font-medium">{formatTenure(p.date_started)}</p>
                             </div>
                             <div>
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-bark">Status</span>
