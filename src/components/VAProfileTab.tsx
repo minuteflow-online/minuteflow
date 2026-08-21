@@ -99,6 +99,49 @@ function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+// ── Collapsible Card ───────────────────────────────────────────────────────
+
+// Same behaviour as ui/Section (header button, rotating chevron), wearing
+// this page's card chrome instead of TaskEditor's terracotta accordion —
+// these sit among cards that are not collapsible, so the header has to keep
+// reading as one of them.
+
+function CollapsibleCard({
+  title,
+  summary,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  /** Shown beside the title while closed — what the section says at a glance. */
+  summary?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-xl border border-sand bg-white overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-cream transition-colors"
+      >
+        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">{title}</h3>
+        <span className="flex items-center gap-2">
+          {summary && <span className="text-[10px] font-semibold text-walnut">{summary}</span>}
+          <svg
+            className={`h-3.5 w-3.5 text-bark transition-transform ${open ? "rotate-180" : ""}`}
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </span>
+      </button>
+      {open && <div className="border-t border-sand p-4">{children}</div>}
+    </div>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function VAProfileTab({
@@ -148,7 +191,7 @@ export default function VAProfileTab({
 
   return (
     <div className="max-w-2xl space-y-5">
-      <BasicInfoSection profile={profile} onSaved={onSaved} />
+      <BasicInfoSection profile={profile} onSaved={onSaved} dateStarted={extProfile?.date_started ?? null} onRefresh={load} />
       <ScheduleSection profile={profile} onSaved={onSaved} />
       <BudgetAndRateSection profile={profile} />
       <ExtendedInfoSection extProfile={extProfile} userId={userId} onRefresh={load} />
@@ -212,21 +255,17 @@ function ScheduleSection({ profile, onSaved }: { profile: Profile; onSaved: (p: 
   };
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Schedule</h3>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-semibold text-walnut">{formatWorkDays(workDaysFromProfile(profile))}</span>
-          {!editing && (
-            <button
-              onClick={() => { setEditing(true); setMsg(null); }}
-              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
-            >
-              Edit
-            </button>
-          )}
+    <CollapsibleCard title="Schedule" summary={formatWorkDays(workDaysFromProfile(profile))}>
+      {!editing && (
+        <div className="flex justify-end mb-3">
+          <button
+            onClick={() => { setEditing(true); setMsg(null); }}
+            className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+          >
+            Edit
+          </button>
         </div>
-      </div>
+      )}
 
       <WorkDaysPicker value={editing ? days : workDaysFromProfile(profile)} onChange={editing ? setDays : undefined} />
 
@@ -264,7 +303,7 @@ function ScheduleSection({ profile, onSaved }: { profile: Profile; onSaved: (p: 
           Time logged on a day off still counts — it comes out of your weekly budget instead.
         </p>
       </div>
-    </div>
+    </CollapsibleCard>
   );
 }
 
@@ -297,19 +336,19 @@ function BudgetAndRateSection({ profile }: { profile: Profile }) {
   })();
 
   return (
-    <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
-      <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Budget and Rate</h3>
+    <CollapsibleCard title="Budget and Rate">
+      <div className="space-y-3">
+        <div>
+          <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">{rateLabel}</p>
+          <p className="text-[13px] text-espresso mt-0.5">{rateValue}</p>
+          <p className="text-[10px] text-stone mt-0.5">Only you can see this here.</p>
+        </div>
 
-      <div>
-        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">{rateLabel}</p>
-        <p className="text-[13px] text-espresso mt-0.5">{rateValue}</p>
-        <p className="text-[10px] text-stone mt-0.5">Only you can see this here.</p>
+        <div className="border-t border-parchment pt-3">
+          <BudgetWidget currentUserId={profile.id} bare alwaysAllowRequest />
+        </div>
       </div>
-
-      <div className="border-t border-parchment pt-3">
-        <BudgetWidget currentUserId={profile.id} bare alwaysAllowRequest />
-      </div>
-    </div>
+    </CollapsibleCard>
   );
 }
 
@@ -318,9 +357,14 @@ function BudgetAndRateSection({ profile }: { profile: Profile }) {
 function BasicInfoSection({
   profile,
   onSaved,
+  dateStarted,
+  onRefresh,
 }: {
   profile: Profile;
   onSaved: (p: Profile) => void;
+  /** profiles.date_started — not on the Profile type, so it arrives separately. */
+  dateStarted: string | null;
+  onRefresh: () => void;
 }) {
   const supabase = createClient();
   const [editing, setEditing] = useState(false);
@@ -331,6 +375,7 @@ function BasicInfoSection({
     username: profile.username || "",
     department: profile.department || "",
   });
+  const [startDate, setStartDate] = useState(dateStarted || "");
 
   useEffect(() => {
     setForm({
@@ -339,6 +384,10 @@ function BasicInfoSection({
       department: profile.department || "",
     });
   }, [profile]);
+
+  useEffect(() => {
+    setStartDate(dateStarted || "");
+  }, [dateStarted]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -349,6 +398,7 @@ function BasicInfoSection({
         full_name: form.full_name.trim(),
         username: form.username.trim(),
         department: form.department.trim() || null,
+        date_started: startDate || null,
       })
       .eq("id", profile.id)
       .select()
@@ -363,6 +413,9 @@ function BasicInfoSection({
       setSaveMsg({ type: "ok", text: "Saved!" });
       setTimeout(() => setSaveMsg(null), 3000);
     }
+    // date_started rides on the same row but reaches this page through the
+    // separate extProfile fetch, so that has to be re-read.
+    onRefresh();
     setEditing(false);
   };
 
@@ -419,6 +472,19 @@ function BasicInfoSection({
                   <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Role</p>
                   <p className="text-[13px] text-espresso mt-1.5">{displayRole(profile.role, profile.department) || "—"}</p>
                 </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Team member since</p>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                  />
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Team member for</p>
+                  <p className="text-[13px] text-espresso mt-1.5">{formatTenure(startDate || null)}</p>
+                </div>
               </div>
               <div>
                 <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Assignment</p>
@@ -457,6 +523,15 @@ function BasicInfoSection({
                 <div>
                   <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Role</p>
                   <p className="text-[13px] text-espresso mt-0.5">{displayRole(profile.role, profile.department) || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Team member since</p>
+                  <p className="text-[13px] text-espresso mt-0.5">{formatDate(dateStarted)}</p>
+                </div>
+                <div>
+                  {/* Derived, never stored — moving the date above is what changes it. */}
+                  <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Team member for</p>
+                  <p className="text-[13px] text-espresso mt-0.5">{formatTenure(dateStarted)}</p>
                 </div>
               </div>
               <div>
@@ -526,7 +601,7 @@ function ExtendedInfoSection({
     { label: "Emergency Contact", key: "emergency_contact_name" },
     { label: "Emergency Phone", key: "emergency_contact_phone" },
     { label: "Birthday", key: "birthday", type: "date" },
-    { label: "Team member since", key: "date_started", type: "date" },
+    // "Team member since" (date_started) is edited in Basic Information now.
   ];
 
   return (
@@ -555,9 +630,7 @@ function ExtendedInfoSection({
                   onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
                   className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
                 />
-                {key === "date_started" && form.date_started && (
-                  <p className="mt-1 text-[10px] text-stone">Team member for {formatTenure(form.date_started)}.</p>
-                )}
+
               </div>
             ))}
           </div>
@@ -587,11 +660,7 @@ function ExtendedInfoSection({
               </p>
             </div>
           ))}
-          {/* Derived, never stored — editing the date above is what moves it. */}
-          <div>
-            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Team member for</p>
-            <p className="text-[13px] text-espresso mt-0.5">{formatTenure(extProfile?.date_started || null)}</p>
-          </div>
+
         </div>
       )}
     </div>
