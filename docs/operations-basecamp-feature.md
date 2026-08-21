@@ -51,16 +51,19 @@ Verified in code, not assumed. Much of the boss's list already exists.
 | Operations as first-class records | Done | `projects` rows with `kind='operation'`; `ProjectKind` in `src/types/database.ts:720` |
 | Optional link to the Objective it supports | Done | `Project.linked_objective_id`; "Supports: X" badge at `VAProjectsTab.tsx:544` |
 | Tree with nesting, create/edit, assigned VAs | Done | `VAProjectsTab.tsx` (`kind="operation"`), `project_va_access` |
-| **Card Table (kanban)** | Done | `SubtaskBoardView.tsx` + `src/lib/subtaskStatusColumns.ts`; List/Board toggle already on screen |
-| **Calendar filter by Objective/Operation** | Mostly done | `calendar/page.tsx:1493` — project filter already lists both kinds and labels which is which |
-| Recurring Templates | Present but **not** attached to an Operation | `operations/page.tsx` renders `RecurringTemplatesManager` with `?mine=true` — a global list, not the selected Operation's |
-| **Message Board** | Net-new | — |
-| **To-dos rollup** | Parts exist | `task_todos` table + API (`assigned-tasks/[id]/todos`); no per-Operation rollup view |
-| **Docs & Files** | Parts exist | `task-attachments` bucket + attachment APIs are per-task; nothing at Operation level |
-| **Chat** | Net-new | `messages` table is 1:1 DM, not project-scoped |
+| **Recurring tasks attached to an Operation** | ✅ Done (2026-08-19) | `project_id` on `recurring_task_templates`; cron carries it onto every generated task — see Phase 1 below |
+| **Workspace tile grid** | ✅ Done (2026-08-19) | `OperationTileGrid.tsx` + `VAProjectsTab.tsx` — Message Board, Recurring, Subtasks, Docs & Files as clickable tiles |
+| **Card Table (kanban)** | Done | `SubtaskBoardView.tsx` + `src/lib/subtaskStatusColumns.ts`; the Subtasks tile's Board View |
+| **Calendar filter by Objective/Operation** | Kind-level filter done; deep-link from a tile still open | `calendar/page.tsx` — "All / Operations only / Objectives only" quick buttons |
+| **Message Board** | ✅ Done (2026-08-19) | `project_messages` + `project_message_comments`; `ProjectMessageBoard.tsx` — posts, threaded comments, edit, avatars, per-post thread view |
+| **To-dos rollup** | Parts exist, tile not built | `task_todos` table + API (`assigned-tasks/[id]/todos`); no per-Operation rollup view yet |
+| **Docs & Files** | ✅ Done (2026-08-19) | `project_files`; `ProjectFiles.tsx` — upload/download/delete, type filter, filename search |
+| **Chat** | Out of scope | See "Out of scope: Chat" below — Toni's answer 1 made this a separate, non-Operations feature |
 
-The honest summary for the boss: **Card Table is done, Calendar is nearly done, and the thing
-that actually makes an Operation an Operation is broken.** That last one is Phase 1.
+The honest summary for the boss, updated: **everything is done except the To-dos tile and the
+Calendar deep-link.** Phase 1 — the thing that actually makes an Operation an Operation, the
+recurring-task link — was the one broken piece when this doc was first written, and it's now
+fixed, shipped, and confirmed against production.
 
 ---
 
@@ -104,12 +107,19 @@ permanently empty is decorating a room with no floor.
 
 | Phase | What | Size | Why here |
 |---|---|---|---|
-| **1** | Recurring tasks belong to the Operation | M (~2–3 d) — **built 2026-08-18, pending the 8 PM EDT cron for final confirmation** | The feature's actual definition. Everything else assumes an Operation has contents. |
-| **2** | Workspace shell — tiles instead of one form | S (~1–2 d) | Cheap, kind-agnostic, and it's the frame every later tile plugs into. Do it before tile #2 exists, not after. |
-| **3** | Message Board | M (~3–4 d) | Highest-value net-new tile; Toni named it first. Self-contained schema. |
-| **4** | To-dos rollup | S–M (~2 d) | Mostly assembly over data that already exists. Grouped by task (answer 3). |
-| **5** | Calendar scoping | S (~1 d) — **kind filter built 2026-08-18**; deep-link still pending Phase 2 | Filter already exists; needs an Objective/Operation **kind** filter + deep-link from a workspace. |
-| **6** | Docs & Files — file cabinet | M (~2–3 d) | Shape settled by answer 2; reuses the attachment API almost verbatim. |
+| **1** | Recurring tasks belong to the Operation | M — **✅ shipped and confirmed 2026-08-19** | The feature's actual definition. Everything else assumes an Operation has contents. |
+| **2** | Workspace shell — tiles instead of one form | S — **✅ shipped 2026-08-19 (PR #67)** | Cheap, kind-agnostic, and it's the frame every later tile plugs into. |
+| **3** | Message Board | M — **✅ shipped 2026-08-19 (PR #67, #70)** | Highest-value net-new tile; Toni named it first. Grew beyond the original scope — see below. |
+| **4** | To-dos rollup | S–M (~2 d) — **not started** | Mostly assembly over data that already exists. Grouped by task (answer 3). |
+| **5** | Calendar scoping | S — **kind filter shipped 2026-08-18**; deep-link into a tile still open (Phase 2's shell exists now, so this is unblocked whenever picked up) | Filter already exists; needs an Objective/Operation **kind** filter + deep-link from a workspace. |
+| **6** | Docs & Files — file cabinet | M — **✅ shipped 2026-08-19 (PR #68)** | Shape settled by answer 2; reuses the attachment API almost verbatim. |
+
+Message Board ended up bigger than scoped: edit-in-place for posts and comments (not just
+delete), author avatars (reusing `AvatarUpload`'s look, read-only), and a proper per-post
+thread page — click a post, it opens full with its own back button, matching Basecamp's
+actual pattern rather than the inline-expand originally planned. Docs & Files picked up a
+type filter (Images/Documents/Spreadsheets/Other) and a filename search, the two pieces of
+Basecamp's filter bar that actually map to a flat, no-folders file list.
 
 **~11–15 days for the whole Operations workspace.** Chat is no longer part of it (answer 1) —
 see "Out of scope" below.
@@ -135,19 +145,24 @@ point, not a shortcut.
 
 ## Phase 1 — Recurring tasks belong to the Operation
 
-### Status (2026-08-18)
-Built and manually verified up to the point automation allows. **Not yet closed out** — the
-cron only runs once a day (8 PM EDT), so the actual generated-task step is confirmed the
-morning after linking a template, not same-day.
+### Status — ✅ Closed out (2026-08-19)
+Built, shipped, and confirmed end to end. The first attempt (2026-08-18 cron run) generated
+a task with `project_id = null` — the fix existed only in a local dev server at that point,
+not on the `main` branch Vercel's cron actually runs. Diagnosed via a direct SQL check
+(`assigned_tasks.project_id` vs. the template's `project_id` — task null, template set),
+traced to the code never having been committed/pushed, then merged via PR #61/#62. The
+2026-08-19 8 PM EDT run, now against the deployed fix, generated "Workspace Update" due
+Aug 20 **with `project_id` set** — confirmed live on `minuteflow.click` in the Operation's
+Subtasks list.
 
 | Step | Verified |
 |---|---|
-| Migration run on production (`project_id` column + index) | ✅ Toni ran it directly, confirmed "Success. No rows returned" |
-| "Link to Operations" picker on the template form, styled like `TaskEditor`'s | ✅ Screenshot confirmed — field present, Test Operation selectable |
-| Template saved with the link; Operation column shows it in the table | ✅ Screenshot confirmed — "Operation" column reads "Test Operation" |
-| Operation's own page shows its linked templates (new "Recurring" section) | ✅ Screenshot confirmed — "Workspace Update · Daily · Starts Aug 18, 2026" |
-| `npx tsc --noEmit` / `npm run lint` | ✅ Clean; lint at baseline (58 errors / 133 warnings, unchanged) |
-| **Generated task carries `project_id` and appears in the Operation's List/Board/Calendar** | ⏳ **Pending tonight's 8 PM EDT cron run** — this is the step that actually proves the fix |
+| Migration run on production (`project_id` column + index) | ✅ |
+| "Link to Operations" picker on the template form, styled like `TaskEditor`'s | ✅ |
+| Template saved with the link; Operation column shows it in the table | ✅ |
+| Operation's own page shows its linked templates (new "Recurring" section) | ✅ |
+| `npx tsc --noEmit` / `npm run lint` | ✅ Clean; lint at baseline |
+| **Generated task carries `project_id` and appears in the Operation's List/Board/Calendar** | ✅ **Confirmed 2026-08-19** — "Workspace Update" (due Aug 20) shows in Test Operation's Subtasks on production |
 
 Also fixed in passing, at Toni's request: the pre-existing "Objective" mislabel on the old
 text-tag field (BASICS section of the task form, and the recurring template form/table) is
