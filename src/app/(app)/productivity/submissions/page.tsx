@@ -1151,7 +1151,10 @@ function ThreadCard({
 
   // Unknown state falls through to "awaiting" — better to offer the buttons
   // than to hide a decision that still needs making.
-  const awaitingReview = state !== "revision_requested" && state !== "approved";
+  // Allow-list, not a deny-list: listing the states that DON'T need review
+  // meant every new state (completed, and anything added later) silently fell
+  // through as "needs review" and showed Approve/Revise on finished work.
+  const awaitingReview = state === undefined || state === "awaiting";
   // An approval on a task that never required review is labelled as such, so
   // "Approved" always means a person actually looked at it.
   const autoApproved = state === "approved" && latest.task?.review_required === false;
