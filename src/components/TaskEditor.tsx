@@ -9,6 +9,7 @@ import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import { screenshotCaptureTime, formatTimeTZ } from "@/lib/utils";
+import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
 import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
 import type { Project } from "@/types/database";
@@ -125,9 +126,8 @@ export interface TaskEditorProps {
   attachmentsExtra?: ReactNode;
   /** Set false to hide the Assign To field and never touch va_ids — for callers with their own multi-assignee UI (assigned_tasks supports several assignees; this form's Assign To is single-select). Default true. */
   manageAssignment?: boolean;
-  /** Org timezone for screenshot capture times. TaskEditor renders inside the admin
-   *  panel as well as the app, and only the app is wrapped in SessionProvider, so this
-   *  is passed rather than read from context. Defaults to the org default. */
+  /** Org timezone for screenshot capture times. Optional — resolved from
+   *  organization_settings when not supplied. */
   timezone?: string;
   onCancel: () => void;
   onSaved: (task: { id: number; [key: string]: unknown }) => void;
@@ -231,10 +231,6 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
-// Used when a caller does not pass one. The org runs on Eastern time throughout
-// (see the upload route, which stamps filenames the same way).
-const ORG_TIMEZONE_FALLBACK = "America/New_York";
-
 /**
  * When a screenshot was taken: the client stamp if present, else the time baked
  * into the Drive filename, else the row's insert time. Mirrors the admin view so
@@ -282,7 +278,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   hideFooter = false,
   readOnly = false,
   attachmentsExtra,
-  timezone = ORG_TIMEZONE_FALLBACK,
+  timezone: timezoneProp,
   manageAssignment = true,
   onCancel,
   onSaved,
@@ -384,6 +380,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [todosLoading, setTodosLoading] = useState(false);
   const [newTodoText, setNewTodoText] = useState("");
   const [todoBusyId, setTodoBusyId] = useState<number | null>(null);
+  // Org time, never the viewer's local time — matches what the admin screenshot
+  // view shows for the same capture. A caller that already has it can pass it in.
+  const timezone = useOrgTimezone(timezoneProp);
   const [screenshots, setScreenshots] = useState<
     Array<{
       id: number;
