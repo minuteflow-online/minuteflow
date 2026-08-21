@@ -5,7 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile, PaymentAccountDetails } from "@/types/database";
 import AvatarUpload from "@/components/AvatarUpload";
 import WorkDaysPicker from "@/components/WorkDaysPicker";
-import { formatWorkDays, shiftHoursFromProfile, workDaysFromProfile } from "@/lib/budget";
+import BudgetWidget from "@/components/BudgetWidget";
+import { formatWorkDays, shiftHoursFromProfile, workDaysFromProfile, vaBudgetType } from "@/lib/budget";
 import { displayRole } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -66,6 +67,34 @@ function formatDate(isoDate: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+// Whole days between date_started and today. Counted off the calendar date
+// rather than elapsed milliseconds so a member who joined yesterday reads as
+// 1 day regardless of what time of day either end falls on.
+function daysSince(isoDate: string | null): number | null {
+  if (!isoDate) return null;
+  const started = new Date(isoDate + "T12:00:00");
+  if (Number.isNaN(started.getTime())) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+  const days = Math.floor((today.getTime() - started.getTime()) / 86_400_000);
+  return days >= 0 ? days : null;
+}
+
+function formatTenure(isoDate: string | null): string {
+  const days = daysSince(isoDate);
+  if (days == null) return "—";
+  if (days === 0) return "Started today";
+  const years = Math.floor(days / 365);
+  const label = `${days.toLocaleString()} day${days === 1 ? "" : "s"}`;
+  // Past a year the raw day count stops being readable on its own.
+  if (years >= 1) {
+    const months = Math.floor((days - years * 365) / 30);
+    const rounded = [`${years}y`, months > 0 ? `${months}m` : null].filter(Boolean).join(" ");
+    return `${label} (${rounded})`;
+  }
+  return label;
+}
+
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
@@ -120,7 +149,8 @@ export default function VAProfileTab({
   return (
     <div className="max-w-2xl space-y-5">
       <BasicInfoSection profile={profile} onSaved={onSaved} />
-      <ScheduleSection profile={profile} />
+      <ScheduleSection profile={profile} onSaved={onSaved} />
+      <BudgetAndRateSection profile={profile} />
       <ExtendedInfoSection extProfile={extProfile} userId={userId} onRefresh={load} />
       <PaymentInfoSection profile={profile} onSaved={onSaved} />
       <LinksSection links={links} userId={userId} onRefresh={load} />
@@ -136,24 +166,91 @@ export default function VAProfileTab({
   );
 }
 
-// ── Schedule Section ───────────────────────────────────────────────────────
+// ── Schedule Section ─────────────────────────────────────────────
 
-// The same weekday control Team Management uses, read-only here: the schedule
-// decides where a VA's daily budget applies, so it stays the admin's to set.
-// Showing it in the portal answers "which days am I on?" without a message.
+// The same weekday control Team Management uses, editable here: a VA owns
+// which days they work. The days decide where their DAILY budget applies —
+// the weekly and monthly limits behind it stay the admin's to set, so this
+// moves when the budget lands, never how much of it there is.
 
-function ScheduleSection({ profile }: { profile: Profile }) {
-  const days = workDaysFromProfile(profile);
+function ScheduleSection({ profile, onSaved }: { profile: Profile; onSaved: (p: Profile) => void }) {
+  const supabase = createClient();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [days, setDays] = useState<number[]>(workDaysFromProfile(profile));
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  useEffect(() => {
+    setDays(workDaysFromProfile(profile));
+  }, [profile]);
+
   const dailyHours = shiftHoursFromProfile(profile);
+
+  const handleSave = async () => {
+    // An empty list reads back as "every day" (see workDaysFromProfile), which
+    // is the opposite of what clearing every chip looks like it means.
+    if (days.length === 0) {
+      setMsg({ type: "err", text: "Pick at least one work day." });
+      return;
+    }
+    setSaving(true);
+    setMsg(null);
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({ work_days: [...days].sort((a, b) => a - b) })
+      .eq("id", profile.id)
+      .select("*")
+      .single();
+    setSaving(false);
+    if (error) {
+      setMsg({ type: "err", text: `Couldn't save: ${error.message}` });
+      return;
+    }
+    if (data) onSaved(data as Profile);
+    setEditing(false);
+    setMsg({ type: "ok", text: "Schedule saved." });
+  };
 
   return (
     <div className="rounded-xl border border-sand bg-white p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Schedule</h3>
-        <span className="text-[10px] font-semibold text-walnut">{formatWorkDays(days)}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold text-walnut">{formatWorkDays(workDaysFromProfile(profile))}</span>
+          {!editing && (
+            <button
+              onClick={() => { setEditing(true); setMsg(null); }}
+              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+            >
+              Edit
+            </button>
+          )}
+        </div>
       </div>
 
-      <WorkDaysPicker value={days} />
+      <WorkDaysPicker value={editing ? days : workDaysFromProfile(profile)} onChange={editing ? setDays : undefined} />
+
+      {editing && (
+        <div className="flex gap-2 pt-3">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button
+            onClick={() => { setEditing(false); setDays(workDaysFromProfile(profile)); setMsg(null); }}
+            className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {msg && (
+        <p className={`mt-2 text-[11px] font-semibold ${msg.type === "ok" ? "text-sage" : "text-terracotta"}`}>{msg.text}</p>
+      )}
 
       <div className="mt-3 space-y-1">
         {dailyHours != null && (
@@ -165,8 +262,52 @@ function ScheduleSection({ profile }: { profile: Profile }) {
         )}
         <p className="text-[11px] text-stone">
           Time logged on a day off still counts — it comes out of your weekly budget instead.
-          Your schedule is set by your admin in Team Management.
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Budget and Rate Section ───────────────────────────────────────
+
+// Deliberately NOT folded into BudgetWidget. That widget is also what an admin
+// sees through Log In As, and a pay rate is not theirs to read there — the rate
+// line lives here, in the portal, where the only possible viewer is the person
+// it belongs to. Everywhere else the usual financial-access rules still hold.
+
+function BudgetAndRateSection({ profile }: { profile: Profile }) {
+  const isOutputBased = vaBudgetType(profile) === "output_based";
+
+  const money = (v: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v);
+
+  // Output Based work is priced per project, not per hour, so say that rather
+  // than dividing a per-task price into an hourly figure that means nothing.
+  const rateLabel = isOutputBased ? "Your Rate" : "Your Hourly Rate";
+  const rateValue = (() => {
+    if (isOutputBased) {
+      return profile.pay_rate
+        ? `${money(profile.pay_rate)} — fixed rate per project`
+        : "Fixed rate per project — set on each task you take.";
+    }
+    if (!profile.pay_rate) return "No rate set — ask your admin.";
+    if (profile.pay_rate_type === "daily") return `${money(profile.pay_rate)} / day`;
+    if (profile.pay_rate_type === "monthly") return `${money(profile.pay_rate)} / month`;
+    return `${money(profile.pay_rate)} / hour`;
+  })();
+
+  return (
+    <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
+      <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">Budget and Rate</h3>
+
+      <div>
+        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">{rateLabel}</p>
+        <p className="text-[13px] text-espresso mt-0.5">{rateValue}</p>
+        <p className="text-[10px] text-stone mt-0.5">Only you can see this here.</p>
+      </div>
+
+      <div className="border-t border-parchment pt-3">
+        <BudgetWidget currentUserId={profile.id} bare alwaysAllowRequest />
       </div>
     </div>
   );
@@ -385,7 +526,7 @@ function ExtendedInfoSection({
     { label: "Emergency Contact", key: "emergency_contact_name" },
     { label: "Emergency Phone", key: "emergency_contact_phone" },
     { label: "Birthday", key: "birthday", type: "date" },
-    { label: "Date Started", key: "date_started", type: "date" },
+    { label: "Team member since", key: "date_started", type: "date" },
   ];
 
   return (
@@ -414,6 +555,9 @@ function ExtendedInfoSection({
                   onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
                   className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
                 />
+                {key === "date_started" && form.date_started && (
+                  <p className="mt-1 text-[10px] text-stone">Team member for {formatTenure(form.date_started)}.</p>
+                )}
               </div>
             ))}
           </div>
@@ -443,6 +587,11 @@ function ExtendedInfoSection({
               </p>
             </div>
           ))}
+          {/* Derived, never stored — editing the date above is what moves it. */}
+          <div>
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Team member for</p>
+            <p className="text-[13px] text-espresso mt-0.5">{formatTenure(extProfile?.date_started || null)}</p>
+          </div>
         </div>
       )}
     </div>

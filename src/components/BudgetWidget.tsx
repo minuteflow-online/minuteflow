@@ -40,7 +40,20 @@ function formatAmount(value: number, unit: "hours" | "dollars"): string {
   return unit === "dollars" ? `$${value.toFixed(2)}` : `${value.toFixed(2)}h`;
 }
 
-export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = false }: { currentUserId: string; refreshKey?: number; bare?: boolean }) {
+// `alwaysAllowRequest` keeps the request form reachable even when nothing is
+// near its limit — the VA Portal offers it as a standing capability, while the
+// dashboard still surfaces it only once a budget is actually under pressure.
+export default function BudgetWidget({
+  currentUserId,
+  refreshKey = 0,
+  bare = false,
+  alwaysAllowRequest = false,
+}: {
+  currentUserId: string;
+  refreshKey?: number;
+  bare?: boolean;
+  alwaysAllowRequest?: boolean;
+}) {
   const supabase = useMemo(() => createClient(), []);
   const [profile, setProfile] = useState<BudgetProfile | null>(null);
   const [dailyUsed, setDailyUsed] = useState(0);
@@ -334,7 +347,7 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
               </div>
             </div>
           ) : (
-            anyOverOrWarn && (
+            (anyOverOrWarn || alwaysAllowRequest) && (
               <button
                 type="button"
                 onClick={() => {
@@ -342,9 +355,13 @@ export default function BudgetWidget({ currentUserId, refreshKey = 0, bare = fal
                   setRequestPeriod(p);
                   setShowRequest(true);
                 }}
-                className="w-full rounded-lg border border-terracotta/40 bg-terracotta-soft px-3 py-1.5 text-[11px] font-semibold text-terracotta hover:bg-terracotta-soft/70"
+                className={`w-full rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${
+                  anyOverOrWarn
+                    ? "border-terracotta/40 bg-terracotta-soft text-terracotta hover:bg-terracotta-soft/70"
+                    : "border-sand bg-parchment/40 text-walnut hover:bg-parchment"
+                }`}
               >
-                Request more budget
+                {anyOverOrWarn ? "Request more budget" : "Request a budget increase"}
               </button>
             )
           ))}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Fragment, useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/types/database";
 import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
@@ -1548,8 +1548,13 @@ const PER_TASK_STATUS_MAP: Record<string, { label: string; cls: string }> = {
   paid: { label: "Paid", cls: "bg-purple-100 text-purple-700" },
 };
 
+// Long enough that most people never page, short enough that the tab does
+// not become a scroll.
+const PAYSTUBS_PER_PAGE = 10;
+
 function PaystubsTab({ currentUserId }: { currentUserId: string }) {
   const supabase = createClient();
+  const [page, setPage] = useState(0);
   const [paystubs, setPaystubs] = useState<PaystubRecord[]>([]);
   const [perTaskEarnings, setPerTaskEarnings] = useState<PerTaskEarning[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1663,189 +1668,236 @@ function PaystubsTab({ currentUserId }: { currentUserId: string }) {
       </div>
 
       {/* ── Paystubs ── */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-bold text-espresso">Paystubs</h3>
-        {paystubs.length === 0 ? (
-          <p className="text-sm text-stone italic py-2">No paystubs yet.</p>
-        ) : (
+      {(() => {
+        const fmtCurrency = (v: number | null | undefined) =>
+          v != null
+            ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v)
+            : "—";
+        const fmtDate = (d: string | null) =>
+          d
+            ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+            : null;
+
+        const pageCount = Math.max(1, Math.ceil(paystubs.length / PAYSTUBS_PER_PAGE));
+        // A deleted paystub can strand the view past the last page.
+        const safePage = Math.min(page, pageCount - 1);
+        const from = safePage * PAYSTUBS_PER_PAGE;
+        const visible = paystubs.slice(from, from + PAYSTUBS_PER_PAGE);
+
+        return (
           <div className="space-y-3">
-            {paystubs.map((p) => {
-              const fmtCurrency = (v: number | null | undefined) =>
-                v != null
-                  ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v)
-                  : "—";
-              const fmtDate = (d: string | null) =>
-                d
-                  ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                  : null;
-              const periodLabel =
-                p.period_start && p.period_end
-                  ? `${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}`
-                  : null;
-              const hoursLabel =
-                p.total_hours_ms != null
-                  ? `${(p.total_hours_ms / 3600000).toFixed(2)}h`
-                  : "—";
-              const isExpanded = expandedId === p.id;
-              const byDateEntries = p.by_date
-                ? Object.entries(p.by_date)
-                    .map(([date, v]) => [date, normalizeByDateValue(v, p.pay_rate)] as const)
-                    .sort(([a], [b]) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
-                : [];
-              // Distinct per-day rates (chronological) — more than one means
-              // the period spans a rate change.
-              const distinctRates = [...new Set(byDateEntries.map(([, { rate }]) => rate).filter((r): r is number => r != null))];
-              return (
-                <div key={p.id} className="rounded-xl border border-sand bg-white shadow-sm overflow-hidden">
-                  {/* Header — click to expand/collapse */}
-                  <button
-                    type="button"
-                    onClick={() => setExpandedId(isExpanded ? null : p.id)}
-                    className="w-full flex items-center justify-between gap-4 px-4 py-3 text-left hover:bg-cream transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-espresso truncate">{p.pay_period_label}</p>
-                      <div className="flex items-center gap-3 mt-0.5">
-                        <span className="text-xs text-stone">
-                          {new Date(p.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                        </span>
-                        {p.payment_method && (
-                          <span className="text-[11px] capitalize rounded-full bg-parchment px-2 py-0.5 text-walnut font-medium">
-                            {p.payment_method.replace(/_/g, " ")}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-sm font-bold text-terracotta">
-                        {fmtCurrency(p.amount_paid)}
-                      </span>
-                      <svg
-                        className={`h-4 w-4 text-bark transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                        viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                      >
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
-                    </div>
-                  </button>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-espresso">Paystubs</h3>
+              {paystubs.length > PAYSTUBS_PER_PAGE && (
+                <span className="text-[11px] text-stone">
+                  {from + 1}–{Math.min(from + PAYSTUBS_PER_PAGE, paystubs.length)} of {paystubs.length}
+                </span>
+              )}
+            </div>
 
-                  {/* Details grid */}
-                  {isExpanded && (
-                  <div className="border-t border-sand px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-2">
-                    {periodLabel && (
-                      <>
-                        <div>
-                          <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Period</p>
-                          <p className="text-[13px] text-espresso">{periodLabel}</p>
-                        </div>
-                        <div />
-                      </>
-                    )}
-                    <div>
-                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Hours</p>
-                      <p className="text-[13px] text-espresso">{hoursLabel}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Pay Rate</p>
-                      <p className="text-[13px] text-espresso">
-                        {distinctRates.length > 1
-                          ? distinctRates.map((r) => `${fmtCurrency(r)}/hr`).join(" → ")
-                          : p.pay_rate != null ? `${fmtCurrency(p.pay_rate)}/hr` : "—"}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Gross Pay</p>
-                      <p className="text-[13px] text-espresso">{fmtCurrency(p.gross_pay)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Amount Paid</p>
-                      <p className="text-[13px] text-espresso">{fmtCurrency(p.amount_paid)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Confirmation #</p>
-                      <p className="text-[13px] text-espresso">{p.confirmation_number || "—"}</p>
-                    </div>
-                    {p.payment_date && (
-                      <div>
-                        <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Payment Date</p>
-                        <p className="text-[13px] text-espresso">
-                          {new Date(p.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}
-                        </p>
-                      </div>
-                    )}
-                    {p.personal_message && (
-                      <div className="col-span-2">
-                        <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Note</p>
-                        <p className="text-[13px] text-espresso">{p.personal_message}</p>
-                      </div>
-                    )}
-                  </div>
-                  )}
+            {paystubs.length === 0 ? (
+              <p className="text-sm text-stone italic py-2">No paystubs yet.</p>
+            ) : (
+              <div className="rounded-xl border border-sand bg-white overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-sand bg-cream/60">
+                        <th className="text-left text-[10px] font-semibold text-walnut uppercase tracking-wide px-4 py-2">Pay Period</th>
+                        <th className="text-left text-[10px] font-semibold text-walnut uppercase tracking-wide px-3 py-2">Sent</th>
+                        <th className="text-left text-[10px] font-semibold text-walnut uppercase tracking-wide px-3 py-2">Method</th>
+                        <th className="text-right text-[10px] font-semibold text-walnut uppercase tracking-wide px-4 py-2">PDF</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visible.map((p) => {
+                        const periodLabel =
+                          p.period_start && p.period_end
+                            ? `${fmtDate(p.period_start)} – ${fmtDate(p.period_end)}`
+                            : null;
+                        const hoursLabel =
+                          p.total_hours_ms != null ? `${(p.total_hours_ms / 3600000).toFixed(2)}h` : "—";
+                        const isExpanded = expandedId === p.id;
+                        const byDateEntries = p.by_date
+                          ? Object.entries(p.by_date)
+                              .map(([date, v]) => [date, normalizeByDateValue(v, p.pay_rate)] as const)
+                              .sort(([a], [b]) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+                          : [];
+                        // Distinct per-day rates (chronological) — more than one
+                        // means the period spans a rate change.
+                        const distinctRates = [
+                          ...new Set(byDateEntries.map(([, { rate }]) => rate).filter((r): r is number => r != null)),
+                        ];
 
-                  {/* Daily breakdown — visible when expanded */}
-                  {isExpanded && (
-                    <div className="border-t border-sand px-4 py-3">
-                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide mb-2">Daily Breakdown</p>
-                      {byDateEntries.length === 0 ? (
-                        <p className="text-xs text-stone italic">No daily data available.</p>
-                      ) : (
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="border-b border-sand">
-                              <th className="text-left text-[10px] font-semibold text-walnut uppercase tracking-wide py-1.5 pr-4">Date</th>
-                              <th className="text-right text-[10px] font-semibold text-walnut uppercase tracking-wide py-1.5 pr-4">Hours</th>
-                              <th className="text-right text-[10px] font-semibold text-walnut uppercase tracking-wide py-1.5">Amount</th>
+                        return (
+                          <Fragment key={p.id}>
+                            <tr
+                              onClick={() => setExpandedId(isExpanded ? null : p.id)}
+                              className={`cursor-pointer border-b border-sand/60 transition-colors ${isExpanded ? "bg-cream" : "hover:bg-cream/60"}`}
+                            >
+                              <td className="px-4 py-2.5">
+                                <div className="flex items-center gap-2">
+                                  <svg
+                                    className={`h-3 w-3 shrink-0 text-bark transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                                    viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                                  >
+                                    <polyline points="6 9 12 15 18 9" />
+                                  </svg>
+                                  <span className="font-semibold text-espresso">{p.pay_period_label}</span>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5 text-stone whitespace-nowrap">
+                                {new Date(p.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              </td>
+                              <td className="px-3 py-2.5">
+                                {p.payment_method ? (
+                                  <span className="text-[10px] capitalize rounded-full bg-parchment px-2 py-0.5 text-walnut font-medium whitespace-nowrap">
+                                    {p.payment_method.replace(/_/g, " ")}
+                                  </span>
+                                ) : (
+                                  <span className="text-stone">—</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                                {/* Its own click target — opening the PDF should not
+                                    also toggle the row underneath it. */}
+                                <a
+                                  href={`/api/paystub/print?id=${p.id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[11px] font-semibold text-sage hover:text-espresso hover:underline"
+                                >
+                                  Download
+                                </a>
+                              </td>
                             </tr>
-                          </thead>
-                          <tbody>
-                            {byDateEntries.map(([date, { ms, rate }]) => {
-                              const hrs = ms / 3_600_000;
-                              const amt = rate != null ? hrs * rate : null;
-                              return (
-                                <tr key={date} className="border-b border-sand/50 last:border-0">
-                                  <td className="py-1.5 pr-4 text-espresso">
-                                    {new Date(date + "T12:00:00Z").toLocaleDateString("en-US", {
-                                      weekday: "short", month: "short", day: "numeric", timeZone: "UTC",
-                                    })}
-                                  </td>
-                                  <td className="py-1.5 pr-4 text-right text-stone">{hrs.toFixed(2)}h</td>
-                                  <td className="py-1.5 text-right text-espresso font-medium">
-                                    {amt != null
-                                      ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amt)
-                                      : "—"}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
-                  )}
 
-                  {/* Footer: Download PDF (always visible) */}
-                  <div className="border-t border-sand px-4 py-3 flex items-center gap-3">
-                    <a
-                      href={`/api/paystub/print?id=${p.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-sage px-3 py-1.5 text-xs font-semibold text-white hover:bg-sage/90 transition-colors"
-                    >
-                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                      Download PDF
-                    </a>
-                  </div>
+                            {isExpanded && (
+                              <tr className="border-b border-sand/60 bg-cream/40">
+                                <td colSpan={4} className="px-4 py-3">
+                                  <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                                    {periodLabel && (
+                                      <div className="col-span-2">
+                                        <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Period</p>
+                                        <p className="text-[13px] text-espresso">{periodLabel}</p>
+                                      </div>
+                                    )}
+                                    <div>
+                                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Hours</p>
+                                      <p className="text-[13px] text-espresso">{hoursLabel}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Pay Rate</p>
+                                      <p className="text-[13px] text-espresso">
+                                        {distinctRates.length > 1
+                                          ? distinctRates.map((r) => `${fmtCurrency(r)}/hr`).join(" → ")
+                                          : p.pay_rate != null
+                                            ? `${fmtCurrency(p.pay_rate)}/hr`
+                                            : "—"}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Gross Pay</p>
+                                      <p className="text-[13px] text-espresso">{fmtCurrency(p.gross_pay)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Amount Paid</p>
+                                      <p className="text-[13px] font-semibold text-espresso">{fmtCurrency(p.amount_paid)}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Confirmation #</p>
+                                      <p className="text-[13px] text-espresso">{p.confirmation_number || "—"}</p>
+                                    </div>
+                                    {p.payment_date && (
+                                      <div>
+                                        <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Payment Date</p>
+                                        <p className="text-[13px] text-espresso">
+                                          {new Date(p.payment_date + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {p.personal_message && (
+                                      <div className="col-span-2">
+                                        <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide">Note</p>
+                                        <p className="text-[13px] text-espresso">{p.personal_message}</p>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="mt-3 border-t border-sand pt-3">
+                                    <p className="text-[10px] font-semibold text-walnut uppercase tracking-wide mb-2">Daily Breakdown</p>
+                                    {byDateEntries.length === 0 ? (
+                                      <p className="text-xs text-stone italic">No daily data available.</p>
+                                    ) : (
+                                      <table className="w-full text-xs">
+                                        <thead>
+                                          <tr className="border-b border-sand">
+                                            <th className="text-left text-[10px] font-semibold text-walnut uppercase tracking-wide py-1.5 pr-4">Date</th>
+                                            <th className="text-right text-[10px] font-semibold text-walnut uppercase tracking-wide py-1.5 pr-4">Hours</th>
+                                            <th className="text-right text-[10px] font-semibold text-walnut uppercase tracking-wide py-1.5">Amount</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {byDateEntries.map(([date, { ms, rate }]) => {
+                                            const hrs = ms / 3_600_000;
+                                            const amt = rate != null ? hrs * rate : null;
+                                            return (
+                                              <tr key={date} className="border-b border-sand/50 last:border-0">
+                                                <td className="py-1.5 pr-4 text-espresso">
+                                                  {new Date(date + "T12:00:00Z").toLocaleDateString("en-US", {
+                                                    weekday: "short", month: "short", day: "numeric", timeZone: "UTC",
+                                                  })}
+                                                </td>
+                                                <td className="py-1.5 pr-4 text-right text-stone">{hrs.toFixed(2)}h</td>
+                                                <td className="py-1.5 text-right text-espresso font-medium">
+                                                  {amt != null
+                                                    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amt)
+                                                    : "—"}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              </div>
+            )}
 
+            {pageCount > 1 && (
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setExpandedId(null); setPage(Math.max(0, safePage - 1)); }}
+                  disabled={safePage === 0}
+                  className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors disabled:opacity-40"
+                >
+                  Previous
+                </button>
+                <span className="text-[11px] text-stone">Page {safePage + 1} of {pageCount}</span>
+                <button
+                  type="button"
+                  onClick={() => { setExpandedId(null); setPage(Math.min(pageCount - 1, safePage + 1)); }}
+                  disabled={safePage >= pageCount - 1}
+                  className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
