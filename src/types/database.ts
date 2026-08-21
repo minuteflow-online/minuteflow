@@ -639,6 +639,11 @@ export interface AssignedTask {
   instructions_locked: boolean;
   fixed_pay_task_id: number | null;
   recurring_template_id: string | null;
+  /** The template THIS task spawned via "Also save as a recurring template"
+   *  on the task form — the reverse relationship from recurring_template_id
+   *  above (which marks a task the cron generated FROM a template). Null
+   *  for every task that never checked that box. */
+  spawned_template_id?: string | null;
   project_id?: string | null;
   parent_task_id: number | null;
   start_time: string | null;

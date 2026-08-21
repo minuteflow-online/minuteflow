@@ -6,6 +6,7 @@ import { canChangeLockedReview } from "@/lib/financialAccess";
 import { createClient } from "@/lib/supabase/client";
 import { autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay, parseDurationToMinutes, formatMinutesInput, RECURRENCE_OPTIONS, type RecurrenceType } from "@/lib/taskSchedule";
 import { useToast } from "@/contexts/ToastProvider";
+import ConfirmModal from "@/components/ConfirmModal";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -348,11 +349,31 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     initialEndTime ? timeOfDay(initialEndTime).slice(0, 5) : defaultEndTime ?? "10:00"
   );
   // "Also save as a recurring template" — time-based only (per Toni: Output
-  // Based needs its own cron work first, see docs). Fires a second, best-effort
-  // create alongside the normal task save; a failure here doesn't undo the task
-  // that already saved successfully.
-  const [alsoSaveAsTemplate, setAlsoSaveAsTemplate] = useState(false);
+  // Based needs its own cron work first, see docs). existingTemplateId is the
+  // persisted link (assigned_tasks.spawned_template_id) — its presence is what
+  // makes the checkbox remember state across reopens, rather than resetting to
+  // unchecked every time like a fire-and-forget action would.
+  const initialSpawnedTemplateId = (initialTask?.spawned_template_id as string) ?? null;
+  const [existingTemplateId, setExistingTemplateId] = useState<string | null>(initialSpawnedTemplateId);
+  const [alsoSaveAsTemplate, setAlsoSaveAsTemplate] = useState(Boolean(initialSpawnedTemplateId));
   const [templateRecurrenceType, setTemplateRecurrenceType] = useState<RecurrenceType>("daily");
+  const [pendingUnlinkTemplate, setPendingUnlinkTemplate] = useState(false);
+  const [unlinkingTemplate, setUnlinkingTemplate] = useState(false);
+
+  // Pre-fills the Repeat dropdown to match the already-linked template's own
+  // recurrence, rather than defaulting to Daily regardless of what it's
+  // actually set to. Only fires once, for the template this task loaded with —
+  // not on every keystroke, since nothing here changes after mount.
+  useEffect(() => {
+    if (!initialSpawnedTemplateId) return;
+    fetch(`/api/recurring-task-templates?id=${initialSpawnedTemplateId}`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.template?.recurrence_type) setTemplateRecurrenceType(d.template.recurrence_type);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Details
   const [taskDetail, setTaskDetail] = useState((initialTask?.task_detail as string) ?? "");
@@ -860,6 +881,72 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       let task: { id: number; [key: string]: unknown };
 
       if (mode === "time_based") {
+        // Companion template create/update happens BEFORE the main task save,
+        // so a newly-created template's id can ride along in the same save
+        // request as every other field below — that request always changes
+        // task_name/account/etc. too, which is what reliably reaches this
+        // route's metadata-update path. Sending spawned_template_id alone, in
+        // a separate follow-up call, would hit none of assigned-tasks/[id]'s
+        // hasCoreMetadataUpdate/hasScheduleUpdate/etc. branches and could be
+        // silently dropped — this avoids ever constructing that request.
+        let templateIdToLink: string | null = existingTemplateId;
+        if (alsoSaveAsTemplate) {
+          try {
+            const templatePayload: Record<string, unknown> = {
+              title: taskName.trim(),
+              task_name: taskName.trim(),
+              account: account || null,
+              project: project || null,
+              category: category || null,
+              description: taskDetail.trim() || null,
+              task_detail: taskDetail.trim() || null,
+              task_notes: taskNotes.trim() || null,
+              link: link.trim() || null,
+              instructions: instructions.trim() || null,
+              review_required: reviewRequired === "yes",
+              start_date: startDate || null,
+              end_date: endDate || null,
+              due_time: dueTime || null,
+              // Clock times, not instants — same reasoning as templateMode's
+              // own save branch: each occurrence supplies its own date.
+              start_time: hasSchedule && startTime ? startTime : null,
+              end_time: hasSchedule && endTime ? endTime : null,
+              planned_minutes: hasSchedule ? null : parsedPlannedMinutes,
+              project_id: linkedProjectId || null,
+              assigned_to_ids: effectiveVaIds,
+              assigned_by: assignedBy || currentUserId || null,
+              pay_type: null,
+              recurrence_type: templateRecurrenceType,
+              is_active: true,
+            };
+            if (existingTemplateId) {
+              const res = await fetch(`/api/recurring-task-templates?id=${existingTemplateId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: existingTemplateId, ...templatePayload }),
+              });
+              if (res.ok) showToast("success", "Recurring template updated");
+              else showToast("error", "Task saved, but the recurring template failed to update.");
+            } else {
+              const res = await fetch("/api/recurring-task-templates", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(templatePayload),
+              });
+              const data = await res.json().catch(() => ({}));
+              if (res.ok && data.template?.id) {
+                templateIdToLink = data.template.id;
+                setExistingTemplateId(data.template.id);
+                showToast("success", "Recurring template created");
+              } else {
+                showToast("error", "Task saved, but the recurring template failed to save.");
+              }
+            }
+          } catch {
+            showToast("error", "Task saved, but the recurring template failed to save.");
+          }
+        }
+
         const body: Record<string, unknown> = {
           account: account || null,
           project: project || null,
@@ -876,6 +963,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           pay_type: payType,
           project_id: linkedProjectId || null,
           parent_task_id: parentTaskId ? Number(parentTaskId) : null,
+          spawned_template_id: templateIdToLink,
         };
 
         // Instructions are the assigner's. Sending them from a VA is a hard 403
@@ -1006,53 +1094,6 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         task = data.task;
       }
 
-      // Best-effort, secondary to the task save above — the task already
-      // exists at this point regardless of what happens here. Same field
-      // mapping and clock-time handling as templateMode's own branch, since
-      // a template's start_time/end_time are bare "HH:MM" (each occurrence
-      // supplies its own date), not a full instant like a task's.
-      if (mode === "time_based" && alsoSaveAsTemplate) {
-        try {
-          const templatePayload: Record<string, unknown> = {
-            title: taskName.trim(),
-            task_name: taskName.trim(),
-            account: account || null,
-            project: project || null,
-            category: category || null,
-            description: taskDetail.trim() || null,
-            task_detail: taskDetail.trim() || null,
-            task_notes: taskNotes.trim() || null,
-            link: link.trim() || null,
-            instructions: instructions.trim() || null,
-            review_required: reviewRequired === "yes",
-            start_date: startDate || null,
-            end_date: endDate || null,
-            due_time: dueTime || null,
-            start_time: hasSchedule && startTime ? startTime : null,
-            end_time: hasSchedule && endTime ? endTime : null,
-            planned_minutes: hasSchedule ? null : parsedPlannedMinutes,
-            project_id: linkedProjectId || null,
-            assigned_to_ids: effectiveVaIds,
-            assigned_by: assignedBy || currentUserId || null,
-            pay_type: null,
-            recurrence_type: templateRecurrenceType,
-            is_active: true,
-          };
-          const templateRes = await fetch("/api/recurring-task-templates", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(templatePayload),
-          });
-          if (templateRes.ok) {
-            showToast("success", "Recurring template created");
-          } else {
-            showToast("error", "Task saved, but the recurring template failed to save.");
-          }
-        } catch {
-          showToast("error", "Task saved, but the recurring template failed to save.");
-        }
-      }
-
       onSaved(task);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save task.");
@@ -1069,10 +1110,33 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     // in, so typing a duration and saving immediately wrote the previous value
     // (usually null) — the field looked filled in and still saved empty.
     parsedPlannedMinutes,
-    pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, showToast,
+    pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, existingTemplateId, showToast,
   ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
+
+  // Unchecking "Also save as a recurring template" on a task that already has
+  // one deletes it — the template row itself, not the task. Deletion cascades
+  // (recurring_task_templates → assigned_tasks.spawned_template_id, via
+  // ON DELETE SET NULL) clear the link on the DB side automatically; this just
+  // keeps local state in sync with that. Gated behind ConfirmModal since it's
+  // a real, hard-to-reverse delete — same rule as everywhere else it's used.
+  const handleUnlinkTemplate = useCallback(async () => {
+    if (!existingTemplateId) return;
+    setUnlinkingTemplate(true);
+    try {
+      const res = await fetch(`/api/recurring-task-templates?id=${existingTemplateId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      setExistingTemplateId(null);
+      setAlsoSaveAsTemplate(false);
+      setPendingUnlinkTemplate(false);
+      showToast("success", "Recurring template removed");
+    } catch {
+      showToast("error", "Failed to remove the recurring template. Please try again.");
+    } finally {
+      setUnlinkingTemplate(false);
+    }
+  }, [existingTemplateId, showToast]);
 
   // What's still required, per section. These sections start collapsed, so an
   // empty required field was invisible and the only symptom was a Save button
@@ -1863,7 +1927,16 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               <input
                 type="checkbox"
                 checked={alsoSaveAsTemplate}
-                onChange={(e) => setAlsoSaveAsTemplate(e.target.checked)}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  if (!checked && existingTemplateId) {
+                    // Unchecking an existing link is a real delete — confirm
+                    // first rather than applying it immediately.
+                    setPendingUnlinkTemplate(true);
+                    return;
+                  }
+                  setAlsoSaveAsTemplate(checked);
+                }}
                 disabled={readOnly}
               />
               Also save as a recurring template
@@ -1882,14 +1955,26 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   ))}
                 </select>
                 <p className="mt-1 text-[10px] text-stone">
-                  Creates a separate recurring template from this task&apos;s details — the task itself
-                  saves normally either way.
+                  {existingTemplateId
+                    ? "Linked to a recurring template — saving updates it to match this task's details."
+                    : "Creates a separate recurring template from this task's details — the task itself saves normally either way."}
                 </p>
               </div>
             )}
           </div>
         )}
       </Section>
+
+      {pendingUnlinkTemplate && (
+        <ConfirmModal
+          title="Remove this recurring template?"
+          message="Unchecking this deletes the recurring template created from this task. The task itself is not affected. This cannot be undone."
+          confirmLabel="Delete Template"
+          confirming={unlinkingTemplate}
+          onConfirm={() => void handleUnlinkTemplate()}
+          onCancel={() => setPendingUnlinkTemplate(false)}
+        />
+      )}
 
       {supportsTodos && (
         <Section title="Screenshots" {...accordionProps("screenshots")}>

@@ -25,7 +25,7 @@ type AssignedTaskStatus =
 type RouteContext = { params: Promise<{ id: string }> };
 
 const TASK_SELECT =
-  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, instructions, instructions_locked, review_required, review_required_locked, assigned_task_assignees(id, va_id, status)";
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, instructions, instructions_locked, review_required, review_required_locked, recurring_template_id, spawned_template_id, assigned_task_assignees(id, va_id, status)";
 
 const REVIEW_LOCKED_ERROR =
   "Forbidden: Review Required is locked at Yes. Only Admin, Manager, CEO, or Founder can change it.";
@@ -190,7 +190,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 
   const body = await request.json();
-  const { account, project, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, planned_minutes: putPlannedMinutes, review_required: putReviewRequired, recurring_template_id, project_id, parent_task_id, va_ids } = body as {
+  const { account, project, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, assigned_by, instructions, instructions_locked, planned_minutes: putPlannedMinutes, review_required: putReviewRequired, recurring_template_id, spawned_template_id, project_id, parent_task_id, va_ids } = body as {
     account?: string;
     project?: string;
     category?: string | null;
@@ -210,6 +210,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
     review_required?: boolean;
     planned_minutes?: number | null;
     recurring_template_id?: string | null;
+    spawned_template_id?: string | null;
     project_id?: string | null;
     parent_task_id?: number | null;
     va_ids?: string[];
@@ -253,6 +254,7 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
   if (putPlannedMinutes !== undefined) updatePayload.planned_minutes = putPlannedMinutes;
   if (recurring_template_id !== undefined) updatePayload.recurring_template_id = recurring_template_id;
+  if (spawned_template_id !== undefined) updatePayload.spawned_template_id = spawned_template_id;
   if (project_id !== undefined) updatePayload.project_id = project_id;
   if (parent_task_id !== undefined) updatePayload.parent_task_id = parent_task_id;
 
@@ -471,6 +473,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     archived_at,
     deleted_at,
     review_required,
+    spawned_template_id,
   } = body as {
     va_id?: string;
     status?: AssignedTaskStatus;
@@ -501,6 +504,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     archived_at?: string | null;
     deleted_at?: string | null;
     review_required?: boolean;
+    spawned_template_id?: string | null;
   };
 
   // Use the service-role client here so VAs who are the task ASSIGNER (assigned_by)
@@ -991,6 +995,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (start_time !== undefined) updatePayload.start_time = start_time;
     if (end_time !== undefined) updatePayload.end_time = end_time;
     if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
+    if (spawned_template_id !== undefined) updatePayload.spawned_template_id = spawned_template_id;
     if (instructions !== undefined) updatePayload.instructions = instructions;
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
     // Append, never replace — read the current text and add to the end, so two

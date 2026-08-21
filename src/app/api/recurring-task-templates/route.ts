@@ -189,8 +189,23 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const mineOnly = searchParams.get("mine") === "true";
   const projectId = searchParams.get("projectId");
+  const id = searchParams.get("id");
 
   const supabase = serviceClient();
+
+  // Single-record lookup by id — used by TaskEditor's "Also save as a
+  // recurring template" toggle to read an already-linked template's own
+  // recurrence_type for pre-filling the Repeat dropdown. A plain VA can only
+  // read a template they're assigned to; admins can read any.
+  if (id) {
+    let single = supabase.from("recurring_task_templates").select("*").eq("id", id);
+    if (!isAdminEquivalent) single = single.contains("assigned_to_ids", [user.id]);
+    const { data, error } = await single.maybeSingle();
+    if (error) return Response.json({ error: error.message }, { status: 500 });
+    if (!data) return Response.json({ error: "Template not found" }, { status: 404 });
+    return Response.json({ template: data });
+  }
+
   let query = supabase
     .from("recurring_task_templates")
     .select("*")
