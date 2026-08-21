@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import TaskEditor from "@/components/TaskEditor";
-import { orgWallClockToUtc } from "@/lib/taskSchedule";
+import { orgWallClockToUtc, RECURRENCE_OPTIONS, type RecurrenceType } from "@/lib/taskSchedule";
 import type { Profile, RecurringTaskTemplate } from "@/types/database";
 
 type LinkedProject = { id: string; name: string };
@@ -34,8 +34,6 @@ interface RecurringTemplatesManagerProps {
   currentUserId?: string;
 }
 
-type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
-
 interface FormState {
   account: string;
   objective_id: string;
@@ -55,14 +53,6 @@ interface FormState {
   is_active: boolean;
 }
 
-const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string; helper: string }[] = [
-  { value: "daily", label: "Daily", helper: "Repeats every day from the start date" },
-  { value: "weekly", label: "Weekly", helper: "Repeats every week on the same day as the start date" },
-  { value: "biweekly", label: "Every 2 weeks", helper: "Repeats every two weeks from the start date" },
-  { value: "monthly", label: "Monthly", helper: "Repeats on the same date each month" },
-  { value: "every_2_months", label: "Every 2 months", helper: "Repeats every two months on the same date" },
-  { value: "every_3_months", label: "Every 3 months", helper: "Repeats every three months on the same date" },
-];
 
 function formatDate(iso: string | null | undefined, _tz?: string): string {
   if (!iso) return "—";
