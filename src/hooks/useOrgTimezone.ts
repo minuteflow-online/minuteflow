@@ -41,21 +41,20 @@ async function loadOrgTimezone(): Promise<string> {
 }
 
 export function useOrgTimezone(override?: string): string {
-  const [timezone, setTimezone] = useState<string>(override ?? cached ?? "UTC");
+  const [fetched, setFetched] = useState<string | null>(cached);
 
   useEffect(() => {
-    if (override) {
-      setTimezone(override);
-      return;
-    }
+    // A caller that already has the timezone is returned it directly below, so
+    // there is nothing to load and no state to set.
+    if (override) return;
     let active = true;
     loadOrgTimezone().then((tz) => {
-      if (active) setTimezone(tz);
+      if (active) setFetched(tz);
     });
     return () => {
       active = false;
     };
   }, [override]);
 
-  return timezone;
+  return override ?? fetched ?? "UTC";
 }
