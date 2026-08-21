@@ -1157,7 +1157,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 </div>
                 <button
                   onClick={() => setShowDetails((v) => !v)}
-                  className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
+                  className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-amber text-white hover:bg-amber/90 transition-colors shrink-0"
                 >
                   {showDetails ? `Hide ${kindLabel} Details` : `${kindLabel} Details`}
                 </button>
