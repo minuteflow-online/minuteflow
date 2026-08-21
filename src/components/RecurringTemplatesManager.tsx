@@ -2,8 +2,23 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import TaskEditor from "@/components/TaskEditor";
+import ColumnHeader from "@/components/table/ColumnHeader";
+import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { orgWallClockToUtc, RECURRENCE_OPTIONS, type RecurrenceType } from "@/lib/taskSchedule";
 import type { Profile, RecurringTaskTemplate } from "@/types/database";
+
+const TEMPLATE_COLUMNS: ColumnDef[] = [
+  { key: "task_name", label: "Task Name", defaultWidth: 200 },
+  { key: "account", label: "Account", defaultWidth: 150 },
+  { key: "project", label: "Project", defaultWidth: 150 },
+  { key: "operation", label: "Operation", defaultWidth: 150 },
+  { key: "detail", label: "Detail", defaultWidth: 220 },
+  { key: "assigned_to", label: "Assigned To", defaultWidth: 160 },
+  { key: "status", label: "Status", defaultWidth: 100 },
+  { key: "start_date", label: "Start Date", defaultWidth: 120 },
+  { key: "repeat", label: "Repeat", defaultWidth: 130 },
+  { key: "created", label: "Created", defaultWidth: 150 },
+];
 
 type LinkedProject = { id: string; name: string };
 
@@ -133,6 +148,22 @@ export default function RecurringTemplatesManager({
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<RecurringTaskTemplate | null>(null);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Column widths persist per user, same mechanism as the Assignment task table.
+  const { widths: columnWidths, setColumnWidth } = useColumnPrefs(
+    "recurring-templates",
+    currentUserId ?? null,
+    TEMPLATE_COLUMNS
+  );
+
+  const [taskNameSearch, setTaskNameSearch] = useState("");
+  const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
+  const [filterAccounts, setFilterAccounts] = useState<string[]>([]);
+  const [filterProjects, setFilterProjects] = useState<string[]>([]);
+  const [filterOperations, setFilterOperations] = useState<string[]>([]);
+  const [filterAssignedTo, setFilterAssignedTo] = useState<string[]>([]);
+  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
+  const [filterRepeats, setFilterRepeats] = useState<string[]>([]);
   // Repeat and Active are the only fields a template has that a task doesn't.
   // Everything else on this panel is TaskEditor's own state.
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>("daily");
@@ -163,6 +194,54 @@ export default function RecurringTemplatesManager({
     () => assigneeOptions.map((p) => ({ id: p.id, full_name: p.full_name, username: p.username })),
     [assigneeOptions]
   );
+
+  // Filter option lists — distinct values from what's actually loaded, same
+  // approach as the Assignment task table's own filter columns.
+  const taskNameFilterOptions = useMemo(
+    () => Array.from(new Set(templates.map((t) => t.title || t.task_name || "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [templates]
+  );
+  const accountFilterOptions = useMemo(
+    () => Array.from(new Set(templates.map((t) => t.account ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [templates]
+  );
+  const projectFilterOptions = useMemo(
+    () => Array.from(new Set(templates.map((t) => displayProject(t)).filter((v) => v && v !== "—"))).sort((a, b) => a.localeCompare(b)),
+    [templates]
+  );
+  const operationFilterOptions = useMemo(() => {
+    const ids = new Set(templates.map((t) => t.project_id).filter((id): id is string => Boolean(id)));
+    return Array.from(ids)
+      .map((id) => ({ value: id, label: linkedProjectNameById.get(id) ?? id }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [templates, linkedProjectNameById]);
+  const assignedToFilterOptions = useMemo(() => {
+    const ids = new Set(templates.flatMap((t) => templateAssignedToIds(t)));
+    const profileMap = new Map(activeProfiles.map((p) => [p.id, p]));
+    return Array.from(ids)
+      .map((id) => ({ value: id, label: profileLabel(profileMap.get(id) ?? { id, full_name: "", username: id }) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [templates, activeProfiles]);
+  const repeatFilterOptions = useMemo(
+    () => RECURRENCE_OPTIONS.filter((option) => templates.some((t) => t.recurrence_type === option.value))
+      .map((option) => ({ value: option.value, label: option.label })),
+    [templates]
+  );
+
+  const filteredTemplates = useMemo(() => {
+    return templates.filter((template) => {
+      const name = template.title || template.task_name || "";
+      if (filterTaskNames.length > 0 && !filterTaskNames.includes(name)) return false;
+      if (taskNameSearch && !name.toLowerCase().includes(taskNameSearch.toLowerCase())) return false;
+      if (filterAccounts.length > 0 && !filterAccounts.includes(template.account ?? "")) return false;
+      if (filterProjects.length > 0 && !filterProjects.includes(displayProject(template))) return false;
+      if (filterOperations.length > 0 && !filterOperations.includes(template.project_id ?? "")) return false;
+      if (filterAssignedTo.length > 0 && !templateAssignedToIds(template).some((id) => filterAssignedTo.includes(id))) return false;
+      if (filterStatuses.length > 0 && !filterStatuses.includes(template.is_active ? "active" : "paused")) return false;
+      if (filterRepeats.length > 0 && !filterRepeats.includes(template.recurrence_type)) return false;
+      return true;
+    });
+  }, [templates, filterTaskNames, taskNameSearch, filterAccounts, filterProjects, filterOperations, filterAssignedTo, filterStatuses, filterRepeats]);
 
   // TaskEditor reads a task-shaped row, and a template is close enough to hand
   // it one directly — the column names line up on both sides. One exception:
@@ -292,25 +371,113 @@ export default function RecurringTemplatesManager({
           <p className="mt-1 text-xs text-stone">Create one to start auto-generating tasks on a schedule.</p>
         </div>
       ) : (
+        <>
+        <div className="mb-3 flex items-center gap-2 text-[11px] text-stone">
+          <span className="rounded-full bg-parchment px-2 py-0.5 font-semibold text-walnut">
+            {filteredTemplates.length}
+          </span>
+          <span>template{filteredTemplates.length === 1 ? "" : "s"}</span>
+          {(filterTaskNames.length > 0 || taskNameSearch || filterAccounts.length > 0 || filterProjects.length > 0 || filterOperations.length > 0 || filterAssignedTo.length > 0 || filterStatuses.length > 0 || filterRepeats.length > 0) && (
+            <button
+              type="button"
+              onClick={() => {
+                setFilterTaskNames([]);
+                setTaskNameSearch("");
+                setFilterAccounts([]);
+                setFilterProjects([]);
+                setFilterOperations([]);
+                setFilterAssignedTo([]);
+                setFilterStatuses([]);
+                setFilterRepeats([]);
+              }}
+              className="text-terracotta hover:underline"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
         <div className="rounded-xl border border-sand bg-white overflow-x-auto shadow-sm">
           <table className="min-w-full w-full">
+            {/* Header renders unconditionally, independent of how many rows the
+                filters leave — a filter narrowing results to zero used to take
+                the whole table (header included) down with it, which left no
+                way to see or clear the filter that caused it. */}
             <thead>
               <tr className="bg-parchment border-b border-sand">
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Task Name</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Account</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Project</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Operation</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Detail</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Assigned To</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Status</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Start Date</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Repeat</th>
-                <th className="text-left px-3 py-2.5 text-[11px] uppercase tracking-wider text-walnut">Created</th>
+                <ColumnHeader
+                  label="Task Name"
+                  width={columnWidths.task_name}
+                  onResize={(w) => setColumnWidth("task_name", w)}
+                  filterOptions={taskNameFilterOptions.map((v) => ({ value: v, label: v }))}
+                  selected={filterTaskNames}
+                  onFilterChange={setFilterTaskNames}
+                  searchable
+                  searchValue={taskNameSearch}
+                  onSearchChange={setTaskNameSearch}
+                  searchPlaceholder="Search task names..."
+                />
+                <ColumnHeader
+                  label="Account"
+                  width={columnWidths.account}
+                  onResize={(w) => setColumnWidth("account", w)}
+                  filterOptions={accountFilterOptions.map((v) => ({ value: v, label: v }))}
+                  selected={filterAccounts}
+                  onFilterChange={setFilterAccounts}
+                />
+                <ColumnHeader
+                  label="Project"
+                  width={columnWidths.project}
+                  onResize={(w) => setColumnWidth("project", w)}
+                  filterOptions={projectFilterOptions.map((v) => ({ value: v, label: v }))}
+                  selected={filterProjects}
+                  onFilterChange={setFilterProjects}
+                />
+                <ColumnHeader
+                  label="Operation"
+                  width={columnWidths.operation}
+                  onResize={(w) => setColumnWidth("operation", w)}
+                  filterOptions={operationFilterOptions}
+                  selected={filterOperations}
+                  onFilterChange={setFilterOperations}
+                />
+                <ColumnHeader label="Detail" width={columnWidths.detail} onResize={(w) => setColumnWidth("detail", w)} />
+                <ColumnHeader
+                  label="Assigned To"
+                  width={columnWidths.assigned_to}
+                  onResize={(w) => setColumnWidth("assigned_to", w)}
+                  filterOptions={assignedToFilterOptions}
+                  selected={filterAssignedTo}
+                  onFilterChange={setFilterAssignedTo}
+                />
+                <ColumnHeader
+                  label="Status"
+                  width={columnWidths.status}
+                  onResize={(w) => setColumnWidth("status", w)}
+                  filterOptions={[{ value: "active", label: "Active" }, { value: "paused", label: "Paused" }]}
+                  selected={filterStatuses}
+                  onFilterChange={setFilterStatuses}
+                />
+                <ColumnHeader label="Start Date" width={columnWidths.start_date} onResize={(w) => setColumnWidth("start_date", w)} />
+                <ColumnHeader
+                  label="Repeat"
+                  width={columnWidths.repeat}
+                  onResize={(w) => setColumnWidth("repeat", w)}
+                  filterOptions={repeatFilterOptions}
+                  selected={filterRepeats}
+                  onFilterChange={setFilterRepeats}
+                />
+                <ColumnHeader label="Created" width={columnWidths.created} onResize={(w) => setColumnWidth("created", w)} />
                 <th className="px-3 py-2.5 w-40"></th>
               </tr>
             </thead>
             <tbody>
-              {templates.map((template) => {
+              {filteredTemplates.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="px-4 py-10 text-center text-sm text-stone">
+                    No recurring templates match these filters.
+                  </td>
+                </tr>
+              ) : filteredTemplates.map((template) => {
                 const assignedTo = displayAssignedTo(template, activeProfiles, profilesLoaded);
                 const statusClass = template.is_active ? "bg-sage-soft text-sage" : "bg-stone/10 text-stone";
                 return (
@@ -378,6 +545,7 @@ export default function RecurringTemplatesManager({
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {panelOpen && (
