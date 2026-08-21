@@ -63,12 +63,17 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   let fallbackLogIds: number[] = [];
   if (unlinkedVaIds.length > 0 && taskRow.task_name) {
-    // Bounded to the assignment's own window. Task names repeat across weeks and
-    // months of recurring work, so an unbounded match returned every screenshot a
-    // VA had ever taken under that name — one task showed 613 shots going back two
-    // months when the day in question had 34.
-    const from = taskRow.start_date ?? (taskRow.created_at ? String(taskRow.created_at).slice(0, 10) : null);
-    const to = taskRow.end_date ?? taskRow.due_date ?? null;
+    // Bounded to the assignment's own dates. Task names repeat across weeks of
+    // recurring work, so an unbounded match returned every screenshot a VA had
+    // ever taken under that name — 613 shots going back two months for a day that
+    // had 34. A task with no explicit range is treated as a single day rather than
+    // an open-ended one, so it can never reach into other days' work.
+    const anchor =
+      taskRow.start_date ??
+      taskRow.due_date ??
+      (taskRow.created_at ? String(taskRow.created_at).slice(0, 10) : null);
+    const from = anchor;
+    const to = taskRow.end_date ?? taskRow.due_date ?? anchor;
 
     let query = admin
       .from("time_logs")
