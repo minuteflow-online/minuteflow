@@ -33,7 +33,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const { data: taskRow } = await admin.from("assigned_tasks").select("task_name").eq("id", taskId).single();
+  const { data: taskRow } = await admin.from("assigned_tasks").select("task_name, start_date, end_date, due_date, created_at").eq("id", taskId).single();
   if (!taskRow) return Response.json({ error: "Task not found" }, { status: 404 });
 
   const { data: assigneeRows } = await admin
@@ -54,13 +54,31 @@ export async function GET(_request: Request, { params }: RouteContext) {
     new Set((assigneeRows ?? []).map((r) => r.va_id).filter((v): v is string => typeof v === "string"))
   );
 
+  // Name-matching is a fallback for assignees with no log_id link, so it only
+  // covers those VAs — anyone with a real link is already accounted for above.
+  const linkedVaIds = new Set(
+    (assigneeRows ?? []).filter((r) => typeof r.log_id === "number").map((r) => r.va_id)
+  );
+  const unlinkedVaIds = vaIds.filter((id) => !linkedVaIds.has(id));
+
   let fallbackLogIds: number[] = [];
-  if (vaIds.length > 0 && taskRow.task_name) {
-    const { data: timeLogs } = await admin
+  if (unlinkedVaIds.length > 0 && taskRow.task_name) {
+    // Bounded to the assignment's own window. Task names repeat across weeks and
+    // months of recurring work, so an unbounded match returned every screenshot a
+    // VA had ever taken under that name — one task showed 613 shots going back two
+    // months when the day in question had 34.
+    const from = taskRow.start_date ?? (taskRow.created_at ? String(taskRow.created_at).slice(0, 10) : null);
+    const to = taskRow.end_date ?? taskRow.due_date ?? null;
+
+    let query = admin
       .from("time_logs")
       .select("id")
-      .in("user_id", vaIds)
+      .in("user_id", unlinkedVaIds)
       .eq("task_name", taskRow.task_name);
+    if (from) query = query.gte("session_date", from);
+    if (to) query = query.lte("session_date", to);
+
+    const { data: timeLogs } = await query;
     fallbackLogIds = (timeLogs ?? []).map((r) => r.id as number);
   }
 
