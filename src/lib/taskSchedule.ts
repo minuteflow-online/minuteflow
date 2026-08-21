@@ -1,6 +1,21 @@
 // Shared helpers for reading/rendering scheduled assigned_tasks (start_time/end_time)
 // across the Calendar and Assignment "Team" workload view.
 
+// Recurring template repeat options — shared by RecurringTemplatesManager
+// (the template's own Repeat field) and TaskEditor (the "also save as a
+// recurring template" toggle on a regular task), so both read the exact same
+// list rather than keeping two copies in sync by hand.
+export type RecurrenceType = "daily" | "weekly" | "biweekly" | "monthly" | "every_2_months" | "every_3_months";
+
+export const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string; helper: string }[] = [
+  { value: "daily", label: "Daily", helper: "Repeats every day from the start date" },
+  { value: "weekly", label: "Weekly", helper: "Repeats every week on the same day as the start date" },
+  { value: "biweekly", label: "Every 2 weeks", helper: "Repeats every two weeks from the start date" },
+  { value: "monthly", label: "Monthly", helper: "Repeats on the same date each month" },
+  { value: "every_2_months", label: "Every 2 months", helper: "Repeats every two months on the same date" },
+  { value: "every_3_months", label: "Every 3 months", helper: "Repeats every three months on the same date" },
+];
+
 // A normalized assigned_tasks row, regardless of which shape the API returned it in.
 export type RawTask = {
   id: number;

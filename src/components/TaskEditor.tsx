@@ -4,7 +4,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { countWords } from "@/lib/utils";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { createClient } from "@/lib/supabase/client";
-import { autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay, parseDurationToMinutes, formatMinutesInput } from "@/lib/taskSchedule";
+import { autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay, parseDurationToMinutes, formatMinutesInput, RECURRENCE_OPTIONS, type RecurrenceType } from "@/lib/taskSchedule";
+import { useToast } from "@/contexts/ToastProvider";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
@@ -269,6 +270,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   onSaved,
 }: TaskEditorProps, ref) {
   const isEditing = Boolean(templateMode ? editingTemplateId : editingTaskId);
+  const { showToast } = useToast();
 
   // Basics
   const [account, setAccount] = useState((initialTask?.account as string) ?? "");
@@ -345,6 +347,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [endTime, setEndTime] = useState(
     initialEndTime ? timeOfDay(initialEndTime).slice(0, 5) : defaultEndTime ?? "10:00"
   );
+  // "Also save as a recurring template" — time-based only (per Toni: Output
+  // Based needs its own cron work first, see docs). Fires a second, best-effort
+  // create alongside the normal task save; a failure here doesn't undo the task
+  // that already saved successfully.
+  const [alsoSaveAsTemplate, setAlsoSaveAsTemplate] = useState(false);
+  const [templateRecurrenceType, setTemplateRecurrenceType] = useState<RecurrenceType>("daily");
 
   // Details
   const [taskDetail, setTaskDetail] = useState((initialTask?.task_detail as string) ?? "");
@@ -998,6 +1006,53 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         task = data.task;
       }
 
+      // Best-effort, secondary to the task save above — the task already
+      // exists at this point regardless of what happens here. Same field
+      // mapping and clock-time handling as templateMode's own branch, since
+      // a template's start_time/end_time are bare "HH:MM" (each occurrence
+      // supplies its own date), not a full instant like a task's.
+      if (mode === "time_based" && alsoSaveAsTemplate) {
+        try {
+          const templatePayload: Record<string, unknown> = {
+            title: taskName.trim(),
+            task_name: taskName.trim(),
+            account: account || null,
+            project: project || null,
+            category: category || null,
+            description: taskDetail.trim() || null,
+            task_detail: taskDetail.trim() || null,
+            task_notes: taskNotes.trim() || null,
+            link: link.trim() || null,
+            instructions: instructions.trim() || null,
+            review_required: reviewRequired === "yes",
+            start_date: startDate || null,
+            end_date: endDate || null,
+            due_time: dueTime || null,
+            start_time: hasSchedule && startTime ? startTime : null,
+            end_time: hasSchedule && endTime ? endTime : null,
+            planned_minutes: hasSchedule ? null : parsedPlannedMinutes,
+            project_id: linkedProjectId || null,
+            assigned_to_ids: effectiveVaIds,
+            assigned_by: assignedBy || currentUserId || null,
+            pay_type: null,
+            recurrence_type: templateRecurrenceType,
+            is_active: true,
+          };
+          const templateRes = await fetch("/api/recurring-task-templates", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(templatePayload),
+          });
+          if (templateRes.ok) {
+            showToast("success", "Recurring template created");
+          } else {
+            showToast("error", "Task saved, but the recurring template failed to save.");
+          }
+        } catch {
+          showToast("error", "Task saved, but the recurring template failed to save.");
+        }
+      }
+
       onSaved(task);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save task.");
@@ -1014,7 +1069,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     // in, so typing a duration and saving immediately wrote the previous value
     // (usually null) — the field looked filled in and still saved empty.
     parsedPlannedMinutes,
-    pendingTodoTexts, readOnly,
+    pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, showToast,
   ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
@@ -1801,6 +1856,39 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             </div>
           )}
         </div>
+
+        {!templateMode && mode === "time_based" && (
+          <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
+            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-espresso">
+              <input
+                type="checkbox"
+                checked={alsoSaveAsTemplate}
+                onChange={(e) => setAlsoSaveAsTemplate(e.target.checked)}
+                disabled={readOnly}
+              />
+              Also save as a recurring template
+            </label>
+            {alsoSaveAsTemplate && (
+              <div>
+                <label className="mb-1 block text-[10px] font-semibold text-walnut">Repeat</label>
+                <select
+                  value={templateRecurrenceType}
+                  onChange={(e) => setTemplateRecurrenceType(e.target.value as RecurrenceType)}
+                  disabled={readOnly}
+                  className={inputClass}
+                >
+                  {RECURRENCE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[10px] text-stone">
+                  Creates a separate recurring template from this task&apos;s details — the task itself
+                  saves normally either way.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </Section>
 
       {supportsTodos && (
