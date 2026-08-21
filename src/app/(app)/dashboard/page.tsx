@@ -1011,7 +1011,7 @@ export default function DashboardPage() {
       const now = new Date().toISOString();
       const isBillable = lastLog.category !== "Personal";
 
-      const { data: logData } = await supabase
+      const { data: logData, error: autoResumeLogError } = await supabase
         .from("time_logs")
         .insert({
           user_id: userId,
@@ -1033,6 +1033,15 @@ export default function DashboardPage() {
         .select()
         .single();
       if (cancelled) return;
+
+      // Nobody asked for this resume, so there's no one to show an alert to.
+      // Leaving the session without an active task is the honest outcome —
+      // the VA sees they aren't tracking and can start a task themselves,
+      // which beats a timer running against a row that doesn't exist.
+      if (autoResumeLogError || !logData) {
+        console.error("auto-resume: time_logs insert failed", autoResumeLogError);
+        return;
+      }
 
       const resumedTask: ActiveTask = {
         task_name: lastLog.task_name,
@@ -1086,7 +1095,7 @@ export default function DashboardPage() {
 
       // Create a "Planning" time_log entry so clock-in registers in activity log
       const clockInSessionDate = new Date().toLocaleDateString("en-CA", { timeZone: orgTimezone });
-      const { data: sortingLog } = await supabase
+      const { data: sortingLog, error: logError } = await supabase
         .from("time_logs")
         .insert({
           user_id: userId,
@@ -1107,6 +1116,20 @@ export default function DashboardPage() {
         .select()
         .single();
 
+      // This row is where the shift's time lands, so losing it has to stop the
+      // clock-in. Marking the session clocked_in anyway leaves the banner
+      // saying "Clocked In Since 7:05" while nothing is being recorded, and the
+      // VA only finds out hours later when the day totals zero. Same guard as
+      // task start below.
+      if (logError || !sortingLog) {
+        alert(
+          "Couldn't clock you in: " +
+            (logError?.message || "unknown error") +
+            ". Please try again — nothing is being tracked right now."
+        );
+        return;
+      }
+
       const sortingTask: ActiveTask = {
         task_name: "Clock In",
         category: "Planning",
@@ -1118,7 +1141,7 @@ export default function DashboardPage() {
         start_time: now,
         end_time: null,
         duration_ms: 0,
-        logId: sortingLog?.id?.toString() || "",
+        logId: sortingLog.id.toString(),
         _startMs: Date.now(),
         billing_type: "hourly",
       };
@@ -1149,9 +1172,7 @@ export default function DashboardPage() {
           session_date: clockInSessionDate,
         } as Session));
         setActiveTask(sortingTask);
-        if (sortingLog) {
-          setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
-        }
+        setTimeLogs((prev) => [sortingLog as TimeLog, ...prev]);
         await refreshSession();
 
         // Request notification permission at clock-in so off-tab alerts work
@@ -1266,7 +1287,7 @@ export default function DashboardPage() {
       }
       // Create a "Clocked Out" time_log entry to mark the boundary
       if (profile) {
-        const { data: clockOutLog } = await supabase
+        const { data: clockOutLog, error: clockOutLogError } = await supabase
           .from("time_logs")
           .insert({
             user_id: userId,
@@ -1287,6 +1308,12 @@ export default function DashboardPage() {
           .select()
           .single();
 
+        // Deliberately not fatal, unlike the start-side guards: this row is a
+        // zero-duration marker, so losing it costs no tracked time, and
+        // refusing to clock out would strand someone on the clock.
+        if (clockOutLogError) {
+          console.error("performClockOut: Clocked Out marker insert failed", clockOutLogError);
+        }
         if (clockOutLog) {
           setTimeLogs((prev) => [clockOutLog as TimeLog, ...prev]);
         }
@@ -1542,7 +1569,7 @@ export default function DashboardPage() {
       }
 
       // Create a break time log
-      const { data: logData } = await supabase
+      const { data: logData, error: breakLogError } = await supabase
         .from("time_logs")
         .insert({
           user_id: userId,
@@ -1561,6 +1588,18 @@ export default function DashboardPage() {
         })
         .select()
         .single();
+
+      // Your previous task was already closed above, so bailing here leaves you
+      // clocked in with nothing running. Say so plainly rather than showing a
+      // break timer that isn't being recorded.
+      if (breakLogError || !logData) {
+        alert(
+          "Couldn't start your break: " +
+            (breakLogError?.message || "unknown error") +
+            ". Your previous task has been stopped and nothing is being tracked right now — try Break again."
+        );
+        return;
+      }
 
       const breakTask: ActiveTask = {
         task_name: "Break",
@@ -1686,7 +1725,7 @@ export default function DashboardPage() {
 
     const isBillable = preBreakTask.category !== "Personal";
 
-    const { data: logData } = await supabase
+    const { data: logData, error: resumeLogError } = await supabase
       .from("time_logs")
       .insert({
         user_id: userId,
@@ -1707,6 +1746,15 @@ export default function DashboardPage() {
       })
       .select()
       .single();
+
+    if (resumeLogError || !logData) {
+      alert(
+        "Couldn't resume your task: " +
+          (resumeLogError?.message || "unknown error") +
+          ". Please try again — nothing is being tracked right now."
+      );
+      return;
+    }
 
     const resumedTask: ActiveTask = {
       ...preBreakTask,
@@ -1799,7 +1847,7 @@ export default function DashboardPage() {
 
     const isBillable = log.category !== "Personal";
 
-    const { data: logData } = await supabase
+    const { data: logData, error: onHoldLogError } = await supabase
       .from("time_logs")
       .insert({
         user_id: userId,
@@ -1820,6 +1868,15 @@ export default function DashboardPage() {
       })
       .select()
       .single();
+
+    if (onHoldLogError || !logData) {
+      alert(
+        "Couldn't resume that task: " +
+          (onHoldLogError?.message || "unknown error") +
+          ". Please try again — nothing is being tracked right now."
+      );
+      return;
+    }
 
     const resumedTask: ActiveTask = {
       task_name: log.task_name,

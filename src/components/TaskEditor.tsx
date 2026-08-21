@@ -10,6 +10,14 @@ import ConfirmModal from "@/components/ConfirmModal";
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
+import {
+  screenshotCaptureTime,
+  formatTimeTZ,
+  formatDateTimeTZ,
+  formatDateFullTZ,
+  formatDateLocalTZ,
+} from "@/lib/utils";
+import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
 import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
 import type { Project } from "@/types/database";
@@ -126,6 +134,9 @@ export interface TaskEditorProps {
   attachmentsExtra?: ReactNode;
   /** Set false to hide the Assign To field and never touch va_ids — for callers with their own multi-assignee UI (assigned_tasks supports several assignees; this form's Assign To is single-select). Default true. */
   manageAssignment?: boolean;
+  /** Org timezone for screenshot capture times. Optional — resolved from
+   *  organization_settings when not supplied. */
+  timezone?: string;
   onCancel: () => void;
   onSaved: (task: { id: number; [key: string]: unknown }) => void;
 }
@@ -228,6 +239,15 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
+/**
+ * When a screenshot was taken: the client stamp if present, else the time baked
+ * into the Drive filename, else the row's insert time. Mirrors the admin view so
+ * the same shot reads the same in both places.
+ */
+function shotTakenAt(ss: { captured_at?: string | null; filename?: string; created_at: string }): string {
+  return ss.captured_at ?? screenshotCaptureTime(ss.filename) ?? ss.created_at;
+}
+
 function ClientMemoFormatTooltip() {
   return (
     <div className="group relative">
@@ -266,6 +286,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   hideFooter = false,
   readOnly = false,
   attachmentsExtra,
+  timezone: timezoneProp,
   manageAssignment = true,
   onCancel,
   onSaved,
@@ -394,7 +415,22 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [todosLoading, setTodosLoading] = useState(false);
   const [newTodoText, setNewTodoText] = useState("");
   const [todoBusyId, setTodoBusyId] = useState<number | null>(null);
-  const [screenshots, setScreenshots] = useState<Array<{ id: number; url: string | null; screenshot_type: string | null }>>([]);
+  // Org time, never the viewer's local time — matches what the admin screenshot
+  // view shows for the same capture. A caller that already has it can pass it in.
+  const timezone = useOrgTimezone(timezoneProp);
+  const [screenshots, setScreenshots] = useState<
+    Array<{
+      id: number;
+      url: string | null;
+      screenshot_type: string | null;
+      filename: string;
+      captured_at: string | null;
+      created_at: string;
+      failure_reason: string | null;
+    }>
+  >([]);
+  // Only shots with an image can be opened; markers ("Computer idle") have none.
+  const viewableShots = useMemo(() => screenshots.filter((s) => Boolean(s.url)), [screenshots]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
 
@@ -656,7 +692,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     setScreenshotsLoading(true);
     fetch(`/api/assigned-tasks/${editingTaskId}/screenshots`)
       .then((res) => res.json())
-      .then((data) => setScreenshots(data.screenshots ?? []))
+      .then((data) =>
+        setScreenshots(
+          [...(data.screenshots ?? [])].sort(
+            (a, b) =>
+              new Date(shotTakenAt(a)).getTime() - new Date(shotTakenAt(b)).getTime()
+          )
+        )
+      )
       .catch(() => setScreenshots([]))
       .finally(() => setScreenshotsLoading(false));
   }, [supportsTodos, editingTaskId]);
@@ -1985,29 +2028,70 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           ) : screenshots.length === 0 ? (
             <p className="text-[12px] text-stone/50">No screenshots.</p>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {screenshots.map((ss, i) => (
-                <button
-                  key={ss.id}
-                  type="button"
-                  onClick={() => ss.url && setLightboxIndex(i)}
-                  disabled={!ss.url}
-                  className="relative h-[36px] w-[48px] shrink-0 cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed"
-                  title={`Screenshot ${ss.screenshot_type || "manual"}`}
-                >
-                  {ss.url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={ss.url} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[8px] text-stone">...</div>
-                  )}
-                </button>
+            <div className="space-y-3">
+              {/* Grouped by day: a task put on hold and resumed spans dates, so a
+                  bare time would be ambiguous about which day it belongs to. */}
+              {Object.entries(
+                screenshots.reduce<Record<string, typeof screenshots>>((byDay, ss) => {
+                  const key = formatDateLocalTZ(shotTakenAt(ss), timezone);
+                  (byDay[key] ||= []).push(ss);
+                  return byDay;
+                }, {})
+              ).map(([dayKey, dayShots]) => (
+                <div key={dayKey}>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                    {formatDateFullTZ(dayShots[0] ? shotTakenAt(dayShots[0]) : dayKey, timezone)}
+                    <span className="ml-1.5 font-normal normal-case tracking-normal text-stone">
+                      {dayShots.length} shot{dayShots.length !== 1 ? "s" : ""}
+                    </span>
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {dayShots.map((ss) => {
+                      const takenAt = shotTakenAt(ss);
+                      // Index into viewableShots, not screenshots: markers carry no
+                      // image and are left out of the lightbox, so using the full-list
+                      // index would open the wrong picture whenever one precedes it.
+                      const lightboxIdx = viewableShots.findIndex((s) => s.id === ss.id);
+                      // A row with no image is a recorded reason there is no screenshot
+                      // (idle, locked, capture failed) — show the reason, not a dead tile.
+                      const isMarker = ss.screenshot_type === "failed" || !ss.url;
+                      return (
+                        <div key={ss.id} className="flex w-[64px] shrink-0 flex-col gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => ss.url && setLightboxIndex(lightboxIdx)}
+                            disabled={!ss.url}
+                            className="relative h-[48px] w-[64px] cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed disabled:hover:scale-100"
+                            title={
+                              isMarker
+                                ? ss.failure_reason || "No screenshot"
+                                : `${ss.screenshot_type || "manual"} — taken ${formatDateTimeTZ(takenAt, timezone)}`
+                            }
+                          >
+                            {isMarker ? (
+                              <div className="flex h-full w-full items-center justify-center px-1 text-center text-[7px] leading-tight text-bark">
+                                {ss.failure_reason || "No screenshot"}
+                              </div>
+                            ) : (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={ss.url as string} alt="" loading="lazy" className="h-full w-full object-cover" />
+                            )}
+                          </button>
+                          <span className="text-center text-[9px] leading-none text-stone">
+                            {formatTimeTZ(takenAt, timezone)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               ))}
             </div>
           )}
           {lightboxIndex !== null && (
             <ScreenshotLightbox
-              urls={screenshots.map((s) => s.url).filter((u): u is string => Boolean(u))}
+              urls={viewableShots.map((s) => s.url as string)}
+              captions={viewableShots.map((s) => formatDateTimeTZ(shotTakenAt(s), timezone))}
               initialIndex={lightboxIndex}
               onClose={() => setLightboxIndex(null)}
             />

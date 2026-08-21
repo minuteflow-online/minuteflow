@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { assignedTaskWindow } from "@/lib/assignedTaskWindow";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
 import { normalizePosition } from "@/types/database";
@@ -677,26 +678,41 @@ export default function TaskListPage() {
         )
       );
 
-      // Fallback for older tasks: find log_ids by matching user_id + task_name in time_logs,
-      // scoped by the assignment date to avoid mixing screenshots from repeated same-named tasks
-      const vaIds = Array.from(
+      // Name-matching is only for assignees with no log_id link; anyone with a real
+      // link is already covered above and must not be name-matched on top of it.
+      const linkedVaIds = new Set(
+        (assigneeRows ?? [])
+          .filter((row) => typeof row.log_id === "number")
+          .map((row) => row.va_id)
+      );
+      const unlinkedVaIds = Array.from(
         new Set(
           (assigneeRows ?? [])
             .map((row) => row.va_id)
             .filter((id): id is string => typeof id === "string")
         )
-      );
+      ).filter((id) => !linkedVaIds.has(id));
 
       let fallbackLogIds: number[] = [];
-      if (vaIds.length > 0 && taskName) {
-        // Match by user_id + task_name. No date filter — tasks are often assigned
-        // retroactively (after the VA already worked on them), so filtering by
-        // assigned_at would exclude all the real work logs and hide screenshots.
-        const { data: timeLogs } = await supabase
+      if (unlinkedVaIds.length > 0 && taskName) {
+        // Work logged before the task existed can never belong to it; work after it
+        // can, right up until the task is finished. See assignedTaskWindow.
+        const { data: taskRow } = await supabase
+          .from("assigned_tasks")
+          .select("status, start_date, end_date, due_date, created_at, updated_at, archived_at")
+          .eq("id", taskId)
+          .single();
+        const { from, to } = assignedTaskWindow(taskRow);
+
+        let query = supabase
           .from("time_logs")
           .select("id")
-          .in("user_id", vaIds)
+          .in("user_id", unlinkedVaIds)
           .eq("task_name", taskName);
+        if (from) query = query.gte("session_date", from);
+        if (to) query = query.lte("session_date", to);
+
+        const { data: timeLogs } = await query;
         fallbackLogIds = (timeLogs ?? []).map((row) => row.id as number);
       }
 

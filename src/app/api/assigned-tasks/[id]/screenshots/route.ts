@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { assignedTaskWindow } from "@/lib/assignedTaskWindow";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -33,7 +34,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const { data: taskRow } = await admin.from("assigned_tasks").select("task_name").eq("id", taskId).single();
+  const { data: taskRow } = await admin.from("assigned_tasks").select("task_name, status, start_date, end_date, due_date, created_at, updated_at, archived_at").eq("id", taskId).single();
   if (!taskRow) return Response.json({ error: "Task not found" }, { status: 404 });
 
   const { data: assigneeRows } = await admin
@@ -54,13 +55,29 @@ export async function GET(_request: Request, { params }: RouteContext) {
     new Set((assigneeRows ?? []).map((r) => r.va_id).filter((v): v is string => typeof v === "string"))
   );
 
+  // Name-matching is a fallback for assignees with no log_id link, so it only
+  // covers those VAs — anyone with a real link is already accounted for above.
+  const linkedVaIds = new Set(
+    (assigneeRows ?? []).filter((r) => typeof r.log_id === "number").map((r) => r.va_id)
+  );
+  const unlinkedVaIds = vaIds.filter((id) => !linkedVaIds.has(id));
+
   let fallbackLogIds: number[] = [];
-  if (vaIds.length > 0 && taskRow.task_name) {
-    const { data: timeLogs } = await admin
+  if (unlinkedVaIds.length > 0 && taskRow.task_name) {
+    // Work logged before the task existed can never belong to it; work after it
+    // can, right up until the task is finished (a task on hold and resumed days
+    // later is still the same task). See assignedTaskWindow.
+    const { from, to } = assignedTaskWindow(taskRow);
+
+    let query = admin
       .from("time_logs")
       .select("id")
-      .in("user_id", vaIds)
+      .in("user_id", unlinkedVaIds)
       .eq("task_name", taskRow.task_name);
+    if (from) query = query.gte("session_date", from);
+    if (to) query = query.lte("session_date", to);
+
+    const { data: timeLogs } = await query;
     fallbackLogIds = (timeLogs ?? []).map((r) => r.id as number);
   }
 
