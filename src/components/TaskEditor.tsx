@@ -8,7 +8,13 @@ import { autoCategoryForTask, orgDateOf, orgWallClockToUtc, timeOfDay, parseDura
 import Section from "@/components/ui/Section";
 import { fetchTodos, addTodo, updateTodo, deleteTodo, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import ScreenshotLightbox from "@/components/ScreenshotLightbox";
-import { screenshotCaptureTime, formatTimeTZ } from "@/lib/utils";
+import {
+  screenshotCaptureTime,
+  formatTimeTZ,
+  formatDateTimeTZ,
+  formatDateFullTZ,
+  formatDateLocalTZ,
+} from "@/lib/utils";
 import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { SubmissionFiles, SubmissionLinks, SubmissionNotes } from "@/components/SubmissionLines";
 import { fetchSubmissions, type TaskSubmission } from "@/lib/submissions";
@@ -1847,40 +1853,61 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           ) : screenshots.length === 0 ? (
             <p className="text-[12px] text-stone/50">No screenshots.</p>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {screenshots.map((ss, i) => {
-                const takenAt = shotTakenAt(ss);
-                // A row with no image is a recorded reason there is no screenshot
-                // (idle, locked, capture failed) — show the reason, not a dead tile.
-                const isMarker = ss.screenshot_type === "failed" || !ss.url;
-                return (
-                  <div key={ss.id} className="flex w-[64px] shrink-0 flex-col gap-0.5">
-                    <button
-                      type="button"
-                      onClick={() => ss.url && setLightboxIndex(i)}
-                      disabled={!ss.url}
-                      className="relative h-[48px] w-[64px] cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed disabled:hover:scale-100"
-                      title={
-                        isMarker
-                          ? ss.failure_reason || "No screenshot"
-                          : `${ss.screenshot_type || "manual"} — taken ${formatTimeTZ(takenAt, timezone)}`
-                      }
-                    >
-                      {isMarker ? (
-                        <div className="flex h-full w-full items-center justify-center px-1 text-center text-[7px] leading-tight text-bark">
-                          {ss.failure_reason || "No screenshot"}
-                        </div>
-                      ) : (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={ss.url as string} alt="" loading="lazy" className="h-full w-full object-cover" />
-                      )}
-                    </button>
-                    <span className="text-center text-[9px] leading-none text-stone">
-                      {formatTimeTZ(takenAt, timezone)}
+            <div className="space-y-3">
+              {/* Grouped by day: a task put on hold and resumed spans dates, so a
+                  bare time would be ambiguous about which day it belongs to. */}
+              {Object.entries(
+                screenshots.reduce<Record<string, typeof screenshots>>((byDay, ss) => {
+                  const key = formatDateLocalTZ(shotTakenAt(ss), timezone);
+                  (byDay[key] ||= []).push(ss);
+                  return byDay;
+                }, {})
+              ).map(([dayKey, dayShots]) => (
+                <div key={dayKey}>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                    {formatDateFullTZ(dayShots[0] ? shotTakenAt(dayShots[0]) : dayKey, timezone)}
+                    <span className="ml-1.5 font-normal normal-case tracking-normal text-stone">
+                      {dayShots.length} shot{dayShots.length !== 1 ? "s" : ""}
                     </span>
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {dayShots.map((ss) => {
+                      const takenAt = shotTakenAt(ss);
+                      const lightboxIdx = screenshots.findIndex((s) => s.id === ss.id);
+                      // A row with no image is a recorded reason there is no screenshot
+                      // (idle, locked, capture failed) — show the reason, not a dead tile.
+                      const isMarker = ss.screenshot_type === "failed" || !ss.url;
+                      return (
+                        <div key={ss.id} className="flex w-[64px] shrink-0 flex-col gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => ss.url && setLightboxIndex(lightboxIdx)}
+                            disabled={!ss.url}
+                            className="relative h-[48px] w-[64px] cursor-pointer overflow-hidden rounded border border-sand bg-parchment transition-all hover:scale-105 hover:border-terracotta disabled:cursor-not-allowed disabled:hover:scale-100"
+                            title={
+                              isMarker
+                                ? ss.failure_reason || "No screenshot"
+                                : `${ss.screenshot_type || "manual"} — taken ${formatDateTimeTZ(takenAt, timezone)}`
+                            }
+                          >
+                            {isMarker ? (
+                              <div className="flex h-full w-full items-center justify-center px-1 text-center text-[7px] leading-tight text-bark">
+                                {ss.failure_reason || "No screenshot"}
+                              </div>
+                            ) : (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={ss.url as string} alt="" loading="lazy" className="h-full w-full object-cover" />
+                            )}
+                          </button>
+                          <span className="text-center text-[9px] leading-none text-stone">
+                            {formatTimeTZ(takenAt, timezone)}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           )}
           {lightboxIndex !== null && (

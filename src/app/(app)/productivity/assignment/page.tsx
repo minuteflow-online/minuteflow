@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { assignedTaskWindow } from "@/lib/assignedTaskWindow";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
 import { normalizePosition } from "@/types/database";
@@ -694,29 +695,21 @@ export default function TaskListPage() {
 
       let fallbackLogIds: number[] = [];
       if (unlinkedVaIds.length > 0 && taskName) {
-        // Bounded to the task's own dates. Matching on name alone returned every
-        // screenshot a VA had ever logged under that name — months of unrelated work
-        // on a task covering a single day. Anchored on start/due date (or the day the
-        // task was created) and treated as one day unless an explicit end exists, so
-        // it can never reach into another day's screenshots.
+        // Work logged before the task existed can never belong to it; work after it
+        // can, right up until the task is finished. See assignedTaskWindow.
         const { data: taskRow } = await supabase
           .from("assigned_tasks")
-          .select("start_date, end_date, due_date, created_at")
+          .select("status, start_date, end_date, due_date, created_at, updated_at, archived_at")
           .eq("id", taskId)
           .single();
-
-        const anchor =
-          taskRow?.start_date ??
-          taskRow?.due_date ??
-          (taskRow?.created_at ? String(taskRow.created_at).slice(0, 10) : null);
-        const to = taskRow?.end_date ?? taskRow?.due_date ?? anchor;
+        const { from, to } = assignedTaskWindow(taskRow);
 
         let query = supabase
           .from("time_logs")
           .select("id")
           .in("user_id", unlinkedVaIds)
           .eq("task_name", taskName);
-        if (anchor) query = query.gte("session_date", anchor);
+        if (from) query = query.gte("session_date", from);
         if (to) query = query.lte("session_date", to);
 
         const { data: timeLogs } = await query;

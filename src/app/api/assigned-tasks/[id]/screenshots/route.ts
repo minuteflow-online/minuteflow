@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { assignedTaskWindow } from "@/lib/assignedTaskWindow";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -33,7 +34,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const { data: taskRow } = await admin.from("assigned_tasks").select("task_name, start_date, end_date, due_date, created_at").eq("id", taskId).single();
+  const { data: taskRow } = await admin.from("assigned_tasks").select("task_name, status, start_date, end_date, due_date, created_at, updated_at, archived_at").eq("id", taskId).single();
   if (!taskRow) return Response.json({ error: "Task not found" }, { status: 404 });
 
   const { data: assigneeRows } = await admin
@@ -63,17 +64,10 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
   let fallbackLogIds: number[] = [];
   if (unlinkedVaIds.length > 0 && taskRow.task_name) {
-    // Bounded to the assignment's own dates. Task names repeat across weeks of
-    // recurring work, so an unbounded match returned every screenshot a VA had
-    // ever taken under that name — 613 shots going back two months for a day that
-    // had 34. A task with no explicit range is treated as a single day rather than
-    // an open-ended one, so it can never reach into other days' work.
-    const anchor =
-      taskRow.start_date ??
-      taskRow.due_date ??
-      (taskRow.created_at ? String(taskRow.created_at).slice(0, 10) : null);
-    const from = anchor;
-    const to = taskRow.end_date ?? taskRow.due_date ?? anchor;
+    // Work logged before the task existed can never belong to it; work after it
+    // can, right up until the task is finished (a task on hold and resumed days
+    // later is still the same task). See assignedTaskWindow.
+    const { from, to } = assignedTaskWindow(taskRow);
 
     let query = admin
       .from("time_logs")
