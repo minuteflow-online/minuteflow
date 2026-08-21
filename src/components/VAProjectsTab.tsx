@@ -557,6 +557,16 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       .filter((p) => p.total > 0);
   }, [editVaIds, activeProfiles, subtasks]);
 
+  // Whole-project completion, alongside the per-VA breakdown above. Computed
+  // straight off the subtask list itself rather than summed from vaProgress —
+  // a subtask with more than one assignee would otherwise get counted once
+  // per VA and inflate the total past the project's actual subtask count.
+  const projectProgress = useMemo(() => {
+    const tasks = subtasks.filter((t) => t.status !== "cancelled");
+    const completed = tasks.filter((t) => DONE_STATUSES.has(t.status)).length;
+    return { total: tasks.length, completed };
+  }, [subtasks]);
+
   const renderNode = (project: Project, depth: number) => {
     const children = childrenByParent.get(project.id) ?? [];
     const isExpanded = expandedIds.has(project.id);
@@ -1121,6 +1131,27 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               {vaProgress.length > 0 && (
                 <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
                   <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Where They Are</h4>
+
+                  {/* Whole-project total, ahead of the per-VA breakdown below —
+                      bolder label and a taller bar so it reads as the rollup,
+                      not just another row in the list. */}
+                  {projectProgress.total > 0 && (
+                    <div className="space-y-1.5 pb-3 border-b border-sand">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[13px] font-bold text-espresso">Overall Progress</span>
+                        <span className="text-[11px] font-semibold text-walnut shrink-0">
+                          {projectProgress.completed} of {projectProgress.total} completed · {Math.round((projectProgress.completed / projectProgress.total) * 100)}%
+                        </span>
+                      </div>
+                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-parchment">
+                        <div
+                          className="h-full rounded-full bg-sage transition-all"
+                          style={{ width: `${Math.round((projectProgress.completed / projectProgress.total) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-3">
                     {vaProgress.map(({ vaId, name, total, completed }) => {
                       const pct = Math.round((completed / total) * 100);
