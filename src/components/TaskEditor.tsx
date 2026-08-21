@@ -400,6 +400,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       failure_reason: string | null;
     }>
   >([]);
+  // Only shots with an image can be opened; markers ("Computer idle") have none.
+  const viewableShots = useMemo(() => screenshots.filter((s) => Boolean(s.url)), [screenshots]);
   const [screenshotsLoading, setScreenshotsLoading] = useState(false);
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
 
@@ -1873,7 +1875,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   <div className="flex flex-wrap gap-2">
                     {dayShots.map((ss) => {
                       const takenAt = shotTakenAt(ss);
-                      const lightboxIdx = screenshots.findIndex((s) => s.id === ss.id);
+                      // Index into viewableShots, not screenshots: markers carry no
+                      // image and are left out of the lightbox, so using the full-list
+                      // index would open the wrong picture whenever one precedes it.
+                      const lightboxIdx = viewableShots.findIndex((s) => s.id === ss.id);
                       // A row with no image is a recorded reason there is no screenshot
                       // (idle, locked, capture failed) — show the reason, not a dead tile.
                       const isMarker = ss.screenshot_type === "failed" || !ss.url;
@@ -1912,7 +1917,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           )}
           {lightboxIndex !== null && (
             <ScreenshotLightbox
-              urls={screenshots.map((s) => s.url).filter((u): u is string => Boolean(u))}
+              urls={viewableShots.map((s) => s.url as string)}
+              captions={viewableShots.map((s) => formatDateTimeTZ(shotTakenAt(s), timezone))}
               initialIndex={lightboxIndex}
               onClose={() => setLightboxIndex(null)}
             />

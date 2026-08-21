@@ -5,15 +5,29 @@ import { useEffect, useMemo, useState } from "react";
 interface ScreenshotLightboxProps {
   urls: string[];
   initialIndex: number;
+  /** Optional label per URL, same order and length — shown under the image. Used
+   *  to say when a screenshot was taken, which the thumbnail grid shows but the
+   *  expanded view otherwise loses. */
+  captions?: string[];
   onClose: () => void;
 }
 
 export default function ScreenshotLightbox({
   urls,
   initialIndex,
+  captions,
   onClose,
 }: ScreenshotLightboxProps) {
-  const safeUrls = useMemo(() => urls.filter(Boolean), [urls]);
+  // urls and captions are filtered together so an empty url can never shift a
+  // caption onto the wrong image.
+  const shots = useMemo(
+    () =>
+      urls
+        .map((url, i) => ({ url, caption: captions?.[i] }))
+        .filter((s) => Boolean(s.url)),
+    [urls, captions]
+  );
+  const safeUrls = useMemo(() => shots.map((s) => s.url), [shots]);
   const [currentIndex, setCurrentIndex] = useState(() => Math.min(Math.max(initialIndex, 0), Math.max(safeUrls.length - 1, 0)));
   const currentUrl = safeUrls[currentIndex] ?? safeUrls[0] ?? "";
   const showArrows = safeUrls.length > 1;
@@ -83,9 +97,14 @@ export default function ScreenshotLightbox({
           alt="Screenshot"
           className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
         />
-        {showArrows && (
-          <div className="text-sm font-medium text-white/80">
-            {currentIndex + 1} / {safeUrls.length}
+        {(shots[currentIndex]?.caption || showArrows) && (
+          <div className="flex items-center gap-3 text-sm font-medium text-white/80">
+            {shots[currentIndex]?.caption && <span>{shots[currentIndex].caption}</span>}
+            {showArrows && (
+              <span className="text-white/60">
+                {currentIndex + 1} / {safeUrls.length}
+              </span>
+            )}
           </div>
         )}
       </div>
