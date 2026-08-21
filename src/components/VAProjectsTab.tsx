@@ -117,6 +117,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // Objective Details form is hidden until requested, rather than shown by default.
   // Local/testing-only per Neil — not boss-approved as the permanent default yet.
   const [showDetails, setShowDetails] = useState(false);
+  // Per-VA "Where They Are" breakdown, collapsed by default — Overall Progress
+  // above it already gives the at-a-glance number; this saves the vertical
+  // space until someone actually wants the per-VA detail (per Toni).
+  const [showVaProgress, setShowVaProgress] = useState(false);
   const [subtaskView, setSubtaskView] = useState<"list" | "board">("list");
   // "Add Subtask" form collapsed by default (Figma correction) — same
   // show-on-demand pattern as showDetails above.
@@ -249,6 +253,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setAddFormKey((k) => k + 1);
     setEditingSubId(null);
     setShowDetails(false);
+    setShowVaProgress(false);
     setSubtaskView("list");
     setShowAddSubtask(false);
     setBoardStatusError(null);
@@ -1130,11 +1135,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               {/* Where They Are card */}
               {vaProgress.length > 0 && (
                 <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
-                  <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Where They Are</h4>
-
-                  {/* Whole-project total, ahead of the per-VA breakdown below —
-                      bolder label and a taller bar so it reads as the rollup,
-                      not just another row in the list. */}
+                  {/* Whole-project total — always visible, not part of the
+                      collapsible section below. This is the number someone
+                      wants at a glance; the per-VA breakdown is the detail
+                      they open up only when they want it. */}
                   {projectProgress.total > 0 && (
                     <div className="space-y-1.5 pb-3 border-b border-sand">
                       <div className="flex items-center justify-between gap-2">
@@ -1152,24 +1156,42 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     </div>
                   )}
 
-                  <div className="space-y-3">
-                    {vaProgress.map(({ vaId, name, total, completed }) => {
-                      const pct = Math.round((completed / total) * 100);
-                      return (
-                        <div key={vaId} className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[12px] font-semibold text-espresso truncate">{name}</span>
-                            <span className="text-[11px] text-stone shrink-0">
-                              {completed} of {total} completed · {pct}%
-                            </span>
+                  {/* Per-VA breakdown — collapsed by default to save space,
+                      same chevron-toggle pattern as Assignment's Unassigned
+                      Tasks section. */}
+                  <button
+                    type="button"
+                    onClick={() => setShowVaProgress((v) => !v)}
+                    className="flex w-full cursor-pointer items-center justify-between gap-2"
+                  >
+                    <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Where They Are</h4>
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-sand text-bark transition-colors hover:bg-parchment">
+                      <svg className={`h-3.5 w-3.5 transition-transform ${showVaProgress ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                    </span>
+                  </button>
+
+                  {showVaProgress && (
+                    <div className="space-y-3">
+                      {vaProgress.map(({ vaId, name, total, completed }) => {
+                        const pct = Math.round((completed / total) * 100);
+                        return (
+                          <div key={vaId} className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[12px] font-semibold text-espresso truncate">{name}</span>
+                              <span className="text-[11px] text-stone shrink-0">
+                                {completed} of {total} completed · {pct}%
+                              </span>
+                            </div>
+                            <div className="h-2 w-full overflow-hidden rounded-full bg-parchment">
+                              <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
+                            </div>
                           </div>
-                          <div className="h-2 w-full overflow-hidden rounded-full bg-parchment">
-                            <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
