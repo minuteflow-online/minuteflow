@@ -39,6 +39,7 @@ import {
   screenshotCaptureTime,
   formatTenure,
 } from "@/lib/utils";
+import ScheduleCard from "@/components/ScheduleCard";
 import ProjectsTasksTab from "@/components/ProjectsTasksTab";
 import FinancialSummaryTab from "@/components/FinancialSummaryTab";
 import CaptureAlertsTab from "@/components/CaptureAlertsTab";
@@ -3956,8 +3957,10 @@ function TeamManagementTab({
                               </div>
                             </div>
                           )}
-                          {/* Budget and Limit */}
-                          <div className="mt-4 pt-4 border-t border-sand/50" onClick={(e) => e.stopPropagation()}>
+                          {/* Schedule — the same card the member sees in their
+                              portal, so both sides read one control. */}
+                          <div className="mt-4 pt-4 border-t border-sand/50 space-y-3" onClick={(e) => e.stopPropagation()}>
+                            <ScheduleCard profile={p} userId={p.id} canEdit={isFullAdmin} onSaved={fetchData} />
                             <ShiftBudgetSection profile={p} userId={p.id} isAdmin={isFullAdmin} onRefresh={fetchData} />
                           </div>
                         </div>

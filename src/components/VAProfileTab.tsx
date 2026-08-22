@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, PaymentAccountDetails } from "@/types/database";
 import AvatarUpload from "@/components/AvatarUpload";
-import WorkDaysPicker from "@/components/WorkDaysPicker";
+import CollapsibleCard from "@/components/CollapsibleCard";
+import ScheduleCard from "@/components/ScheduleCard";
 import BudgetWidget from "@/components/BudgetWidget";
-import { formatWorkDays, shiftHoursFromProfile, workDaysFromProfile, vaBudgetType } from "@/lib/budget";
+import { vaBudgetType } from "@/lib/budget";
 import { displayRole, formatTenure } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -71,49 +72,6 @@ function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-// ── Collapsible Card ───────────────────────────────────────────────────────
-
-// Same behaviour as ui/Section (header button, rotating chevron), wearing
-// this page's card chrome instead of TaskEditor's terracotta accordion —
-// these sit among cards that are not collapsible, so the header has to keep
-// reading as one of them.
-
-function CollapsibleCard({
-  title,
-  summary,
-  defaultOpen = false,
-  children,
-}: {
-  title: string;
-  /** Shown beside the title while closed — what the section says at a glance. */
-  summary?: string;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="rounded-xl border border-sand bg-white overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left hover:bg-cream transition-colors"
-      >
-        <h3 className="text-[10px] font-bold text-espresso uppercase tracking-wide">{title}</h3>
-        <span className="flex items-center gap-2">
-          {summary && <span className="text-[10px] font-semibold text-walnut">{summary}</span>}
-          <svg
-            className={`h-3.5 w-3.5 text-bark transition-transform ${open ? "rotate-180" : ""}`}
-            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </span>
-      </button>
-      {open && <div className="border-t border-sand p-4">{children}</div>}
-    </div>
-  );
-}
-
 // ── Main Component ─────────────────────────────────────────────────────────
 
 export default function VAProfileTab({
@@ -157,6 +115,14 @@ export default function VAProfileTab({
 
   useEffect(() => { load(); }, [load]);
 
+  // ScheduleCard writes work_days straight to profiles; this pulls the row
+  // back so the card's summary and the rest of the page agree with it.
+  const reloadProfile = useCallback(async () => {
+    const { data } = await supabase.from("profiles").select("*").eq("id", userId).single();
+    if (data) onSaved(data as Profile);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
   if (loading) {
     return <div className="px-6 py-8 text-[13px] text-stone">Loading profile…</div>;
   }
@@ -164,7 +130,7 @@ export default function VAProfileTab({
   return (
     <div className="max-w-2xl space-y-5">
       <BasicInfoSection profile={profile} onSaved={onSaved} dateStarted={extProfile?.date_started ?? null} onRefresh={load} />
-      <ScheduleSection profile={profile} onSaved={onSaved} />
+      <ScheduleCard profile={profile} userId={userId} onSaved={reloadProfile} />
       <BudgetAndRateSection profile={profile} />
       <ExtendedInfoSection extProfile={extProfile} userId={userId} onRefresh={load} />
       <PaymentInfoSection profile={profile} onSaved={onSaved} />
@@ -178,104 +144,6 @@ export default function VAProfileTab({
         onRefresh={load}
       />
     </div>
-  );
-}
-
-// ── Schedule Section ─────────────────────────────────────────────
-
-// The same weekday control Team Management uses, editable here: a VA owns
-// which days they work. The days decide where their DAILY budget applies —
-// the weekly and monthly limits behind it stay the admin's to set, so this
-// moves when the budget lands, never how much of it there is.
-
-function ScheduleSection({ profile, onSaved }: { profile: Profile; onSaved: (p: Profile) => void }) {
-  const supabase = createClient();
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [days, setDays] = useState<number[]>(workDaysFromProfile(profile));
-  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-
-  useEffect(() => {
-    setDays(workDaysFromProfile(profile));
-  }, [profile]);
-
-  const dailyHours = shiftHoursFromProfile(profile);
-
-  const handleSave = async () => {
-    // An empty list reads back as "every day" (see workDaysFromProfile), which
-    // is the opposite of what clearing every chip looks like it means.
-    if (days.length === 0) {
-      setMsg({ type: "err", text: "Pick at least one work day." });
-      return;
-    }
-    setSaving(true);
-    setMsg(null);
-    const { data, error } = await supabase
-      .from("profiles")
-      .update({ work_days: [...days].sort((a, b) => a - b) })
-      .eq("id", profile.id)
-      .select("*")
-      .single();
-    setSaving(false);
-    if (error) {
-      setMsg({ type: "err", text: `Couldn't save: ${error.message}` });
-      return;
-    }
-    if (data) onSaved(data as Profile);
-    setEditing(false);
-    setMsg({ type: "ok", text: "Schedule saved." });
-  };
-
-  return (
-    <CollapsibleCard title="Schedule" summary={formatWorkDays(workDaysFromProfile(profile))}>
-      {!editing && (
-        <div className="flex justify-end mb-3">
-          <button
-            onClick={() => { setEditing(true); setMsg(null); }}
-            className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
-          >
-            Edit
-          </button>
-        </div>
-      )}
-
-      <WorkDaysPicker value={editing ? days : workDaysFromProfile(profile)} onChange={editing ? setDays : undefined} />
-
-      {editing && (
-        <div className="flex gap-2 pt-3">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-          <button
-            onClick={() => { setEditing(false); setDays(workDaysFromProfile(profile)); setMsg(null); }}
-            className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-
-      {msg && (
-        <p className={`mt-2 text-[11px] font-semibold ${msg.type === "ok" ? "text-sage" : "text-terracotta"}`}>{msg.text}</p>
-      )}
-
-      <div className="mt-3 space-y-1">
-        {dailyHours != null && (
-          <p className="text-[11px] text-bark">
-            {profile.shift_start && profile.shift_end
-              ? `${profile.shift_start}–${profile.shift_end} on a work day (${dailyHours.toFixed(2)}h).`
-              : `${dailyHours.toFixed(2)}h of daily budget on a work day.`}
-          </p>
-        )}
-        <p className="text-[11px] text-stone">
-          Time logged on a day off still counts — it comes out of your weekly budget instead.
-        </p>
-      </div>
-    </CollapsibleCard>
   );
 }
 

@@ -2,17 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { formatTenure } from "@/lib/utils";
-import WorkDaysPicker from "@/components/WorkDaysPicker";
+import ScheduleCard from "@/components/ScheduleCard";
 import { createClient } from "@/lib/supabase/client";
 import type { PaymentAccountDetails } from "@/types/database";
-import {
-  shiftHoursFromProfile,
-  vaBudgetType,
-  hourlyRateFromProfile,
-  DEFAULT_WORK_DAYS,
-  formatWorkDays,
-  workDaysFromProfile,
-} from "@/lib/budget";
+import { shiftHoursFromProfile, vaBudgetType, hourlyRateFromProfile } from "@/lib/budget";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -161,6 +154,7 @@ export default function TeamProfilePanel({ userId, isAdmin }: { userId: string; 
         isAdmin={isAdmin}
         onRefresh={load}
       />
+      <ScheduleCard profile={profile} userId={userId} canEdit={isAdmin} onSaved={load} />
       <ShiftBudgetSection
         profile={profile}
         userId={userId}
@@ -693,11 +687,7 @@ export function ShiftBudgetSection({
   const [mode, setMode] = useState<"hours" | "range">(
     profile?.shift_start && profile?.shift_end ? "range" : "hours"
   );
-  // Which weekdays this member works. A member with none set yet starts the
-  // editor on Mon–Fri, so the common case is one click away from saved.
-  const [workDays, setWorkDays] = useState<number[]>(
-    profile?.work_days?.length ? profile.work_days : DEFAULT_WORK_DAYS
-  );
+
   const [shiftHours, setShiftHours] = useState(profile?.shift_hours != null ? String(profile.shift_hours) : "");
   const [shiftStart, setShiftStart] = useState(profile?.shift_start ?? "");
   const [shiftEnd, setShiftEnd] = useState(profile?.shift_end ?? "");
@@ -714,7 +704,6 @@ export function ShiftBudgetSection({
 
   useEffect(() => {
     setMode(profile?.shift_start && profile?.shift_end ? "range" : "hours");
-    setWorkDays(profile?.work_days?.length ? profile.work_days : DEFAULT_WORK_DAYS);
     setShiftHours(profile?.shift_hours != null ? String(profile.shift_hours) : "");
     setShiftStart(profile?.shift_start ?? "");
     setShiftEnd(profile?.shift_end ?? "");
@@ -762,7 +751,6 @@ export function ShiftBudgetSection({
     const updates: Record<string, unknown> = {
       weekly_budget_limit: num(weeklyLimit),
       monthly_budget_limit: num(monthlyLimit),
-      work_days: [...workDays].sort((a, b) => a - b),
     };
     if (isOutputBased) {
       updates.daily_budget_limit = dailyLimit.trim() ? Number(dailyLimit) : null;
@@ -931,13 +919,6 @@ export function ShiftBudgetSection({
             </div>
           )}
 
-          <div>
-            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">Work Days</p>
-            <WorkDaysPicker value={workDays} onChange={setWorkDays} />
-            <p className="text-[10px] text-stone mt-1">
-              Days off carry no daily budget. Anything booked on one still counts, coming out of the weekly limit.
-            </p>
-          </div>
 
           <div className="max-w-[180px]">
             <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1">
@@ -1008,10 +989,7 @@ export function ShiftBudgetSection({
               {displayMonthly != null ? `${formatLimit(displayMonthly)} / month` : "No limit set"}
             </p>
           </div>
-          <div>
-            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Work Days</p>
-            <p className="text-[13px] text-espresso mt-0.5">{formatWorkDays(workDaysFromProfile(profile))}</p>
-          </div>
+
         </div>
       )}
     </div>
