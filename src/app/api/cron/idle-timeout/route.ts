@@ -1,6 +1,7 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
 import { notifyVaPrivately } from "@/lib/vaNotify";
+import { checkStaticScreens, clearStaticFlags } from "@/lib/staticScreen";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
@@ -321,9 +322,32 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Separate pass, and deliberately over every clocked-in session rather than
+  // just the stale ones. A tab left open keeps the heartbeat fresh, so someone
+  // can look perfectly active here while their screen has not moved at all —
+  // that is exactly the case the idle check above cannot see.
+  const { data: liveSessions } = await supabase
+    .from("sessions")
+    .select("user_id, active_task")
+    .eq("clocked_in", true)
+    .not("active_task", "is", null);
+
+  const liveCandidates = (liveSessions ?? []).map((s) => {
+    const activeTask = s.active_task as { category?: string; isBreak?: boolean } | null;
+    return {
+      user_id: s.user_id as string,
+      category: activeTask?.category ?? null,
+      isBreak: Boolean(activeTask?.isBreak),
+    };
+  });
+
+  const staticScreens = await checkStaticScreens(liveCandidates, IDLE_EXEMPT_CATEGORIES);
+  await clearStaticFlags(liveCandidates.map((c) => c.user_id));
+
   return Response.json({
     warned: warned.length,
     closed: closed.length,
+    staticScreens: staticScreens.length,
     candidates,
   });
 }

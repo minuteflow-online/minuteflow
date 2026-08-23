@@ -61,3 +61,31 @@ export async function sendDriveFilesToTelegram(
   }
   return posted;
 }
+
+/**
+ * A Drive file's MD5, read from metadata rather than by downloading it.
+ *
+ * Drive computes this on upload, so identical screenshots have identical
+ * checksums and comparing captures costs one small metadata call each instead
+ * of pulling images down and hashing them here.
+ *
+ * Null on anything unreadable — a missing checksum must read as "cannot tell",
+ * never as "unchanged", or a Drive hiccup would look like an idle VA.
+ */
+export async function driveChecksum(fileId: string): Promise<string | null> {
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!keyJson) return null;
+
+  try {
+    const auth = new google.auth.GoogleAuth({
+      credentials: JSON.parse(keyJson),
+      scopes: ["https://www.googleapis.com/auth/drive.readonly"],
+    });
+    const drive = google.drive({ version: "v3", auth });
+    const res = await drive.files.get({ fileId, fields: "md5Checksum" });
+    return (res.data as { md5Checksum?: string }).md5Checksum ?? null;
+  } catch (err) {
+    console.error(`drive checksum failed for ${fileId}:`, err);
+    return null;
+  }
+}
