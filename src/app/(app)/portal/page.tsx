@@ -2422,8 +2422,10 @@ function BugReportTab({
 
   return (
     <div className="space-y-6 max-w-2xl">
-      {/* New report + filters */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* One toolbar: the action on the left, every filter grouped on the right.
+          These were two rows with a justify-between between them, which spaced
+          the controls out across the width and read as clutter. */}
+      <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => setShowForm(true)}
           className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors"
@@ -2431,80 +2433,77 @@ function BugReportTab({
           + New Report
         </button>
 
-        <select
-          value={typeFilter}
-          onChange={(e) => { setTypeFilter(e.target.value as "all" | ReportType); setPage(1); }}
-          className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
-        >
-          <option value="all">All types</option>
-          <option value="bug">Bugs</option>
-          <option value="feature">Features</option>
-        </select>
-        {isAdmin && reportReporters.length > 1 && (
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <select
-            value={reporterFilter}
-            onChange={(e) => { setReporterFilter(e.target.value); setPage(1); }}
-            className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
+            value={typeFilter}
+            onChange={(e) => { setTypeFilter(e.target.value as "all" | ReportType); setPage(1); }}
+            className="rounded-lg border border-sand bg-white px-2.5 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta"
           >
-            <option value="all">Everyone</option>
-            {reportReporters.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
+            <option value="all">All types</option>
+            <option value="bug">Bugs</option>
+            <option value="feature">Features</option>
           </select>
-        )}
-        {reportTags.length > 0 && (
-          <select
-            value={tagFilter}
-            onChange={(e) => { setTagFilter(e.target.value); setPage(1); }}
-            className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
-          >
-            <option value="all">All topics</option>
-            {reportTags.map((tag) => (
-              <option key={tag} value={tag} className="capitalize">
-                {tag}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
 
-      {/* Status filter — opens on Submitted, so what still needs attention is
-          what you land on. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Status</p>
-        {/* Archived rides in here rather than as its own toggle: when you are
-            choosing what to look at, it is the same question. */}
-        <select
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value as "all" | BugReport["status"] | "archived");
-            setPage(1);
-          }}
-          className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
-        >
-          {([
-            { value: "submitted" as const, label: "Submitted" },
-            { value: "testing" as const, label: "Testing" },
-            { value: "fixed" as const, label: "Fixed" },
-            { value: "dismissed" as const, label: "Dismissed" },
-            { value: "all" as const, label: "All" },
-          ]).map(({ value, label }) => {
-            const count =
-              value === "all"
-                ? typeScopedReports.filter((r) => !r.archived_at).length
-                : typeScopedReports.filter((r) => !r.archived_at && r.status === value).length;
-            return (
-              <option key={value} value={value}>
-                {label} ({count})
-              </option>
-            );
-          })}
-          {isAdmin && (
-            <option value="archived">Archived ({archivedReportCount})</option>
+          {isAdmin && reportReporters.length > 1 && (
+            <select
+              value={reporterFilter}
+              onChange={(e) => { setReporterFilter(e.target.value); setPage(1); }}
+              className="rounded-lg border border-sand bg-white px-2.5 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta"
+            >
+              <option value="all">Everyone</option>
+              {reportReporters.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
           )}
-        </select>
+
+          {reportTags.length > 0 && (
+            <select
+              value={tagFilter}
+              onChange={(e) => { setTagFilter(e.target.value); setPage(1); }}
+              className="rounded-lg border border-sand bg-white px-2.5 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta"
+            >
+              <option value="all">All topics</option>
+              {reportTags.map((tag) => (
+                <option key={tag} value={tag} className="capitalize">
+                  {tag}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* No "Status" label — the selected option already says Submitted (12).
+              Archived rides in here rather than as its own toggle. */}
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value as "all" | BugReport["status"] | "archived");
+              setPage(1);
+            }}
+            className="rounded-lg border border-sand bg-white px-2.5 py-1.5 text-[11px] text-espresso outline-none focus:border-terracotta"
+          >
+            {([
+              { value: "submitted" as const, label: "Submitted" },
+              { value: "testing" as const, label: "Testing" },
+              { value: "fixed" as const, label: "Fixed" },
+              { value: "dismissed" as const, label: "Dismissed" },
+              { value: "all" as const, label: "All" },
+            ]).map(({ value, label }) => {
+              const count =
+                value === "all"
+                  ? typeScopedReports.filter((r) => !r.archived_at).length
+                  : typeScopedReports.filter((r) => !r.archived_at && r.status === value).length;
+              return (
+                <option key={value} value={value}>
+                  {label} ({count})
+                </option>
+              );
+            })}
+            {isAdmin && <option value="archived">Archived ({archivedReportCount})</option>}
+          </select>
+        </div>
       </div>
 
       {/* The same form the nav button opens — one code path for both entries */}
@@ -2649,6 +2648,7 @@ function BugReportTab({
                     <BugReportTagEditor
                       reportId={report.id}
                       tags={report.tags ?? []}
+                      knownTags={reportTags}
                       canEdit={isAdmin || (report.user_id === currentUserId && report.status === "submitted")}
                       onSaved={(next) =>
                         setReports((rs) =>
