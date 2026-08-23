@@ -1,5 +1,3 @@
-  const [requesterFilter, setRequesterFilter] = useState<string>("all");
-  const [pastRequestsPage, setPastRequestsPage] = useState(1);
 "use client";
 
 import { Fragment, useEffect, useState, useCallback } from "react";
@@ -359,6 +357,8 @@ function RequestsTab({
 
   // ── Form state ──
   const [showForm, setShowForm] = useState(false);
+  const [requesterFilter, setRequesterFilter] = useState<string>("all");
+  const [pastRequestsPage, setPastRequestsPage] = useState(1);
   const [reqChoice, setReqChoice] = useState<string>("time_off");
   const choice = REQUEST_CHOICES.find((c) => c.key === reqChoice) ?? REQUEST_CHOICES[0];
   const reqType = choice.type;
@@ -2255,6 +2255,7 @@ interface BugReport {
   report_date: string;
   status: "submitted" | "testing" | "fixed" | "dismissed";
   archived_at: string | null;
+  tags: string[] | null;
   drive_file_ids: string[];
   admin_notes: string | null;
   reviewed_at: string | null;
@@ -2294,6 +2295,7 @@ function BugReportTab({
   // Opens on Submitted — the reports nobody has picked up yet are the ones
   // worth landing on.
   const [statusFilter, setStatusFilter] = useState<"all" | BugReport["status"]>("submitted");
+  const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [statusUpdating, setStatusUpdating] = useState<Record<number, boolean>>({});
@@ -2362,11 +2364,17 @@ function BugReportTab({
 
   // Type first, so the status counts describe the list you're actually looking
   // at rather than the whole table.
+  const reportTags = Array.from(new Set(reports.flatMap((r) => r.tags ?? []))).sort((a, b) =>
+    a.localeCompare(b)
+  );
+
   const typeScopedReports = reports.filter(
     // Archived reports are filed away by a reviewer; the portal has no archive
     // view to send anyone to, so they drop out of the requester's list.
     (r) =>
-      !r.archived_at && (typeFilter === "all" || (r.report_type || "bug") === typeFilter)
+      !r.archived_at &&
+      (typeFilter === "all" || (r.report_type || "bug") === typeFilter) &&
+      (tagFilter === "all" || (r.tags ?? []).includes(tagFilter))
   );
   const visibleReports = typeScopedReports.filter(
     (r) => statusFilter === "all" || r.status === statusFilter
@@ -2411,6 +2419,20 @@ function BugReportTab({
             </button>
           ))}
         </div>
+        {reportTags.length > 0 && (
+          <select
+            value={tagFilter}
+            onChange={(e) => { setTagFilter(e.target.value); setPage(1); }}
+            className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
+          >
+            <option value="all">All topics</option>
+            {reportTags.map((tag) => (
+              <option key={tag} value={tag} className="capitalize">
+                {tag}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Status filter — opens on Submitted, so what still needs attention is
@@ -2484,6 +2506,14 @@ function BugReportTab({
                     {reportType === "bug" ? "Bug" : "Feature"}
                   </span>
                   <span className="text-[13px] font-medium text-espresso truncate">{report.title}</span>
+                  {(report.tags ?? []).map((tag) => (
+                    <span
+                      key={tag}
+                      className="shrink-0 rounded-full bg-slate-blue-soft px-1.5 py-[1px] text-[9px] font-semibold capitalize text-slate-blue"
+                    >
+                      {tag}
+                    </span>
+                  ))}
                   {isAdmin && (
                     <span className="shrink-0 text-[11px] text-bark">{report.full_name}</span>
                   )}
