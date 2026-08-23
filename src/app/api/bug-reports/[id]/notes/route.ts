@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { canReviewBugReports } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -35,16 +35,16 @@ async function loadContext(reportId: number) {
 
   const { data: report } = await supabase
     .from("bug_reports")
-    .select("id, user_id")
+    .select("id, user_id, status")
     .eq("id", reportId)
     .single();
 
   if (!report) return { error: "Report not found" as const, status: 404 };
 
-  const allowed = report.user_id === user.id || hasBroadAdminAccess(profile);
+  const allowed = report.user_id === user.id || canReviewBugReports(profile);
   if (!allowed) return { error: "Forbidden" as const, status: 403 };
 
-  return { supabase, user, profile };
+  return { supabase, user, profile, report };
 }
 
 export async function GET(_request: NextRequest, { params }: RouteContext) {
@@ -103,4 +103,45 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   }
 
   return Response.json({ note: data }, { status: 201 });
+}
+
+
+export async function DELETE(request: NextRequest, { params }: RouteContext) {
+  const { id } = await params;
+  const ctx = await loadContext(Number(id));
+  if ("error" in ctx) return Response.json({ error: ctx.error }, { status: ctx.status });
+
+  const noteId = new URL(request.url).searchParams.get("noteId");
+  if (!noteId) return Response.json({ error: "noteId required" }, { status: 400 });
+
+  // The thread is a record of what was decided once work starts, so notes can
+  // only be taken back while the report is still Submitted. After that a note is
+  // part of what the reviewer is working from and deleting it would rewrite the
+  // history they are relying on.
+  if (ctx.report.status !== "submitted") {
+    return Response.json(
+      { error: "This report is being worked on — notes can no longer be deleted." },
+      { status: 409 }
+    );
+  }
+
+  const { data: note } = await ctx.supabase
+    .from("bug_report_notes")
+    .select("user_id")
+    .eq("id", Number(noteId))
+    .single();
+  if (!note) return Response.json({ error: "Note not found" }, { status: 404 });
+
+  // Your own note, or anyone's if you review these.
+  if (note.user_id !== ctx.user.id && !canReviewBugReports(ctx.profile)) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { error } = await ctx.supabase
+    .from("bug_report_notes")
+    .delete()
+    .eq("id", Number(noteId));
+
+  if (error) return Response.json({ error: error.message }, { status: 500 });
+  return Response.json({ ok: true });
 }

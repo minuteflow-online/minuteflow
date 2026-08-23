@@ -380,6 +380,7 @@ export default function BugReportsAdminTab({
                         reportId={report.id}
                         currentUserId={currentUserId}
                         timezone={orgTimezone}
+                        canDelete={report.status === "submitted"}
                       />
 
                       <div className="mt-3 flex items-center gap-2">

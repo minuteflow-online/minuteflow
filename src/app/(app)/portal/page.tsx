@@ -7,7 +7,7 @@ import VaBroadcastsPortalTab from "@/components/VaBroadcastsPortalTab";
 import VAProfileTab from "@/components/VAProfileTab";
 import { normalizeByDateValue, type ByDateValue } from "@/lib/payroll";
 import { useUrlTab } from "@/hooks/useUrlTab";
-import { hasModerationAccess } from "@/lib/financialAccess";
+import { hasModerationAccess, canReviewBugReports } from "@/lib/financialAccess";
 import ReportIssueModal, {
   BugIcon,
   REPORT_STATUS_LABEL,
@@ -2093,6 +2093,9 @@ export default function VaPortalPage() {
   }, [supabase]);
 
   const isAdmin = hasModerationAccess(profile);
+  // Working on bug reports is narrower than portal moderation — only IT and the
+  // Founder/CEO triage them, because they are the ones who act on them.
+  const canReviewReports = canReviewBugReports(profile);
 
   const tabLabel: Record<PortalTab, string> = {
     profile: "My Profile",
@@ -2237,7 +2240,7 @@ export default function VaPortalPage() {
           <PortalChangePasswordTab />
         )}
         {activeTab === "bug_reports" && currentUserId && (
-          <BugReportTab currentUserId={currentUserId} isAdmin={isAdmin} orgTimezone={orgTimezone} />
+          <BugReportTab currentUserId={currentUserId} isAdmin={canReviewReports} orgTimezone={orgTimezone} />
         )}
       </main>
     </div>
@@ -2685,6 +2688,7 @@ function BugReportTab({
                       reportId={report.id}
                       currentUserId={currentUserId}
                       timezone={orgTimezone}
+                      canDelete={report.status === "submitted"}
                     />
 
                     {/* Only admins can move status — the PATCH route rejects

@@ -25,10 +25,13 @@ export default function BugReportNotes({
   reportId,
   currentUserId,
   timezone,
+  canDelete = false,
 }: {
   reportId: number;
   currentUserId?: string;
   timezone: string;
+  /** Notes can only be removed while the report is still Submitted. */
+  canDelete?: boolean;
 }) {
   const [notes, setNotes] = useState<BugReportNote[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +63,26 @@ export default function BugReportNotes({
   useEffect(() => {
     fetchNotes();
   }, [fetchNotes]);
+
+  const deleteNote = useCallback(
+    async (noteId: number) => {
+      setError(null);
+      try {
+        const res = await fetch(
+          `/api/bug-reports/${reportId}/notes?noteId=${noteId}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          throw new Error(e.error || "Could not delete note");
+        }
+        setNotes((n) => n.filter((note) => note.id !== noteId));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not delete note");
+      }
+    },
+    [reportId]
+  );
 
   const addNote = useCallback(async () => {
     const body = draft.trim();
@@ -132,6 +155,15 @@ export default function BugReportNotes({
                   {note.full_name || "Unknown"}
                 </span>
                 <span className="text-[10px] text-stone">{formatWhen(note.created_at)}</span>
+                {canDelete && note.user_id === currentUserId && (
+                  <button
+                    type="button"
+                    onClick={() => deleteNote(note.id)}
+                    className="ml-auto text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
               {note.body && (
                 <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-espresso">
