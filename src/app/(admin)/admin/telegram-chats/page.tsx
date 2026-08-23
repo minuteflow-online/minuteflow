@@ -6,6 +6,7 @@
 // Access is gated by (admin)/layout.tsx, same as every other admin page.
 
 import TelegramChatLinker from "@/components/TelegramChatLinker";
+import TelegramWebhookButton from "@/components/TelegramWebhookButton";
 
 export const dynamic = "force-dynamic";
 
@@ -198,6 +199,8 @@ export default async function TelegramChatsPage() {
           </div>
         )}
       </div>
+
+      <TelegramWebhookButton active={Boolean(diag.webhookUrl)} />
 
       <TelegramChatLinker chats={groups} />
 
