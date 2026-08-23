@@ -110,6 +110,23 @@ export async function POST(request: NextRequest) {
   return Response.json({ report: data }, { status: 201 });
 }
 
+/** Statuses a report moves through — see ReportStatus in BugReportsAdminTab.
+ *  Kept as a lookup rather than raw values so the chat reads as a sentence and
+ *  an unrecognised status still falls through to something sensible. */
+const STATUS_LABELS: Record<string, string> = {
+  submitted: "Submitted",
+  testing: "In testing",
+  fixed: "Fixed",
+  dismissed: "Dismissed",
+};
+
+const STATUS_EMOJI: Record<string, string> = {
+  submitted: "📥",
+  testing: "🧪",
+  fixed: "✅",
+  dismissed: "🚫",
+};
+
 export async function PATCH(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -217,5 +234,24 @@ export async function PATCH(request: NextRequest) {
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  // Announce a real status move. Compared against the row as it was, so
+  // re-saving the same status — or editing notes and tags — stays silent;
+  // otherwise triage would fill the chat with updates that changed nothing.
+  if (status && status !== existing.status && telegramEnabled("bugs")) {
+    const kind = data.report_type === "feature" ? "Feature request" : "Bug report";
+    const filedBy = data.full_name || data.username || "someone";
+    await sendTelegram(
+      "bugs",
+      [
+        `${STATUS_EMOJI[status] ?? "🔄"} <b>${kind} — ${esc(STATUS_LABELS[status] ?? status)}</b>`,
+        esc(data.title ?? ""),
+        `Filed by ${esc(filedBy)} · was ${esc(STATUS_LABELS[existing.status] ?? existing.status)}`,
+        "",
+        "Review: https://minuteflow.click/admin",
+      ].join("\n")
+    );
+  }
+
   return Response.json({ report: data });
 }
