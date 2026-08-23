@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { sendDriveFilesToTelegram } from "@/lib/driveFetch";
 
 export const dynamic = "force-dynamic";
 
@@ -134,9 +135,19 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
     lines.push("", "Review: https://minuteflow.click/admin");
 
-    await sendTelegram("bugs", lines.join("\n"), {
+    const sent = await sendTelegram("bugs", lines.join("\n"), {
       replyToMessageId: thread?.telegram_message_id ?? undefined,
     });
+
+    // Under the note itself where possible, so the picture sits with the words
+    // that introduced it rather than at the bottom of the report's thread.
+    if (driveFileIds.length > 0) {
+      await sendDriveFilesToTelegram(
+        "bugs",
+        driveFileIds,
+        sent.messageId ?? thread?.telegram_message_id ?? undefined
+      );
+    }
   }
 
   return Response.json({ note: data }, { status: 201 });

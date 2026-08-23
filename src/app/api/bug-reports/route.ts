@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { sendDriveFilesToTelegram } from "@/lib/driveFetch";
 
 export const dynamic = "force-dynamic";
 
@@ -118,6 +119,15 @@ export async function POST(request: NextRequest) {
       if (threadError) {
         console.warn("bug-reports: could not store telegram_message_id", threadError.message);
       }
+    }
+
+    // Screenshots under the report they belong to. A bug is usually easier to
+    // recognise from the picture than the description.
+    const attachments: string[] = Array.isArray(drive_file_ids)
+      ? drive_file_ids.filter((f: unknown): f is string => typeof f === "string")
+      : [];
+    if (attachments.length > 0) {
+      await sendDriveFilesToTelegram("bugs", attachments, sent.messageId);
     }
   }
 

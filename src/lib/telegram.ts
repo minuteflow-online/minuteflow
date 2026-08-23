@@ -130,6 +130,61 @@ export async function sendTelegramTo(
   }
 }
 
+/** Telegram rejects a photo over 10MB. Anything larger is skipped rather than
+ *  failing the send — the text already went out. */
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Upload image bytes to the chat for `topic`.
+ *
+ * Bytes rather than a URL because these come from Drive, which is not public —
+ * Telegram fetching the link itself would get a login page.
+ *
+ * Typically called with the id of the message it belongs under, so the picture
+ * appears as a reply to the alert it illustrates rather than floating loose.
+ */
+export async function sendTelegramPhoto(
+  topic: TelegramTopic,
+  photo: Buffer,
+  filename: string,
+  opts: { replyToMessageId?: number; caption?: string } = {}
+): Promise<{ ok: boolean; messageId?: number; error?: string }> {
+  const chatId = chatIdFor(topic);
+  if (!BOT_TOKEN || !chatId) return { ok: false, error: `telegram not configured for "${topic}"` };
+  if (photo.byteLength > MAX_PHOTO_BYTES) return { ok: false, error: "photo over 10MB" };
+
+  try {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    if (opts.caption) {
+      form.append("caption", opts.caption);
+      form.append("parse_mode", "HTML");
+    }
+    if (opts.replyToMessageId) {
+      form.append(
+        "reply_parameters",
+        JSON.stringify({ message_id: opts.replyToMessageId, allow_sending_without_reply: true })
+      );
+    }
+    form.append("photo", new Blob([new Uint8Array(photo)]), filename);
+
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) return { ok: false, error: await res.text() };
+
+    let messageId: number | undefined;
+    try {
+      messageId = ((await res.json()) as { result?: { message_id?: number } }).result?.message_id;
+    } catch { /* non-fatal */ }
+    return { ok: true, messageId };
+  } catch (err) {
+    console.error(`telegram photo failed (${topic}):`, err);
+    return { ok: false, error: String(err) };
+  }
+}
+
 /**
  * Post to the chat for `topic`. Best-effort: never throws, so a Telegram
  * outage can never fail the request that triggered the alert.
