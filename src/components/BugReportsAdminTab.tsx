@@ -46,6 +46,9 @@ const TYPE_STYLES: Record<ReportType, string> = {
 
 const STATUS_ORDER: ReportStatus[] = ["submitted", "testing", "fixed", "dismissed"];
 
+// Enough to scan a screen of reports without the list running off the page.
+const PAGE_SIZE = 15;
+
 export default function BugReportsAdminTab({
   orgTimezone,
   currentUserId,
@@ -64,6 +67,7 @@ export default function BugReportsAdminTab({
   // Archived reports are kept out of the working list entirely rather than
   // being one more status to filter past.
   const [showArchived, setShowArchived] = useState(false);
+  const [page, setPage] = useState(1);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -149,6 +153,13 @@ export default function BugReportsAdminTab({
   const archivedCount = reports.filter((r) => r.archived_at).length;
   const visible = scoped.filter((r) => statusFilter === "all" || r.status === statusFilter);
 
+  // Clamped rather than reset through an effect: archiving the last report on
+  // the final page shortens the list, and a stale page number would otherwise
+  // leave an empty screen.
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageItems = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
   const countFor = (status: "all" | ReportStatus) =>
     status === "all" ? scoped.length : scoped.filter((r) => r.status === status).length;
 
@@ -169,7 +180,7 @@ export default function BugReportsAdminTab({
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as "all" | ReportType)}
+            onChange={(e) => { setTypeFilter(e.target.value as "all" | ReportType); setPage(1); }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">All types</option>
@@ -178,7 +189,7 @@ export default function BugReportsAdminTab({
           </select>
           <select
             value={reporterFilter}
-            onChange={(e) => setReporterFilter(e.target.value)}
+            onChange={(e) => { setReporterFilter(e.target.value); setPage(1); }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">Everyone</option>
@@ -188,22 +199,11 @@ export default function BugReportsAdminTab({
               </option>
             ))}
           </select>
-          <button
-            onClick={() => setShowArchived((v) => !v)}
-            className={`rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-colors ${
-              showArchived
-                ? "bg-walnut text-white"
-                : "bg-stone/10 text-stone hover:bg-stone/20"
-            }`}
-          >
-            {showArchived ? "Viewing archive" : `Archive (${archivedCount})`}
-          </button>
-
           <div className="flex items-center gap-1.5">
             {(["all", ...STATUS_ORDER] as const).map((value) => (
               <button
                 key={value}
-                onClick={() => setStatusFilter(value)}
+                onClick={() => { setStatusFilter(value); setPage(1); }}
                 className={`rounded-lg px-3 py-1 text-[10px] font-semibold capitalize transition-colors ${
                   statusFilter === value
                     ? "bg-sage text-white"
@@ -214,6 +214,16 @@ export default function BugReportsAdminTab({
               </button>
             ))}
           </div>
+          <button
+            onClick={() => { setShowArchived((v) => !v); setPage(1); }}
+            className={`rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-colors ${
+              showArchived
+                ? "bg-walnut text-white"
+                : "bg-stone/10 text-stone hover:bg-stone/20"
+            }`}
+          >
+            {showArchived ? "Viewing archive" : `Archive (${archivedCount})`}
+          </button>
         </div>
       </div>
 
@@ -234,7 +244,7 @@ export default function BugReportsAdminTab({
           </div>
         ) : (
           <div className="space-y-2">
-            {visible.map((report) => {
+            {pageItems.map((report) => {
               const type = (report.report_type || "bug") as ReportType;
               const isOpen = expandedId === report.id;
               return (
@@ -325,6 +335,34 @@ export default function BugReportsAdminTab({
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <div className="mt-4 flex items-center justify-between border-t border-parchment pt-3">
+            <span className="text-[11px] text-bark">
+              Showing {(safePage - 1) * PAGE_SIZE + 1}&ndash;
+              {Math.min(safePage * PAGE_SIZE, visible.length)} of {visible.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((n) => Math.max(1, n - 1))}
+                disabled={safePage <= 1}
+                className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span className="text-[11px] text-bark">
+                Page {safePage} of {totalPages}
+              </span>
+              <button
+                onClick={() => setPage((n) => Math.min(totalPages, n + 1))}
+                disabled={safePage >= totalPages}
+                className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </div>
