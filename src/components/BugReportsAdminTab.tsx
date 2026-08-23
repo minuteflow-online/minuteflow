@@ -30,6 +30,7 @@ interface BugReport {
   admin_notes: string | null;
   reviewed_at: string | null;
   tags: string[] | null;
+  dismiss_reason: string | null;
   handled_by_name: string | null;
   archived_at: string | null;
   created_at: string;
@@ -74,6 +75,9 @@ export default function BugReportsAdminTab({
   const [updating, setUpdating] = useState<Record<number, boolean>>({});
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
+  // Which report is mid-dismissal, and the reason being typed for it.
+  const [dismissingId, setDismissingId] = useState<number | null>(null);
+  const [dismissReason, setDismissReason] = useState("");
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -94,14 +98,14 @@ export default function BugReportsAdminTab({
     fetchReports();
   }, [fetchReports]);
 
-  const updateStatus = useCallback(async (id: number, status: ReportStatus) => {
+  const updateStatus = useCallback(async (id: number, status: ReportStatus, reason?: string) => {
     setUpdating((u) => ({ ...u, [id]: true }));
     setError(null);
     try {
       const res = await fetch(`/api/bug-reports?id=${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(reason ? { status, dismiss_reason: reason } : { status }),
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
@@ -109,7 +113,13 @@ export default function BugReportsAdminTab({
       }
       // Updated in place rather than refetched: a refetch re-applies the status
       // filter, and the row just moved would vanish from under the cursor.
-      setReports((rs) => rs.map((r) => (r.id === id ? { ...r, status } : r)));
+      setReports((rs) =>
+        rs.map((r) =>
+          r.id === id
+            ? { ...r, status, dismiss_reason: status === "dismissed" ? reason ?? null : null }
+            : r
+        )
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update status");
     } finally {
@@ -252,6 +262,7 @@ export default function BugReportsAdminTab({
             <option value="archived">Archived ({countFor("archived")})</option>
           </select>
         </div>
+
       </div>
 
       <div className="p-5">
@@ -364,7 +375,14 @@ export default function BugReportsAdminTab({
                           <button
                             key={status}
                             disabled={updating[report.id] || report.status === status}
-                            onClick={() => updateStatus(report.id, status)}
+                            onClick={() => {
+                              if (status === "dismissed") {
+                                setDismissReason("");
+                                setDismissingId(report.id);
+                                return;
+                              }
+                              updateStatus(report.id, status);
+                            }}
                             className={`rounded-lg px-3 py-1 text-[10px] font-semibold capitalize transition-colors disabled:opacity-50 ${
                               report.status === status
                                 ? "bg-sage text-white"
@@ -383,6 +401,47 @@ export default function BugReportsAdminTab({
                           {report.archived_at ? "Restore" : "Archive"}
                         </button>
                       </div>
+
+                      {dismissingId === report.id && (
+                        <div className="mt-2 rounded-lg border border-sand bg-cream p-2">
+                          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                            Why is this being dismissed?
+                          </label>
+                          <textarea
+                            autoFocus
+                            value={dismissReason}
+                            onChange={(e) => setDismissReason(e.target.value)}
+                            rows={2}
+                            placeholder="The requester sees this — say what was decided and why."
+                            className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+                          />
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <button
+                              disabled={!dismissReason.trim() || updating[report.id]}
+                              onClick={async () => {
+                                await updateStatus(report.id, "dismissed", dismissReason.trim());
+                                setDismissingId(null);
+                                setDismissReason("");
+                              }}
+                              className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white hover:bg-sage/90 disabled:opacity-50"
+                            >
+                              Dismiss report
+                            </button>
+                            <button
+                              onClick={() => { setDismissingId(null); setDismissReason(""); }}
+                              className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone hover:bg-stone/20"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {report.status === "dismissed" && report.dismiss_reason && (
+                        <p className="mt-2 rounded-lg border border-stone/20 bg-stone/5 px-2 py-1.5 text-[11px] text-bark">
+                          <span className="font-semibold text-espresso">Dismissed:</span>{" "}
+                          {report.dismiss_reason}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

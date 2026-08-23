@@ -2255,6 +2255,7 @@ interface BugReport {
   description: string;
   report_date: string;
   status: "submitted" | "testing" | "fixed" | "dismissed";
+  dismiss_reason: string | null;
   handled_by_name: string | null;
   archived_at: string | null;
   tags: string[] | null;
@@ -2299,6 +2300,8 @@ function BugReportTab({
   const [statusFilter, setStatusFilter] = useState<"all" | BugReport["status"] | "archived">("submitted");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
+  const [dismissingId, setDismissingId] = useState<number | null>(null);
+  const [dismissReason, setDismissReason] = useState("");
   const [reporterFilter, setReporterFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [statusUpdating, setStatusUpdating] = useState<Record<number, boolean>>({});
@@ -2370,13 +2373,13 @@ function BugReportTab({
     );
   }, []);
 
-  const handleStatusChange = useCallback(async (id: number, status: string) => {
+  const handleStatusChange = useCallback(async (id: number, status: string, reason?: string) => {
     setStatusUpdating((s) => ({ ...s, [id]: true }));
     setStatusError(null);
     const res = await fetch(`/api/bug-reports?id=${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(reason ? { status, dismiss_reason: reason } : { status }),
     });
     setStatusUpdating((s) => ({ ...s, [id]: false }));
     if (!res.ok) {
@@ -2678,7 +2681,14 @@ function BugReportTab({
                         <select
                           value={report.status}
                           disabled={!!statusUpdating[report.id]}
-                          onChange={(e) => handleStatusChange(report.id, e.target.value)}
+                          onChange={(e) => {
+                            if (e.target.value === "dismissed") {
+                              setDismissReason("");
+                              setDismissingId(report.id);
+                              return;
+                            }
+                            handleStatusChange(report.id, e.target.value);
+                          }}
                           className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
                         >
                           <option value="submitted">{statusLabels.submitted}</option>
@@ -2697,6 +2707,48 @@ function BugReportTab({
                           <div className="h-3.5 w-3.5 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
                         )}
                       </div>
+                    )}
+
+                    {dismissingId === report.id && (
+                      <div className="rounded-lg border border-sand bg-cream p-2">
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                          Why is this being dismissed?
+                        </label>
+                        <textarea
+                          autoFocus
+                          value={dismissReason}
+                          onChange={(e) => setDismissReason(e.target.value)}
+                          rows={2}
+                          placeholder="The requester sees this — say what was decided and why."
+                          className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+                        />
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <button
+                            disabled={!dismissReason.trim() || !!statusUpdating[report.id]}
+                            onClick={async () => {
+                              await handleStatusChange(report.id, "dismissed", dismissReason.trim());
+                              setDismissingId(null);
+                              setDismissReason("");
+                            }}
+                            className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white hover:bg-sage/90 disabled:opacity-50"
+                          >
+                            Dismiss report
+                          </button>
+                          <button
+                            onClick={() => { setDismissingId(null); setDismissReason(""); }}
+                            className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone hover:bg-stone/20"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {report.status === "dismissed" && report.dismiss_reason && (
+                      <p className="rounded-lg border border-stone/20 bg-stone/5 px-2 py-1.5 text-[11px] text-bark">
+                        <span className="font-semibold text-espresso">Dismissed:</span>{" "}
+                        {report.dismiss_reason}
+                      </p>
                     )}
                   </div>
                 )}
