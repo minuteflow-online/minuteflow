@@ -2179,7 +2179,8 @@ interface BugReport {
   title: string;
   description: string;
   report_date: string;
-  status: "submitted" | "testing" | "fixed";
+  status: "submitted" | "testing" | "fixed" | "dismissed";
+  archived_at: string | null;
   drive_file_ids: string[];
   admin_notes: string | null;
   reviewed_at: string | null;
@@ -2190,6 +2191,7 @@ const BUG_STATUS_STYLES: Record<string, { bg: string; text: string; border: stri
   submitted: { bg: "bg-amber-soft",      text: "text-amber",      border: "border-amber-200"    },
   testing:   { bg: "bg-slate-blue-soft", text: "text-slate-blue", border: "border-slate-blue/20" },
   fixed:     { bg: "bg-sage-soft",       text: "text-sage",       border: "border-sage/20"       },
+  dismissed: { bg: "bg-stone/10",         text: "text-stone",      border: "border-stone/20"      },
 };
 
 const REPORT_TYPE_STYLES: Record<ReportType, { bg: string; text: string; border: string }> = {
@@ -2251,7 +2253,10 @@ function BugReportTab({
   // Type first, so the status counts describe the list you're actually looking
   // at rather than the whole table.
   const typeScopedReports = reports.filter(
-    (r) => typeFilter === "all" || (r.report_type || "bug") === typeFilter
+    // Archived reports are filed away by a reviewer; the portal has no archive
+    // view to send anyone to, so they drop out of the requester's list.
+    (r) =>
+      !r.archived_at && (typeFilter === "all" || (r.report_type || "bug") === typeFilter)
   );
   const visibleReports = typeScopedReports.filter(
     (r) => statusFilter === "all" || r.status === statusFilter
@@ -2297,6 +2302,7 @@ function BugReportTab({
           { value: "submitted" as const, label: "Submitted" },
           { value: "testing" as const,   label: "Reviewing" },
           { value: "fixed" as const,     label: "Fixed" },
+          { value: "dismissed" as const, label: "Dismissed" },
           { value: "all" as const,       label: "All" },
         ]).map(({ value, label }) => {
           const count = value === "all"
