@@ -36,6 +36,7 @@ type TemplateRow = {
   end_date?: string | null;
   review_required?: boolean | null;
   is_active: boolean;
+  paused_until?: string | null;
 };
 
 function serviceClient() {
@@ -161,10 +162,29 @@ async function handleCron(request: NextRequest) {
   // Tops up the same window the save-time generation fills. Both go through
   // generateOccurrences, so "when does a recurring task appear" has one answer
   // and a re-run converges instead of duplicating.
+  // A pause whose date has passed ends here, so nobody has to remember to
+  // press Resume. Generation would resume on its own either way — fallsOn only
+  // suppresses dates inside the window — but the template would sit there
+  // labelled Paused while quietly producing tasks.
+  const expired = ((templates ?? []) as TemplateRow[]).filter(
+    (t) => !t.is_active && t.paused_until && t.paused_until < today
+  );
+  for (const template of expired) {
+    await supabase
+      .from("recurring_task_templates")
+      .update({ is_active: true, paused_until: null })
+      .eq("id", template.id);
+    template.is_active = true;
+    template.paused_until = null;
+  }
+
   let created = 0;
   const createdTemplates: string[] = [];
   for (const template of (templates ?? []) as TemplateRow[]) {
-    if (!template.is_active) continue;
+    // Paused templates still go through: a pause with an end date lets the
+    // dates after it generate, and generateOccurrences is what knows the
+    // difference. Only an open-ended pause produces nothing.
+    if (!template.is_active && !template.paused_until) continue;
     const result = await generateOccurrences(
       supabase,
       template as unknown as Parameters<typeof generateOccurrences>[1],

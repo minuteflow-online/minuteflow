@@ -28,6 +28,10 @@ export type RecurrenceType =
 export type OccurrenceTemplate = {
   id: string;
   is_active: boolean;
+  /** A pause with an end date. Dates up to and including this one are skipped;
+   *  after it the schedule resumes on its own. Null while paused means paused
+   *  indefinitely, which is what an is_active=false template used to mean. */
+  paused_until?: string | null;
   start_date?: string | null;
   repeat_until?: string | null;
   recurrence_type: RecurrenceType | string;
@@ -54,7 +58,12 @@ function monthsBetween(a: string, b: string): number {
 
 /** Whether a template lands on a given date. */
 export function fallsOn(template: OccurrenceTemplate, date: string): boolean {
-  if (!template.is_active) return false;
+  // Paused. With an end date the pause is a window rather than a stop, so
+  // dates past it still land — the schedule restarts itself and nobody has to
+  // remember to press Resume.
+  if (!template.is_active && (!template.paused_until || date <= template.paused_until)) {
+    return false;
+  }
   if (!template.start_date || date < template.start_date) return false;
   if (template.repeat_until && date > template.repeat_until) return false;
 

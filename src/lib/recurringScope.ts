@@ -138,3 +138,46 @@ export async function removeOccurrences(
 
   return siblings.length;
 }
+
+/**
+ * Clear the occurrences a pause covers.
+ *
+ * Pre-generating the calendar means a pause that only stops future generation
+ * changes nothing you can see — the next two months are already sitting there.
+ * So pausing takes them back out, from today through the end of the pause
+ * (everything from today on, if the pause is open-ended).
+ *
+ * These are hard deletes, deliberately. A soft delete is a tombstone and the
+ * generator treats those dates as taken forever, so pressing Resume early would
+ * come back to a schedule full of holes. A pause is meant to be reversible;
+ * removing a single date is the decision that sticks.
+ *
+ * Dates already worked on are left alone, same as every other series-wide
+ * change.
+ */
+export async function clearPausedWindow(
+  supabase: MinimalClient,
+  templateId: string,
+  fromDate: string,
+  until: string | null
+): Promise<number> {
+  let query = supabase
+    .from("assigned_tasks")
+    .select("id, status")
+    .eq("recurring_template_id", templateId)
+    .is("deleted_at", null)
+    .gte("due_date", fromDate);
+  if (until) query = query.lte("due_date", until);
+
+  const { data } = await query;
+  const clearable = ((data ?? []) as { id: number; status: string }[]).filter(
+    (task) => !UNTOUCHABLE.includes(task.status)
+  );
+
+  for (const task of clearable) {
+    await supabase.from("assigned_task_assignees").delete().eq("assigned_task_id", task.id);
+    await supabase.from("assigned_tasks").delete().eq("id", task.id);
+  }
+
+  return clearable.length;
+}

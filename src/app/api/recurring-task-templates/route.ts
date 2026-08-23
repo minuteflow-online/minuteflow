@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { clearPausedWindow } from "@/lib/recurringScope";
 import { generateOccurrences } from "@/lib/recurringOccurrences";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
@@ -300,6 +301,7 @@ export async function POST(request: Request) {
     recurrence_days: null,
     recurrence_day_of_month: resolvedDayOfMonth,
     is_active: booleanOrDefault(body.is_active, true),
+    paused_until: stringOrNull(body.paused_until),
     created_by: user.id,
   };
 
@@ -422,7 +424,13 @@ ${existingText}` : addition;
       updates.recurrence_day_of_month = null;
     }
   }
-  if (body.is_active !== undefined) updates.is_active = booleanOrDefault(body.is_active, true);
+  if (body.paused_until !== undefined) updates.paused_until = stringOrNull(body.paused_until);
+  // Resuming always clears the end date, so a template can never come back
+  // active while still carrying the date it was paused until.
+  if (body.is_active !== undefined) {
+    updates.is_active = booleanOrDefault(body.is_active, true);
+    if (updates.is_active === true) updates.paused_until = null;
+  }
   if (body.is_paused !== undefined) updates.is_active = !booleanOrDefault(body.is_paused, false);
 
   const supabase = serviceClient();
@@ -445,6 +453,16 @@ ${existingText}` : addition;
   // generateOccurrences skips dates that already exist, so the two converge.
   try {
     const todayStr = new Date().toISOString().slice(0, 10);
+    const saved = templates[0] as unknown as { is_active: boolean; paused_until: string | null };
+    if (saved.is_active === false) {
+      // A pause has to take the dates back off the calendar too. Stopping
+      // future generation alone would change nothing anyone can see, because
+      // the next two months were already written when the template was saved.
+      await clearPausedWindow(serviceClient(), id, todayStr, saved.paused_until ?? null);
+    }
+    // Runs even while paused: fallsOn skips every date inside the pause window,
+    // so this only fills in the ones after it ends — and on Resume it puts the
+    // whole window back.
     await generateOccurrences(serviceClient(), templates[0] as never, todayStr);
   } catch {
     // Never fail the save over generation — the cron will catch up.

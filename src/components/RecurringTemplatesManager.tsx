@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import TaskEditor from "@/components/TaskEditor";
 import ColumnHeader from "@/components/table/ColumnHeader";
+import PauseTemplateDialog from "@/components/ui/PauseTemplateDialog";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { orgWallClockToUtc, RECURRENCE_OPTIONS, type RecurrenceType } from "@/lib/taskSchedule";
 import type { Profile, RecurringTaskTemplate } from "@/types/database";
@@ -299,6 +300,29 @@ export default function RecurringTemplatesManager({
     setEditingTemplate(null);
     setNotice(null);
   }, []);
+  const [pausing, setPausing] = useState<RecurringTaskTemplate | null>(null);
+
+  const setPaused = useCallback(
+    async (template: RecurringTaskTemplate, pausedUntil: string | null) => {
+      try {
+        const res = await fetch(`/api/recurring-task-templates?id=${template.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: template.id, is_active: false, paused_until: pausedUntil }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        setPausing(null);
+        onRefresh();
+      } catch (error) {
+        setNotice({ type: "error", text: error instanceof Error ? error.message : "Failed to pause template." });
+      }
+    },
+    [onRefresh]
+  );
+
   const toggleActive = useCallback(
     async (template: RecurringTaskTemplate) => {
       try {
@@ -504,7 +528,11 @@ export default function RecurringTemplatesManager({
                     </td>
                     <td className="px-3 py-3">
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusClass}`}>
-                        {template.is_active ? "Active" : "Paused"}
+                        {template.is_active
+                          ? "Active"
+                          : template.paused_until
+                            ? `Paused until ${formatDate(template.paused_until, orgTimezone)}`
+                            : "Paused"}
                       </span>
                     </td>
                     <td className="px-3 py-3 text-[13px] text-walnut">{formatDate(template.start_date, orgTimezone)}</td>
@@ -526,7 +554,9 @@ export default function RecurringTemplatesManager({
                           Edit
                         </button>
                         <button
-                          onClick={() => void toggleActive(template)}
+                          onClick={() =>
+                            template.is_active ? setPausing(template) : void toggleActive(template)
+                          }
                           className="rounded-lg border border-sand px-3 py-1.5 text-[12px] text-walnut hover:border-walnut cursor-pointer"
                         >
                           {template.is_active ? "Pause" : "Resume"}
@@ -625,6 +655,14 @@ export default function RecurringTemplatesManager({
             </div>
           </div>
         </div>
+      )}
+
+      {pausing && (
+        <PauseTemplateDialog
+          templateName={pausing.title}
+          onConfirm={(pausedUntil) => void setPaused(pausing, pausedUntil)}
+          onCancel={() => setPausing(null)}
+        />
       )}
     </div>
   );

@@ -614,6 +614,8 @@ export interface RecurringTaskTemplate {
   recurrence_day_of_month: number | null;
   is_active: boolean;
   is_paused?: boolean;
+  /** Set with a pause to say when it ends. Null while paused means indefinite. */
+  paused_until?: string | null;
   created_by?: string | null;
   created_at: string;
   updated_at: string;
