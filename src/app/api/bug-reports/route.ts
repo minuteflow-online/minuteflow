@@ -319,6 +319,17 @@ export async function PATCH(request: NextRequest) {
       `Filed by ${esc(filedBy)} · was ${esc(STATUS_LABELS[existing.status] ?? existing.status)}`,
     ];
 
+    // Why it was dismissed is the whole point of the message. It is new
+    // information rather than a repeat of the filing, so it goes out whether
+    // or not this ends up threaded.
+    const dismissReason = (data.dismiss_reason ?? "").trim();
+    if (status === "dismissed" && dismissReason) {
+      lines.push(
+        "",
+        `Reason: ${esc(dismissReason.length > 400 ? dismissReason.slice(0, 400) + "…" : dismissReason)}`
+      );
+    }
+
     // The original wording is only repeated when this cannot be threaded. As a
     // reply the filing is right there above it, so restating it is noise — but
     // an older report posts standalone, and "Fixed" with no context is useless.
