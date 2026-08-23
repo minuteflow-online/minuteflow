@@ -253,16 +253,20 @@ export async function PATCH(request: NextRequest) {
   if (status && status !== existing.status && telegramEnabled("bugs")) {
     const kind = data.report_type === "feature" ? "Feature request" : "Bug report";
     const filedBy = data.full_name || data.username || "someone";
-    await sendTelegram(
-      "bugs",
-      [
-        `${STATUS_EMOJI[status] ?? "🔄"} <b>${kind} — ${esc(STATUS_LABELS[status] ?? status)}</b>`,
-        esc(data.title ?? ""),
-        `Filed by ${esc(filedBy)} · was ${esc(STATUS_LABELS[existing.status] ?? existing.status)}`,
-        "",
-        "Review: https://minuteflow.click/admin",
-      ].join("\n")
-    );
+    // The original wording travels with the update. Reading "Fixed" weeks later
+    // means nothing without the thing that was being fixed, and nobody wants to
+    // open the admin panel to remember which report this was.
+    const detail = (data.description ?? "").trim();
+    const lines = [
+      `${STATUS_EMOJI[status] ?? "🔄"} <b>${kind} — ${esc(STATUS_LABELS[status] ?? status)}</b>`,
+      esc(data.title ?? ""),
+      `Filed by ${esc(filedBy)} · was ${esc(STATUS_LABELS[existing.status] ?? existing.status)}`,
+    ];
+    if (detail) {
+      lines.push("", esc(detail.length > 400 ? detail.slice(0, 400) + "…" : detail));
+    }
+    lines.push("", "Review: https://minuteflow.click/admin");
+    await sendTelegram("bugs", lines.join("\n"));
   }
 
   return Response.json({ report: data });

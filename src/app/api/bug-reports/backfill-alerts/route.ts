@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 
   const { data: reports, error } = await supabase
     .from("bug_reports")
-    .select("id, report_type, status, title, full_name, username, reviewed_at")
+    .select("id, report_type, status, title, description, full_name, username, reviewed_at")
     .neq("status", "submitted")
     .order("reviewed_at", { ascending: true, nullsFirst: false });
 
@@ -70,16 +70,19 @@ export async function GET(request: NextRequest) {
   for (const r of pending) {
     const kind = r.report_type === "feature" ? "Feature request" : "Bug report";
     const filedBy = r.full_name || r.username || "someone";
-    const result = await sendTelegram(
-      "bugs",
-      [
-        `${STATUS_EMOJI[r.status] ?? "🔄"} <b>${kind} — ${esc(STATUS_LABELS[r.status] ?? r.status)}</b>`,
-        esc(r.title ?? ""),
-        `Filed by ${esc(filedBy)}`,
-        "",
-        "Review: https://minuteflow.click/admin",
-      ].join("\n")
-    );
+    // Same shape as a live status change, original wording included — these are
+    // old reports, so the title alone is unlikely to jog anyone's memory.
+    const detail = (r.description ?? "").trim();
+    const lines = [
+      `${STATUS_EMOJI[r.status] ?? "🔄"} <b>${kind} — ${esc(STATUS_LABELS[r.status] ?? r.status)}</b>`,
+      esc(r.title ?? ""),
+      `Filed by ${esc(filedBy)}`,
+    ];
+    if (detail) {
+      lines.push("", esc(detail.length > 400 ? detail.slice(0, 400) + "…" : detail));
+    }
+    lines.push("", "Review: https://minuteflow.click/admin");
+    const result = await sendTelegram("bugs", lines.join("\n"));
     if (result.ok) sent.push(r.id);
   }
 
