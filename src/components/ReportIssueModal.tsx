@@ -42,6 +42,21 @@ export function IdeaIcon({ className }: { className?: string }) {
   );
 }
 
+// Offered as one-click chips so topics converge on a shared vocabulary — free
+// text alone gives you "timelog", "time log" and "time-log" within a week.
+export const REPORT_TAG_SUGGESTIONS = [
+  "screenshots",
+  "timelog",
+  "tasks",
+  "invoices",
+  "payroll",
+  "portal",
+  "admin",
+  "extension",
+  "reports",
+  "login",
+] as const;
+
 const PLACEHOLDERS: Record<ReportType, { title: string; description: string }> = {
   bug: {
     title: "Brief description of the issue",
@@ -73,6 +88,7 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
   const [description, setDescription] = useState("");
   const [reportDate, setReportDate] = useState(new Date().toISOString().split("T")[0]);
   const [files, setFiles] = useState<File[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -103,6 +119,7 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
         description: description.trim(),
         report_date: reportDate,
         drive_file_ids: driveFileIds,
+        tags,
       }),
     });
     setSubmitting(false);
@@ -115,7 +132,7 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
       const e = await res.json().catch(() => ({}));
       setError(e.error || "Failed to submit");
     }
-  }, [reportType, title, description, reportDate, files, onSubmitted, onClose]);
+  }, [reportType, title, description, reportDate, files, tags, onSubmitted, onClose]);
 
   const ph = PLACEHOLDERS[reportType];
 
@@ -188,6 +205,35 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
               placeholder={ph.description}
               className="w-full resize-none rounded-lg border border-sand bg-white px-3 py-2 text-[13px] text-espresso outline-none focus:border-terracotta"
             />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold tracking-wide text-walnut">
+              Topics <span className="font-normal text-stone">(optional)</span>
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {REPORT_TAG_SUGGESTIONS.map((tag) => {
+                const on = tags.includes(tag);
+                return (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() =>
+                      setTags((current) =>
+                        on ? current.filter((t) => t !== tag) : [...current, tag]
+                      )
+                    }
+                    className={`rounded-full px-2.5 py-1 text-[10px] font-semibold capitalize transition-colors ${
+                      on
+                        ? "bg-slate-blue text-white"
+                        : "bg-stone/10 text-stone hover:bg-stone/20"
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* A date only means something for a bug — it's when it happened. */}

@@ -28,6 +28,7 @@ interface BugReport {
   drive_file_ids: string[] | null;
   admin_notes: string | null;
   reviewed_at: string | null;
+  tags: string[] | null;
   archived_at: string | null;
   created_at: string;
 }
@@ -67,6 +68,7 @@ export default function BugReportsAdminTab({
   // Archived reports are kept out of the working list entirely rather than
   // being one more status to filter past.
   const [showArchived, setShowArchived] = useState(false);
+  const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
 
   const fetchReports = useCallback(async () => {
@@ -136,6 +138,13 @@ export default function BugReportsAdminTab({
     }
   }, []);
 
+  // Built from tags actually in use, not a fixed vocabulary — a topic nobody
+  // has tagged is a filter nobody needs.
+  const allTags = useMemo(
+    () => Array.from(new Set(reports.flatMap((r) => r.tags ?? []))).sort((a, b) => a.localeCompare(b)),
+    [reports]
+  );
+
   const reporters = useMemo(() => {
     const names = new Map<string, string>();
     reports.forEach((r) => names.set(r.user_id, r.full_name || r.username || "Unknown"));
@@ -148,7 +157,8 @@ export default function BugReportsAdminTab({
     (r) =>
       Boolean(r.archived_at) === showArchived &&
       (typeFilter === "all" || (r.report_type || "bug") === typeFilter) &&
-      (reporterFilter === "all" || r.user_id === reporterFilter)
+      (reporterFilter === "all" || r.user_id === reporterFilter) &&
+      (tagFilter === "all" || (r.tags ?? []).includes(tagFilter))
   );
   const archivedCount = reports.filter((r) => r.archived_at).length;
   const visible = scoped.filter((r) => statusFilter === "all" || r.status === statusFilter);
@@ -199,21 +209,34 @@ export default function BugReportsAdminTab({
               </option>
             ))}
           </select>
-          <div className="flex items-center gap-1.5">
-            {(["all", ...STATUS_ORDER] as const).map((value) => (
-              <button
-                key={value}
-                onClick={() => { setStatusFilter(value); setPage(1); }}
-                className={`rounded-lg px-3 py-1 text-[10px] font-semibold capitalize transition-colors ${
-                  statusFilter === value
-                    ? "bg-sage text-white"
-                    : "bg-stone/10 text-stone hover:bg-stone/20"
-                }`}
-              >
-                {value} ({countFor(value)})
-              </button>
+          {allTags.length > 0 && (
+            <select
+              value={tagFilter}
+              onChange={(e) => { setTagFilter(e.target.value); setPage(1); }}
+              className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+            >
+              <option value="all">All topics</option>
+              {allTags.map((tag) => (
+                <option key={tag} value={tag} className="capitalize">
+                  {tag}
+                </option>
+              ))}
+            </select>
+          )}
+          {/* Dropdown rather than pills: five statuses plus the type and
+              reporter selects wrapped onto a second row at normal widths. */}
+          <select
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value as "all" | ReportStatus); setPage(1); }}
+            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+          >
+            <option value="all">All statuses ({countFor("all")})</option>
+            {STATUS_ORDER.map((status) => (
+              <option key={status} value={status} className="capitalize">
+                {status.charAt(0).toUpperCase() + status.slice(1)} ({countFor(status)})
+              </option>
             ))}
-          </div>
+          </select>
           <button
             onClick={() => { setShowArchived((v) => !v); setPage(1); }}
             className={`rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-colors ${
@@ -259,6 +282,14 @@ export default function BugReportsAdminTab({
                       {type}
                     </span>
                     <span className="text-[13px] font-semibold text-espresso">{report.title}</span>
+                    {(report.tags ?? []).map((tag) => (
+                      <span
+                        key={tag}
+                        className="shrink-0 rounded-full bg-slate-blue-soft px-1.5 py-[1px] text-[9px] font-semibold capitalize text-slate-blue"
+                      >
+                        {tag}
+                      </span>
+                    ))}
                     <span className="text-[11px] text-bark">
                       {report.full_name || report.username || "Unknown"}
                     </span>

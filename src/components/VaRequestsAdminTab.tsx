@@ -43,7 +43,8 @@ export default function VaRequestsAdminTab() {
   const [loading, setLoading] = useState(true);
   const [adminNotes, setAdminNotes] = useState<Record<number, string>>({});
   const [processing, setProcessing] = useState<Record<string, boolean>>({});
-  const [filter, setFilter] = useState<"pending" | "all">("pending");
+  const [filter, setFilter] = useState<"all" | RequestStatus>("pending");
+  const [requesterFilter, setRequesterFilter] = useState<string>("all");
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
@@ -70,24 +71,51 @@ export default function VaRequestsAdminTab() {
     setProcessing((p) => ({ ...p, [key]: false }));
   }, [adminNotes, fetchRequests]);
 
-  const pendingCount = requests.filter((r) => r.status === "pending").length;
-  const filtered = filter === "pending" ? requests.filter((r) => r.status === "pending") : requests;
+  const requesters = Array.from(
+    new Map(requests.map((r) => [r.user_id, r.requester_name || "Unknown"])).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]));
+
+  // Requester narrows first so the status counts describe the person on screen.
+  const byRequester = requests.filter(
+    (r) => requesterFilter === "all" || r.user_id === requesterFilter
+  );
+  const filtered = byRequester.filter((r) => filter === "all" || r.status === filter);
+  const countFor = (status: "all" | RequestStatus) =>
+    status === "all"
+      ? byRequester.length
+      : byRequester.filter((r) => r.status === status).length;
 
   return (
     <div className="max-w-4xl space-y-6">
       {/* Filter bar */}
       <div className="flex items-center gap-2 flex-wrap">
-        {(["pending", "all"] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded-lg text-[12px] font-medium border transition-all cursor-pointer ${
-              filter === f ? "bg-terracotta text-white border-terracotta" : "bg-white text-walnut border-sand hover:border-terracotta"
-            }`}
-          >
-            {f === "pending" ? `Pending (${pendingCount})` : `All (${requests.length})`}
-          </button>
-        ))}
+        {/* Dropdowns rather than a row of pills: with four statuses and a name
+            per teammate, buttons wrap into a block that pushes the list down. */}
+        <select
+          value={filter}
+          onChange={(e) => setFilter(e.target.value as "all" | RequestStatus)}
+          className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+        >
+          <option value="all">All statuses ({countFor("all")})</option>
+          {(Object.keys(STATUS_STYLES) as RequestStatus[]).map((status) => (
+            <option key={status} value={status}>
+              {STATUS_STYLES[status].label} ({countFor(status)})
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={requesterFilter}
+          onChange={(e) => setRequesterFilter(e.target.value)}
+          className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+        >
+          <option value="all">Everyone</option>
+          {requesters.map(([id, name]) => (
+            <option key={id} value={id}>
+              {name}
+            </option>
+          ))}
+        </select>
       </div>
 
       {loading && (

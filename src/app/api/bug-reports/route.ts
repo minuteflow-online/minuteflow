@@ -5,6 +5,21 @@ import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Tags are free text, so they are lowercased and de-duplicated on the way in —
+ * otherwise "Invoices", "invoices" and " invoices" become three separate topics
+ * and filtering by any one of them misses the others.
+ */
+function normalizeTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const cleaned = value
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, 10);
+  return Array.from(new Set(cleaned));
+}
+
 export async function GET() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -45,7 +60,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   const body = await request.json();
-  const { title, description, report_date, drive_file_ids, report_type } = body;
+  const { title, description, report_date, drive_file_ids, report_type, tags } = body;
 
   if (!title?.trim() || !description?.trim()) {
     return Response.json({ error: "title and description are required" }, { status: 400 });
@@ -67,6 +82,7 @@ export async function POST(request: NextRequest) {
       report_date: report_date || new Date().toISOString().split("T")[0],
       status: "submitted",
       drive_file_ids: drive_file_ids || [],
+      tags: normalizeTags(tags),
     })
     .select()
     .single();
@@ -120,7 +136,7 @@ export async function PATCH(request: NextRequest) {
   const isOwner = existing.user_id === user.id;
 
   const body = await request.json();
-  const { status, admin_notes, archived, title, description, drive_file_ids } = body;
+  const { status, admin_notes, archived, title, description, drive_file_ids, tags } = body;
 
   const updates: Record<string, unknown> = {};
 
@@ -128,7 +144,11 @@ export async function PATCH(request: NextRequest) {
   // started on it. Once a reviewer moves it to testing the wording is what they
   // are testing against, so it freezes — anything further goes in the note
   // thread, which stays open to both sides for the life of the report.
-  if (title !== undefined || description !== undefined || drive_file_ids !== undefined) {
+  if (
+    title !== undefined ||
+    description !== undefined ||
+    drive_file_ids !== undefined
+  ) {
     if (!isOwner && !isReviewer) {
       return Response.json({ error: "Forbidden" }, { status: 403 });
     }
@@ -151,6 +171,19 @@ export async function PATCH(request: NextRequest) {
     if (Array.isArray(drive_file_ids)) {
       updates.drive_file_ids = drive_file_ids.filter((f: unknown) => typeof f === "string");
     }
+  }
+
+  // Tagging is triage, so a reviewer can retag at any point in a report's life.
+  // The person who filed it can tag their own while it is still theirs to edit.
+  if (tags !== undefined) {
+    const canTag = isReviewer || (isOwner && existing.status === "submitted");
+    if (!canTag) {
+      return Response.json(
+        { error: "This report can no longer be edited. Add a note instead." },
+        { status: 409 }
+      );
+    }
+    updates.tags = normalizeTags(tags);
   }
 
   // Status, reviewer notes and archiving stay reviewer-only, whether or not the
