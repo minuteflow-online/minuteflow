@@ -2234,6 +2234,38 @@ function BugReportTab({
 
   useEffect(() => { fetchReports(); }, [fetchReports]);
 
+  // A report can be corrected by the person who filed it, but only while it is
+  // still Submitted. Once a reviewer moves it to Testing the wording is what
+  // they are testing against, so it freezes and further detail goes in a note.
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const saveEdit = useCallback(async (id: number) => {
+    setSavingEdit(true);
+    setStatusError(null);
+    try {
+      const res = await fetch(`/api/bug-reports?id=${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: editTitle, description: editDescription }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not save changes");
+      setReports((rs) =>
+        rs.map((r) =>
+          r.id === id ? { ...r, title: editTitle.trim(), description: editDescription.trim() } : r
+        )
+      );
+      setEditingId(null);
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : "Could not save changes");
+    } finally {
+      setSavingEdit(false);
+    }
+  }, [editTitle, editDescription]);
+
   const handleStatusChange = useCallback(async (id: number, status: string) => {
     setStatusUpdating((s) => ({ ...s, [id]: true }));
     setStatusError(null);
@@ -2300,7 +2332,7 @@ function BugReportTab({
         <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mr-1">Status</p>
         {([
           { value: "submitted" as const, label: "Submitted" },
-          { value: "testing" as const,   label: "Reviewing" },
+          { value: "testing" as const,   label: "Testing" },
           { value: "fixed" as const,     label: "Fixed" },
           { value: "dismissed" as const, label: "Dismissed" },
           { value: "all" as const,       label: "All" },
@@ -2380,7 +2412,58 @@ function BugReportTab({
 
                 {isExpanded && (
                   <div className="px-4 pb-4 border-t border-sand space-y-3 pt-3">
-                    <p className="text-xs text-bark leading-relaxed">{report.description}</p>
+                    {editingId === report.id ? (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[13px] font-semibold text-espresso outline-none focus:border-terracotta"
+                        />
+                        <textarea
+                          value={editDescription}
+                          onChange={(e) => setEditDescription(e.target.value)}
+                          rows={4}
+                          className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => saveEdit(report.id)}
+                            disabled={savingEdit || !editTitle.trim() || !editDescription.trim()}
+                            className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white hover:bg-sage/90 disabled:opacity-50"
+                          >
+                            {savingEdit ? "Saving..." : "Save changes"}
+                          </button>
+                          <button
+                            onClick={() => setEditingId(null)}
+                            className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone hover:bg-stone/20"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <p className="text-xs text-bark leading-relaxed">{report.description}</p>
+                        {report.user_id === currentUserId && report.status === "submitted" && (
+                          <button
+                            onClick={() => {
+                              setEditingId(report.id);
+                              setEditTitle(report.title);
+                              setEditDescription(report.description);
+                            }}
+                            className="text-[11px] font-semibold text-slate-blue hover:text-espresso"
+                          >
+                            Edit request
+                          </button>
+                        )}
+                        {report.user_id === currentUserId && report.status !== "submitted" && (
+                          <p className="text-[10px] italic text-stone">
+                            Locked — this is being worked on. Add a note below instead.
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {report.drive_file_ids && report.drive_file_ids.length > 0 && (
                       <div>
