@@ -30,6 +30,7 @@ interface BugReport {
   admin_notes: string | null;
   reviewed_at: string | null;
   tags: string[] | null;
+  handled_by_name: string | null;
   archived_at: string | null;
   created_at: string;
 }
@@ -73,6 +74,9 @@ export default function BugReportsAdminTab({
   const [updating, setUpdating] = useState<Record<number, boolean>>({});
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkTag, setBulkTag] = useState("");
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -115,6 +119,47 @@ export default function BugReportsAdminTab({
       setUpdating((u) => ({ ...u, [id]: false }));
     }
   }, []);
+
+  /**
+   * Apply one change to every selected report.
+   *
+   * Sequential rather than parallel: these are a handful of rows at a time, and
+   * a burst of parallel PATCHes against the same table buys nothing a person
+   * would notice while making a partial failure harder to reason about. The
+   * local list is updated per success, so a failure halfway leaves the screen
+   * showing exactly what did land.
+   */
+  const applyToSelected = useCallback(
+    async (patch: (report: BugReport) => Record<string, unknown> | null) => {
+      setBulkBusy(true);
+      setError(null);
+      const ids = Array.from(selected);
+      for (const id of ids) {
+        const report = reports.find((r) => r.id === id);
+        if (!report) continue;
+        const body = patch(report);
+        if (!body) continue;
+        try {
+          const res = await fetch(`/api/bug-reports?id=${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Could not update");
+          setReports((rs) => rs.map((r) => (r.id === id ? { ...r, ...data.report } : r)));
+        } catch (err) {
+          setError(
+            `${err instanceof Error ? err.message : "Could not update"} — stopped at "${report.title}"`
+          );
+          break;
+        }
+      }
+      setBulkBusy(false);
+      setSelected(new Set());
+    },
+    [reports, selected]
+  );
 
   const setArchived = useCallback(async (id: number, archived: boolean) => {
     setUpdating((u) => ({ ...u, [id]: true }));
@@ -261,6 +306,75 @@ export default function BugReportsAdminTab({
           </p>
         )}
 
+          {selected.size > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-sage/30 bg-sage-soft px-3 py-2">
+              <span className="text-[11px] font-semibold text-espresso">
+                {selected.size} selected
+              </span>
+
+              <select
+                disabled={bulkBusy}
+                value=""
+                onChange={(e) => {
+                  const status = e.target.value;
+                  if (status) applyToSelected(() => ({ status }));
+                }}
+                className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none disabled:opacity-50"
+              >
+                <option value="">Set status…</option>
+                {STATUS_ORDER.map((status) => (
+                  <option key={status} value={status} className="capitalize">
+                    {status.charAt(0).toUpperCase() + status.slice(1)}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                list="bulk-topics"
+                value={bulkTag}
+                disabled={bulkBusy}
+                onChange={(e) => setBulkTag(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  const tag = bulkTag.trim().toLowerCase();
+                  if (!tag) return;
+                  setBulkTag("");
+                  // Added to whatever each report already has, never replacing —
+                  // a bulk action that quietly wiped existing topics would be a
+                  // nasty surprise.
+                  applyToSelected((r) =>
+                    (r.tags ?? []).includes(tag) ? null : { tags: [...(r.tags ?? []), tag] }
+                  );
+                }}
+                placeholder="Add topic — press Enter"
+                className="w-[170px] rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none disabled:opacity-50"
+              />
+              <datalist id="bulk-topics">
+                {Array.from(new Set([...allTags])).map((tag) => (
+                  <option key={tag} value={tag} />
+                ))}
+              </datalist>
+
+              <button
+                disabled={bulkBusy}
+                onClick={() => applyToSelected((r) => ({ archived: !r.archived_at }))}
+                className="rounded-lg bg-stone/10 px-2.5 py-1 text-[11px] font-semibold text-stone hover:bg-stone/20 disabled:opacity-50"
+              >
+                {statusFilter === "archived" ? "Restore" : "Archive"}
+              </button>
+
+              <button
+                onClick={() => setSelected(new Set())}
+                className="ml-auto text-[11px] font-semibold text-bark hover:text-espresso"
+              >
+                Clear
+              </button>
+
+              {bulkBusy && <span className="text-[11px] text-bark">Applying…</span>}
+            </div>
+          )}
+
         {loading ? (
           <p className="py-8 text-center text-sm text-bark">Loading reports...</p>
         ) : visible.length === 0 ? (
@@ -276,6 +390,19 @@ export default function BugReportsAdminTab({
               const isOpen = expandedId === report.id;
               return (
                 <div key={report.id} className="rounded-lg border border-sand bg-white">
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(report.id)}
+                      onChange={(e) => {
+                        const next = new Set(selected);
+                        if (e.target.checked) next.add(report.id);
+                        else next.delete(report.id);
+                        setSelected(next);
+                      }}
+                      className="ml-3 h-3.5 w-3.5 shrink-0 accent-sage"
+                      aria-label={`Select ${report.title}`}
+                    />
                   <button
                     onClick={() => setExpandedId(isOpen ? null : report.id)}
                     className="flex w-full flex-wrap items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-cream"
@@ -303,7 +430,13 @@ export default function BugReportsAdminTab({
                     >
                       {report.status}
                     </span>
+                    {report.handled_by_name && (
+                      <span className="shrink-0 text-[10px] text-bark">
+                        {report.handled_by_name}
+                      </span>
+                    )}
                   </button>
+                  </div>
 
                   {isOpen && (
                     <div className="border-t border-parchment px-3 py-3">
