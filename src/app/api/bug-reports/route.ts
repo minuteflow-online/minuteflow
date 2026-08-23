@@ -267,33 +267,34 @@ export async function PATCH(request: NextRequest) {
   if (status && status !== existing.status && telegramEnabled("bugs")) {
     const kind = data.report_type === "feature" ? "Feature request" : "Bug report";
     const filedBy = data.full_name || data.username || "someone";
-    // The original wording travels with the update. Reading "Fixed" weeks later
-    // means nothing without the thing that was being fixed, and nobody wants to
-    // open the admin panel to remember which report this was.
-    const detail = (data.description ?? "").trim();
-    const lines = [
-      `${STATUS_EMOJI[status] ?? "🔄"} <b>${kind} — ${esc(STATUS_LABELS[status] ?? status)}</b>`,
-      esc(data.title ?? ""),
-      `Filed by ${esc(filedBy)} · was ${esc(STATUS_LABELS[existing.status] ?? existing.status)}`,
-    ];
-    if (detail) {
-      lines.push("", esc(detail.length > 400 ? detail.slice(0, 400) + "…" : detail));
-    }
-    lines.push("", "Review: https://minuteflow.click/admin");
-
     // Reply to the message that announced the report, so its whole history
     // reads as one thread. Looked up on its own and tolerated as missing —
-    // reports filed before this existed have no stored id, and those simply
-    // post as standalone messages rather than not posting at all.
+    // reports filed before this existed have no stored id.
     const { data: thread } = await supabase
       .from("bug_reports")
       .select("telegram_message_id")
       .eq("id", Number(id))
       .single();
+    const replyTo = thread?.telegram_message_id ?? undefined;
 
-    await sendTelegram("bugs", lines.join("\n"), {
-      replyToMessageId: thread?.telegram_message_id ?? undefined,
-    });
+    const lines = [
+      `${STATUS_EMOJI[status] ?? "🔄"} <b>${kind} — ${esc(STATUS_LABELS[status] ?? status)}</b>`,
+      esc(data.title ?? ""),
+      `Filed by ${esc(filedBy)} · was ${esc(STATUS_LABELS[existing.status] ?? existing.status)}`,
+    ];
+
+    // The original wording is only repeated when this cannot be threaded. As a
+    // reply the filing is right there above it, so restating it is noise — but
+    // an older report posts standalone, and "Fixed" with no context is useless.
+    if (!replyTo) {
+      const detail = (data.description ?? "").trim();
+      if (detail) {
+        lines.push("", esc(detail.length > 400 ? detail.slice(0, 400) + "…" : detail));
+      }
+    }
+
+    lines.push("", "Review: https://minuteflow.click/admin");
+    await sendTelegram("bugs", lines.join("\n"), { replyToMessageId: replyTo });
   }
 
   return Response.json({ report: data });
