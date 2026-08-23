@@ -52,6 +52,11 @@ export default function BugReportsAdminTab({ orgTimezone }: { orgTimezone: strin
   const [reporterFilter, setReporterFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [updating, setUpdating] = useState<Record<number, boolean>>({});
+  // Note drafts are held per report so switching between two open reports never
+  // carries one person's half-written note onto another's.
+  const [noteDrafts, setNoteDrafts] = useState<Record<number, string>>({});
+  const [savingNote, setSavingNote] = useState<Record<number, boolean>>({});
+  const [savedNote, setSavedNote] = useState<Record<number, boolean>>({});
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -94,6 +99,36 @@ export default function BugReportsAdminTab({ orgTimezone }: { orgTimezone: strin
       setUpdating((u) => ({ ...u, [id]: false }));
     }
   }, []);
+
+  const saveNote = useCallback(
+    async (id: number, note: string) => {
+      setSavingNote((s) => ({ ...s, [id]: true }));
+      setSavedNote((s) => ({ ...s, [id]: false }));
+      setError(null);
+      try {
+        const res = await fetch(`/api/bug-reports?id=${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          // Empty clears the note rather than being ignored, so a note added by
+          // mistake can be taken back off the requester's view.
+          body: JSON.stringify({ admin_notes: note.trim() || null }),
+        });
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          throw new Error(e.error || "Could not save note");
+        }
+        setReports((rs) =>
+          rs.map((r) => (r.id === id ? { ...r, admin_notes: note.trim() || null } : r))
+        );
+        setSavedNote((s) => ({ ...s, [id]: true }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not save note");
+      } finally {
+        setSavingNote((s) => ({ ...s, [id]: false }));
+      }
+    },
+    []
+  );
 
   const reporters = useMemo(() => {
     const names = new Map<string, string>();
@@ -228,6 +263,42 @@ export default function BugReportsAdminTab({ orgTimezone }: { orgTimezone: strin
                           ))}
                         </div>
                       )}
+
+                      {/* Notes are shown to the person who filed the report, in
+                          their portal — this is the reply channel, not a private
+                          scratchpad. */}
+                      <div className="mt-3">
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-walnut">
+                          Note to {report.full_name?.split(" ")[0] || "reporter"}
+                        </label>
+                        <textarea
+                          value={noteDrafts[report.id] ?? report.admin_notes ?? ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setNoteDrafts((d) => ({ ...d, [report.id]: value }));
+                            setSavedNote((s) => ({ ...s, [report.id]: false }));
+                          }}
+                          rows={2}
+                          placeholder="What's happening with this one?"
+                          className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
+                        />
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <button
+                            onClick={() => saveNote(report.id, noteDrafts[report.id] ?? report.admin_notes ?? "")}
+                            disabled={
+                              savingNote[report.id] ||
+                              (noteDrafts[report.id] ?? report.admin_notes ?? "") ===
+                                (report.admin_notes ?? "")
+                            }
+                            className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+                          >
+                            {savingNote[report.id] ? "Saving..." : "Save note"}
+                          </button>
+                          {savedNote[report.id] && (
+                            <span className="text-[10px] text-sage">Saved — visible in their portal</span>
+                          )}
+                        </div>
+                      </div>
 
                       <div className="mt-3 flex items-center gap-2">
                         <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
