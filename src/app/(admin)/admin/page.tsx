@@ -1862,7 +1862,7 @@ export default function AdminPage() {
           )}
 
           {activeTab === "bug_reports" && (
-            <BugReportsAdminTab orgTimezone={orgTimezone} />
+            <BugReportsAdminTab orgTimezone={orgTimezone} currentUserId={currentUserId ?? undefined} />
           )}
           {activeTab === "va_reviews" && (
             <VaReviewsAdminTab />
