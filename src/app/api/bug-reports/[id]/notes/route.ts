@@ -135,9 +135,23 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     }
     lines.push("", "Review: https://minuteflow.click/admin");
 
-    const sent = await sendTelegram("bugs", lines.join("\n"), {
-      replyToMessageId: thread?.telegram_message_id ?? undefined,
-    });
+    const anchor = thread?.telegram_message_id ?? undefined;
+    const sent = await sendTelegram("bugs", lines.join("\n"), { replyToMessageId: anchor });
+
+    // A report announced before threading existed has no message to reply to,
+    // and Telegram offers no way to look up what the bot posted in the past.
+    // So the first alert that finds no anchor becomes one: everything after it
+    // on this report threads under this note instead. Older reports get a
+    // thread starting from their next bit of activity rather than none at all.
+    if (!anchor && sent.messageId) {
+      const { error: anchorError } = await ctx.supabase
+        .from("bug_reports")
+        .update({ telegram_message_id: sent.messageId })
+        .eq("id", Number(id));
+      if (anchorError) {
+        console.warn("bug-report notes: could not store anchor", anchorError.message);
+      }
+    }
 
     // Under the note itself where possible, so the picture sits with the words
     // that introduced it rather than at the bottom of the report's thread.

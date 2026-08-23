@@ -341,7 +341,20 @@ export async function PATCH(request: NextRequest) {
     }
 
     lines.push("", "Review: https://minuteflow.click/admin");
-    await sendTelegram("bugs", lines.join("\n"), { replyToMessageId: replyTo });
+    const sent = await sendTelegram("bugs", lines.join("\n"), { replyToMessageId: replyTo });
+
+    // Same anchoring rule as notes: a report with nothing to reply to adopts
+    // this message as the start of its thread, so a report that predates
+    // threading still gathers one from its next bit of activity onward.
+    if (!replyTo && sent.messageId) {
+      const { error: anchorError } = await supabase
+        .from("bug_reports")
+        .update({ telegram_message_id: sent.messageId })
+        .eq("id", Number(id));
+      if (anchorError) {
+        console.warn("bug-reports: could not store anchor", anchorError.message);
+      }
+    }
   }
 
   return Response.json({ report: data });
