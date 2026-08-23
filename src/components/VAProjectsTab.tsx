@@ -111,6 +111,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [loading, setLoading] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [objectiveOptions, setObjectiveOptions] = useState<Project[]>([]);
+  // Reverse of objectiveOptions: on the Objective tab, the Operations that link
+  // to each objective (read-only here — edited at their origin in Operations).
+  const [linkedOperations, setLinkedOperations] = useState<Project[]>([]);
 
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   // Lighter default view (Figma reference, docs/objective-foundation-feature.md):
@@ -209,6 +212,25 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
         if (res.ok && !cancelled) {
           const d = await res.json();
           setObjectiveOptions(d.projects ?? []);
+        }
+      } catch {
+        // leave empty
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [kind]);
+
+  // Objective tab: load the Operations that support these objectives, so each
+  // objective can show its linked operations (read-only; edited in Operations).
+  useEffect(() => {
+    if (kind !== "objective") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/projects?mine=true&kind=operation", { cache: "no-store" });
+        if (res.ok && !cancelled) {
+          const d = await res.json();
+          setLinkedOperations(d.projects ?? []);
         }
       } catch {
         // leave empty
@@ -529,6 +551,17 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   };
 
   const objectiveNameById = new Map(objectiveOptions.map((o) => [o.id, o.name]));
+  // Group linked operations by the objective they support, for the reverse view.
+  const operationsByObjective = useMemo(() => {
+    const map = new Map<string, Project[]>();
+    for (const op of linkedOperations) {
+      if (!op.linked_objective_id) continue;
+      const list = map.get(op.linked_objective_id) ?? [];
+      list.push(op);
+      map.set(op.linked_objective_id, list);
+    }
+    return map;
+  }, [linkedOperations]);
 
   const openCreateForm = (parentId: string) => {
     setShowCreate(true);
@@ -626,6 +659,20 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-plum-soft text-plum border-plum/20 w-fit">
               Supports: {objectiveNameById.get(project.linked_objective_id) ?? "Objective"}
             </span>
+          )}
+          {kind === "objective" && (operationsByObjective.get(project.id)?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap items-center gap-1">
+              {operationsByObjective.get(project.id)!.map((op) => (
+                <span
+                  key={op.id}
+                  title="Operation · read-only here — edit in Operations"
+                  className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-slate-blue-soft text-slate-blue border-slate-blue/20 w-fit inline-flex items-center gap-1"
+                >
+                  <span className="opacity-60 uppercase tracking-wide text-[8px]">Op</span>
+                  {op.name}
+                </span>
+              ))}
+            </div>
           )}
           {project.description && (
             <p className="text-[11px] text-stone/80 truncate">{project.description}</p>
