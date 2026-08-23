@@ -15,6 +15,7 @@ import ReportIssueModal, {
   type ReportType,
 } from "@/components/ReportIssueModal";
 import BugReportNotes from "@/components/BugReportNotes";
+import BugReportTagEditor from "@/components/BugReportTagEditor";
 import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 
 // ─── Types ───────────────────────────────────────────────────
@@ -2294,13 +2295,10 @@ function BugReportTab({
   const [typeFilter, setTypeFilter] = useState<"all" | ReportType>("all");
   // Opens on Submitted — the reports nobody has picked up yet are the ones
   // worth landing on.
-  const [statusFilter, setStatusFilter] = useState<"all" | BugReport["status"]>("submitted");
+  const [statusFilter, setStatusFilter] = useState<"all" | BugReport["status"] | "archived">("submitted");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [reporterFilter, setReporterFilter] = useState<string>("all");
-  // Only reviewers can archive, so only they have an archive to look at; a VA
-  // stays on the working list and never sees the toggle.
-  const [showArchived, setShowArchived] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [statusUpdating, setStatusUpdating] = useState<Record<number, boolean>>({});
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -2402,14 +2400,16 @@ function BugReportTab({
     // Archived reports are filed away by a reviewer; the portal has no archive
     // view to send anyone to, so they drop out of the requester's list.
     (r) =>
-      Boolean(r.archived_at) === showArchived &&
       (reporterFilter === "all" || r.user_id === reporterFilter) &&
       (typeFilter === "all" || (r.report_type || "bug") === typeFilter) &&
       (tagFilter === "all" || (r.tags ?? []).includes(tagFilter))
   );
-  const visibleReports = typeScopedReports.filter(
-    (r) => statusFilter === "all" || r.status === statusFilter
-  );
+  const visibleReports =
+    statusFilter === "archived"
+      ? typeScopedReports.filter((r) => r.archived_at)
+      : typeScopedReports.filter(
+          (r) => !r.archived_at && (statusFilter === "all" || r.status === statusFilter)
+        );
 
   // Clamped, not reset through an effect: filtering to a shorter list while on
   // a later page would otherwise leave an empty screen.
@@ -2431,25 +2431,15 @@ function BugReportTab({
           + New Report
         </button>
 
-        <div className="flex items-center gap-1.5">
-          {([
-            { value: "all" as const, label: "All" },
-            { value: "bug" as const, label: "Bugs" },
-            { value: "feature" as const, label: "Features" },
-          ]).map(({ value, label }) => (
-            <button
-              key={value}
-              onClick={() => { setTypeFilter(value); setPage(1); }}
-              className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
-                typeFilter === value
-                  ? "bg-terracotta text-white"
-                  : "bg-stone/10 text-stone hover:bg-stone/20"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <select
+          value={typeFilter}
+          onChange={(e) => { setTypeFilter(e.target.value as "all" | ReportType); setPage(1); }}
+          className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
+        >
+          <option value="all">All types</option>
+          <option value="bug">Bugs</option>
+          <option value="feature">Features</option>
+        </select>
         {isAdmin && reportReporters.length > 1 && (
           <select
             value={reporterFilter}
@@ -2463,16 +2453,6 @@ function BugReportTab({
               </option>
             ))}
           </select>
-        )}
-        {isAdmin && (
-          <button
-            onClick={() => { setShowArchived((v) => !v); setPage(1); }}
-            className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-colors ${
-              showArchived ? "bg-walnut text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
-            }`}
-          >
-            {showArchived ? "Viewing archive" : `Archive (${archivedReportCount})`}
-          </button>
         )}
         {reportTags.length > 0 && (
           <select
@@ -2492,32 +2472,39 @@ function BugReportTab({
 
       {/* Status filter — opens on Submitted, so what still needs attention is
           what you land on. */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mr-1">Status</p>
-        {([
-          { value: "submitted" as const, label: "Submitted" },
-          { value: "testing" as const,   label: "Testing" },
-          { value: "fixed" as const,     label: "Fixed" },
-          { value: "dismissed" as const, label: "Dismissed" },
-          { value: "all" as const,       label: "All" },
-        ]).map(({ value, label }) => {
-          const count = value === "all"
-            ? typeScopedReports.length
-            : typeScopedReports.filter((r) => r.status === value).length;
-          return (
-            <button
-              key={value}
-              onClick={() => { setStatusFilter(value); setPage(1); }}
-              className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
-                statusFilter === value
-                  ? "bg-terracotta text-white"
-                  : "bg-stone/10 text-stone hover:bg-stone/20"
-              }`}
-            >
-              {label} ({count})
-            </button>
-          );
-        })}
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Status</p>
+        {/* Archived rides in here rather than as its own toggle: when you are
+            choosing what to look at, it is the same question. */}
+        <select
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value as "all" | BugReport["status"] | "archived");
+            setPage(1);
+          }}
+          className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
+        >
+          {([
+            { value: "submitted" as const, label: "Submitted" },
+            { value: "testing" as const, label: "Testing" },
+            { value: "fixed" as const, label: "Fixed" },
+            { value: "dismissed" as const, label: "Dismissed" },
+            { value: "all" as const, label: "All" },
+          ]).map(({ value, label }) => {
+            const count =
+              value === "all"
+                ? typeScopedReports.filter((r) => !r.archived_at).length
+                : typeScopedReports.filter((r) => !r.archived_at && r.status === value).length;
+            return (
+              <option key={value} value={value}>
+                {label} ({count})
+              </option>
+            );
+          })}
+          {isAdmin && (
+            <option value="archived">Archived ({archivedReportCount})</option>
+          )}
+        </select>
       </div>
 
       {/* The same form the nav button opens — one code path for both entries */}
@@ -2659,6 +2646,17 @@ function BugReportTab({
                       <p className="text-xs text-bark italic">"{report.admin_notes}"</p>
                     )}
 
+                    <BugReportTagEditor
+                      reportId={report.id}
+                      tags={report.tags ?? []}
+                      canEdit={isAdmin || (report.user_id === currentUserId && report.status === "submitted")}
+                      onSaved={(next) =>
+                        setReports((rs) =>
+                          rs.map((r) => (r.id === report.id ? { ...r, tags: next } : r))
+                        )
+                      }
+                    />
+
                     <BugReportNotes
                       reportId={report.id}
                       currentUserId={currentUserId}
@@ -2745,7 +2743,7 @@ function BugReportTab({
               empty list because nothing has ever been reported. */}
           <p className="text-sm font-medium text-espresso">
             {reports.length > 0
-              ? showArchived
+              ? statusFilter === "archived"
                 ? "Nothing archived yet"
                 : "Nothing matches these filters"
               : isAdmin ? "Nothing here yet" : "Nothing submitted yet"}

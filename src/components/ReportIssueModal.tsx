@@ -89,6 +89,7 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
   const [reportDate, setReportDate] = useState(new Date().toISOString().split("T")[0]);
   const [files, setFiles] = useState<File[]>([]);
   const [tags, setTags] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -233,6 +234,45 @@ function ReportForm({ onClose, onSubmitted, defaultType = "bug" }: Omit<Props, "
                   </button>
                 );
               })}
+            </div>
+            {/* Suggestions are a starting point, not the whole vocabulary — a
+                topic nobody predicted still needs somewhere to go. */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {tags
+                .filter((t) => !REPORT_TAG_SUGGESTIONS.includes(t as typeof REPORT_TAG_SUGGESTIONS[number]))
+                .map((tag) => (
+                  <span
+                    key={tag}
+                    className="flex items-center gap-1 rounded-full bg-slate-blue px-2.5 py-1 text-[10px] font-semibold capitalize text-white"
+                  >
+                    {tag}
+                    <button
+                      type="button"
+                      onClick={() => setTags((c) => c.filter((t) => t !== tag))}
+                      className="text-white/70 hover:text-white"
+                      aria-label={`Remove ${tag}`}
+                    >
+                      &times;
+                    </button>
+                  </span>
+                ))}
+              <input
+                type="text"
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter adds the tag rather than submitting the form — losing a
+                  // half-written report to a stray keypress would be unforgivable.
+                  if (e.key === "Enter" || e.key === ",") {
+                    e.preventDefault();
+                    const next = tagDraft.trim().toLowerCase();
+                    if (next && !tags.includes(next)) setTags((c) => [...c, next]);
+                    setTagDraft("");
+                  }
+                }}
+                placeholder="Add your own — press Enter"
+                className="min-w-[180px] flex-1 rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
+              />
             </div>
           </div>
 
