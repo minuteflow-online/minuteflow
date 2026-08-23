@@ -26,7 +26,7 @@ type AssignedTaskStatus =
 type RouteContext = { params: Promise<{ id: string }> };
 
 const TASK_SELECT =
-  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, instructions, instructions_locked, review_required, review_required_locked, recurring_template_id, spawned_template_id, assigned_task_assignees(id, va_id, status)";
+  "id, account, project, project_id, parent_task_id, pay_type, category, task_name, task_detail, task_notes, link, due_date, due_time, start_date, end_date, start_time, end_time, planned_minutes, assigned_by, instructions, instructions_locked, review_required, review_required_locked, recurring_template_id, spawned_template_id, task_todos(id, text, sort_order), assigned_task_assignees(id, va_id, status)";
 
 const REVIEW_LOCKED_ERROR =
   "Forbidden: Review Required is locked at Yes. Only Admin, Manager, CEO, or Founder can change it.";
