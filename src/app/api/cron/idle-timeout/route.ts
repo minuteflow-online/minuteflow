@@ -1,7 +1,7 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
 import { notifyVaPrivately } from "@/lib/vaNotify";
-import { checkStaticScreens, clearStaticFlags } from "@/lib/staticScreen";
+import { checkStaticScreens } from "@/lib/staticScreen";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
@@ -333,16 +333,16 @@ export async function GET(request: NextRequest) {
     .not("active_task", "is", null);
 
   const liveCandidates = (liveSessions ?? []).map((s) => {
-    const activeTask = s.active_task as { category?: string; isBreak?: boolean } | null;
+    const activeTask = s.active_task as { category?: string; isBreak?: boolean; logId?: string } | null;
     return {
       user_id: s.user_id as string,
       category: activeTask?.category ?? null,
       isBreak: Boolean(activeTask?.isBreak),
+      log_id: activeTask?.logId ? parseInt(activeTask.logId, 10) : null,
     };
   });
 
   const staticScreens = await checkStaticScreens(liveCandidates, IDLE_EXEMPT_CATEGORIES);
-  await clearStaticFlags(liveCandidates.map((c) => c.user_id));
 
   return Response.json({
     warned: warned.length,

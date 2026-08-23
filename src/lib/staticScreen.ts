@@ -1,9 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import { driveChecksum } from "./driveFetch";
 import { notifyVaPrivately } from "./vaNotify";
+import { forceClockOut } from "./forceClockOut";
+import { esc } from "./telegram";
 
 /**
- * Flags a VA whose screen has not changed for 20 minutes while a task is running.
+ * Flags a VA whose screen has not changed for 15 minutes while a task is running,
+ * then closes the session if it still has not changed 15 minutes after that.
  *
  * This catches something the heartbeat cannot. A tab left open keeps the session
  * alive, so someone can look perfectly active to the idle check while their
@@ -21,18 +24,23 @@ import { notifyVaPrivately } from "./vaNotify";
  */
 
 /** How long the screen must be unchanged before it is worth mentioning. */
-const STATIC_WINDOW_MS = 20 * 60 * 1000;
+const STATIC_WINDOW_MS = 15 * 60 * 1000;
 
-/** Captures run every five minutes, so a real 20-minute window holds four or
- *  five. Fewer than three means the window is not properly covered and the
+/** How long after that message the person has to do something before the
+ *  session is closed. Any change on screen in between cancels it entirely. */
+const GRACE_MS = 15 * 60 * 1000;
+
+/** Captures run every five minutes, so a real 15-minute window holds three or
+ *  four. Fewer than three means the window is not properly covered and the
  *  check stays silent. */
 const MIN_CAPTURES = 3;
 
-/** One warning per stretch. Cleared as soon as the screen moves again, so a VA
- *  who comes back and goes quiet later is warned afresh rather than never. */
-const REWARN_AFTER_MS = 60 * 60 * 1000;
-
-type Candidate = { user_id: string; category: string | null; isBreak: boolean };
+type Candidate = {
+  user_id: string;
+  category: string | null;
+  isBreak: boolean;
+  log_id: number | null;
+};
 
 /** Built here rather than passed in: the Supabase client type does not survive
  *  crossing a module boundary cleanly, and this is a cron with no request to
@@ -51,6 +59,7 @@ export async function checkStaticScreens(
 ): Promise<string[]> {
   const supabase = serviceClient();
   const flagged: string[] = [];
+  const closed: string[] = [];
   const since = new Date(Date.now() - STATIC_WINDOW_MS).toISOString();
 
   for (const c of candidates) {
@@ -68,18 +77,13 @@ export async function checkStaticScreens(
     if (error || !shots || shots.length < MIN_CAPTURES) continue;
 
     // The captures must actually span the window. A burst of three uploads two
-    // minutes ago says nothing about the twenty minutes before them.
+    // minutes ago says nothing about the fifteen minutes before them.
     const first = new Date(shots[0].created_at as string).getTime();
     const last = new Date(shots[shots.length - 1].created_at as string).getTime();
     if (last - first < STATIC_WINDOW_MS * 0.8) continue;
 
-    const checksums = await Promise.all(
-      shots.map((s) => driveChecksum(s.drive_file_id as string))
-    );
-    // Any unreadable checksum makes the comparison meaningless.
-    if (checksums.some((h) => !h)) continue;
-    if (new Set(checksums).size !== 1) continue;
-
+    // Loaded before the comparison because both outcomes need it — a moved
+    // screen has to clear this person's standing warning, not just a still one.
     const { data: prof } = await supabase
       .from("profiles")
       .select("full_name, username, telegram_chat_id, screen_static_warned_at")
@@ -87,44 +91,82 @@ export async function checkStaticScreens(
       .single();
     if (!prof) continue;
 
+    const checksums = await Promise.all(
+      shots.map((s) => driveChecksum(s.drive_file_id as string))
+    );
+    // Any unreadable checksum makes the comparison meaningless.
+    if (checksums.some((h) => !h)) continue;
+
+    // The screen moved. Clear any standing warning here rather than in a
+    // sweep afterwards — this is the only place that actually knows whose
+    // screen changed, and a sweep keyed on "still clocked in" would leave the
+    // warning set on everyone who came back, so their countdown would resume
+    // mid-way instead of starting over.
+    if (new Set(checksums).size !== 1) {
+      if (prof?.screen_static_warned_at) {
+        await supabase
+          .from("profiles")
+          .update({ screen_static_warned_at: null })
+          .eq("id", c.user_id);
+      }
+      continue;
+    }
+
+    const who = (prof.full_name as string) || (prof.username as string) || "Someone";
     const warnedAt = prof.screen_static_warned_at
       ? new Date(prof.screen_static_warned_at as string).getTime()
       : null;
-    if (warnedAt && Date.now() - warnedAt < REWARN_AFTER_MS) continue;
 
-    const who = (prof.full_name as string) || (prof.username as string) || "Someone";
-    await supabase
-      .from("profiles")
-      .update({ screen_static_warned_at: new Date().toISOString() })
-      .eq("id", c.user_id);
+    // First time we see this stretch: say something, close nothing.
+    if (!warnedAt) {
+      await supabase
+        .from("profiles")
+        .update({ screen_static_warned_at: new Date().toISOString() })
+        .eq("id", c.user_id);
 
-    await notifyVaPrivately({
-      chatId: prof.telegram_chat_id as number | null,
-      vaName: who,
-      topic: "Screen activity",
-      message: [
-        "🖥️ <b>Your screen has not changed in 20 minutes</b>",
-        "",
-        "A task is still running, so your time is being recorded against it.",
-        "If you have stepped away, take a break or clock out so the time is not billed as work.",
-        "If you are working, carry on — this is only a heads-up.",
-      ].join("\n"),
-    });
+      // Worded as a prompt, not an accusation. A still screen has plenty of
+      // innocent explanations — reading, a call, a second monitor — and the
+      // useful thing is for them to check their own captures and decide.
+      await notifyVaPrivately({
+        chatId: prof.telegram_chat_id as number | null,
+        vaName: who,
+        topic: "Screen activity",
+        message: [
+          "🖥️ <b>Quick check on your screenshots</b>",
+          "",
+          `Hi ${esc(who)} — your last few captures look identical, so MinuteFlow cannot tell whether your screen is being recorded properly.`,
+          "",
+          "Could you open MinuteFlow and check your screenshots are going through? If you have stepped away, a break or a clock-out keeps your log accurate.",
+          "",
+          `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
+        ].join("\n"),
+      });
+
+      flagged.push(who);
+      continue;
+    }
+
+    // Warned already and still nothing moving — close it.
+    if (Date.now() - warnedAt >= GRACE_MS) {
+      await forceClockOut(c.user_id, c.log_id);
+      await notifyVaPrivately({
+        chatId: prof.telegram_chat_id as number | null,
+        vaName: who,
+        topic: "Screen activity",
+        message: [
+          "⚪ <b>Session closed</b>",
+          "",
+          "Your screen stayed the same after the check, so MinuteFlow ended the session and closed the open task.",
+          "If you were working, tell Toni — the time can be put back.",
+        ].join("\n"),
+      });
+      closed.push(who);
+      continue;
+    }
 
     flagged.push(who);
   }
 
-  return flagged;
+  return [...flagged, ...closed];
 }
 
-/** Clears the marker for anyone whose screen has moved since, so the next quiet
- *  stretch is treated on its own rather than suppressed by an old warning. */
-export async function clearStaticFlags(stillFlagged: string[]): Promise<void> {
-  const supabase = serviceClient();
-  let query = supabase
-    .from("profiles")
-    .update({ screen_static_warned_at: null })
-    .not("screen_static_warned_at", "is", null);
-  if (stillFlagged.length > 0) query = query.not("id", "in", `(${stillFlagged.join(",")})`);
-  await query;
-}
