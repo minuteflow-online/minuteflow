@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
+import RecurringScopeDialog from "@/components/ui/RecurringScopeDialog";
 import { countWords } from "@/lib/utils";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { createClient } from "@/lib/supabase/client";
@@ -844,7 +845,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     return `Applies daily, ${fmt(startTime)}–${fmt(endTime)}, ${startDate || "?"}–${endDate}`;
   }, [hasSchedule, startTime, endTime, startDate, endDate]);
 
-  const handleSubmit = useCallback(async () => {
+  const submitWithScope = useCallback(async (scope?: "this" | "future") => {
     if (readOnly) return;
     if (!taskName.trim()) {
       setError("Task name is required.");
@@ -1089,6 +1090,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           // metadata save would have dropped the rest. The picker is seeded
           // from all of them, so what it sends is the whole set.
           if (isAdminOrManager && manageAssignment) body.va_ids = effectiveVaIds;
+          // Only sent when the user was asked and chose to change the series.
+          if (scope) body.scope = scope;
           if (isAdminOrManager) {
             const res = await fetch(`/api/assigned-tasks/${editingTaskId}`, {
               method: "PUT",
@@ -1187,6 +1190,20 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, templateRepeatUntil, existingTemplateId, showToast,
   ]);
 
+
+  // A task generated from a recurring template belongs to a series, so saving
+  // it raises the question the calendar apps all ask: this one, or all of them?
+  // Asked only when it applies — a one-off saves straight through.
+  const belongsToSeries = Boolean(initialTask?.recurring_template_id) && isEditing;
+  const [scopeAsk, setScopeAsk] = useState<null | { resolve: (s: "this" | "future" | null) => void }>(null);
+
+  const handleSubmit = useCallback(async () => {
+    if (!belongsToSeries || readOnly) return submitWithScope();
+    const choice = await new Promise<"this" | "future" | null>((resolve) => setScopeAsk({ resolve }));
+    setScopeAsk(null);
+    if (choice === null) return; // cancelled — nothing saved
+    return submitWithScope(choice);
+  }, [belongsToSeries, readOnly, submitWithScope]);
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
   // Unchecking "Also save as a recurring template" on a task that already has
@@ -2149,6 +2166,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </Section>
       )}
 
+      {scopeAsk && (
+        <RecurringScopeDialog
+          action="edit"
+          taskName={taskName || "This task"}
+          onChoose={(choice) => scopeAsk.resolve(choice)}
+          onCancel={() => scopeAsk.resolve(null)}
+        />
+      )}
       {error && <p className="text-[12px] text-red-600">{error}</p>}
 
       {!hideFooter && (

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { applyDeleteToFuture, applyEditToFuture } from "@/lib/recurringScope";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canChangeLockedReview } from "@/lib/financialAccess";
@@ -474,6 +475,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     deleted_at,
     review_required,
     spawned_template_id,
+    scope,
   } = body as {
     va_id?: string;
     status?: AssignedTaskStatus;
@@ -501,6 +503,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     instructions_append?: string | null;
     /** Minutes the task takes when it has no specific hours. */
     planned_minutes?: number | null;
+    /** "this" (default) or "future" — whether a change to one occurrence of a
+     *  recurring template should carry to the rest of the series. */
+    scope?: "this" | "future";
     archived_at?: string | null;
     deleted_at?: string | null;
     review_required?: boolean;
@@ -753,6 +758,20 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (trashError) {
       return Response.json({ error: trashError.message }, { status: 500 });
     }
+
+    // Removing the rest of the series has to stop the template as well, or the
+    // generator simply recreates tomorrow what was just deleted today.
+    if (scope === "future" && deleted_at) {
+      const { data: seriesRow } = await adminSupabase
+        .from("assigned_tasks")
+        .select("recurring_template_id, due_date")
+        .eq("id", id)
+        .single();
+      if (seriesRow?.recurring_template_id && seriesRow?.due_date) {
+        await applyDeleteToFuture(adminSupabase, seriesRow.recurring_template_id, seriesRow.due_date, id);
+      }
+    }
+
     return Response.json({ ok: true });
   }
 
@@ -1061,6 +1080,25 @@ ${existing}` : addition;
 
     if (taskError) {
       return Response.json({ error: taskError.message }, { status: 500 });
+    }
+
+    // Series-wide edit, when the caller asked for one.
+    if (scope === "future") {
+      const { data: seriesRow } = await adminSupabase
+        .from("assigned_tasks")
+        .select("recurring_template_id, due_date")
+        .eq("id", id)
+        .single();
+      if (seriesRow?.recurring_template_id && seriesRow?.due_date) {
+        await applyEditToFuture(
+          adminSupabase,
+          seriesRow.recurring_template_id,
+          seriesRow.due_date,
+          id,
+          updatePayload,
+          start_time !== undefined ? { start_time, end_time } : {}
+        );
+      }
     }
 
     // Sync task_detail → client_memo on linked time_logs
