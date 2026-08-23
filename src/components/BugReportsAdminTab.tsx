@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import BugReportNotes from "@/components/BugReportNotes";
+import BugReportTagEditor from "@/components/BugReportTagEditor";
 
 /**
  * Bugs and feature requests in the admin panel.
@@ -47,6 +48,11 @@ const TYPE_STYLES: Record<ReportType, string> = {
 
 const STATUS_ORDER: ReportStatus[] = ["submitted", "testing", "fixed", "dismissed"];
 
+// Archived is not a status on the record — a fixed report and a dismissed one
+// can both be archived — but it is the same question when you are choosing what
+// to look at, so it rides in the same dropdown.
+type StatusChoice = "all" | ReportStatus | "archived";
+
 // Enough to scan a screen of reports without the list running off the page.
 const PAGE_SIZE = 15;
 
@@ -61,13 +67,10 @@ export default function BugReportsAdminTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<"all" | ReportType>("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | ReportStatus>("submitted");
+  const [statusFilter, setStatusFilter] = useState<StatusChoice>("submitted");
   const [reporterFilter, setReporterFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [updating, setUpdating] = useState<Record<number, boolean>>({});
-  // Archived reports are kept out of the working list entirely rather than
-  // being one more status to filter past.
-  const [showArchived, setShowArchived] = useState(false);
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
 
@@ -155,13 +158,19 @@ export default function BugReportsAdminTab({
   // list actually on screen rather than the whole table.
   const scoped = reports.filter(
     (r) =>
-      Boolean(r.archived_at) === showArchived &&
       (typeFilter === "all" || (r.report_type || "bug") === typeFilter) &&
       (reporterFilter === "all" || r.user_id === reporterFilter) &&
       (tagFilter === "all" || (r.tags ?? []).includes(tagFilter))
   );
   const archivedCount = reports.filter((r) => r.archived_at).length;
-  const visible = scoped.filter((r) => statusFilter === "all" || r.status === statusFilter);
+  // The archive is a separate shelf: everything else is the working list, so a
+  // status view never mixes archived reports back in.
+  const visible =
+    statusFilter === "archived"
+      ? scoped.filter((r) => r.archived_at)
+      : scoped.filter(
+          (r) => !r.archived_at && (statusFilter === "all" || r.status === statusFilter)
+        );
 
   // Clamped rather than reset through an effect: archiving the last report on
   // the final page shortens the list, and a stale page number would otherwise
@@ -170,8 +179,12 @@ export default function BugReportsAdminTab({
   const safePage = Math.min(page, totalPages);
   const pageItems = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const countFor = (status: "all" | ReportStatus) =>
-    status === "all" ? scoped.length : scoped.filter((r) => r.status === status).length;
+  const countFor = (choice: StatusChoice) =>
+    choice === "archived"
+      ? scoped.filter((r) => r.archived_at).length
+      : choice === "all"
+        ? scoped.filter((r) => !r.archived_at).length
+        : scoped.filter((r) => !r.archived_at && r.status === choice).length;
 
   const formatWhen = (iso: string) =>
     new Date(iso).toLocaleString("en-US", {
@@ -227,7 +240,7 @@ export default function BugReportsAdminTab({
               reporter selects wrapped onto a second row at normal widths. */}
           <select
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value as "all" | ReportStatus); setPage(1); }}
+            onChange={(e) => { setStatusFilter(e.target.value as StatusChoice); setPage(1); }}
             className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
           >
             <option value="all">All statuses ({countFor("all")})</option>
@@ -236,17 +249,8 @@ export default function BugReportsAdminTab({
                 {status.charAt(0).toUpperCase() + status.slice(1)} ({countFor(status)})
               </option>
             ))}
+            <option value="archived">Archived ({countFor("archived")})</option>
           </select>
-          <button
-            onClick={() => { setShowArchived((v) => !v); setPage(1); }}
-            className={`rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-colors ${
-              showArchived
-                ? "bg-walnut text-white"
-                : "bg-stone/10 text-stone hover:bg-stone/20"
-            }`}
-          >
-            {showArchived ? "Viewing archive" : `Archive (${archivedCount})`}
-          </button>
         </div>
       </div>
 
@@ -262,7 +266,7 @@ export default function BugReportsAdminTab({
         ) : visible.length === 0 ? (
           <div className="py-12 text-center">
             <p className="text-sm text-bark">
-              {showArchived ? "Nothing archived yet." : "No reports match these filters."}
+              {statusFilter === "archived" ? "Nothing archived yet." : "No reports match these filters."}
             </p>
           </div>
         ) : (
@@ -327,6 +331,17 @@ export default function BugReportsAdminTab({
                       {report.admin_notes && (
                         <p className="mt-2 text-xs italic text-bark">&quot;{report.admin_notes}&quot;</p>
                       )}
+
+                      <BugReportTagEditor
+                        reportId={report.id}
+                        tags={report.tags ?? []}
+                        canEdit
+                        onSaved={(next) =>
+                          setReports((rs) =>
+                            rs.map((r) => (r.id === report.id ? { ...r, tags: next } : r))
+                          )
+                        }
+                      />
 
                       <BugReportNotes
                         reportId={report.id}
