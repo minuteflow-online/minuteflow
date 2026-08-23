@@ -2297,6 +2297,10 @@ function BugReportTab({
   const [statusFilter, setStatusFilter] = useState<"all" | BugReport["status"]>("submitted");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
+  const [reporterFilter, setReporterFilter] = useState<string>("all");
+  // Only reviewers can archive, so only they have an archive to look at; a VA
+  // stays on the working list and never sees the toggle.
+  const [showArchived, setShowArchived] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [statusUpdating, setStatusUpdating] = useState<Record<number, boolean>>({});
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -2346,6 +2350,27 @@ function BugReportTab({
     }
   }, [editTitle, editDescription]);
 
+  const handleArchive = useCallback(async (id: number, archived: boolean) => {
+    setStatusUpdating((s) => ({ ...s, [id]: true }));
+    setStatusError(null);
+    const res = await fetch(`/api/bug-reports?id=${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived }),
+    });
+    setStatusUpdating((s) => ({ ...s, [id]: false }));
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      setStatusError(e.error || "Could not archive");
+      return;
+    }
+    setReports((rs) =>
+      rs.map((r) =>
+        r.id === id ? { ...r, archived_at: archived ? new Date().toISOString() : null } : r
+      )
+    );
+  }, []);
+
   const handleStatusChange = useCallback(async (id: number, status: string) => {
     setStatusUpdating((s) => ({ ...s, [id]: true }));
     setStatusError(null);
@@ -2364,6 +2389,11 @@ function BugReportTab({
 
   // Type first, so the status counts describe the list you're actually looking
   // at rather than the whole table.
+  const reportReporters = Array.from(
+    new Map(reports.map((r) => [r.user_id, r.full_name || "Unknown"])).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]));
+  const archivedReportCount = reports.filter((r) => r.archived_at).length;
+
   const reportTags = Array.from(new Set(reports.flatMap((r) => r.tags ?? []))).sort((a, b) =>
     a.localeCompare(b)
   );
@@ -2372,7 +2402,8 @@ function BugReportTab({
     // Archived reports are filed away by a reviewer; the portal has no archive
     // view to send anyone to, so they drop out of the requester's list.
     (r) =>
-      !r.archived_at &&
+      Boolean(r.archived_at) === showArchived &&
+      (reporterFilter === "all" || r.user_id === reporterFilter) &&
       (typeFilter === "all" || (r.report_type || "bug") === typeFilter) &&
       (tagFilter === "all" || (r.tags ?? []).includes(tagFilter))
   );
@@ -2419,6 +2450,30 @@ function BugReportTab({
             </button>
           ))}
         </div>
+        {isAdmin && reportReporters.length > 1 && (
+          <select
+            value={reporterFilter}
+            onChange={(e) => { setReporterFilter(e.target.value); setPage(1); }}
+            className="rounded-lg border border-sand bg-white px-2.5 py-1 text-[11px] text-espresso outline-none focus:border-terracotta"
+          >
+            <option value="all">Everyone</option>
+            {reportReporters.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+        )}
+        {isAdmin && (
+          <button
+            onClick={() => { setShowArchived((v) => !v); setPage(1); }}
+            className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+              showArchived ? "bg-walnut text-white" : "bg-stone/10 text-stone hover:bg-stone/20"
+            }`}
+          >
+            {showArchived ? "Viewing archive" : `Archive (${archivedReportCount})`}
+          </button>
+        )}
         {reportTags.length > 0 && (
           <select
             value={tagFilter}
@@ -2627,6 +2682,13 @@ function BugReportTab({
                           <option value="fixed">{statusLabels.fixed}</option>
                           <option value="dismissed">{statusLabels.dismissed}</option>
                         </select>
+                        <button
+                          onClick={() => handleArchive(report.id, !report.archived_at)}
+                          disabled={!!statusUpdating[report.id]}
+                          className="rounded-lg bg-stone/10 px-2.5 py-1 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+                        >
+                          {report.archived_at ? "Restore" : "Archive"}
+                        </button>
                         {statusUpdating[report.id] && (
                           <div className="h-3.5 w-3.5 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
                         )}
@@ -2683,7 +2745,9 @@ function BugReportTab({
               empty list because nothing has ever been reported. */}
           <p className="text-sm font-medium text-espresso">
             {reports.length > 0
-              ? "Nothing matches these filters"
+              ? showArchived
+                ? "Nothing archived yet"
+                : "Nothing matches these filters"
               : isAdmin ? "Nothing here yet" : "Nothing submitted yet"}
           </p>
           <p className="mt-1 text-xs text-stone">
