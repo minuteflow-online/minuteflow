@@ -2187,6 +2187,9 @@ interface BugReport {
   created_at: string;
 }
 
+// Enough reports per page to scan at a glance without endless scrolling.
+const REPORTS_PAGE_SIZE = 10;
+
 const BUG_STATUS_STYLES: Record<string, { bg: string; text: string; border: string }> = {
   submitted: { bg: "bg-amber-soft",      text: "text-amber",      border: "border-amber-200"    },
   testing:   { bg: "bg-slate-blue-soft", text: "text-slate-blue", border: "border-slate-blue/20" },
@@ -2217,6 +2220,7 @@ function BugReportTab({
   // Opens on Submitted — the reports nobody has picked up yet are the ones
   // worth landing on.
   const [statusFilter, setStatusFilter] = useState<"all" | BugReport["status"]>("submitted");
+  const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [statusUpdating, setStatusUpdating] = useState<Record<number, boolean>>({});
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -2294,6 +2298,15 @@ function BugReportTab({
     (r) => statusFilter === "all" || r.status === statusFilter
   );
 
+  // Clamped, not reset through an effect: filtering to a shorter list while on
+  // a later page would otherwise leave an empty screen.
+  const totalPages = Math.max(1, Math.ceil(visibleReports.length / REPORTS_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageReports = visibleReports.slice(
+    (safePage - 1) * REPORTS_PAGE_SIZE,
+    safePage * REPORTS_PAGE_SIZE
+  );
+
   return (
     <div className="space-y-6 max-w-2xl">
       {/* New report + filters */}
@@ -2313,7 +2326,7 @@ function BugReportTab({
           ]).map(({ value, label }) => (
             <button
               key={value}
-              onClick={() => setTypeFilter(value)}
+              onClick={() => { setTypeFilter(value); setPage(1); }}
               className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
                 typeFilter === value
                   ? "bg-terracotta text-white"
@@ -2343,7 +2356,7 @@ function BugReportTab({
           return (
             <button
               key={value}
-              onClick={() => setStatusFilter(value)}
+              onClick={() => { setStatusFilter(value); setPage(1); }}
               className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors cursor-pointer ${
                 statusFilter === value
                   ? "bg-terracotta text-white"
@@ -2378,36 +2391,35 @@ function BugReportTab({
       {/* Reports list */}
       {!loading && visibleReports.length > 0 && (
         <div className="space-y-3">
-          {visibleReports.map((report) => {
+          {pageReports.map((report) => {
             const style = BUG_STATUS_STYLES[report.status] || BUG_STATUS_STYLES.submitted;
             const reportType: ReportType = report.report_type || "bug";
             const typeStyle = REPORT_TYPE_STYLES[reportType];
             const statusLabels = REPORT_STATUS_LABEL[reportType];
             const isExpanded = expandedId === report.id;
             return (
-              <div key={report.id} className="rounded-xl border border-sand bg-white shadow-sm overflow-hidden">
+              <div key={report.id} className="rounded-lg border border-sand bg-white overflow-hidden">
+                {/* One row per report: name, title, date and badges on a single
+                    line. Stacked three-line cards turned a dozen reports into a
+                    page of scrolling. */}
                 <div
-                  className="flex items-start justify-between gap-3 p-4 cursor-pointer"
+                  className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-cream transition-colors"
                   onClick={() => setExpandedId(isExpanded ? null : report.id)}
                 >
-                  <div className="min-w-0">
-                    {isAdmin && (
-                      <p className="text-xs font-semibold text-espresso">{report.full_name}</p>
-                    )}
-                    <p className="text-sm font-medium text-espresso truncate">{report.title}</p>
-                    <p className="text-[11px] text-stone mt-0.5">{fmtDate(report.report_date)}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full ${typeStyle.bg} ${typeStyle.text} border ${typeStyle.border}`}>
-                      {REPORT_TYPE_LABEL[reportType]}
-                    </span>
-                    <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full ${style.bg} ${style.text} border ${style.border}`}>
-                      {statusLabels[report.status] || report.status}
-                    </span>
-                    <svg className={`h-3.5 w-3.5 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M6 9l6 6 6-6" />
-                    </svg>
-                  </div>
+                  <span className={`shrink-0 text-[9px] font-semibold px-1.5 py-[1px] rounded-full ${typeStyle.bg} ${typeStyle.text} border ${typeStyle.border}`}>
+                    {reportType === "bug" ? "Bug" : "Feature"}
+                  </span>
+                  <span className="text-[13px] font-medium text-espresso truncate">{report.title}</span>
+                  {isAdmin && (
+                    <span className="shrink-0 text-[11px] text-bark">{report.full_name}</span>
+                  )}
+                  <span className="shrink-0 text-[10px] text-stone">{fmtDate(report.report_date)}</span>
+                  <span className={`ml-auto shrink-0 text-[9px] font-semibold px-2 py-[1px] rounded-full ${style.bg} ${style.text} border ${style.border}`}>
+                    {statusLabels[report.status] || report.status}
+                  </span>
+                  <svg className={`h-3.5 w-3.5 shrink-0 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
                 </div>
 
                 {isExpanded && (
@@ -2509,6 +2521,7 @@ function BugReportTab({
                           <option value="submitted">{statusLabels.submitted}</option>
                           <option value="testing">{statusLabels.testing}</option>
                           <option value="fixed">{statusLabels.fixed}</option>
+                          <option value="dismissed">{statusLabels.dismissed}</option>
                         </select>
                         {statusUpdating[report.id] && (
                           <div className="h-3.5 w-3.5 rounded-full border-2 border-sand border-t-terracotta animate-spin" />
@@ -2520,6 +2533,35 @@ function BugReportTab({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {!loading && totalPages > 1 && (
+        <div className="flex items-center justify-between border-t border-sand pt-3">
+          <span className="text-[11px] text-bark">
+            Showing {(safePage - 1) * REPORTS_PAGE_SIZE + 1}&ndash;
+            {Math.min(safePage * REPORTS_PAGE_SIZE, visibleReports.length)} of{" "}
+            {visibleReports.length}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((n) => Math.max(1, n - 1))}
+              disabled={safePage <= 1}
+              className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <span className="text-[11px] text-bark">
+              Page {safePage} of {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((n) => Math.min(totalPages, n + 1))}
+              disabled={safePage >= totalPages}
+              className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
 
