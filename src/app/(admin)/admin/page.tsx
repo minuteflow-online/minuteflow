@@ -47,6 +47,7 @@ import PaystubTab from "@/components/PaystubTab";
 import VaResourcesAdminTab from "@/components/VaResourcesAdminTab";
 import VaFeedbackAdminTab from "@/components/VaFeedbackAdminTab";
 import VaRequestsAdminTab from "@/components/VaRequestsAdminTab";
+import BugReportsAdminTab from "@/components/BugReportsAdminTab";
 import BudgetRequestsAdminTab from "@/components/BudgetRequestsAdminTab";
 import VaReviewsAdminTab from "@/components/VaReviewsAdminTab";
 import VaTokensAdminTab from "@/components/VaTokensAdminTab";
@@ -171,7 +172,7 @@ type ScreenshotPersonDay = {
 
 /* ── Sidebar Tab Type ────────────────────────────────────── */
 
-type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_requests" | "email_log" | "reset_va_password";
+type AdminTab = "overview" | "screenshots" | "team" | "task_assignments" | "fixed_pay_tasks" | "organization" | "corrections" | "sorting" | "password" | "accounts" | "clients" | "invoices" | "paystubs" | "projects" | "financial" | "alerts" | "va_resources" | "va_feedback" | "va_reviews" | "va_tokens" | "va_broadcasts" | "va_requests" | "bug_reports" | "email_log" | "reset_va_password";
 
 const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
   {
@@ -360,6 +361,16 @@ const SIDEBAR_TABS: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: "bug_reports",
+    label: "Bugs & Requests",
+    icon: (
+      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M12 2a4 4 0 014 4v1H8V6a4 4 0 014-4z" />
+        <path d="M5 10h14M12 7v12M6 10v4a6 6 0 0012 0v-4" />
+      </svg>
+    ),
+  },
+  {
     id: "va_reviews",
     label: "Reviews",
     icon: (
@@ -456,7 +467,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     id: "team",
     label: "Team",
-    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "paystubs", "email_log", "reset_va_password"] as AdminTab[]).includes(t.id)),
+    tabs: SIDEBAR_TABS.filter((t) => (["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "bug_reports", "paystubs", "email_log", "reset_va_password"] as AdminTab[]).includes(t.id)),
   },
 ];
 
@@ -464,7 +475,7 @@ const TEAM_SIDEBAR_GROUPS: SidebarGroup[] = [
 const SIDEBAR_GROUPS: SidebarGroup[] = [...ADMIN_SIDEBAR_GROUPS, ...TEAM_SIDEBAR_GROUPS];
 
 // Tab IDs that belong to the TEAM section
-const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "paystubs", "email_log", "reset_va_password"];
+const TEAM_TAB_IDS: AdminTab[] = ["team", "task_assignments", "fixed_pay_tasks", "va_resources", "va_reviews", "va_tokens", "va_broadcasts", "va_feedback", "va_requests", "bug_reports", "paystubs", "email_log", "reset_va_password"];
 
 // Tabs reserved for financial access (Founder/Accounting, see
 // financialAccess.ts) — invoices, paystubs, and the send-history log stay
@@ -1694,6 +1705,7 @@ export default function AdminPage() {
                 {activeTab === "va_resources" && "Manage onboarding, SOPs, coaching, and job postings for VAs"}
                 {activeTab === "va_feedback" && "Review feedback submitted by your team"}
                 {activeTab === "va_requests" && "Approve or deny time off, schedule change, and other VA requests"}
+                {activeTab === "bug_reports" && "Bugs and feature requests submitted from the portal"}
                 {activeTab === "va_reviews" && "Create and publish performance reviews"}
                 {activeTab === "va_tokens" && "Award tokens and track daily ratings"}
                 {activeTab === "va_broadcasts" && "Send broadcasts, memos, and announcements to your team"}
@@ -1847,6 +1859,10 @@ export default function AdminPage() {
               <VaRequestsAdminTab />
               <BudgetRequestsAdminTab />
             </div>
+          )}
+
+          {activeTab === "bug_reports" && (
+            <BugReportsAdminTab orgTimezone={orgTimezone} />
           )}
           {activeTab === "va_reviews" && (
             <VaReviewsAdminTab />
