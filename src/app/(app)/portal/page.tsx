@@ -14,6 +14,8 @@ import ReportIssueModal, {
   REPORT_TYPE_LABEL,
   type ReportType,
 } from "@/components/ReportIssueModal";
+import BugReportNotes from "@/components/BugReportNotes";
+import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -1990,6 +1992,8 @@ function PortalChangePasswordTab() {
 // ─── Main Portal Page ────────────────────────────────────────
 
 export default function VaPortalPage() {
+  // Times on bug-report notes are shown in org time, like everywhere else.
+  const orgTimezone = useOrgTimezone();
   const supabase = createClient();
   const [activeTab, setActiveTab] = useUrlTab<PortalTab>("tab", "profile");
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -2157,7 +2161,7 @@ export default function VaPortalPage() {
           <PortalChangePasswordTab />
         )}
         {activeTab === "bug_reports" && currentUserId && (
-          <BugReportTab currentUserId={currentUserId} isAdmin={isAdmin} />
+          <BugReportTab currentUserId={currentUserId} isAdmin={isAdmin} orgTimezone={orgTimezone} />
         )}
       </main>
     </div>
@@ -2195,7 +2199,15 @@ const REPORT_TYPE_STYLES: Record<ReportType, { bg: string; text: string; border:
 
 // ─── Bug Report Tab ──────────────────────────────────────────
 
-function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdmin: boolean }) {
+function BugReportTab({
+  currentUserId,
+  isAdmin,
+  orgTimezone,
+}: {
+  currentUserId: string;
+  isAdmin: boolean;
+  orgTimezone: string;
+}) {
   const [reports, setReports] = useState<BugReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -2386,6 +2398,12 @@ function BugReportTab({ currentUserId, isAdmin }: { currentUserId: string; isAdm
                     {report.admin_notes && (
                       <p className="text-xs text-bark italic">"{report.admin_notes}"</p>
                     )}
+
+                    <BugReportNotes
+                      reportId={report.id}
+                      currentUserId={currentUserId}
+                      timezone={orgTimezone}
+                    />
 
                     {/* Only admins can move status — the PATCH route rejects
                         everyone else, so showing the control to a VA would only
