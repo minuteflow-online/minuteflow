@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { generateOccurrences } from "@/lib/recurringOccurrences";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
@@ -283,6 +284,7 @@ export async function POST(request: Request) {
     assigned_by: stringOrNull(body.assigned_by) ?? user.id,
     account: stringOrNull(body.account),
     project: stringOrNull(body.project),
+    repeat_until: stringOrNull(body.repeat_until),
     project_id: stringOrNull(body.project_id),
     link: stringOrNull(body.link),
     // Clock times, not timestamps — the template says “9-10am” and the cron
@@ -312,6 +314,17 @@ export async function POST(request: Request) {
   }
 
   const templates = await decorateTemplates([data as TemplateRow], supabase);
+
+  // Fill the calendar now rather than waiting for the nightly run. A template
+  // that shows nothing until the night before each occurrence looks broken and
+  // is useless for planning a week. The cron tops the same window back up, and
+  // generateOccurrences skips dates that already exist, so the two converge.
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    await generateOccurrences(serviceClient(), templates[0] as never, todayStr);
+  } catch {
+    // Never fail the save over generation — the cron will catch up.
+  }
   return Response.json({ template: templates[0] }, { status: 201 });
 }
 
@@ -382,6 +395,7 @@ ${existingText}` : addition;
   if (body.assigned_by !== undefined) updates.assigned_by = stringOrNull(body.assigned_by);
   if (body.account !== undefined) updates.account = stringOrNull(body.account);
   if (body.project !== undefined) updates.project = stringOrNull(body.project);
+  if (body.repeat_until !== undefined) updates.repeat_until = stringOrNull(body.repeat_until);
   if (body.project_id !== undefined) updates.project_id = stringOrNull(body.project_id);
   if (body.category !== undefined) updates.category = stringOrNull(body.category);
   if (body.link !== undefined) updates.link = stringOrNull(body.link);
@@ -424,6 +438,17 @@ ${existingText}` : addition;
   }
 
   const templates = await decorateTemplates([data as TemplateRow], supabase);
+
+  // Fill the calendar now rather than waiting for the nightly run. A template
+  // that shows nothing until the night before each occurrence looks broken and
+  // is useless for planning a week. The cron tops the same window back up, and
+  // generateOccurrences skips dates that already exist, so the two converge.
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    await generateOccurrences(serviceClient(), templates[0] as never, todayStr);
+  } catch {
+    // Never fail the save over generation — the cron will catch up.
+  }
   return Response.json({ template: templates[0] });
 }
 

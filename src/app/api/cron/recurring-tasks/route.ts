@@ -1,4 +1,5 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { generateOccurrences } from "@/lib/recurringOccurrences";
 import type { NextRequest } from "next/server";
 import { orgWallClockToUtc } from "@/lib/taskSchedule";
 
@@ -157,133 +158,31 @@ async function handleCron(request: NextRequest) {
     return Response.json({ error: templateError.message }, { status: 500 });
   }
 
-  const dueTemplates = ((templates ?? []) as TemplateRow[]).filter((template) =>
-    isTemplateDueToday(template, tomorrowDayOfMonth, tomorrow)
-  );
-
-  if (dueTemplates.length === 0) {
-    return Response.json({ created: 0, skipped: 0, message: "No recurring templates due today" });
-  }
-
-  const templateIds = dueTemplates.map((template) => template.id);
-  const { data: existingTasks, error: existingError } = await supabase
-    .from("assigned_tasks")
-    .select("id, recurring_template_id, due_date")
-    .in("recurring_template_id", templateIds)
-    .eq("due_date", tomorrow);
-
-  if (existingError) {
-    return Response.json({ error: existingError.message }, { status: 500 });
-  }
-
-  const alreadyCreated = new Set((existingTasks ?? []).map((task) => task.recurring_template_id as string));
-  const createTemplates = dueTemplates.filter((template) => !alreadyCreated.has(template.id));
-
+  // Tops up the same window the save-time generation fills. Both go through
+  // generateOccurrences, so "when does a recurring task appear" has one answer
+  // and a re-run converges instead of duplicating.
   let created = 0;
   const createdTemplates: string[] = [];
-
-  for (const template of createTemplates) {
-    const assigneeIds = normalizeAssignedToIds(template);
-    if (assigneeIds.length === 0) {
-      continue;
+  for (const template of (templates ?? []) as TemplateRow[]) {
+    if (!template.is_active) continue;
+    const result = await generateOccurrences(
+      supabase,
+      template as unknown as Parameters<typeof generateOccurrences>[1],
+      today
+    );
+    if (result.created > 0) {
+      created += result.created;
+      createdTemplates.push(template.id);
     }
-
-    const { data: task, error: taskError } = await supabase
-      .from("assigned_tasks")
-      .insert({
-        account: template.account,
-        project: template.project,
-        project_id: template.project_id ?? null,
-        task_name: template.title,
-        category: template.category,
-        task_detail: template.task_detail ?? template.description,
-        task_notes: template.task_notes,
-        // Carried onto every generated task, so a recurring job says how long
-        // it takes the same way a one-off does. Without it, anything spawned
-        // from a template arrived with no duration no matter who it went to.
-        planned_minutes: template.planned_minutes ?? null,
-        link: template.link ?? null,
-        due_date: tomorrow,
-        due_time: template.due_time ?? null,
-        end_date: template.end_date ?? null,
-        review_required: Boolean(template.review_required),
-        review_required_locked: Boolean(template.review_required),
-        // The template holds clock times; each occurrence pairs them with its
-        // own date so the generated task lands on the calendar as a real block,
-        // read on the org clock like every other schedule write.
-        start_date: template.start_time ? tomorrow : template.start_date ?? null,
-        start_time: template.start_time ? orgWallClockToUtc(tomorrow, template.start_time.slice(0, 5)) : null,
-        end_time: template.end_time ? orgWallClockToUtc(tomorrow, template.end_time.slice(0, 5)) : null,
-        assigned_by: template.assigned_by,
-        instructions: template.instructions,
-        instructions_locked: Boolean(template.instructions_locked),
-        recurring_template_id: template.id,
-        created_by: template.assigned_by,
-        status: "pending",
-      })
-      .select("id")
-      .single();
-
-    if (taskError || !task) {
-      continue;
-    }
-
-    const { error: assigneeError } = await supabase
-      .from("assigned_task_assignees")
-      .insert(
-        assigneeIds.map((va_id) => ({
-          assigned_task_id: task.id,
-          va_id,
-          status: "pending",
-        }))
-      );
-
-    if (assigneeError) {
-      await supabase.from("assigned_tasks").delete().eq("id", task.id);
-      continue;
-    }
-
-    const { data: templateAttachments, error: attachmentFetchError } = await supabase
-      .from("recurring_template_attachments")
-      .select("filename, storage_path, file_size, mime_type, uploaded_by")
-      .eq("template_id", template.id)
-      .order("uploaded_at", { ascending: true });
-
-    if (attachmentFetchError) {
-      await supabase.from("assigned_task_assignees").delete().eq("assigned_task_id", task.id);
-      await supabase.from("assigned_tasks").delete().eq("id", task.id);
-      continue;
-    }
-
-    if ((templateAttachments ?? []).length > 0) {
-      const { error: attachmentInsertError } = await supabase.from("assigned_task_attachments").insert(
-        (templateAttachments ?? []).map((attachment) => ({
-          assigned_task_id: task.id,
-          filename: attachment.filename,
-          storage_path: attachment.storage_path,
-          file_size: attachment.file_size,
-          mime_type: attachment.mime_type,
-          uploaded_by: attachment.uploaded_by ?? template.assigned_by,
-        }))
-      );
-
-      if (attachmentInsertError) {
-        await supabase.from("assigned_task_assignees").delete().eq("assigned_task_id", task.id);
-        await supabase.from("assigned_tasks").delete().eq("id", task.id);
-        continue;
-      }
-    }
-
-    created++;
-    createdTemplates.push(template.id);
   }
+
+  void dayOfMonth;
 
   return Response.json({
     created,
-    skipped: dueTemplates.length - created,
-    dueTemplates: dueTemplates.length,
+    templates: (templates ?? []).length,
     createdTemplateIds: createdTemplates,
-    date: tomorrow,
+    from: today,
   });
 }
 

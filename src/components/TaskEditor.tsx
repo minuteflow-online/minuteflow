@@ -378,6 +378,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const [existingTemplateId, setExistingTemplateId] = useState<string | null>(initialSpawnedTemplateId);
   const [alsoSaveAsTemplate, setAlsoSaveAsTemplate] = useState(Boolean(initialSpawnedTemplateId));
   const [templateRecurrenceType, setTemplateRecurrenceType] = useState<RecurrenceType>("daily");
+  // Blank means indefinite. Seeded from the linked template so editing a task
+  // that already repeats shows the limit it actually has.
+  const [templateRepeatUntil, setTemplateRepeatUntil] = useState("");
   const [pendingUnlinkTemplate, setPendingUnlinkTemplate] = useState(false);
   const [unlinkingTemplate, setUnlinkingTemplate] = useState(false);
 
@@ -775,6 +778,33 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     isEditing && Boolean(taskName) && !taskOptionsForObjective.some((t) => t.task_name === taskName);
   const linkedObjectives = useMemo(() => linkedProjects.filter((p) => p.kind === "objective"), [linkedProjects]);
   const linkedOperations = useMemo(() => linkedProjects.filter((p) => p.kind === "operation"), [linkedProjects]);
+  // Parents first with their children indented beneath, so the dropdown shows
+  // the shape of the tree rather than a flat alphabetical list where a sub and
+  // its parent sit unrelated. Orphans (a parent that isn’t in this list) are
+  // treated as top level so nothing silently disappears.
+  const asTree = useCallback((items: Project[]) => {
+    const byParent = new Map<string, Project[]>();
+    const ids = new Set(items.map((p) => p.id));
+    const roots: Project[] = [];
+    for (const p of items) {
+      const parent = p.parent_project_id;
+      if (parent && ids.has(parent)) {
+        byParent.set(parent, [...(byParent.get(parent) ?? []), p]);
+      } else {
+        roots.push(p);
+      }
+    }
+    const out: { id: string; label: string }[] = [];
+    for (const root of roots) {
+      const children = byParent.get(root.id) ?? [];
+      out.push({ id: root.id, label: children.length > 0 ? `${root.name} (parent)` : root.name });
+      for (const child of children) out.push({ id: child.id, label: `— ${child.name} (sub)` });
+    }
+    return out;
+  }, []);
+
+  const objectiveTree = useMemo(() => asTree(linkedObjectives), [asTree, linkedObjectives]);
+  const operationTree = useMemo(() => asTree(linkedOperations), [asTree, linkedOperations]);
 
   // "Link to Objective" and "Link to Operations" are two fields over one
   // `project_id` column, so they're mutually exclusive: whichever you pick
@@ -960,6 +990,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               assigned_by: assignedBy || currentUserId || null,
               pay_type: null,
               recurrence_type: templateRecurrenceType,
+              repeat_until: templateRepeatUntil || null,
               is_active: true,
             };
             if (existingTemplateId) {
@@ -1153,7 +1184,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     // in, so typing a duration and saving immediately wrote the previous value
     // (usually null) — the field looked filled in and still saved empty.
     parsedPlannedMinutes,
-    pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, existingTemplateId, showToast,
+    pendingTodoTexts, readOnly, alsoSaveAsTemplate, templateRecurrenceType, templateRepeatUntil, existingTemplateId, showToast,
   ]);
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
@@ -1650,8 +1681,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   className={inputClass}
                 >
                   <option value="">— None —</option>
-                  {linkedObjectives.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
+                  {objectiveTree.map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
                 </select>
               </div>
@@ -1665,8 +1696,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                   className={inputClass}
                 >
                   <option value="">— None —</option>
-                  {linkedOperations.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
+                  {operationTree.map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
                 </select>
               </div>
@@ -1965,8 +1996,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         </div>
 
         {!templateMode && mode === "time_based" && (
-          <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
-            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-espresso">
+          /* Highlighted rather than another grey box — this one turns a one-off
+             into a repeating commitment, which is worth noticing before you save. */
+          <div className={`rounded-lg border-2 p-3 space-y-2 ${
+            alsoSaveAsTemplate ? "border-terracotta bg-terracotta-soft/50" : "border-amber bg-amber-soft/40"
+          }`}>
+            <label className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-espresso">
               <input
                 type="checkbox"
                 checked={alsoSaveAsTemplate}
@@ -1982,7 +2017,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 }}
                 disabled={readOnly}
               />
-              Also save as a recurring template
+              Save as a recurring template
             </label>
             {alsoSaveAsTemplate && (
               <div>
@@ -1997,6 +2032,21 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
+                <div className="mt-2">
+                  <label className="mb-1 block text-[10px] font-semibold text-walnut">Repeat until (optional)</label>
+                  <input
+                    type="date"
+                    value={templateRepeatUntil}
+                    onChange={(e) => setTemplateRepeatUntil(e.target.value)}
+                    disabled={readOnly}
+                    className={inputClass}
+                  />
+                  <p className="mt-1 text-[10px] text-stone">
+                    {templateRepeatUntil
+                      ? `Stops after ${templateRepeatUntil}.`
+                      : "Leave blank to repeat indefinitely."}
+                  </p>
+                </div>
                 <p className="mt-1 text-[10px] text-stone">
                   {existingTemplateId
                     ? "Linked to a recurring template — saving updates it to match this task's details."
