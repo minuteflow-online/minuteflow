@@ -102,6 +102,15 @@ function StatusBadge({ status }: { status: string }) {
 
 const KIND_LABEL: Record<ProjectKind, string> = { objective: "Objective", operation: "Operation" };
 
+// Project-level status (distinct from the Active/Inactive toggle and from subtask status).
+const PROJECT_STATUS_OPTIONS: { value: string; label: string; cls: string }[] = [
+  { value: "planning", label: "Planning", cls: "bg-slate-blue-soft text-slate-blue border-slate-blue/20" },
+  { value: "active", label: "Active", cls: "bg-sage-soft text-sage border-sage/20" },
+  { value: "on_hold", label: "On hold", cls: "bg-amber-50 text-amber-600 border-amber-200" },
+  { value: "done", label: "Done", cls: "bg-emerald-50 text-emerald-600 border-emerald-200" },
+];
+const PROJECT_STATUS_BY_VALUE = new Map(PROJECT_STATUS_OPTIONS.map((s) => [s.value, s]));
+
 // Statuses counted as "done" for the "Where They Are" completed/total figure.
 const DONE_STATUSES = new Set(["completed", "approved", "paid"]);
 
@@ -110,7 +119,12 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [objectiveOptions, setObjectiveOptions] = useState<Project[]>([]);
+  // Reverse of objectiveOptions: on the Objective tab, the Operations that link
+  // to each objective (read-only here — edited at their origin in Operations).
+  const [linkedOperations, setLinkedOperations] = useState<Project[]>([]);
 
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   // Lighter default view (Figma reference, docs/objective-foundation-feature.md):
@@ -132,6 +146,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [editNotes, setEditNotes] = useState("");
   const [editVaIds, setEditVaIds] = useState<string[]>([]);
   const [editTargetDate, setEditTargetDate] = useState("");
+  const [editStartDate, setEditStartDate] = useState("");
+  const [editProjectStatus, setEditProjectStatus] = useState("active");
   const [editLinkedObjectiveId, setEditLinkedObjectiveId] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [editNotice, setEditNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -145,6 +161,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [createVaIds, setCreateVaIds] = useState<string[]>([]);
   const [createParentId, setCreateParentId] = useState("");
   const [createTargetDate, setCreateTargetDate] = useState("");
+  const [createStartDate, setCreateStartDate] = useState("");
+  const [createProjectStatus, setCreateProjectStatus] = useState("active");
   const [createLinkedObjectiveId, setCreateLinkedObjectiveId] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -217,6 +235,25 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     return () => { cancelled = true; };
   }, [kind]);
 
+  // Objective tab: load the Operations that support these objectives, so each
+  // objective can show its linked operations (read-only; edited in Operations).
+  useEffect(() => {
+    if (kind !== "objective") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/projects?mine=true&kind=operation", { cache: "no-store" });
+        if (res.ok && !cancelled) {
+          const d = await res.json();
+          setLinkedOperations(d.projects ?? []);
+        }
+      } catch {
+        // leave empty
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [kind]);
+
   const childrenByParent = useMemo(() => {
     const map = new Map<string, Project[]>();
     for (const p of projects) {
@@ -224,10 +261,52 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
     }
+    // Order within each level (parents among parents, children within a parent):
+    // a manual drag order (sort_order) wins when set; otherwise by target date
+    // ascending (undated last); created_at breaks remaining ties.
+    const rank = (a: Project, b: Project) => {
+      const sa = a.sort_order, sb = b.sort_order;
+      if (sa != null && sb != null && sa !== sb) return sa - sb;
+      if (sa != null && sb == null) return -1;
+      if (sa == null && sb != null) return 1;
+      const ta = a.target_date ?? "", tb = b.target_date ?? "";
+      if (ta && tb && ta !== tb) return ta < tb ? -1 : 1;
+      if (ta && !tb) return -1;
+      if (!ta && tb) return 1;
+      return (a.created_at ?? "") < (b.created_at ?? "") ? 1 : -1;
+    };
+    for (const list of map.values()) list.sort(rank);
     return map;
   }, [projects]);
 
   const rootProjects = childrenByParent.get("__root__") ?? [];
+
+  // Drag-to-reorder top-level items. Reorders the visible root list, then
+  // persists the new order (sets sort_order = index), which wins over the
+  // date sort until changed again.
+  const handleReorderRoots = async (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    const ids = rootProjects.map((p) => p.id);
+    const from = ids.indexOf(draggedId);
+    const to = ids.indexOf(targetId);
+    if (from === -1 || to === -1) return;
+    ids.splice(from, 1);
+    ids.splice(to, 0, draggedId);
+    // Optimistic: renumber locally so the list holds its new order immediately.
+    setProjects((prev) => prev.map((p) => {
+      const idx = ids.indexOf(p.id);
+      return idx === -1 ? p : { ...p, sort_order: idx };
+    }));
+    try {
+      await fetch("/api/projects/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+    } catch {
+      void fetchProjects();
+    }
+  };
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
@@ -246,6 +325,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setEditDetails(selectedProject.details ?? "");
     setEditNotes(selectedProject.notes ?? "");
     setEditTargetDate(selectedProject.target_date ?? "");
+    setEditStartDate(selectedProject.start_date ?? "");
+    setEditProjectStatus(selectedProject.status ?? "active");
     setEditLinkedObjectiveId(selectedProject.linked_objective_id ?? "");
     setEditVaIds([]);
     setEditNotice(null);
@@ -353,6 +434,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           details: editDetails.trim() || null,
           notes: editNotes.trim() || null,
           va_ids: editVaIds,
+          start_date: editStartDate || null,
+          status: editProjectStatus,
           ...(kind === "objective" ? { target_date: editTargetDate || null } : {}),
           ...(kind === "operation" ? { linked_objective_id: editLinkedObjectiveId || null } : {}),
         }),
@@ -368,6 +451,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               account: editAccount.trim() || null,
               details: editDetails.trim() || null,
               notes: editNotes.trim() || null,
+              start_date: editStartDate || null,
+              status: editProjectStatus,
               target_date: kind === "objective" ? (editTargetDate || null) : prev.target_date,
               linked_objective_id: kind === "operation" ? (editLinkedObjectiveId || null) : prev.linked_objective_id,
             }
@@ -436,6 +521,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           va_ids: createVaIds,
           kind,
           parent_project_id: createParentId || null,
+          start_date: createStartDate || null,
+          status: createProjectStatus,
           ...(kind === "objective" ? { target_date: createTargetDate || null } : {}),
           ...(kind === "operation" ? { linked_objective_id: createLinkedObjectiveId || null } : {}),
         }),
@@ -450,6 +537,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       setCreateVaIds([]);
       setCreateParentId("");
       setCreateTargetDate("");
+      setCreateStartDate("");
+      setCreateProjectStatus("active");
       setCreateLinkedObjectiveId("");
       setShowCreate(false);
       if (createParentId) setExpandedIds((prev) => new Set(prev).add(createParentId));
@@ -529,6 +618,17 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   };
 
   const objectiveNameById = new Map(objectiveOptions.map((o) => [o.id, o.name]));
+  // Group linked operations by the objective they support, for the reverse view.
+  const operationsByObjective = useMemo(() => {
+    const map = new Map<string, Project[]>();
+    for (const op of linkedOperations) {
+      if (!op.linked_objective_id) continue;
+      const list = map.get(op.linked_objective_id) ?? [];
+      list.push(op);
+      map.set(op.linked_objective_id, list);
+    }
+    return map;
+  }, [linkedOperations]);
 
   const openCreateForm = (parentId: string) => {
     setShowCreate(true);
@@ -541,6 +641,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setCreateVaIds([]);
     setCreateParentId(parentId);
     setCreateTargetDate("");
+    setCreateStartDate("");
+    setCreateProjectStatus("active");
     setCreateLinkedObjectiveId("");
     setCreateError(null);
   };
@@ -579,9 +681,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       <React.Fragment key={project.id}>
         <div
           onClick={() => handleSelectProject(project)}
+          draggable={depth === 0}
+          onDragStart={depth === 0 ? (e) => { setDragId(project.id); e.dataTransfer.effectAllowed = "move"; } : undefined}
+          onDragOver={depth === 0 ? (e) => { e.preventDefault(); if (dragId && dragId !== project.id) setDragOverId(project.id); } : undefined}
+          onDragLeave={depth === 0 ? () => setDragOverId((cur) => (cur === project.id ? null : cur)) : undefined}
+          onDrop={depth === 0 ? (e) => { e.preventDefault(); if (dragId) void handleReorderRoots(dragId, project.id); setDragId(null); setDragOverId(null); } : undefined}
+          onDragEnd={depth === 0 ? () => { setDragId(null); setDragOverId(null); } : undefined}
           className={`flex flex-col gap-1 px-3 py-2.5 cursor-pointer transition-colors ${
             selectedProject?.id === project.id ? "bg-parchment" : "hover:bg-cream"
-          }`}
+          } ${dragOverId === project.id ? "border-t-2 border-terracotta" : ""} ${dragId === project.id ? "opacity-50" : ""}`}
           style={{ paddingLeft: 12 + depth * 16 }}
         >
           <div className="flex items-center justify-between gap-2">
@@ -608,6 +716,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               >
                 +
               </button>
+              {project.status && project.status !== "active" && PROJECT_STATUS_BY_VALUE.has(project.status) && (
+                <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${PROJECT_STATUS_BY_VALUE.get(project.status)!.cls}`}>
+                  {PROJECT_STATUS_BY_VALUE.get(project.status)!.label}
+                </span>
+              )}
               <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
                 project.is_active
                   ? "bg-sage-soft text-sage border-sage/20"
@@ -626,6 +739,20 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-plum-soft text-plum border-plum/20 w-fit">
               Supports: {objectiveNameById.get(project.linked_objective_id) ?? "Objective"}
             </span>
+          )}
+          {kind === "objective" && (operationsByObjective.get(project.id)?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap items-center gap-1">
+              {operationsByObjective.get(project.id)!.map((op) => (
+                <span
+                  key={op.id}
+                  title="Operation · read-only here — edit in Operations"
+                  className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-slate-blue-soft text-slate-blue border-slate-blue/20 w-fit inline-flex items-center gap-1"
+                >
+                  <span className="opacity-60 uppercase tracking-wide text-[8px]">Op</span>
+                  {op.name}
+                </span>
+              ))}
+            </div>
           )}
           {project.description && (
             <p className="text-[11px] text-stone/80 truncate">{project.description}</p>
@@ -996,6 +1123,34 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 />
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={createStartDate}
+                    onChange={(e) => setCreateStartDate(e.target.value)}
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                    Status
+                  </label>
+                  <select
+                    value={createProjectStatus}
+                    onChange={(e) => setCreateProjectStatus(e.target.value)}
+                    className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                  >
+                    {PROJECT_STATUS_OPTIONS.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               {kind === "objective" && (
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
@@ -1248,6 +1403,34 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     onChange={(e) => setEditName(e.target.value)}
                     className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
                   />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Start Date
+                    </label>
+                    <input
+                      type="date"
+                      value={editStartDate}
+                      onChange={(e) => setEditStartDate(e.target.value)}
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Status
+                    </label>
+                    <select
+                      value={editProjectStatus}
+                      onChange={(e) => setEditProjectStatus(e.target.value)}
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                    >
+                      {PROJECT_STATUS_OPTIONS.map((s) => (
+                        <option key={s.value} value={s.value}>{s.label}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {kind === "objective" && (

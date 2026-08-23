@@ -72,7 +72,11 @@ export async function GET(request: Request) {
     const { user, isAdmin } = authResult;
 
     if (isAdmin) {
-      let query = supabase.from("projects").select("*").order("created_at", { ascending: false });
+      let query = supabase
+        .from("projects")
+        .select("*")
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: false });
       if (kind) query = query.eq("kind", kind);
       const { data, error } = await query;
       if (error) return Response.json({ error: error.message }, { status: 500 });
@@ -94,6 +98,7 @@ export async function GET(request: Request) {
           ? `created_by.eq.${user.id},id.in.(${accessIds.join(",")})`
           : `created_by.eq.${user.id}`
       )
+      .order("sort_order", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false });
     if (kind) query = query.eq("kind", kind);
     const { data, error } = await query;
@@ -125,6 +130,8 @@ export async function POST(request: Request) {
     kind?: string;
     parent_project_id?: string | null;
     target_date?: string | null;
+    start_date?: string | null;
+    status?: string | null;
     linked_objective_id?: string | null;
   };
   if (!body.name?.trim()) return Response.json({ error: "name is required" }, { status: 400 });
@@ -141,6 +148,8 @@ export async function POST(request: Request) {
     kind,
     parent_project_id: body.parent_project_id || null,
     target_date: body.target_date || null,
+    start_date: body.start_date || null,
+    status: body.status?.trim() || "active",
     linked_objective_id: body.linked_objective_id || null,
   }).select("*").single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
@@ -181,6 +190,8 @@ export async function PATCH(request: Request) {
     va_ids?: string[];
     parent_project_id?: string | null;
     target_date?: string | null;
+    start_date?: string | null;
+    status?: string | null;
     linked_objective_id?: string | null;
   };
   const updates: Record<string, unknown> = {};
@@ -197,6 +208,8 @@ export async function PATCH(request: Request) {
     updates.parent_project_id = body.parent_project_id || null;
   }
   if (body.target_date !== undefined) updates.target_date = body.target_date || null;
+  if (body.start_date !== undefined) updates.start_date = body.start_date || null;
+  if (body.status !== undefined) updates.status = body.status?.trim() || "active";
   if (body.linked_objective_id !== undefined) updates.linked_objective_id = body.linked_objective_id || null;
   const { data, error } = await supabase.from("projects").update(updates).eq("id", id).select("*").single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
