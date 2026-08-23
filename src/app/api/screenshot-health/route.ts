@@ -15,7 +15,8 @@ import { NextRequest } from "next/server";
 import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
 import { refreshGoogleToken, getValidAccessToken } from "@/lib/google-token";
-import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { telegramEnabled, esc } from "@/lib/telegram";
+import { notifyVaPrivately } from "@/lib/vaNotify";
 import { EXTENSION_LATEST_VERSION, EXTENSION_STORE_URL, isVersionOlder } from "@/lib/extensionVersion";
 
 export const dynamic = "force-dynamic";
@@ -185,7 +186,7 @@ export async function GET(request: NextRequest) {
   //
   // Cron-only, so a manual health check never fires a team-wide message.
   let outdated: string[] = [];
-  if (isCron && telegramEnabled("submissions")) {
+  if (isCron && telegramEnabled("ops")) {
     const { data: statuses } = await supabase
       .from("extension_upload_status")
       .select("user_id, extension_version");
@@ -197,27 +198,34 @@ export async function GET(request: NextRequest) {
     if (behind.length > 0) {
       const { data: profiles } = await supabase
         .from("profiles")
-        .select("id, full_name, username")
+        .select("id, full_name, username, telegram_chat_id")
         .in("id", behind.map((s) => s.user_id));
 
-      const nameById = new Map(
-        (profiles ?? []).map((p) => [p.id as string, (p.full_name || p.username || "Someone") as string])
-      );
+      const byId = new Map((profiles ?? []).map((p) => [p.id as string, p]));
       outdated = behind.map(
-        (s) => `${nameById.get(s.user_id as string) ?? "Someone"} — ${s.extension_version}`
+        (s) =>
+          `${byId.get(s.user_id as string)?.full_name || byId.get(s.user_id as string)?.username || "Someone"} — ${s.extension_version}`
       );
 
-      await sendTelegram(
-        "submissions",
-        [
-          `🧩 <b>Extension update available</b> — v${esc(EXTENSION_LATEST_VERSION)}`,
-          "",
-          "Still on an older build:",
-          ...outdated.map((line) => `• ${esc(line)}`),
-          "",
-          `Install or update: ${EXTENSION_STORE_URL}`,
-        ].join("\n")
-      );
+      // Each person is told directly rather than named on a list the whole team
+      // reads. Their own copy carries the store link, which is the only part
+      // they can act on, and Toni gets a log line per send.
+      for (const s of behind) {
+        const p = byId.get(s.user_id as string);
+        const name = p?.full_name || p?.username || "Someone";
+        await notifyVaPrivately({
+          chatId: p?.telegram_chat_id,
+          vaName: name,
+          topic: "Extension update",
+          message: [
+            `🧩 <b>A newer MinuteFlow extension is out</b> — v${esc(EXTENSION_LATEST_VERSION)}`,
+            "",
+            `You are on ${esc(String(s.extension_version))}. Most installs update themselves, so if yours has not, open the store page and update it by hand.`,
+            "",
+            EXTENSION_STORE_URL,
+          ].join("\n"),
+        });
+      }
     }
   }
 

@@ -5,6 +5,8 @@
 //
 // Access is gated by (admin)/layout.tsx, same as every other admin page.
 
+import TelegramChatLinker from "@/components/TelegramChatLinker";
+
 export const dynamic = "force-dynamic";
 
 type TgChat = { id: number; title?: string; type: string; first_name?: string };
@@ -196,6 +198,8 @@ export default async function TelegramChatsPage() {
           </div>
         )}
       </div>
+
+      <TelegramChatLinker chats={groups} />
 
       <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
         <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Where each id goes</h3>

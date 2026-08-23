@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { notifyVaPrivately } from "@/lib/vaNotify";
 
 export const dynamic = "force-dynamic";
 
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest) {
       // Get VA name
       const { data: profile } = await supabase
         .from("profiles")
-        .select("full_name, username")
+        .select("full_name, username, telegram_chat_id")
         .eq("id", userId)
         .single();
 
@@ -172,15 +173,20 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Notice only, and deliberately silent on the reason. Naming the problem
-      // here would tell the whole team whose setup is broken; the nudge is
-      // enough to get them into the email that explains it.
-      if (telegramEnabled("submissions")) {
-        await sendTelegram(
-          "submissions",
-          `📧 <b>${esc(vaName)}</b> — email sent. Topic: Screenshot`
-        );
-      }
+      // Straight to the person whose machine it is, plus a log line for Toni.
+      // Nothing goes to the team chat — whose setup is broken is not the
+      // team's business, and the person needs to see it in time to fix it.
+      await notifyVaPrivately({
+        chatId: profile?.telegram_chat_id,
+        vaName,
+        topic: "Screenshot",
+        message: [
+          "📷 <b>Your screenshots are not uploading</b>",
+          "",
+          "Three uploads in a row did not reach Drive. They are saved on your computer and will upload on their own once the connection is back.",
+          "If it keeps happening, check your internet and that the MinuteFlow extension is still enabled in Chrome.",
+        ].join("\n"),
+      });
     }
 
     return Response.json({ ok: true });

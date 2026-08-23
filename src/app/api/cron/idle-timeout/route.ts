@@ -1,6 +1,6 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
-import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { notifyVaPrivately } from "@/lib/vaNotify";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
@@ -149,12 +149,12 @@ async function emailForcedClockOut(userId: string, who: string, closedAt: string
  *     heartbeat in between clears the warning and nothing further happens.
  *   - The trigger is the session heartbeat, not the extension. The old guard
  *     failed precisely because it trusted extension state.
- *   - Detail goes by email to the VA with admins copied; the team chat only
- *     carries a one-line notice that an email was sent. The person knows to
- *     look and a teammate can nudge them, without the specifics of someone's
- *     quiet stretch being posted in front of everyone.
+ *   - Both the warning and the close reach the VA privately: a direct message
+ *     from the bot plus an email holding the detail. The team chat sees none
+ *     of it; Toni gets a log line recording that it was sent, and a loud one
+ *     when the VA has no Telegram link and could not be reached.
  *
- * Requires profiles.idle_warned_at.
+ * Requires profiles.idle_warned_at and profiles.telegram_chat_id.
  *
  * Secured by IDLE_TIMEOUT_CRON_SECRET (VPS crontab, every 10 min).
  */
@@ -242,7 +242,7 @@ export async function GET(request: NextRequest) {
   for (const c of candidates) {
     const { data: prof } = await supabase
       .from("profiles")
-      .select("full_name, username, idle_warned_at")
+      .select("full_name, username, idle_warned_at, telegram_chat_id")
       .eq("id", c.user_id)
       .single();
     if (!prof) continue;
@@ -260,10 +260,17 @@ export async function GET(request: NextRequest) {
       await supabase.from("profiles").update({ idle_warned_at: new Date().toISOString() }).eq("id", c.user_id);
       warned.push(who);
       await emailIdleWarning(c.user_id, who);
-      await sendTelegram(
-        "submissions",
-        `📧 <b>${esc(who)}</b> — email sent. Topic: Activity`
-      );
+      await notifyVaPrivately({
+        chatId: prof.telegram_chat_id,
+        vaName: who,
+        topic: "Activity",
+        message: [
+          "⏰ <b>Are you still there?</b>",
+          "",
+          `MinuteFlow has not seen activity on your session for ${Math.round(STALE_THRESHOLD_MS / 60000)} minutes. Open MinuteFlow to keep your time running.`,
+          `If nothing changes in the next ${Math.round(GRACE_MS / 60000)} minutes you will be clocked out automatically.`,
+        ].join("\n"),
+      });
       continue;
     }
 
@@ -297,22 +304,21 @@ export async function GET(request: NextRequest) {
       await supabase.from("profiles").update({ idle_warned_at: null }).eq("id", c.user_id);
       closed.push(who);
 
-      // The detail goes to the VA by email — what was closed, when, and how to
-      // get it corrected. That is a record they keep, rather than a line in a
-      // group chat that scrolls away.
+      // Email is the record they keep; the DM is what they actually see in
+      // time to react. Toni gets a log line from notifyVaPrivately either way.
       await emailForcedClockOut(c.user_id, who, now);
+      await notifyVaPrivately({
+        chatId: prof.telegram_chat_id,
+        vaName: who,
+        topic: "Activity",
+        message: [
+          "⚪ <b>You have been clocked out</b>",
+          "",
+          "No activity was seen after the warning, so MinuteFlow ended your session and closed the open task.",
+          "The details are in your email. If this was wrong, tell Toni — the time can be corrected.",
+        ].join("\n"),
+      });
     }
-  }
-
-  // Name plus a bare topic label, nothing more. Spelling out the reason in a
-  // room the whole team is in gives away exactly what the email was meant to
-  // keep private. "Activity" covers both the warning and the close, so the
-  // chat does not reveal which stage this person reached either.
-  if (closed.length > 0 && telegramEnabled("submissions")) {
-    await sendTelegram(
-      "submissions",
-      `📧 <b>${esc(closed.join(", "))}</b> — email sent. Topic: Activity`
-    );
   }
 
   return Response.json({
