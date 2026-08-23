@@ -763,6 +763,9 @@ export interface Project {
   kind: ProjectKind;
   target_date: string | null;
   linked_objective_id: string | null;
+  sort_order: number | null;
+  start_date: string | null;
+  status: string;
 }
 
 export interface FixedPayTaskAttachment {
