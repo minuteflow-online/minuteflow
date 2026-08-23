@@ -335,6 +335,7 @@ export default function BugReportsAdminTab({
                       <BugReportTagEditor
                         reportId={report.id}
                         tags={report.tags ?? []}
+                        knownTags={allTags}
                         canEdit
                         onSaved={(next) =>
                           setReports((rs) =>
