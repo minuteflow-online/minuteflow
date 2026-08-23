@@ -284,19 +284,26 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // Drag-to-reorder top-level items. Reorders the visible root list, then
   // persists the new order (sets sort_order = index), which wins over the
   // date sort until changed again.
-  const handleReorderRoots = async (draggedId: string, targetId: string) => {
+  const handleReorderSiblings = async (draggedId: string, targetId: string) => {
     if (draggedId === targetId) return;
-    const ids = rootProjects.map((p) => p.id);
+    const dragged = projects.find((p) => p.id === draggedId);
+    const target = projects.find((p) => p.id === targetId);
+    if (!dragged || !target) return;
+    // Only reorder within the same level (same parent) — dropping onto a node
+    // in a different group is ignored.
+    if ((dragged.parent_project_id ?? null) !== (target.parent_project_id ?? null)) return;
+    const parentKey = dragged.parent_project_id ?? "__root__";
+    const ids = (childrenByParent.get(parentKey) ?? []).map((p) => p.id);
     const from = ids.indexOf(draggedId);
     const to = ids.indexOf(targetId);
     if (from === -1 || to === -1) return;
     ids.splice(from, 1);
     ids.splice(to, 0, draggedId);
-    // Optimistic: renumber locally so the list holds its new order immediately.
-    setProjects((prev) => prev.map((p) => {
-      const idx = ids.indexOf(p.id);
-      return idx === -1 ? p : { ...p, sort_order: idx };
-    }));
+    const orderById = new Map(ids.map((id, idx) => [id, idx]));
+    // Optimistic: renumber this sibling group so the list holds its order immediately.
+    setProjects((prev) => prev.map((p) =>
+      orderById.has(p.id) ? { ...p, sort_order: orderById.get(p.id)! } : p
+    ));
     try {
       await fetch("/api/projects/reorder", {
         method: "POST",
@@ -681,13 +688,13 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       <React.Fragment key={project.id}>
         <div
           onClick={() => handleSelectProject(project)}
-          draggable={depth === 0}
-          onDragStart={depth === 0 ? (e) => { setDragId(project.id); e.dataTransfer.effectAllowed = "move"; } : undefined}
-          onDragOver={depth === 0 ? (e) => { e.preventDefault(); if (dragId && dragId !== project.id) setDragOverId(project.id); } : undefined}
-          onDragLeave={depth === 0 ? () => setDragOverId((cur) => (cur === project.id ? null : cur)) : undefined}
-          onDrop={depth === 0 ? (e) => { e.preventDefault(); if (dragId) void handleReorderRoots(dragId, project.id); setDragId(null); setDragOverId(null); } : undefined}
-          onDragEnd={depth === 0 ? () => { setDragId(null); setDragOverId(null); } : undefined}
-          className={`flex flex-col gap-1 px-3 py-2.5 cursor-pointer transition-colors ${
+          draggable
+          onDragStart={(e) => { e.stopPropagation(); setDragId(project.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", project.id); }}
+          onDragOver={(e) => { if (!dragId) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dragId !== project.id) setDragOverId(project.id); }}
+          onDragLeave={() => setDragOverId((cur) => (cur === project.id ? null : cur))}
+          onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const dragged = dragId || e.dataTransfer.getData("text/plain"); if (dragged) void handleReorderSiblings(dragged, project.id); setDragId(null); setDragOverId(null); }}
+          onDragEnd={() => { setDragId(null); setDragOverId(null); }}
+          className={`flex flex-col gap-1 px-3 py-2.5 transition-colors cursor-grab active:cursor-grabbing ${
             selectedProject?.id === project.id ? "bg-parchment" : "hover:bg-cream"
           } ${dragOverId === project.id ? "border-t-2 border-terracotta" : ""} ${dragId === project.id ? "opacity-50" : ""}`}
           style={{ paddingLeft: 12 + depth * 16 }}
