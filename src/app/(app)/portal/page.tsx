@@ -1,3 +1,5 @@
+  const [requesterFilter, setRequesterFilter] = useState<string>("all");
+  const [pastRequestsPage, setPastRequestsPage] = useState(1);
 "use client";
 
 import { Fragment, useEffect, useState, useCallback } from "react";
@@ -343,6 +345,9 @@ function ResourcesTab({
 
 // ─── Requests Tab ────────────────────────────────────────────
 
+// Resolved requests accumulate forever; ten a page keeps the history scannable.
+const REQUESTS_PAGE_SIZE = 10;
+
 function RequestsTab({
   currentUserId,
   isAdmin,
@@ -507,8 +512,26 @@ function RequestsTab({
     [supabase, currentUserId, adminNotes, fetchRequests]
   );
 
-  const pendingRequests = requests.filter((r) => r.status === "pending");
-  const pastRequests = requests.filter((r) => r.status !== "pending");
+  // Reviewers see everyone's requests, so they get a submitter filter; a VA only
+  // ever has their own and would just be filtering a list of one name.
+  const requesters = Array.from(
+    new Map(requests.map((r) => [r.user_id, r.requester_name || "Unknown"])).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]));
+
+  const byRequester = requests.filter(
+    (r) => requesterFilter === "all" || r.user_id === requesterFilter
+  );
+  const pendingRequests = byRequester.filter((r) => r.status === "pending");
+  const pastRequests = byRequester.filter((r) => r.status !== "pending");
+
+  // Only the resolved history grows without bound; pending is a working queue
+  // and is meant to be seen in full.
+  const pastTotalPages = Math.max(1, Math.ceil(pastRequests.length / REQUESTS_PAGE_SIZE));
+  const pastPage = Math.min(pastRequestsPage, pastTotalPages);
+  const pagedPastRequests = pastRequests.slice(
+    (pastPage - 1) * REQUESTS_PAGE_SIZE,
+    pastPage * REQUESTS_PAGE_SIZE
+  );
 
   return (
     <div className="max-w-3xl space-y-8">
@@ -708,6 +731,29 @@ function RequestsTab({
         </div>
       )}
 
+      {isAdmin && requesters.length > 1 && (
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
+            Requester
+          </label>
+          <select
+            value={requesterFilter}
+            onChange={(e) => {
+              setRequesterFilter(e.target.value);
+              setPastRequestsPage(1);
+            }}
+            className="rounded-lg border border-sand bg-white px-3 py-1.5 text-xs text-espresso outline-none focus:border-terracotta"
+          >
+            <option value="all">Everyone</option>
+            {requesters.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* ── Pending requests (admin review OR VA view) ── */}
       {!loading && pendingRequests.length > 0 && (
         <section>
@@ -805,32 +851,60 @@ function RequestsTab({
       {!loading && pastRequests.length > 0 && (
         <section>
           <h2 className="text-sm font-bold text-espresso mb-4">Past Requests</h2>
-          <div className="space-y-3">
-            {pastRequests.map((req) => (
-              <div key={req.id} className="rounded-xl border border-sand bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    {isAdmin && (
-                      <p className="text-xs font-semibold text-espresso">{req.requester_name}</p>
-                    )}
-                    <p className="text-sm font-medium text-espresso truncate">{req.subject}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="inline-flex items-center rounded-full bg-parchment px-2 py-0.5 text-[11px] font-medium text-walnut">
-                        {REQUEST_TYPE_LABELS[req.type]}
-                      </span>
-                      <span className="text-[11px] text-stone">{fmtDate(req.created_at)}</span>
-                    </div>
-                    {req.admin_notes && (
-                      <p className="mt-2 text-xs text-bark italic">"{req.admin_notes}"</p>
-                    )}
-                  </div>
-                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold shrink-0 ${STATUS_STYLES[req.status].bg} ${STATUS_STYLES[req.status].text}`}>
+          <div className="space-y-1.5">
+            {pagedPastRequests.map((req) => (
+              <div key={req.id} className="rounded-lg border border-sand bg-white">
+                {/* One line per resolved request — the history is for scanning,
+                    not reading. Notes stay on their own line when present. */}
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className="shrink-0 inline-flex items-center rounded-full bg-parchment px-2 py-[1px] text-[9px] font-medium text-walnut">
+                    {REQUEST_TYPE_LABELS[req.type]}
+                  </span>
+                  <span className="text-[13px] font-medium text-espresso truncate">{req.subject}</span>
+                  {isAdmin && (
+                    <span className="shrink-0 text-[11px] text-bark">{req.requester_name}</span>
+                  )}
+                  <span className="shrink-0 text-[10px] text-stone">{fmtDate(req.created_at)}</span>
+                  <span className={`ml-auto shrink-0 rounded-full px-2 py-[1px] text-[9px] font-semibold ${STATUS_STYLES[req.status].bg} ${STATUS_STYLES[req.status].text}`}>
                     {STATUS_STYLES[req.status].label}
                   </span>
                 </div>
+                {req.admin_notes && (
+                  <p className="border-t border-parchment px-3 py-1.5 text-[11px] italic text-bark">
+                    &quot;{req.admin_notes}&quot;
+                  </p>
+                )}
               </div>
             ))}
           </div>
+          {pastTotalPages > 1 && (
+            <div className="mt-3 flex items-center justify-between border-t border-sand pt-2">
+              <span className="text-[11px] text-bark">
+                Showing {(pastPage - 1) * REQUESTS_PAGE_SIZE + 1}&ndash;
+                {Math.min(pastPage * REQUESTS_PAGE_SIZE, pastRequests.length)} of{" "}
+                {pastRequests.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPastRequestsPage((n) => Math.max(1, n - 1))}
+                  disabled={pastPage <= 1}
+                  className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone hover:bg-stone/20 disabled:opacity-40"
+                >
+                  Previous
+                </button>
+                <span className="text-[11px] text-bark">
+                  Page {pastPage} of {pastTotalPages}
+                </span>
+                <button
+                  onClick={() => setPastRequestsPage((n) => Math.min(pastTotalPages, n + 1))}
+                  disabled={pastPage >= pastTotalPages}
+                  className="rounded-lg bg-stone/10 px-3 py-1 text-[11px] font-semibold text-stone hover:bg-stone/20 disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       )}
 
