@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { canReviewBugReports } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 import { sendDriveFilesToTelegram } from "@/lib/driveFetch";
@@ -32,7 +32,7 @@ export async function GET() {
     .eq("id", user.id)
     .single();
 
-  const isAdmin = hasBroadAdminAccess(profile);
+  const isAdmin = canReviewBugReports(profile);
 
   let query = supabase
     .from("bug_reports")
@@ -173,7 +173,7 @@ export async function PATCH(request: NextRequest) {
     .single();
   if (!existing) return Response.json({ error: "Report not found" }, { status: 404 });
 
-  const isReviewer = hasBroadAdminAccess(profile);
+  const isReviewer = canReviewBugReports(profile);
   const isOwner = existing.user_id === user.id;
 
   const body = await request.json();

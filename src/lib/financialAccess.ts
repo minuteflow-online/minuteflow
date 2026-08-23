@@ -51,6 +51,25 @@ export function hasAccountsClientsAccess(
 // Feedback, publishing Reviews, awarding Tokens, reviewing Bug Reports) —
 // Admin and Manager only. Coordinator/Specialist are deliberately excluded
 // here, unlike the broader admin-panel tier.
+/**
+ * Who can work on bug reports and feature requests: IT, and the Founder/CEO.
+ *
+ * Deliberately narrower than hasBroadAdminAccess — an Operations admin can read
+ * the queue but has no business moving a report to Testing or dismissing it,
+ * because they are not the person who will fix it. Whoever filed a report never
+ * qualifies through ownership either; a requester marking their own request
+ * Fixed is the loophole this closes.
+ *
+ * IT is read from department rather than role: the IT specialist and an IT
+ * manager are the same person for this purpose.
+ */
+export function canReviewBugReports(
+  profile?: { role?: string | null; department?: string | null } | null
+): boolean {
+  if (profile?.role === "founder" || profile?.role === "ceo") return true;
+  return profile?.department?.trim().toUpperCase() === "IT";
+}
+
 export function hasModerationAccess(
   profile?: { role?: string | null } | null
 ): boolean {
