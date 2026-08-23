@@ -167,7 +167,16 @@ export async function PATCH(request: NextRequest) {
   const isOwner = existing.user_id === user.id;
 
   const body = await request.json();
-  const { status, admin_notes, archived, title, description, drive_file_ids, tags } = body;
+  const {
+    status,
+    admin_notes,
+    archived,
+    title,
+    description,
+    drive_file_ids,
+    tags,
+    dismiss_reason,
+  } = body;
 
   const updates: Record<string, unknown> = {};
 
@@ -225,6 +234,23 @@ export async function PATCH(request: NextRequest) {
 
   if (Object.keys(updates).length === 0 && !isReviewer) {
     return Response.json({ error: "Nothing to update" }, { status: 400 });
+  }
+
+  // A dismissal without a reason tells whoever filed the report nothing except
+  // that it is closed, so the reason is required here rather than left to the
+  // form to remember — the API is what actually guarantees it.
+  if (status === "dismissed") {
+    const reason = typeof dismiss_reason === "string" ? dismiss_reason.trim() : "";
+    if (!reason) {
+      return Response.json(
+        { error: "A reason is required when dismissing a report" },
+        { status: 400 }
+      );
+    }
+    updates.dismiss_reason = reason;
+  } else if (status) {
+    // Reopened or resolved another way: the old reason no longer describes it.
+    updates.dismiss_reason = null;
   }
 
   if (status) updates.status = status;
