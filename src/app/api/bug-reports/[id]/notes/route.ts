@@ -75,7 +75,13 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
   const body = await request.json();
   const text = typeof body.body === "string" ? body.body.trim() : "";
-  if (!text) return Response.json({ error: "body is required" }, { status: 400 });
+  const driveFileIds: string[] = Array.isArray(body.drive_file_ids)
+    ? body.drive_file_ids.filter((id: unknown): id is string => typeof id === "string")
+    : [];
+  // A note can be an image on its own — "here is what I mean" needs no caption.
+  if (!text && driveFileIds.length === 0) {
+    return Response.json({ error: "a note needs text or an attachment" }, { status: 400 });
+  }
 
   const { data, error } = await ctx.supabase
     .from("bug_report_notes")
@@ -84,6 +90,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       user_id: ctx.user.id,
       full_name: ctx.profile?.full_name || ctx.profile?.username || "",
       body: text,
+      drive_file_ids: driveFileIds,
     })
     .select()
     .single();

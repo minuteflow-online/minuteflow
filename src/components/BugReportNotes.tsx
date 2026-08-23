@@ -16,6 +16,7 @@ interface BugReportNote {
   user_id: string;
   full_name: string;
   body: string;
+  drive_file_ids: string[] | null;
   created_at: string;
 }
 
@@ -34,6 +35,7 @@ export default function BugReportNotes({
   // than showing an error on every report.
   const [unavailable, setUnavailable] = useState(false);
   const [draft, setDraft] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,25 +59,40 @@ export default function BugReportNotes({
 
   const addNote = useCallback(async () => {
     const body = draft.trim();
-    if (!body) return;
+    // An image on its own is a valid note — "here's what I mean" needs no caption.
+    if (!body && files.length === 0) return;
     setSaving(true);
     setError(null);
     try {
+      // Screenshots go to Google Drive through the same route the report form
+      // uses. Uploaded before the note is created so a failed upload doesn't
+      // leave a note claiming attachments it never got.
+      const driveFileIds: string[] = [];
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append("file", file);
+        const up = await fetch("/api/bug-reports/upload", { method: "POST", body: fd });
+        if (!up.ok) throw new Error("Could not upload attachment");
+        const uploaded = await up.json();
+        if (uploaded.drive_file_id) driveFileIds.push(uploaded.drive_file_id);
+      }
+
       const res = await fetch(`/api/bug-reports/${reportId}/notes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, drive_file_ids: driveFileIds }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not add note");
       setNotes((n) => [...n, data.note]);
       setDraft("");
+      setFiles([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add note");
     } finally {
       setSaving(false);
     }
-  }, [draft, reportId]);
+  }, [draft, files, reportId]);
 
   if (loading || unavailable) return null;
 
@@ -112,9 +129,32 @@ export default function BugReportNotes({
                 </span>
                 <span className="text-[10px] text-stone">{formatWhen(note.created_at)}</span>
               </div>
-              <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-espresso">
-                {note.body}
-              </p>
+              {note.body && (
+                <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-espresso">
+                  {note.body}
+                </p>
+              )}
+              {(note.drive_file_ids?.length ?? 0) > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {note.drive_file_ids!.map((fileId) => (
+                    <a
+                      key={fileId}
+                      href={`/api/drive-image?id=${fileId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`/api/drive-image?id=${fileId}`}
+                        alt="Attachment"
+                        loading="lazy"
+                        className="h-[72px] w-[96px] rounded border border-sand object-cover transition-all hover:border-terracotta"
+                      />
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -127,14 +167,50 @@ export default function BugReportNotes({
         placeholder="Add something you forgot, or reply..."
         className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-xs text-espresso outline-none transition-colors focus:border-terracotta"
       />
-      <div className="mt-1.5 flex items-center gap-2">
+      {files.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {files.map((file, i) => (
+            <span
+              key={`${file.name}-${i}`}
+              className="flex items-center gap-1.5 rounded-lg border border-sand bg-cream px-2 py-1 text-[10px] text-espresso"
+            >
+              {file.name.length > 24 ? `${file.name.slice(0, 24)}…` : file.name}
+              <button
+                onClick={() => setFiles((f) => f.filter((_, idx) => idx !== i))}
+                className="text-stone transition-colors hover:text-terracotta"
+                aria-label={`Remove ${file.name}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
         <button
           onClick={addNote}
-          disabled={saving || !draft.trim()}
+          disabled={saving || (!draft.trim() && files.length === 0)}
           className="rounded-lg bg-sage px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
         >
           {saving ? "Adding..." : "Add note"}
         </button>
+
+        <label className="cursor-pointer rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20">
+          Attach screenshot
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              setFiles((f) => [...f, ...Array.from(e.target.files || [])]);
+              // Cleared so re-picking the same file still fires a change event.
+              e.target.value = "";
+            }}
+          />
+        </label>
+
         {error && <span className="text-[10px] text-terracotta">{error}</span>}
       </div>
     </div>
