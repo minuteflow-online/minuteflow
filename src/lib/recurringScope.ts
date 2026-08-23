@@ -116,11 +116,14 @@ export async function applyEditToFuture(
 }
 
 /**
- * Remove this occurrence and every future unstarted one, and stop the template
- * at the day before — otherwise the generator simply recreates what was just
- * deleted on its next run.
+ * Remove this occurrence and every later unstarted one.
+ *
+ * Removal is per-date and never touches the template: the schedule keeps
+ * running, it just has holes where someone decided the work was not needed.
+ * The removed rows stay as tombstones, which is what stops the generator
+ * putting those dates back (see generateOccurrences).
  */
-export async function applyDeleteToFuture(
+export async function removeOccurrences(
   supabase: MinimalClient,
   templateId: string,
   fromDueDate: string,
@@ -132,13 +135,6 @@ export async function applyDeleteToFuture(
   for (const sibling of siblings) {
     await supabase.from("assigned_tasks").update({ deleted_at: now, updated_at: now }).eq("id", sibling.id);
   }
-
-  const dayBefore = new Date(`${fromDueDate}T00:00:00Z`);
-  dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
-  await supabase
-    .from("recurring_task_templates")
-    .update({ repeat_until: dayBefore.toISOString().slice(0, 10) })
-    .eq("id", templateId);
 
   return siblings.length;
 }

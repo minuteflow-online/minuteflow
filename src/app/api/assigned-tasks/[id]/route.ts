@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { applyDeleteToFuture, applyEditToFuture } from "@/lib/recurringScope";
+import { removeOccurrences, applyEditToFuture } from "@/lib/recurringScope";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canChangeLockedReview } from "@/lib/financialAccess";
@@ -759,8 +759,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       return Response.json({ error: trashError.message }, { status: 500 });
     }
 
-    // Removing the rest of the series has to stop the template as well, or the
-    // generator simply recreates tomorrow what was just deleted today.
+    // Removing later dates too. The template is deliberately left alone —
+    // removing an occurrence is "not this week", not "stop scheduling this".
+    // The removed rows are what stop the generator putting the dates back.
     if (scope === "future" && deleted_at) {
       const { data: seriesRow } = await adminSupabase
         .from("assigned_tasks")
@@ -768,7 +769,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
         .eq("id", id)
         .single();
       if (seriesRow?.recurring_template_id && seriesRow?.due_date) {
-        await applyDeleteToFuture(adminSupabase, seriesRow.recurring_template_id, seriesRow.due_date, id);
+        await removeOccurrences(adminSupabase, seriesRow.recurring_template_id, seriesRow.due_date, id);
       }
     }
 

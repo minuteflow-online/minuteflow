@@ -161,11 +161,13 @@ export async function generateOccurrences(
   const wanted = occurrenceDates(template, from);
   if (wanted.length === 0) return { created: 0, dates: [] };
 
+  // Removed dates count as taken. A soft-deleted occurrence is a decision —
+  // "not this week" — so filtering it out here would have the generator
+  // helpfully put it back on the next run.
   const { data: existing } = await supabase
     .from("assigned_tasks")
     .select("due_date")
     .eq("recurring_template_id", template.id)
-    .is("deleted_at", null)
     .in("due_date", wanted);
 
   const already = new Set((existing ?? []).map((r: { due_date: string }) => r.due_date));

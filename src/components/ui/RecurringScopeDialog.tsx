@@ -27,7 +27,7 @@ export default function RecurringScopeDialog({
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-xl border border-sand bg-white p-5 shadow-xl">
         <h3 className="text-sm font-bold text-espresso">
-          {isDelete ? "Remove a repeating task" : "Update a repeating task"}
+          {isDelete ? "Remove a repeating task from the calendar" : "Update a repeating task"}
         </h3>
         <p className="mt-1 text-[12px] text-stone">
           <span className="font-semibold text-espresso">{taskName}</span> repeats on a schedule.
@@ -45,7 +45,7 @@ export default function RecurringScopeDialog({
             <span className="block text-[13px] font-semibold text-espresso">This occurrence only</span>
             <span className="block text-[11px] text-stone">
               {isDelete
-                ? "Removes this date. The schedule carries on as normal."
+                ? "Removes this date only. The schedule carries on as normal."
                 : "Changes this date. Every other one stays as it is."}
             </span>
           </button>
@@ -58,7 +58,7 @@ export default function RecurringScopeDialog({
             <span className="block text-[13px] font-semibold text-espresso">This and all later occurrences</span>
             <span className="block text-[11px] text-stone">
               {isDelete
-                ? "Removes this date and every later one, and ends the schedule here. Dates already worked on are left alone."
+                ? "Removes this date and every later one. The schedule itself stays — delete it from Recurring Templates if you want it gone. Dates already worked on are left alone."
                 : "Changes this date and every later one, and updates the schedule so new dates match. Dates already worked on are left alone."}
             </span>
           </button>
