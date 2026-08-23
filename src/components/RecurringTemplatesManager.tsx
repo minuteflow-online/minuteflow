@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import TaskEditor from "@/components/TaskEditor";
 import ColumnHeader from "@/components/table/ColumnHeader";
+import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import PauseTemplateDialog from "@/components/ui/PauseTemplateDialog";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { orgWallClockToUtc, RECURRENCE_OPTIONS, type RecurrenceType } from "@/lib/taskSchedule";
@@ -150,12 +151,14 @@ export default function RecurringTemplatesManager({
   const [editingTemplate, setEditingTemplate] = useState<RecurringTaskTemplate | null>(null);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  // Column widths persist per user, same mechanism as the Assignment task table.
-  const { widths: columnWidths, setColumnWidth } = useColumnPrefs(
+  // Column widths and which columns show persist per user, same mechanism as
+  // the Assignment task table.
+  const { widths: columnWidths, hidden: hiddenColumns, setColumnWidth, toggleColumnVisible } = useColumnPrefs(
     "recurring-templates",
     currentUserId ?? null,
     TEMPLATE_COLUMNS
   );
+  const show = useCallback((key: string) => !hiddenColumns.has(key), [hiddenColumns]);
 
   const [taskNameSearch, setTaskNameSearch] = useState("");
   const [filterTaskNames, setFilterTaskNames] = useState<string[]>([]);
@@ -419,6 +422,13 @@ export default function RecurringTemplatesManager({
               Clear filters
             </button>
           )}
+          <div className="ml-auto">
+            <ColumnVisibilityPicker
+              columns={TEMPLATE_COLUMNS}
+              hidden={hiddenColumns}
+              onToggle={toggleColumnVisible}
+            />
+          </div>
         </div>
         <div className="rounded-xl border border-sand bg-white overflow-x-auto shadow-sm">
           <table className="min-w-full w-full">
@@ -428,76 +438,96 @@ export default function RecurringTemplatesManager({
                 way to see or clear the filter that caused it. */}
             <thead>
               <tr className="bg-parchment border-b border-sand">
-                <ColumnHeader
-                  label="Task Name"
-                  width={columnWidths.task_name}
-                  onResize={(w) => setColumnWidth("task_name", w)}
-                  filterOptions={taskNameFilterOptions.map((v) => ({ value: v, label: v }))}
-                  selected={filterTaskNames}
-                  onFilterChange={setFilterTaskNames}
-                  searchable
-                  searchValue={taskNameSearch}
-                  onSearchChange={setTaskNameSearch}
-                  searchPlaceholder="Search task names..."
-                />
-                <ColumnHeader
-                  label="Account"
-                  width={columnWidths.account}
-                  onResize={(w) => setColumnWidth("account", w)}
-                  filterOptions={accountFilterOptions.map((v) => ({ value: v, label: v }))}
-                  selected={filterAccounts}
-                  onFilterChange={setFilterAccounts}
-                />
-                <ColumnHeader
-                  label="Project"
-                  width={columnWidths.project}
-                  onResize={(w) => setColumnWidth("project", w)}
-                  filterOptions={projectFilterOptions.map((v) => ({ value: v, label: v }))}
-                  selected={filterProjects}
-                  onFilterChange={setFilterProjects}
-                />
-                <ColumnHeader
-                  label="Operation"
-                  width={columnWidths.operation}
-                  onResize={(w) => setColumnWidth("operation", w)}
-                  filterOptions={operationFilterOptions}
-                  selected={filterOperations}
-                  onFilterChange={setFilterOperations}
-                />
-                <ColumnHeader label="Detail" width={columnWidths.detail} onResize={(w) => setColumnWidth("detail", w)} />
-                <ColumnHeader
-                  label="Assigned To"
-                  width={columnWidths.assigned_to}
-                  onResize={(w) => setColumnWidth("assigned_to", w)}
-                  filterOptions={assignedToFilterOptions}
-                  selected={filterAssignedTo}
-                  onFilterChange={setFilterAssignedTo}
-                />
-                <ColumnHeader
-                  label="Status"
-                  width={columnWidths.status}
-                  onResize={(w) => setColumnWidth("status", w)}
-                  filterOptions={[{ value: "active", label: "Active" }, { value: "paused", label: "Paused" }]}
-                  selected={filterStatuses}
-                  onFilterChange={setFilterStatuses}
-                />
-                <ColumnHeader label="Start Date" width={columnWidths.start_date} onResize={(w) => setColumnWidth("start_date", w)} />
-                <ColumnHeader
-                  label="Repeat"
-                  width={columnWidths.repeat}
-                  onResize={(w) => setColumnWidth("repeat", w)}
-                  filterOptions={repeatFilterOptions}
-                  selected={filterRepeats}
-                  onFilterChange={setFilterRepeats}
-                />
-                <ColumnHeader label="Created" width={columnWidths.created} onResize={(w) => setColumnWidth("created", w)} />
+                {show("task_name") && (
+                  <ColumnHeader
+                    label="Task Name"
+                    width={columnWidths.task_name}
+                    onResize={(w) => setColumnWidth("task_name", w)}
+                    filterOptions={taskNameFilterOptions.map((v) => ({ value: v, label: v }))}
+                    selected={filterTaskNames}
+                    onFilterChange={setFilterTaskNames}
+                    searchable
+                    searchValue={taskNameSearch}
+                    onSearchChange={setTaskNameSearch}
+                    searchPlaceholder="Search task names..."
+                  />
+                )}
+                {show("account") && (
+                  <ColumnHeader
+                    label="Account"
+                    width={columnWidths.account}
+                    onResize={(w) => setColumnWidth("account", w)}
+                    filterOptions={accountFilterOptions.map((v) => ({ value: v, label: v }))}
+                    selected={filterAccounts}
+                    onFilterChange={setFilterAccounts}
+                  />
+                )}
+                {show("project") && (
+                  <ColumnHeader
+                    label="Project"
+                    width={columnWidths.project}
+                    onResize={(w) => setColumnWidth("project", w)}
+                    filterOptions={projectFilterOptions.map((v) => ({ value: v, label: v }))}
+                    selected={filterProjects}
+                    onFilterChange={setFilterProjects}
+                  />
+                )}
+                {show("operation") && (
+                  <ColumnHeader
+                    label="Operation"
+                    width={columnWidths.operation}
+                    onResize={(w) => setColumnWidth("operation", w)}
+                    filterOptions={operationFilterOptions}
+                    selected={filterOperations}
+                    onFilterChange={setFilterOperations}
+                  />
+                )}
+                {show("detail") && (
+                  <ColumnHeader label="Detail" width={columnWidths.detail} onResize={(w) => setColumnWidth("detail", w)} />
+                )}
+                {show("assigned_to") && (
+                  <ColumnHeader
+                    label="Assigned To"
+                    width={columnWidths.assigned_to}
+                    onResize={(w) => setColumnWidth("assigned_to", w)}
+                    filterOptions={assignedToFilterOptions}
+                    selected={filterAssignedTo}
+                    onFilterChange={setFilterAssignedTo}
+                  />
+                )}
+                {show("status") && (
+                  <ColumnHeader
+                    label="Status"
+                    width={columnWidths.status}
+                    onResize={(w) => setColumnWidth("status", w)}
+                    filterOptions={[{ value: "active", label: "Active" }, { value: "paused", label: "Paused" }]}
+                    selected={filterStatuses}
+                    onFilterChange={setFilterStatuses}
+                  />
+                )}
+                {show("start_date") && (
+                  <ColumnHeader label="Start Date" width={columnWidths.start_date} onResize={(w) => setColumnWidth("start_date", w)} />
+                )}
+                {show("repeat") && (
+                  <ColumnHeader
+                    label="Repeat"
+                    width={columnWidths.repeat}
+                    onResize={(w) => setColumnWidth("repeat", w)}
+                    filterOptions={repeatFilterOptions}
+                    selected={filterRepeats}
+                    onFilterChange={setFilterRepeats}
+                  />
+                )}
+                {show("created") && (
+                  <ColumnHeader label="Created" width={columnWidths.created} onResize={(w) => setColumnWidth("created", w)} />
+                )}
                 <th className="px-3 py-2.5 w-40"></th>
               </tr>
             </thead>
             <tbody>
               {filteredTemplates.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-10 text-center text-sm text-stone">
+                  <td colSpan={TEMPLATE_COLUMNS.length - hiddenColumns.size + 1} className="px-4 py-10 text-center text-sm text-stone">
                     No recurring templates match these filters.
                   </td>
                 </tr>
@@ -506,45 +536,65 @@ export default function RecurringTemplatesManager({
                 const statusClass = template.is_active ? "bg-sage-soft text-sage" : "bg-stone/10 text-stone";
                 return (
                   <tr key={template.id} className="border-b border-sand last:border-0 hover:bg-parchment/30 transition-colors">
-                    <td className="px-3 py-3 text-[13px] text-ink">
-                      <button className="font-medium text-left hover:text-terracotta" onClick={() => openEdit(template)}>
-                        {template.title || template.task_name || "Untitled template"}
-                      </button>
-                    </td>
-                    <td className="px-3 py-3 text-[13px] text-walnut">{template.account || "—"}</td>
-                    <td className="px-3 py-3 text-[13px] text-walnut">{displayProject(template)}</td>
-                    <td className="px-3 py-3 text-[13px] text-walnut">
-                      {template.project_id ? linkedProjectNameById.get(template.project_id) ?? "—" : "—"}
-                    </td>
-                    <td className="px-3 py-3 text-[13px] text-walnut">
-                      <span className="block max-w-[240px] truncate" title={template.task_detail ?? template.description ?? ""}>
-                        {template.task_detail ?? template.description ?? "—"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-[13px] text-walnut">
-                      <span className="block max-w-[240px] truncate" title={assignedTo}>
-                        {assignedTo}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusClass}`}>
-                        {template.is_active
-                          ? "Active"
-                          : template.paused_until
-                            ? `Paused until ${formatDate(template.paused_until, orgTimezone)}`
-                            : "Paused"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-[13px] text-walnut">{formatDate(template.start_date, orgTimezone)}</td>
-                    <td className="px-3 py-3 text-[13px] text-walnut">{recurrenceLabel(template)}</td>
-                    <td className="px-3 py-3 text-[13px] text-walnut">
-                      <div className="space-y-0.5">
-                        <div className="truncate max-w-[140px]">
-                          {template.created_by_profile?.full_name || template.created_by_profile?.username || "—"}
+                    {show("task_name") && (
+                      <td className="px-3 py-3 text-[13px] text-ink">
+                        <button className="font-medium text-left hover:text-terracotta" onClick={() => openEdit(template)}>
+                          {template.title || template.task_name || "Untitled template"}
+                        </button>
+                      </td>
+                    )}
+                    {show("account") && (
+                      <td className="px-3 py-3 text-[13px] text-walnut">{template.account || "—"}</td>
+                    )}
+                    {show("project") && (
+                      <td className="px-3 py-3 text-[13px] text-walnut">{displayProject(template)}</td>
+                    )}
+                    {show("operation") && (
+                      <td className="px-3 py-3 text-[13px] text-walnut">
+                        {template.project_id ? linkedProjectNameById.get(template.project_id) ?? "—" : "—"}
+                      </td>
+                    )}
+                    {show("detail") && (
+                      <td className="px-3 py-3 text-[13px] text-walnut">
+                        <span className="block max-w-[240px] truncate" title={template.task_detail ?? template.description ?? ""}>
+                          {template.task_detail ?? template.description ?? "—"}
+                        </span>
+                      </td>
+                    )}
+                    {show("assigned_to") && (
+                      <td className="px-3 py-3 text-[13px] text-walnut">
+                        <span className="block max-w-[240px] truncate" title={assignedTo}>
+                          {assignedTo}
+                        </span>
+                      </td>
+                    )}
+                    {show("status") && (
+                      <td className="px-3 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusClass}`}>
+                          {template.is_active
+                            ? "Active"
+                            : template.paused_until
+                              ? `Paused until ${formatDate(template.paused_until, orgTimezone)}`
+                              : "Paused"}
+                        </span>
+                      </td>
+                    )}
+                    {show("start_date") && (
+                      <td className="px-3 py-3 text-[13px] text-walnut">{formatDate(template.start_date, orgTimezone)}</td>
+                    )}
+                    {show("repeat") && (
+                      <td className="px-3 py-3 text-[13px] text-walnut">{recurrenceLabel(template)}</td>
+                    )}
+                    {show("created") && (
+                      <td className="px-3 py-3 text-[13px] text-walnut">
+                        <div className="space-y-0.5">
+                          <div className="truncate max-w-[140px]">
+                            {template.created_by_profile?.full_name || template.created_by_profile?.username || "—"}
+                          </div>
+                          <div className="text-[11px] text-stone/70">{formatDate(template.created_at, orgTimezone)}</div>
                         </div>
-                        <div className="text-[11px] text-stone/70">{formatDate(template.created_at, orgTimezone)}</div>
-                      </div>
-                    </td>
+                      </td>
+                    )}
                     <td className="px-3 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button
