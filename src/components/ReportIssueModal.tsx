@@ -18,8 +18,8 @@ export const REPORT_TYPE_LABEL: Record<ReportType, string> = {
 export const REPORT_STATUS_LABEL: Record<ReportType, Record<string, string>> = {
   // "Dismissed" reads better than "Won't fix" to whoever filed it — it says the
   // request was considered and closed, not that it was wrong to raise.
-  bug: { submitted: "Submitted", testing: "Reviewing", fixed: "Fixed", dismissed: "Dismissed" },
-  feature: { submitted: "Submitted", testing: "Reviewing", fixed: "Shipped", dismissed: "Dismissed" },
+  bug: { submitted: "Submitted", testing: "Testing", fixed: "Fixed", dismissed: "Dismissed" },
+  feature: { submitted: "Submitted", testing: "Testing", fixed: "Shipped", dismissed: "Dismissed" },
 };
 
 export function BugIcon({ className }: { className?: string }) {
