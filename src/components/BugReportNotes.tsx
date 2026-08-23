@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 
 /**
  * The note thread on a bug report, shared by the portal and the admin panel so
@@ -38,6 +39,9 @@ export default function BugReportNotes({
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A new tab shows the raw image with no way to step through the others; the
+  // lightbox keeps the thread in view behind it and arrows between attachments.
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
 
   const fetchNotes = useCallback(async () => {
     try {
@@ -136,22 +140,28 @@ export default function BugReportNotes({
               )}
               {(note.drive_file_ids?.length ?? 0) > 0 && (
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {note.drive_file_ids!.map((fileId) => (
-                    <a
+                  {note.drive_file_ids!.map((fileId, i) => (
+                    <button
                       key={fileId}
-                      href={`/api/drive-image?id=${fileId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block"
+                      type="button"
+                      onClick={() =>
+                        setLightbox({
+                          urls: (note.drive_file_ids ?? []).map(
+                            (id) => `/api/drive-image?id=${id}`
+                          ),
+                          index: i,
+                        })
+                      }
+                      className="block overflow-hidden rounded border border-sand transition-all hover:border-terracotta"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={`/api/drive-image?id=${fileId}`}
                         alt="Attachment"
                         loading="lazy"
-                        className="h-[72px] w-[96px] rounded border border-sand object-cover transition-all hover:border-terracotta"
+                        className="h-[72px] w-[96px] object-cover"
                       />
-                    </a>
+                    </button>
                   ))}
                 </div>
               )}
@@ -213,6 +223,14 @@ export default function BugReportNotes({
 
         {error && <span className="text-[10px] text-terracotta">{error}</span>}
       </div>
+
+      {lightbox && (
+        <ScreenshotLightbox
+          urls={lightbox.urls}
+          initialIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }

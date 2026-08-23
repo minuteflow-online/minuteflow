@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import BugReportNotes from "@/components/BugReportNotes";
 import BugReportTagEditor from "@/components/BugReportTagEditor";
+import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 
 /**
  * Bugs and feature requests in the admin panel.
@@ -75,6 +76,7 @@ export default function BugReportsAdminTab({
   const [updating, setUpdating] = useState<Record<number, boolean>>({});
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   // Which report is mid-dismissal, and the reason being typed for it.
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const [dismissReason, setDismissReason] = useState("");
@@ -330,15 +332,28 @@ export default function BugReportsAdminTab({
 
                       {(report.drive_file_ids?.length ?? 0) > 0 && (
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {report.drive_file_ids!.map((fileId) => (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
+                          {report.drive_file_ids!.map((fileId, i) => (
+                            <button
                               key={fileId}
-                              src={`/api/drive-image?id=${fileId}`}
-                              alt="Attachment"
-                              loading="lazy"
-                              className="h-[72px] w-[96px] rounded border border-sand object-cover"
-                            />
+                              type="button"
+                              onClick={() =>
+                                setLightbox({
+                                  urls: (report.drive_file_ids ?? []).map(
+                                    (id) => `/api/drive-image?id=${id}`
+                                  ),
+                                  index: i,
+                                })
+                              }
+                              className="overflow-hidden rounded border border-sand transition-all hover:border-terracotta"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={`/api/drive-image?id=${fileId}`}
+                                alt="Attachment"
+                                loading="lazy"
+                                className="h-[72px] w-[96px] object-cover"
+                              />
+                            </button>
                           ))}
                         </div>
                       )}
@@ -478,6 +493,14 @@ export default function BugReportsAdminTab({
           </div>
         )}
       </div>
+
+      {lightbox && (
+        <ScreenshotLightbox
+          urls={lightbox.urls}
+          initialIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }

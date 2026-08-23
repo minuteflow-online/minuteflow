@@ -15,6 +15,7 @@ import ReportIssueModal, {
   type ReportType,
 } from "@/components/ReportIssueModal";
 import BugReportNotes from "@/components/BugReportNotes";
+import ScreenshotLightbox from "@/components/ScreenshotLightbox";
 import BugReportTagEditor from "@/components/BugReportTagEditor";
 import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 
@@ -2300,6 +2301,8 @@ function BugReportTab({
   const [statusFilter, setStatusFilter] = useState<"all" | BugReport["status"] | "archived">("submitted");
   const [tagFilter, setTagFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
+  // Which report is being viewed full-size, and from which thumbnail.
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null);
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const [dismissReason, setDismissReason] = useState("");
   const [reporterFilter, setReporterFilter] = useState<string>("all");
@@ -2635,16 +2638,28 @@ function BugReportTab({
                       <div>
                         <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase mb-1.5">Screenshots</p>
                         <div className="flex flex-wrap gap-2">
-                          {report.drive_file_ids.map((fileId) => (
-                            <a
+                          {report.drive_file_ids.map((fileId, i) => (
+                            <button
                               key={fileId}
-                              href={`https://drive.google.com/file/d/${fileId}/view`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-slate-blue underline hover:text-espresso"
+                              type="button"
+                              onClick={() =>
+                                setLightbox({
+                                  urls: report.drive_file_ids.map(
+                                    (id) => `/api/drive-image?id=${id}`
+                                  ),
+                                  index: i,
+                                })
+                              }
+                              className="overflow-hidden rounded border border-sand transition-all hover:border-terracotta"
                             >
-                              View Screenshot
-                            </a>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={`/api/drive-image?id=${fileId}`}
+                                alt="Screenshot"
+                                loading="lazy"
+                                className="h-[64px] w-[86px] object-cover"
+                              />
+                            </button>
                           ))}
                         </div>
                       </div>
@@ -2814,6 +2829,14 @@ function BugReportTab({
               : "Use \"New Report\" above — or the Report Bug / Idea button in the top bar."}
           </p>
         </div>
+      )}
+
+      {lightbox && (
+        <ScreenshotLightbox
+          urls={lightbox.urls}
+          initialIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
       )}
     </div>
   );
