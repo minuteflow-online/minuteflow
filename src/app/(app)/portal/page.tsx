@@ -2255,6 +2255,7 @@ interface BugReport {
   description: string;
   report_date: string;
   status: "submitted" | "testing" | "fixed" | "dismissed";
+  handled_by_name: string | null;
   archived_at: string | null;
   tags: string[] | null;
   drive_file_ids: string[];
@@ -2562,6 +2563,11 @@ function BugReportTab({
                   <span className={`ml-auto shrink-0 text-[9px] font-semibold px-2 py-[1px] rounded-full ${style.bg} ${style.text} border ${style.border}`}>
                     {statusLabels[report.status] || report.status}
                   </span>
+                  {report.handled_by_name && (
+                    <span className="shrink-0 text-[10px] text-bark" title="Working on this">
+                      {report.handled_by_name}
+                    </span>
+                  )}
                   <svg className={`h-3.5 w-3.5 shrink-0 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M6 9l6 6 6-6" />
                   </svg>

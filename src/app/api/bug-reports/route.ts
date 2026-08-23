@@ -117,7 +117,7 @@ export async function PATCH(request: NextRequest) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, department")
+    .select("role, department, full_name, username")
     .eq("id", user.id)
     .single();
 
@@ -197,6 +197,18 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (status) updates.status = status;
+  // Whoever moves a report off Submitted owns it from that point — the question
+  // "who is looking at this?" is otherwise unanswerable without asking around.
+  // Moving it back to Submitted clears the owner rather than leaving a stale name
+  // on a report nobody is holding.
+  if (status && status !== existing.status) {
+    const isClaim = status !== "submitted";
+    updates.handled_by = isClaim ? user.id : null;
+    updates.handled_by_name = isClaim
+      ? profile?.full_name || profile?.username || "Unknown"
+      : null;
+    updates.handled_at = isClaim ? new Date().toISOString() : null;
+  }
   if (admin_notes !== undefined) updates.admin_notes = admin_notes;
   // Both endings count as reviewed: dismissing a request is a decision, not a
   // report left untouched.
