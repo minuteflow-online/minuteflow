@@ -13,7 +13,7 @@ import BugReportNotes from "@/components/BugReportNotes";
  */
 
 type ReportType = "bug" | "feature";
-type ReportStatus = "submitted" | "testing" | "fixed";
+type ReportStatus = "submitted" | "testing" | "fixed" | "dismissed";
 
 interface BugReport {
   id: number;
@@ -28,6 +28,7 @@ interface BugReport {
   drive_file_ids: string[] | null;
   admin_notes: string | null;
   reviewed_at: string | null;
+  archived_at: string | null;
   created_at: string;
 }
 
@@ -35,6 +36,7 @@ const STATUS_STYLES: Record<ReportStatus, string> = {
   submitted: "bg-amber-soft text-amber border-amber-200",
   testing: "bg-slate-blue-soft text-slate-blue border-slate-blue/20",
   fixed: "bg-sage-soft text-sage border-sage/20",
+  dismissed: "bg-stone/10 text-stone border-stone/20",
 };
 
 const TYPE_STYLES: Record<ReportType, string> = {
@@ -42,7 +44,7 @@ const TYPE_STYLES: Record<ReportType, string> = {
   feature: "bg-plum-soft text-plum border-plum/20",
 };
 
-const STATUS_ORDER: ReportStatus[] = ["submitted", "testing", "fixed"];
+const STATUS_ORDER: ReportStatus[] = ["submitted", "testing", "fixed", "dismissed"];
 
 export default function BugReportsAdminTab({
   orgTimezone,
@@ -59,6 +61,9 @@ export default function BugReportsAdminTab({
   const [reporterFilter, setReporterFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [updating, setUpdating] = useState<Record<number, boolean>>({});
+  // Archived reports are kept out of the working list entirely rather than
+  // being one more status to filter past.
+  const [showArchived, setShowArchived] = useState(false);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -102,6 +107,31 @@ export default function BugReportsAdminTab({
     }
   }, []);
 
+  const setArchived = useCallback(async (id: number, archived: boolean) => {
+    setUpdating((u) => ({ ...u, [id]: true }));
+    setError(null);
+    try {
+      const res = await fetch(`/api/bug-reports?id=${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || "Could not archive");
+      }
+      setReports((rs) =>
+        rs.map((r) =>
+          r.id === id ? { ...r, archived_at: archived ? new Date().toISOString() : null } : r
+        )
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not archive");
+    } finally {
+      setUpdating((u) => ({ ...u, [id]: false }));
+    }
+  }, []);
+
   const reporters = useMemo(() => {
     const names = new Map<string, string>();
     reports.forEach((r) => names.set(r.user_id, r.full_name || r.username || "Unknown"));
@@ -112,9 +142,11 @@ export default function BugReportsAdminTab({
   // list actually on screen rather than the whole table.
   const scoped = reports.filter(
     (r) =>
+      Boolean(r.archived_at) === showArchived &&
       (typeFilter === "all" || (r.report_type || "bug") === typeFilter) &&
       (reporterFilter === "all" || r.user_id === reporterFilter)
   );
+  const archivedCount = reports.filter((r) => r.archived_at).length;
   const visible = scoped.filter((r) => statusFilter === "all" || r.status === statusFilter);
 
   const countFor = (status: "all" | ReportStatus) =>
@@ -156,6 +188,17 @@ export default function BugReportsAdminTab({
               </option>
             ))}
           </select>
+          <button
+            onClick={() => setShowArchived((v) => !v)}
+            className={`rounded-lg px-3 py-1.5 text-[10px] font-semibold transition-colors ${
+              showArchived
+                ? "bg-walnut text-white"
+                : "bg-stone/10 text-stone hover:bg-stone/20"
+            }`}
+          >
+            {showArchived ? "Viewing archive" : `Archive (${archivedCount})`}
+          </button>
+
           <div className="flex items-center gap-1.5">
             {(["all", ...STATUS_ORDER] as const).map((value) => (
               <button
@@ -185,7 +228,9 @@ export default function BugReportsAdminTab({
           <p className="py-8 text-center text-sm text-bark">Loading reports...</p>
         ) : visible.length === 0 ? (
           <div className="py-12 text-center">
-            <p className="text-sm text-bark">No reports match these filters.</p>
+            <p className="text-sm text-bark">
+              {showArchived ? "Nothing archived yet." : "No reports match these filters."}
+            </p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -266,6 +311,14 @@ export default function BugReportsAdminTab({
                             {status}
                           </button>
                         ))}
+
+                        <button
+                          disabled={updating[report.id]}
+                          onClick={() => setArchived(report.id, !report.archived_at)}
+                          className="ml-auto rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-50"
+                        >
+                          {report.archived_at ? "Restore" : "Archive"}
+                        </button>
                       </div>
                     </div>
                   )}

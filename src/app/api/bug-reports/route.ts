@@ -114,12 +114,21 @@ export async function PATCH(request: NextRequest) {
   if (!id) return Response.json({ error: "id required" }, { status: 400 });
 
   const body = await request.json();
-  const { status, admin_notes } = body;
+  const { status, admin_notes, archived } = body;
 
   const updates: Record<string, unknown> = {};
   if (status) updates.status = status;
   if (admin_notes !== undefined) updates.admin_notes = admin_notes;
-  if (status === "fixed") updates.reviewed_at = new Date().toISOString();
+  // Both endings count as reviewed: dismissing a request is a decision, not a
+  // report left untouched.
+  if (status === "fixed" || status === "dismissed") {
+    updates.reviewed_at = new Date().toISOString();
+  }
+  // Archiving is separate from status — a fixed report and a dismissed one can
+  // both be filed away, and either can come back out.
+  if (archived !== undefined) {
+    updates.archived_at = archived ? new Date().toISOString() : null;
+  }
 
   const { data, error } = await supabase
     .from("bug_reports")
