@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
     const who = profile?.full_name || profile?.username || "Someone";
     const desc = description.trim();
     const heading = reportType === "feature" ? "💡 <b>Feature request</b>" : "🐞 <b>Bug report</b>";
-    await sendTelegram(
+    const sent = await sendTelegram(
       "bugs",
       [
         `${heading} from ${esc(who)}`,
@@ -105,6 +105,20 @@ export async function POST(request: NextRequest) {
         "Review: https://minuteflow.click/admin",
       ].join("\n")
     );
+
+    // Remember which message announced this report so later status changes can
+    // reply to it and Telegram threads them together. Written separately and
+    // its error swallowed: the column may not exist yet, and a report that
+    // saved fine must not fail over a missing nicety.
+    if (sent.messageId) {
+      const { error: threadError } = await supabase
+        .from("bug_reports")
+        .update({ telegram_message_id: sent.messageId })
+        .eq("id", data.id);
+      if (threadError) {
+        console.warn("bug-reports: could not store telegram_message_id", threadError.message);
+      }
+    }
   }
 
   return Response.json({ report: data }, { status: 201 });
@@ -266,7 +280,20 @@ export async function PATCH(request: NextRequest) {
       lines.push("", esc(detail.length > 400 ? detail.slice(0, 400) + "…" : detail));
     }
     lines.push("", "Review: https://minuteflow.click/admin");
-    await sendTelegram("bugs", lines.join("\n"));
+
+    // Reply to the message that announced the report, so its whole history
+    // reads as one thread. Looked up on its own and tolerated as missing —
+    // reports filed before this existed have no stored id, and those simply
+    // post as standalone messages rather than not posting at all.
+    const { data: thread } = await supabase
+      .from("bug_reports")
+      .select("telegram_message_id")
+      .eq("id", Number(id))
+      .single();
+
+    await sendTelegram("bugs", lines.join("\n"), {
+      replyToMessageId: thread?.telegram_message_id ?? undefined,
+    });
   }
 
   return Response.json({ report: data });

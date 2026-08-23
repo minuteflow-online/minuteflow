@@ -153,7 +153,17 @@ export async function sendTelegram(
         text,
         parse_mode: "HTML",
         link_preview_options: { is_disabled: opts.disablePreview !== false },
-        ...(opts.replyToMessageId ? { reply_parameters: { message_id: opts.replyToMessageId } } : {}),
+        // allow_sending_without_reply matters: if the original was deleted,
+        // Telegram would otherwise reject the whole send and the update would
+        // vanish. Better a standalone message than no message.
+        ...(opts.replyToMessageId
+          ? {
+              reply_parameters: {
+                message_id: opts.replyToMessageId,
+                allow_sending_without_reply: true,
+              },
+            }
+          : {}),
       }),
     });
     if (!res.ok) return { ok: false, error: await res.text() };
