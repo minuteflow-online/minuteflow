@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
+import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,7 @@ async function loadContext(reportId: number) {
 
   const { data: report } = await supabase
     .from("bug_reports")
-    .select("id, user_id")
+    .select("id, user_id, title, report_type")
     .eq("id", reportId)
     .single();
 
@@ -44,7 +45,7 @@ async function loadContext(reportId: number) {
   const allowed = report.user_id === user.id || hasBroadAdminAccess(profile);
   if (!allowed) return { error: "Forbidden" as const, status: 403 };
 
-  return { supabase, user, profile };
+  return { supabase, user, profile, report };
 }
 
 export async function GET(_request: NextRequest, { params }: RouteContext) {
@@ -100,6 +101,42 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       return Response.json({ error: "Notes are not enabled yet" }, { status: 503 });
     }
     return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  // A note is the reply channel between the person who filed a report and
+  // whoever is working it, so it is worth surfacing — otherwise a question
+  // sits unanswered until someone happens to reopen the report.
+  //
+  // Best-effort: the note is saved, and a Telegram problem must not fail it.
+  if (telegramEnabled("bugs")) {
+    // Fetched separately and tolerated as missing: the column may not exist
+    // yet, and a report filed before threading has no id to reply to.
+    const { data: thread } = await ctx.supabase
+      .from("bug_reports")
+      .select("telegram_message_id")
+      .eq("id", Number(id))
+      .single();
+
+    const kind = ctx.report.report_type === "feature" ? "Feature request" : "Bug report";
+    const who = ctx.profile?.full_name || ctx.profile?.username || "Someone";
+    const shown = text.length > 400 ? text.slice(0, 400) + "…" : text;
+
+    const lines = [`📝 <b>Note on ${kind}</b> — ${esc(ctx.report.title ?? "")}`, `${esc(who)}:`];
+    // A note can be an attachment with no words; say so rather than posting a
+    // name followed by nothing.
+    lines.push(
+      shown
+        ? esc(shown)
+        : `(${driveFileIds.length} attachment${driveFileIds.length === 1 ? "" : "s"})`
+    );
+    if (shown && driveFileIds.length > 0) {
+      lines.push(`+ ${driveFileIds.length} attachment${driveFileIds.length === 1 ? "" : "s"}`);
+    }
+    lines.push("", "Review: https://minuteflow.click/admin");
+
+    await sendTelegram("bugs", lines.join("\n"), {
+      replyToMessageId: thread?.telegram_message_id ?? undefined,
+    });
   }
 
   return Response.json({ note: data }, { status: 201 });
