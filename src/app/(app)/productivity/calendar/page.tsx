@@ -11,7 +11,6 @@ import {
   addDaysToDateStr,
   formatDayLabel,
   orgDateOf,
-  formatTimeRange,
   formatDueTime,
   normalizeAssignedRows,
   categoryDotClass,
@@ -19,6 +18,8 @@ import {
   statusLabel,
   isDateInSpan,
   reanchorToDate,
+  timeOfDay,
+  formatMinutesInput,
   spanLabel,
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
@@ -142,6 +143,113 @@ function buildWeekGrid(dateStr: string): string[] {
   return days;
 }
 
+
+// What was actually entered on a task, read-only. Opening a block asks "what is
+// this?" far more often than "let me change it", and a form full of inputs
+// answers that badly — every value sits in a box that invites editing, and the
+// empty ones take up as much room as the filled ones.
+//
+// Only fields with a value are rendered, so a sparse task stays short.
+function TaskDetails({
+  task,
+  onEdit,
+  onClose,
+}: {
+  task: TaskEditorInitialTask;
+  onEdit: () => void;
+  onClose: () => void;
+}) {
+  const str = (k: string) => {
+    const v = task[k];
+    if (v === null || v === undefined) return null;
+    const text = String(v).trim();
+    return text.length > 0 ? text : null;
+  };
+  const time = (k: string) => {
+    const v = str(k);
+    return v ? timeOfDay(v).slice(0, 5) : null;
+  };
+
+  const plannedMinutes = task.planned_minutes as number | null | undefined;
+  const start = time("start_time");
+  const end = time("end_time");
+  const todos = (task.task_todos ?? []) as Array<{ id: number; text: string; sort_order: number }>;
+
+  const rows: Array<[string, string | null]> = [
+    ["Account", str("account")],
+    ["Objective", str("project")],
+    ["Category", str("category")],
+    ["Status", str("status") ? statusLabel(str("status") as string) : null],
+    ["Client Detail", str("task_detail")],
+    ["Notes", str("task_notes")],
+    ["Instructions", str("instructions")],
+    ["Link", str("link")],
+    ["Start Date", str("start_date")],
+    ["End Date", str("end_date")],
+    ["Due", [str("due_date"), str("due_time") ? formatDueTime(str("due_time") as string) : null].filter(Boolean).join(" ") || null],
+    ["Time Block", start && end ? `${start} – ${end}` : null],
+    ["Duration", plannedMinutes != null && plannedMinutes > 0 ? formatMinutesInput(plannedMinutes) : null],
+    ["Rate", task.rate != null ? `${task.rate}` : null],
+  ];
+  const filled = rows.filter(([, value]) => Boolean(value));
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h4 className="text-[15px] font-bold leading-tight text-espresso">{str("task_name") ?? "Untitled task"}</h4>
+      </div>
+
+      <dl className="divide-y divide-sand rounded-lg border border-sand overflow-hidden">
+        {filled.map(([label, value]) => (
+          <div key={label} className="flex gap-3 px-3 py-1.5">
+            <dt className="w-28 shrink-0 text-[10px] font-bold uppercase tracking-wide text-walnut">{label}</dt>
+            <dd className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] text-espresso">{value}</dd>
+          </div>
+        ))}
+        {filled.length === 0 && (
+          <p className="px-3 py-4 text-center text-[12px] text-stone">Nothing filled in yet.</p>
+        )}
+      </dl>
+
+      {todos.length > 0 && (
+        <div>
+          <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-walnut">
+            To-Do ({todos.length})
+          </p>
+          <ul className="space-y-1 rounded-lg border border-sand p-2">
+            {todos
+              .slice()
+              .sort((a, b) => a.sort_order - b.sort_order)
+              .map((t) => (
+                <li key={t.id} className="flex gap-2 text-[12px] text-espresso">
+                  <span className="text-stone">·</span>
+                  <span className="min-w-0 break-words">{t.text}</span>
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          type="button"
+          onClick={onEdit}
+          className="px-4 py-2 rounded-lg bg-sage text-white text-[13px] font-semibold hover:bg-sage/90 transition-colors cursor-pointer"
+        >
+          Edit Task
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors cursor-pointer"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ProductivityCalendarPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -196,6 +304,9 @@ export default function ProductivityCalendarPage() {
   // views doesn't drag one view's choice onto the other.
   const [weekTab, setWeekTab] = useState<"grid" | "hours">("grid");
   const [rangeTab, setRangeTab] = useState<"grid" | "hours">("grid");
+  // Opening a block should answer "what is this?" before it offers to change
+  // it, so the modal lands on Details and Edit Task is one click away.
+  const [modalTab, setModalTab] = useState<"details" | "edit">("details");
   const [limitNotice, setLimitNotice] = useState<string | null>(null);
   const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
   const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
@@ -772,6 +883,7 @@ export default function ProductivityCalendarPage() {
   // can prefill without clobbering anything the VA hasn't touched.
   const openEditBlock = async (task: RawTask) => {
     if (!task.start_time || !task.end_time) return;
+    setModalTab("details");
     setEditingBlockId(task.id);
     // These come off the grid already reanchored, so they're naive org
     // wall-clock strings ("2026-08-18T11:00:00") — slice them rather than
@@ -788,6 +900,7 @@ export default function ProductivityCalendarPage() {
   };
 
   const openScheduleExisting = async (task: RawTask, dateStr: string = selectedDate) => {
+    setModalTab("details");
     setEditingBlockId(task.id);
     setFormDate(dateStr);
     setFormStart("09:00");
@@ -2199,7 +2312,11 @@ export default function ProductivityCalendarPage() {
                               {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
                               {task.task_name}
                             </p>
-                            <p className="truncate text-[9px] opacity-80">{formatTimeRange(task)}</p>
+                            {(task.account || task.task_detail) && (
+                              <p className="truncate text-[9px] opacity-80">
+                                {[task.account, task.task_detail].filter(Boolean).join(" · ")}
+                              </p>
+                            )}
                           </button>
                         );
                       });
@@ -2340,7 +2457,15 @@ export default function ProductivityCalendarPage() {
                                 )}
                                 {task.task_name}
                               </p>
-                              <p className="truncate text-[10px] opacity-80">{formatTimeRange(task)}</p>
+                              {/* The block's position and height already say when
+                                  it runs, so printing the times again spent the only
+                                  line there was. Account and client detail are what
+                                  you can't read off the grid. */}
+                              {(task.account || task.task_detail) && (
+                                <p className="truncate text-[10px] opacity-80">
+                                  {[task.account, task.task_detail].filter(Boolean).join(" · ")}
+                                </p>
+                              )}
                             </div>
                             {task.todos.length > 0 && (
                               // Runs alongside the title/time instead of stacking below
@@ -2604,6 +2729,32 @@ export default function ProductivityCalendarPage() {
               </button>
             </div>
             <div className="p-5 space-y-3">
+              {/* Only when there's a saved task to describe — "Add Task" has no
+                  details yet, so it goes straight to the form. */}
+              {editingBlockId && editingTaskFull && (
+                <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                  {([
+                    ["details", "Details"],
+                    ["edit", "Edit Task"],
+                  ] as const).map(([tab, label]) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setModalTab(tab)}
+                      className={`flex-1 px-3 py-1.5 transition-colors ${
+                        modalTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {editingBlockId && editingTaskFull && modalTab === "details" ? (
+                <TaskDetails task={editingTaskFull} onEdit={() => setModalTab("edit")} onClose={() => setShowForm(false)} />
+              ) : (
+              <>
               {!editingBlockId && (() => {
                 const modes = taskModesForMember(teamMembers.find((m) => m.id === dayUserId));
                 if (!modes.canTimeBased || !modes.canOutputBased) return null;
@@ -2650,6 +2801,8 @@ export default function ProductivityCalendarPage() {
                   if (taskMode === "output_based") void fetchFixedItems();
                 }}
               />
+              </>
+              )}
             </div>
           </div>
         </div>
