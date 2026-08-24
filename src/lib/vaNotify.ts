@@ -35,12 +35,26 @@ export async function notifyVaPrivately(opts: {
   // private. Never the team chat: the point of the DM was that the team does
   // not see it, and a log line naming the person would undo that.
   if (telegramEnabled("ops")) {
-    const line = delivered
-      ? `📤 <b>${esc(vaName)}</b> — sent privately. Topic: ${esc(topic)}`
-      : chatId
-        ? `⚠️ <b>${esc(vaName)}</b> — private message FAILED. Topic: ${esc(topic)}`
-        : `⚠️ <b>${esc(vaName)}</b> — not on Telegram, nothing sent. Topic: ${esc(topic)}`;
-    await sendTelegram("ops", line);
+    const lines = [
+      delivered
+        ? `📤 <b>${esc(vaName)}</b> — sent privately. Topic: ${esc(topic)}`
+        : chatId
+          ? `⚠️ <b>${esc(vaName)}</b> — private message FAILED. Topic: ${esc(topic)}`
+          : `⚠️ <b>${esc(vaName)}</b> — not on Telegram, nothing sent. Topic: ${esc(topic)}`,
+    ];
+
+    // The words themselves, not just the subject. A topic label says something
+    // happened; it does not say what the person was told, and several of these
+    // messages vary in wording. Shown even when delivery failed, so the log
+    // records what they would have read.
+    //
+    // Tags are stripped rather than re-escaped: the message body was already
+    // escaped when it was built, so escaping again would show &amp; to Toni
+    // where the VA saw &.
+    const plain = message.replace(/<[^>]+>/g, "").replace(/\n{2,}/g, "\n").trim();
+    if (plain) lines.push("", `Message sent: ${plain}`);
+
+    await sendTelegram("ops", lines.join("\n"));
   }
 
   return { delivered };

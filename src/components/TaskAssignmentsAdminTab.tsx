@@ -21,6 +21,7 @@ import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import RevisionBadge from "@/components/RevisionBadge";
+import RecurringBadge from "@/components/RecurringBadge";
 
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 180 },
@@ -1265,11 +1266,14 @@ export default function TaskAssignmentsAdminTab({
     field,
     display,
     inputType = "text",
+    badge,
   }: {
     task: AssignedTaskWithAssignees;
     field: string;
     display: string;
     inputType?: string;
+    /** Rendered after the value, e.g. the recurring marker on a task name. */
+    badge?: React.ReactNode;
   }) {
     const isEditing = inlineEdit?.taskId === task.id && inlineEdit?.field === field;
 
@@ -1362,6 +1366,7 @@ export default function TaskAssignmentsAdminTab({
         onClick={(e) => startInlineEdit(e, task.id, field, rawValue)}
       >
         {display || <span className="text-stone/40">—</span>}
+        {badge}
       </td>
     );
   }
@@ -1745,6 +1750,11 @@ export default function TaskAssignmentsAdminTab({
                         task={task}
                         field="task_name"
                         display={task.task_name}
+                        badge={
+                          <RecurringBadge
+                            fromTemplateId={task.recurring_template_id}
+                          />
+                        }
                       />
                     )}
 

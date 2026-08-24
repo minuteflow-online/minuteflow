@@ -8,6 +8,7 @@ import CollapsibleCard from "@/components/CollapsibleCard";
 import ScheduleCard from "@/components/ScheduleCard";
 import BudgetWidget from "@/components/BudgetWidget";
 import VaAccountAssignments from "@/components/VaAccountAssignments";
+import AccountBudgetAllocation from "@/components/AccountBudgetAllocation";
 import { vaBudgetType } from "@/lib/budget";
 import { displayRole, formatTenure } from "@/lib/utils";
 
@@ -191,6 +192,12 @@ function BudgetAndRateSection({ profile }: { profile: Profile }) {
         <div className="border-t border-parchment pt-3">
           <BudgetWidget currentUserId={profile.id} bare alwaysAllowRequest />
         </div>
+
+        <AccountBudgetAllocation
+          vaId={profile.id}
+          weeklyLimit={profile.weekly_budget_limit ?? null}
+          monthlyLimit={profile.monthly_budget_limit ?? null}
+        />
       </div>
     </CollapsibleCard>
   );

@@ -23,6 +23,7 @@ import { countWords } from "@/lib/utils";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import RevisionBadge from "@/components/RevisionBadge";
+import RecurringBadge from "@/components/RecurringBadge";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
@@ -140,6 +141,9 @@ type VATaskRow = {
     review_required: boolean;
     review_required_locked?: boolean;
     revision_count: number;
+    /* Both mean recurring: spawned BY a template, or spawns one. */
+    recurring_template_id: string | null;
+    spawned_template_id: string | null;
     fixed_pay_task_id: number | null;
     fixed_pay_tasks?: { rate: number } | null;
     projects?: { id: string; name: string } | null;
@@ -197,6 +201,8 @@ type AdminAssigneeFlat = {
 };
 type AdminTaskFlat = {
   id: number;
+  recurring_template_id?: string | null;
+  spawned_template_id?: string | null;
   account: string | null;
   project: string | null;
   project_id: string | null;
@@ -545,6 +551,8 @@ export default function TaskListPage() {
                 review_required: Boolean(task.review_required),
                 review_required_locked: Boolean(task.review_required_locked),
                 revision_count: task.revision_count ?? 0,
+                recurring_template_id: task.recurring_template_id ?? null,
+                spawned_template_id: task.spawned_template_id ?? null,
                 fixed_pay_task_id: task.fixed_pay_task_id ?? null,
                 fixed_pay_tasks: task.fixed_pay_tasks ?? null,
                 projects: task.projects ?? null,
@@ -2026,7 +2034,9 @@ export default function TaskListPage() {
                   >
                     <option value="">My View</option>
                     {assignedByProfiles
-                      .filter((p) => p.id !== currentUserId && p.role === "va" && p.position !== "Admin")
+                      .filter((p) => p.id !== currentUserId)
+                      .slice()
+                      .sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""))
                       .map((p) => (
                         <option key={p.id} value={p.id}>{p.full_name}</option>
                       ))}
@@ -2617,6 +2627,9 @@ export default function TaskListPage() {
                                 display={
                                   <span className="flex items-center gap-1.5">
                                     <RevisionBadge count={task.assigned_tasks.revision_count ?? 0} />
+                                    <RecurringBadge
+                                      fromTemplateId={task.assigned_tasks.recurring_template_id}
+                                    />
                                     <StatusBadge status={task.status} />
                                   </span>
                                 }

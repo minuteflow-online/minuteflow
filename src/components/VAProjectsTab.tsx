@@ -154,6 +154,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [editStartDate, setEditStartDate] = useState("");
   const [editProjectStatus, setEditProjectStatus] = useState("active");
   const [editLinkedObjectiveId, setEditLinkedObjectiveId] = useState("");
+  const [editParentId, setEditParentId] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [editNotice, setEditNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -286,6 +287,25 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
   const rootProjects = childrenByParent.get("__root__") ?? [];
 
+  // Candidates for "Nested Under" when editing an existing Objective: every
+  // other Objective except itself and its own descendants — picking a
+  // descendant as the new parent would create a loop in the tree.
+  const nestableParentOptions = useMemo(() => {
+    if (!selectedProject) return [];
+    const descendantIds = new Set<string>();
+    const queue = [selectedProject.id];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const child of childrenByParent.get(current) ?? []) {
+        if (!descendantIds.has(child.id)) {
+          descendantIds.add(child.id);
+          queue.push(child.id);
+        }
+      }
+    }
+    return projects.filter((p) => p.id !== selectedProject.id && !descendantIds.has(p.id));
+  }, [selectedProject, projects, childrenByParent]);
+
   // Drag-to-reorder top-level items. Reorders the visible root list, then
   // persists the new order (sets sort_order = index), which wins over the
   // date sort until changed again.
@@ -340,6 +360,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setEditStartDate(selectedProject.start_date ?? "");
     setEditProjectStatus(selectedProject.status ?? "active");
     setEditLinkedObjectiveId(selectedProject.linked_objective_id ?? "");
+    setEditParentId(selectedProject.parent_project_id ?? "");
     setEditVaIds([]);
     setEditNotice(null);
     setSubtasks([]);
@@ -448,7 +469,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           va_ids: editVaIds,
           start_date: editStartDate || null,
           status: editProjectStatus,
-          ...(kind === "objective" ? { target_date: editTargetDate || null } : {}),
+          ...(kind === "objective" ? { target_date: editTargetDate || null, parent_project_id: editParentId || null } : {}),
           ...(kind === "operation" ? { linked_objective_id: editLinkedObjectiveId || null } : {}),
         }),
       });
@@ -467,6 +488,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               status: editProjectStatus,
               target_date: kind === "objective" ? (editTargetDate || null) : prev.target_date,
               linked_objective_id: kind === "operation" ? (editLinkedObjectiveId || null) : prev.linked_objective_id,
+              parent_project_id: kind === "objective" ? (editParentId || null) : prev.parent_project_id,
             }
           : prev
       );
@@ -1478,6 +1500,24 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       onChange={(e) => setEditTargetDate(e.target.value)}
                       className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
                     />
+                  </div>
+                )}
+
+                {kind === "objective" && (
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                      Nested Under
+                    </label>
+                    <select
+                      value={editParentId}
+                      onChange={(e) => setEditParentId(e.target.value)}
+                      className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
+                    >
+                      <option value="">— Top-level —</option>
+                      {nestableParentOptions.map((o) => (
+                        <option key={o.id} value={o.id}>{o.name}</option>
+                      ))}
+                    </select>
                   </div>
                 )}
 
