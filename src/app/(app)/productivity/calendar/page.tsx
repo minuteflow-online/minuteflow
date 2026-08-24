@@ -1045,6 +1045,7 @@ export default function ProductivityCalendarPage() {
         account: t.account,
         category: t.category,
         detail: t.task_detail,
+        todos: t.todos,
         minutes: minutesOf(t),
         timed: true,
       }));
@@ -1064,6 +1065,7 @@ export default function ProductivityCalendarPage() {
           account: t.account,
           category: t.category,
           detail: t.task_detail,
+          todos: t.todos,
           minutes: t.planned_minutes as number,
           timed: false,
         }));
@@ -1084,6 +1086,9 @@ export default function ProductivityCalendarPage() {
           account: f.account,
           category: f.category,
           detail: f.detail,
+          // fixed_pay_tasks has no to-do table of its own — task_todos keys off
+          // assigned_tasks.id — so these are always empty rather than missing.
+          todos: [] as RawTask["todos"],
           minutes: f.minutes,
           timed: false,
           source: "fixed" as const,
@@ -1219,11 +1224,17 @@ export default function ProductivityCalendarPage() {
           ? { text: `${formatDuration(usedMinutes)} · off`, over: false, warn: false, off: true }
           : { text: "Day off", over: false, warn: false, off: true };
       }
+      // Both halves name the budget they're measured against. "2h over" sitting
+      // under a "6h" total is a riddle — it reads as a second, unrelated number
+      // unless you already know the shift is 4h. "2h over 4h" says it outright.
       const remaining = shiftBudgetMinutes - usedMinutes;
-      if (remaining < 0) return { text: `${formatDuration(-remaining)} over`, over: true, warn: false };
+      const budget = formatDuration(shiftBudgetMinutes);
+      if (remaining < 0) {
+        return { text: `${formatDuration(-remaining)} over ${budget}`, over: true, warn: false };
+      }
       const warn =
         shiftBudgetMinutes > 0 && usedMinutes / shiftBudgetMinutes >= BUDGET_WARN_THRESHOLD;
-      return { text: `${formatDuration(remaining)} left`, over: false, warn };
+      return { text: `${formatDuration(remaining)} left of ${budget}`, over: false, warn };
     },
     [durationsForDate, shiftBudgetMinutes, isOffDay]
   );
@@ -1571,25 +1582,54 @@ export default function ProductivityCalendarPage() {
                     <p className="pt-2 text-center text-[10px] text-stone/70">Nothing blocked</p>
                   ) : (
                     rows.map((row) => (
-                      <div
+                      // Clickable, same as the Day list's rows — these were plain
+                      // divs, so a card here looked identical to one on the Day
+                      // view but did nothing when clicked. The day comes from
+                      // this column, not selectedDate, so scheduling an untimed
+                      // task lands on the column you actually clicked.
+                      <button
                         key={`${row.source}-${row.id}`}
+                        type="button"
+                        disabled={row.source === "fixed"}
+                        onClick={() => {
+                          const blocked = scheduledForDate(dateStr).find((t) => t.id === row.id);
+                          if (blocked) {
+                            void openEditBlock(blocked);
+                            return;
+                          }
+                          const task = daySchedule.find((t) => t.id === row.id);
+                          if (task) void openScheduleExisting(task, dateStr);
+                        }}
                         title={`${row.name}${row.account ? " — " + row.account : ""} · ${formatDuration(row.minutes)}`}
-                        className={`rounded-md border px-1.5 py-1 shadow-sm ${categoryBlockClasses(row.category)}`}
+                        className={`w-full rounded-md border px-1.5 py-1 text-left shadow-sm ${categoryBlockClasses(row.category)} ${
+                          row.source === "fixed" ? "cursor-default" : "cursor-pointer hover:opacity-90"
+                        }`}
                       >
                         <p className="truncate text-[11px] font-semibold leading-tight">
                           {row.name}
                           {row.detail && <span className="font-normal opacity-80"> | {row.detail}</span>}
                         </p>
-                        {row.account && <p className="truncate text-[9px] opacity-80">{row.account}</p>}
+                        {/* Account and length share a line — the length has to stay
+                            visible here because, unlike a Time Block, nothing about
+                            this card's size says how long the task takes. */}
                         <p className="truncate text-[9px] opacity-80">
-                          {formatDuration(row.minutes)}
+                          {[row.account, formatDuration(row.minutes)].filter(Boolean).join(" | ")}
                           {row.source === "fixed"
                             ? " · Output Based"
                             : !row.timed
                             ? " · no set time"
                             : ""}
                         </p>
-                      </div>
+                        {row.todos.length > 0 && (
+                          <div className="mt-0.5 border-t border-black/10 pt-0.5">
+                            {row.todos.map((t) => (
+                              <p key={t.id} className="truncate text-[9px] opacity-70 leading-tight">
+                                · {t.text}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </button>
                     ))
                   )}
                 </div>
