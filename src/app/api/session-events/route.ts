@@ -72,7 +72,7 @@ export async function POST(request: Request) {
 
   const event = classify(payload.record ?? null, payload.old_record ?? null);
   if (!event) return Response.json({ ok: true, skipped: "no transition" });
-  if (!telegramEnabled("submissions")) return Response.json({ ok: true, skipped: "telegram off" });
+  if (!telegramEnabled("ops")) return Response.json({ ok: true, skipped: "telegram off" });
 
   const userId = payload.record?.user_id;
   let who = "Someone";
@@ -98,7 +98,10 @@ export async function POST(request: Request) {
     hour12: true,
   });
 
-  await sendTelegram("submissions", `<b>${esc(who)}</b> ${EVENTS[event]} — ${time} ET`);
+  // Private, not the team chat. When someone starts and stops work is between
+  // them and Toni — posting it where the whole team reads turns a log into a
+  // scoreboard of who arrived when.
+  await sendTelegram("ops", `<b>${esc(who)}</b> ${EVENTS[event]} — ${time} ET`);
 
   // A word at each end of the day. Sent straight to them rather than through
   // notifyVaPrivately: Toni already gets the line above, and a second log entry
