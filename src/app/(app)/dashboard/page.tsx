@@ -17,7 +17,7 @@ import AvailableTasksWidget from "@/components/AvailableTasksWidget";
 import GapFillModal from "@/components/GapFillModal";
 import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useScreenCaptureCtx } from "@/contexts/ScreenCaptureProvider";
-import { getTodayBoundsInTimezone, countWords } from "@/lib/utils";
+import { getTodayBoundsInTimezone, countWords, isDuplicateActiveLogError } from "@/lib/utils";
 import { fetchScreenshotsForLogs, groupScreenshotsByLog } from "@/lib/screenshots";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import { todoLabel, type TaskTodo } from "@/lib/taskTodos";
@@ -1123,9 +1123,11 @@ export default function DashboardPage() {
       // task start below.
       if (logError || !sortingLog) {
         alert(
-          "Couldn't clock you in: " +
-            (logError?.message || "unknown error") +
-            ". Please try again — nothing is being tracked right now."
+          isDuplicateActiveLogError(logError)
+            ? "You're already clocked in somewhere else (another tab, device, or the extension?). Refresh this page to see your current status."
+            : "Couldn't clock you in: " +
+                (logError?.message || "unknown error") +
+                ". Please try again — nothing is being tracked right now."
         );
         return;
       }
@@ -1594,9 +1596,11 @@ export default function DashboardPage() {
       // break timer that isn't being recorded.
       if (breakLogError || !logData) {
         alert(
-          "Couldn't start your break: " +
-            (breakLogError?.message || "unknown error") +
-            ". Your previous task has been stopped and nothing is being tracked right now — try Break again."
+          isDuplicateActiveLogError(breakLogError)
+            ? "You're already tracking something else somewhere (another tab, device, or the extension?). Your previous task has been stopped — refresh this page to see your current status."
+            : "Couldn't start your break: " +
+                (breakLogError?.message || "unknown error") +
+                ". Your previous task has been stopped and nothing is being tracked right now — try Break again."
         );
         return;
       }
@@ -1749,9 +1753,11 @@ export default function DashboardPage() {
 
     if (resumeLogError || !logData) {
       alert(
-        "Couldn't resume your task: " +
-          (resumeLogError?.message || "unknown error") +
-          ". Please try again — nothing is being tracked right now."
+        isDuplicateActiveLogError(resumeLogError)
+          ? "You're already tracking something else somewhere (another tab, device, or the extension?). Refresh this page to see your current status."
+          : "Couldn't resume your task: " +
+              (resumeLogError?.message || "unknown error") +
+              ". Please try again — nothing is being tracked right now."
       );
       return;
     }
@@ -1871,9 +1877,11 @@ export default function DashboardPage() {
 
     if (onHoldLogError || !logData) {
       alert(
-        "Couldn't resume that task: " +
-          (onHoldLogError?.message || "unknown error") +
-          ". Please try again — nothing is being tracked right now."
+        isDuplicateActiveLogError(onHoldLogError)
+          ? "You're already tracking something else somewhere (another tab, device, or the extension?). Refresh this page to see your current status."
+          : "Couldn't resume that task: " +
+              (onHoldLogError?.message || "unknown error") +
+              ". Please try again — nothing is being tracked right now."
       );
       return;
     }
@@ -2398,7 +2406,11 @@ export default function DashboardPage() {
           // the UI would show the new task as "live" with nothing actually being
           // recorded (looks exactly like "the task stopped on its own"). Surface the
           // failure and leave the VA idle instead, so it's obvious and retryable.
-          alert("Failed to start task: " + (newLogError?.message || "unknown error") + ". Please try again — nothing is being tracked right now.");
+          alert(
+            isDuplicateActiveLogError(newLogError)
+              ? "You're already tracking something else somewhere (another tab, device, or the extension?). Refresh this page to see your current status."
+              : "Failed to start task: " + (newLogError?.message || "unknown error") + ". Please try again — nothing is being tracked right now."
+          );
           return;
         }
 
