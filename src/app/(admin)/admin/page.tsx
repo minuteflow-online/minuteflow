@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
+import ColumnHeader from "@/components/table/ColumnHeader";
 import {
   VA_POSITION_OPTIONS,
   DEPARTMENT_OPTIONS,
@@ -4381,6 +4382,9 @@ interface AccountRow {
   name: string;
   active: boolean;
   billing_rate: number | null;
+  /* Hour budgets for the account — informational targets, not enforced caps. */
+  weekly_hours_budget: number | null;
+  monthly_hours_budget: number | null;
   created_at: string;
 }
 
@@ -4417,6 +4421,20 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
   const [editRate, setEditRate] = useState("");
   const [linkAccountId, setLinkAccountId] = useState<number | null>(null);
   const [linkClientId, setLinkClientId] = useState("");
+  const [editingBudgetId, setEditingBudgetId] = useState<number | null>(null);
+  const [editWeekly, setEditWeekly] = useState("");
+  const [editMonthly, setEditMonthly] = useState("");
+  /* Name search sits by the title; the per-column carets filter on exact
+     values. Widths are local — this table has no saved column prefs. */
+  const [search, setSearch] = useState("");
+  const [filterRates, setFilterRates] = useState<string[]>([]);
+  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
+  const [filterClients, setFilterClients] = useState<string[]>([]);
+  const [colWidths, setColWidths] = useState<Record<string, number>>({
+    name: 220, rate: 130, budget: 150, status: 110, clients: 260,
+  });
+  const setColumnWidth = (key: string, w: number) =>
+    setColWidths((prev) => ({ ...prev, [key]: w }));
 
   const fetchAccounts = useCallback(async () => {
     const [accRes, cliRes] = await Promise.all([
@@ -4486,6 +4504,29 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
     fetchAccounts();
   };
 
+  /* Weekly and monthly hour budgets are edited together in one cell — an
+     empty box clears that budget rather than storing zero. */
+  const handleSaveBudget = async (id: number) => {
+    const parse = (v: string) => {
+      const t = v.trim();
+      if (t === "") return null;
+      const n = parseFloat(t);
+      return isNaN(n) || n < 0 ? undefined : n;
+    };
+    const weekly = parse(editWeekly);
+    const monthly = parse(editMonthly);
+    if (weekly === undefined || monthly === undefined) return;
+    await fetch("/api/accounts", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, weekly_hours_budget: weekly, monthly_hours_budget: monthly }),
+    });
+    setEditingBudgetId(null);
+    setEditWeekly("");
+    setEditMonthly("");
+    fetchAccounts();
+  };
+
   const handleLinkClient = async (accountId: number, clientId: string) => {
     if (!clientId) return;
     await fetch("/api/accounts", {
@@ -4513,14 +4554,61 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       .map((m) => m.clients!);
   };
 
+  const rateLabel = (a: AccountRow) =>
+    a.billing_rate != null ? "$" + Number(a.billing_rate).toFixed(2) + "/hr" : "No rate";
+
+  const rateFilterOptions = Array.from(new Set(accounts.map(rateLabel))).sort();
+  const clientFilterOptions = Array.from(
+    new Set(mappings.map((m) => m.clients?.name).filter((n): n is string => !!n))
+  ).sort();
+
+  const visibleAccounts = accounts.filter((acc) => {
+    if (search.trim() && !acc.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    if (filterRates.length > 0 && !filterRates.includes(rateLabel(acc))) return false;
+    if (filterStatuses.length > 0 && !filterStatuses.includes(acc.active ? "Active" : "Inactive")) return false;
+    if (filterClients.length > 0) {
+      const names = getLinkedClients(acc.id).map((c) => c.name);
+      if (!names.some((n) => filterClients.includes(n))) return false;
+    }
+    return true;
+  });
+
+  const filterCount =
+    (search.trim() ? 1 : 0) + (filterRates.length > 0 ? 1 : 0) +
+    (filterStatuses.length > 0 ? 1 : 0) + (filterClients.length > 0 ? 1 : 0);
+
+  const clearFilters = () => {
+    setSearch(""); setFilterRates([]); setFilterStatuses([]); setFilterClients([]);
+  };
+
   if (loading) {
     return <div className="h-48 animate-pulse rounded-xl border border-sand bg-white" />;
   }
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-between">
-        <span className="text-[13px] text-bark">{accounts.length} accounts</span>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="text-[13px] text-bark">
+            {filterCount > 0
+              ? visibleAccounts.length + " of " + accounts.length + " accounts"
+              : accounts.length + " accounts"}
+          </span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search accounts..."
+            className="w-52 rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+          />
+          {filterCount > 0 && (
+            <button
+              onClick={clearFilters}
+              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
           className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] cursor-pointer"
@@ -4560,16 +4648,59 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
         <div className="overflow-x-auto">
           <table className="w-full text-left text-[12px]">
             <thead>
-              <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-3 py-3">Billing Rate</th>
-                <th className="px-3 py-3">Status</th>
-                <th className="px-3 py-3">Linked Clients</th>
-                <th className="px-3 py-3 text-center">Actions</th>
+              <tr className="border-b border-parchment bg-parchment/30">
+                <ColumnHeader
+                  label="Name"
+                  width={colWidths.name}
+                  onResize={(w) => setColumnWidth("name", w)}
+                />
+                <ColumnHeader
+                  label="Billing Rate"
+                  width={colWidths.rate}
+                  onResize={(w) => setColumnWidth("rate", w)}
+                  filterOptions={rateFilterOptions.map((v) => ({ value: v, label: v }))}
+                  selected={filterRates}
+                  onFilterChange={setFilterRates}
+                />
+                <ColumnHeader
+                  label="Hours Budget"
+                  width={colWidths.budget}
+                  onResize={(w) => setColumnWidth("budget", w)}
+                />
+                <ColumnHeader
+                  label="Status"
+                  width={colWidths.status}
+                  onResize={(w) => setColumnWidth("status", w)}
+                  filterOptions={[
+                    { value: "Active", label: "Active" },
+                    { value: "Inactive", label: "Inactive" },
+                  ]}
+                  selected={filterStatuses}
+                  onFilterChange={setFilterStatuses}
+                />
+                <ColumnHeader
+                  label="Linked Clients"
+                  width={colWidths.clients}
+                  onResize={(w) => setColumnWidth("clients", w)}
+                  filterOptions={clientFilterOptions.map((v) => ({ value: v, label: v }))}
+                  selected={filterClients}
+                  onFilterChange={setFilterClients}
+                  searchable
+                />
+                <th className="border-b border-sand bg-parchment px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-parchment">
-              {accounts.map((acc) => {
+              {visibleAccounts.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-10 text-center text-[13px] text-bark">
+                    No accounts match your filters.
+                  </td>
+                </tr>
+              )}
+              {visibleAccounts.map((acc) => {
                 const linked = getLinkedClients(acc.id);
                 const unlinkedClients = allClients.filter(
                   (c) => !linked.some((l) => l.id === c.id)
@@ -4631,6 +4762,57 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
                             <span className="text-espresso">${Number(acc.billing_rate).toFixed(2)}/hr</span>
                           ) : (
                             <span className="text-bark/50 italic">Set rate</span>
+                          )}
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      {editingBudgetId === acc.id ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            value={editWeekly}
+                            onChange={(e) => setEditWeekly(e.target.value)}
+                            className="w-14 rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
+                            placeholder="wk"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveBudget(acc.id);
+                              if (e.key === "Escape") setEditingBudgetId(null);
+                            }}
+                          />
+                          <span className="text-[10px] text-bark">/</span>
+                          <input
+                            value={editMonthly}
+                            onChange={(e) => setEditMonthly(e.target.value)}
+                            className="w-14 rounded border border-terracotta px-1.5 py-0.5 text-[11px] outline-none"
+                            placeholder="mo"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveBudget(acc.id);
+                              if (e.key === "Escape") setEditingBudgetId(null);
+                            }}
+                          />
+                          <button onClick={() => handleSaveBudget(acc.id)} className="text-sage text-sm font-bold">OK</button>
+                          <button onClick={() => setEditingBudgetId(null)} className="text-bark hover:text-terracotta text-sm">&times;</button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setEditingBudgetId(acc.id);
+                            setEditWeekly(acc.weekly_hours_budget != null ? String(acc.weekly_hours_budget) : "");
+                            setEditMonthly(acc.monthly_hours_budget != null ? String(acc.monthly_hours_budget) : "");
+                          }}
+                          className="cursor-pointer text-[12px] font-medium transition-colors hover:text-terracotta"
+                        >
+                          {acc.weekly_hours_budget != null || acc.monthly_hours_budget != null ? (
+                            <span className="text-espresso">
+                              {acc.weekly_hours_budget != null ? Number(acc.weekly_hours_budget) + "h" : "—"}
+                              <span className="text-bark/60"> wk</span>
+                              <span className="text-bark/40"> · </span>
+                              {acc.monthly_hours_budget != null ? Number(acc.monthly_hours_budget) + "h" : "—"}
+                              <span className="text-bark/60"> mo</span>
+                            </span>
+                          ) : (
+                            <span className="text-bark/50 italic">Set budget</span>
                           )}
                         </button>
                       )}

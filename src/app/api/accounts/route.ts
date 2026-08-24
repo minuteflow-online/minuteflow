@@ -88,17 +88,26 @@ export async function PATCH(request: Request) {
   const isFullAdmin = hasAccountsClientsAccess(callerProfile);
 
   const body = await request.json();
-  const { id, name, active, billing_rate, linkClientId, unlinkClientId } = body;
+  const { id, name, active, billing_rate, weekly_hours_budget, monthly_hours_budget, linkClientId, unlinkClientId } = body;
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
   }
 
-  // Update name/active/billing_rate
-  if (name !== undefined || active !== undefined || (isFullAdmin && billing_rate !== undefined)) {
+  // Update name/active/billing_rate/hours budgets. The hour budgets are not
+  // money, so they follow name/active rather than the billing_rate gate.
+  if (
+    name !== undefined ||
+    active !== undefined ||
+    weekly_hours_budget !== undefined ||
+    monthly_hours_budget !== undefined ||
+    (isFullAdmin && billing_rate !== undefined)
+  ) {
     const updates: Record<string, unknown> = {};
     if (name !== undefined) updates.name = name.trim();
     if (active !== undefined) updates.active = active;
+    if (weekly_hours_budget !== undefined) updates.weekly_hours_budget = weekly_hours_budget;
+    if (monthly_hours_budget !== undefined) updates.monthly_hours_budget = monthly_hours_budget;
     if (isFullAdmin && billing_rate !== undefined) updates.billing_rate = billing_rate;
 
     const { error } = await supabase
