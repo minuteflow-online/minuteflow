@@ -376,7 +376,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setActiveMessageId(null);
     void fetchSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
-    if (kind === "operation") void fetchRecurringForProject(selectedProject.id);
+    void fetchRecurringForProject(selectedProject.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
 
@@ -822,6 +822,51 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
   // Subtasks card — shared between the normal detail layout (List View, narrow
   // column) and the Board View full-width takeover below, so the two never drift.
+  // Recurring templates linked to this node. Objectives show it too now: a
+  // template pointed at an Objective was being saved correctly and then never
+  // shown anywhere, because only the Operation view ever fetched or rendered
+  // this list.
+  const renderRecurringCard = () => (
+    <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Recurring</h3>
+      </div>
+      {recurringLoading ? (
+        <p className="text-[12px] text-stone">Loading…</p>
+      ) : recurringTemplates.length === 0 ? (
+        <p className="text-[12px] text-stone/70">
+          No recurring templates linked yet. Tick &ldquo;Save as a recurring template&rdquo; on a task
+          here, or point a template at this {kind === "objective" ? "Objective" : "Operation"}.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {recurringTemplates.map((template) => (
+            <div
+              key={template.id}
+              className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[13px] font-semibold text-espresso leading-tight">
+                  {template.title || template.task_name || "Untitled template"}
+                </span>
+                <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
+                  template.is_active
+                    ? "bg-sage-soft text-sage border-sage/20"
+                    : "bg-stone/10 text-stone border-stone/20"
+                }`}>
+                  {template.is_active ? "Active" : "Paused"}
+                </span>
+              </div>
+              <div className="text-[11px] text-stone/80">
+                {RECURRENCE_LABEL[template.recurrence_type] ?? template.recurrence_type} · Starts {formatDate(template.start_date)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   const renderSubtasksCard = () => {
     if (!selectedProject) return null;
     return (
@@ -1669,47 +1714,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       />
                     )}
 
-                    {activeTile === "recurring" && (
-                      <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Recurring</h3>
-                        </div>
-                        {recurringLoading ? (
-                          <p className="text-[12px] text-stone">Loading…</p>
-                        ) : recurringTemplates.length === 0 ? (
-                          <p className="text-[12px] text-stone/70">
-                            No recurring templates linked yet. Add one from the Recurring Templates tab and set
-                            &ldquo;Link to Operations&rdquo; to this Operation.
-                          </p>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {recurringTemplates.map((template) => (
-                              <div
-                                key={template.id}
-                                className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white"
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <span className="text-[13px] font-semibold text-espresso leading-tight">
-                                    {template.title || template.task_name || "Untitled template"}
-                                  </span>
-                                  <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
-                                    template.is_active
-                                      ? "bg-sage-soft text-sage border-sage/20"
-                                      : "bg-stone/10 text-stone border-stone/20"
-                                  }`}>
-                                    {template.is_active ? "Active" : "Paused"}
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-stone/80">
-                                  {RECURRENCE_LABEL[template.recurrence_type] ?? template.recurrence_type} · Starts {formatDate(template.start_date)}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
+                    {activeTile === "recurring" && renderRecurringCard()}
                     {activeTile === "subtasks" && renderSubtasksCard()}
 
                     {activeTile === "files" && (
@@ -1720,6 +1725,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               ) : (
                 <div className="space-y-3">
                   {renderSubtasksCard()}
+                  {recurringTemplates.length > 0 && renderRecurringCard()}
                   <ProjectFiles projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
                 </div>
               )}
