@@ -2629,7 +2629,6 @@ export default function TaskListPage() {
                                     <RevisionBadge count={task.assigned_tasks.revision_count ?? 0} />
                                     <RecurringBadge
                                       fromTemplateId={task.assigned_tasks.recurring_template_id}
-                                      spawnsTemplateId={task.assigned_tasks.spawned_template_id}
                                     />
                                     <StatusBadge status={task.status} />
                                   </span>

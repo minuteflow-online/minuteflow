@@ -1753,7 +1753,6 @@ export default function TaskAssignmentsAdminTab({
                         badge={
                           <RecurringBadge
                             fromTemplateId={task.recurring_template_id}
-                            spawnsTemplateId={task.spawned_template_id}
                           />
                         }
                       />
