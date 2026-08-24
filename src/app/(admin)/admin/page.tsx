@@ -4942,6 +4942,8 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
     payment_terms: "due_on_receipt" as string,
     currency: "USD",
     default_hourly_rate: "",
+    weekly_hours_budget: "",
+    monthly_hours_budget: "",
     tax_id: "",
     notes: "",
     active: true,
@@ -4983,6 +4985,8 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       payment_terms: client.payment_terms || "due_on_receipt",
       currency: client.currency || "USD",
       default_hourly_rate: client.default_hourly_rate != null ? String(client.default_hourly_rate) : "",
+      weekly_hours_budget: client.weekly_hours_budget != null ? String(client.weekly_hours_budget) : "",
+      monthly_hours_budget: client.monthly_hours_budget != null ? String(client.monthly_hours_budget) : "",
       tax_id: client.tax_id || "",
       notes: client.notes || "",
       active: client.active,
@@ -5009,6 +5013,8 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       payment_terms: "due_on_receipt",
       currency: "USD",
       default_hourly_rate: "",
+    weekly_hours_budget: "",
+    monthly_hours_budget: "",
       tax_id: "",
       notes: "",
       active: true,
@@ -5077,6 +5083,8 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       payment_terms: form.payment_terms,
       currency: form.currency,
       default_hourly_rate: form.default_hourly_rate ? parseFloat(form.default_hourly_rate) : null,
+      weekly_hours_budget: form.weekly_hours_budget ? parseFloat(form.weekly_hours_budget) : null,
+      monthly_hours_budget: form.monthly_hours_budget ? parseFloat(form.monthly_hours_budget) : null,
       tax_id: form.tax_id.trim(),
       notes: form.notes.trim(),
       active: form.active,
@@ -5370,6 +5378,30 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
                   🔒 Hidden
                 </div>
               )}
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Weekly Hours Budget</label>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={form.weekly_hours_budget}
+                onChange={(e) => updateForm("weekly_hours_budget", e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                placeholder="No limit"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Monthly Hours Budget</label>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={form.monthly_hours_budget}
+                onChange={(e) => updateForm("monthly_hours_budget", e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                placeholder="No limit"
+              />
             </div>
             <div>
               <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Tax ID</label>
