@@ -286,7 +286,7 @@ export default function ProductivityCalendarPage() {
   // folded into the day's total by durationsForDate.
   const [fixedSpend, setFixedSpend] = useState<Array<{ taskId: number; amount: number; date: string }>>([]);
   const [fixedDurations, setFixedDurations] = useState<
-    Array<{ taskId: number; name: string; account: string | null; category: string | null; status: string; minutes: number; date: string }>
+    Array<{ taskId: number; name: string; account: string | null; category: string | null; detail: string | null; status: string; minutes: number; date: string }>
   >([]);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [daySchedule, setDaySchedule] = useState<RawTask[]>([]);
@@ -456,6 +456,7 @@ export default function ProductivityCalendarPage() {
         claimed_by: string | null;
         planned_minutes: number | null;
         rate: number | string | null;
+        task_detail: string | null;
       }>;
       let filtered = rows.filter((t) => t.due_date || t.start_date);
       if (!isAdminOrManager || scope === "__self__") {
@@ -505,6 +506,7 @@ export default function ProductivityCalendarPage() {
             name: t.task_name,
             account: t.account,
             category: t.category,
+            detail: t.task_detail,
             status: t.status,
             minutes: t.planned_minutes as number,
             date: (t.start_date ?? t.due_date) as string,
@@ -1042,6 +1044,7 @@ export default function ProductivityCalendarPage() {
         name: t.task_name,
         account: t.account,
         category: t.category,
+        detail: t.task_detail,
         minutes: minutesOf(t),
         timed: true,
       }));
@@ -1060,6 +1063,7 @@ export default function ProductivityCalendarPage() {
           name: t.task_name,
           account: t.account,
           category: t.category,
+          detail: t.task_detail,
           minutes: t.planned_minutes as number,
           timed: false,
         }));
@@ -1079,6 +1083,7 @@ export default function ProductivityCalendarPage() {
           name: f.name,
           account: f.account,
           category: f.category,
+          detail: f.detail,
           minutes: f.minutes,
           timed: false,
           source: "fixed" as const,
@@ -1571,7 +1576,11 @@ export default function ProductivityCalendarPage() {
                         title={`${row.name}${row.account ? " — " + row.account : ""} · ${formatDuration(row.minutes)}`}
                         className={`rounded-md border px-1.5 py-1 shadow-sm ${categoryBlockClasses(row.category)}`}
                       >
-                        <p className="truncate text-[11px] font-semibold leading-tight">{row.name}</p>
+                        <p className="truncate text-[11px] font-semibold leading-tight">
+                          {row.name}
+                          {row.detail && <span className="font-normal opacity-80"> | {row.detail}</span>}
+                        </p>
+                        {row.account && <p className="truncate text-[9px] opacity-80">{row.account}</p>}
                         <p className="truncate text-[9px] opacity-80">
                           {formatDuration(row.minutes)}
                           {row.source === "fixed"
@@ -2311,11 +2320,12 @@ export default function ProductivityCalendarPage() {
                             <p className="truncate text-[10px] font-semibold leading-tight">
                               {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
                               {task.task_name}
+                              {task.task_detail && (
+                                <span className="font-normal opacity-80"> | {task.task_detail}</span>
+                              )}
                             </p>
-                            {(task.account || task.task_detail) && (
-                              <p className="truncate text-[9px] opacity-80">
-                                {[task.account, task.task_detail].filter(Boolean).join(" · ")}
-                              </p>
+                            {task.account && (
+                              <p className="truncate text-[9px] opacity-80">{task.account}</p>
                             )}
                           </button>
                         );
@@ -2368,7 +2378,14 @@ export default function ProductivityCalendarPage() {
                               either view. Colours come from categoryBlockClasses,
                               so the secondary line rides the block's own text
                               colour at reduced opacity rather than fighting it. */}
-                          <span className="block truncate text-[13px] font-semibold">{row.name}</span>
+                          {/* Same two lines the grid blocks use: task and client
+                              detail together, account underneath. The duration on
+                              the right stays — unlike a grid block, nothing about
+                              this row's position says how long it takes. */}
+                          <span className="block truncate text-[13px] font-semibold">
+                            {row.name}
+                            {row.detail && <span className="font-normal opacity-80"> | {row.detail}</span>}
+                          </span>
                           <span className="block truncate text-[10px] opacity-80">
                             {row.account}
                             {/* Output Based rows count toward the total but have
@@ -2449,6 +2466,11 @@ export default function ProductivityCalendarPage() {
                         >
                           <div className="flex h-full items-start gap-2">
                             <div className="min-w-0 shrink-0 max-w-[55%]">
+                              {/* Task and client detail share the top line; the
+                                  account sits underneath. The block's position and
+                                  height already say when it runs, which is why the
+                                  times this used to print were the one thing here
+                                  you could read off the grid anyway. */}
                               <p className="truncate text-[11px] font-semibold">
                                 {label && (
                                   <span className="mr-1 rounded bg-black/10 px-1 text-[9px] font-bold uppercase tracking-wide">
@@ -2456,15 +2478,12 @@ export default function ProductivityCalendarPage() {
                                   </span>
                                 )}
                                 {task.task_name}
+                                {task.task_detail && (
+                                  <span className="font-normal opacity-80"> | {task.task_detail}</span>
+                                )}
                               </p>
-                              {/* The block's position and height already say when
-                                  it runs, so printing the times again spent the only
-                                  line there was. Account and client detail are what
-                                  you can't read off the grid. */}
-                              {(task.account || task.task_detail) && (
-                                <p className="truncate text-[10px] opacity-80">
-                                  {[task.account, task.task_detail].filter(Boolean).join(" · ")}
-                                </p>
+                              {task.account && (
+                                <p className="truncate text-[10px] opacity-80">{task.account}</p>
                               )}
                             </div>
                             {task.todos.length > 0 && (
