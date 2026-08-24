@@ -144,6 +144,23 @@ function buildWeekGrid(dateStr: string): string[] {
 }
 
 
+// Marks a block as generated from a recurring template. A glyph rather than a
+// word: the blocks it sits on are one line tall and already carry the task name
+// and client detail, so a "Recurring" badge would push the name out. Inherits
+// the block's own colour, so it reads as part of the block rather than a badge
+// stuck on top of it.
+function RecurringMark({ className = "" }: { className?: string }) {
+  return (
+    <span
+      title="Repeats — generated from a recurring template"
+      aria-label="Recurring"
+      className={`shrink-0 opacity-70 ${className}`}
+    >
+      ↻
+    </span>
+  );
+}
+
 // What was actually entered on a task, read-only. Opening a block asks "what is
 // this?" far more often than "let me change it", and a form full of inputs
 // answers that badly — every value sits in a box that invites editing, and the
@@ -195,8 +212,16 @@ function TaskDetails({
 
   return (
     <div className="space-y-3">
-      <div>
+      <div className="flex items-center gap-1.5">
         <h4 className="text-[15px] font-bold leading-tight text-espresso">{str("task_name") ?? "Untitled task"}</h4>
+        {task.recurring_template_id != null && (
+          <span
+            title="Repeats — generated from a recurring template"
+            className="shrink-0 rounded-full border border-slate-blue/30 bg-slate-blue-soft px-2 py-[1px] text-[10px] font-semibold text-slate-blue"
+          >
+            ↻ Recurring
+          </span>
+        )}
       </div>
 
       <dl className="divide-y divide-sand rounded-lg border border-sand overflow-hidden">
@@ -1046,6 +1071,7 @@ export default function ProductivityCalendarPage() {
         category: t.category,
         detail: t.task_detail,
         todos: t.todos,
+        recurring: t.isRecurring,
         minutes: minutesOf(t),
         timed: true,
       }));
@@ -1066,6 +1092,7 @@ export default function ProductivityCalendarPage() {
           category: t.category,
           detail: t.task_detail,
           todos: t.todos,
+          recurring: t.isRecurring,
           minutes: t.planned_minutes as number,
           timed: false,
         }));
@@ -1089,6 +1116,8 @@ export default function ProductivityCalendarPage() {
           // fixed_pay_tasks has no to-do table of its own — task_todos keys off
           // assigned_tasks.id — so these are always empty rather than missing.
           todos: [] as RawTask["todos"],
+          // Output Based work isn't generated from a recurring template.
+          recurring: false,
           minutes: f.minutes,
           timed: false,
           source: "fixed" as const,
@@ -1509,6 +1538,7 @@ export default function ProductivityCalendarPage() {
                                 >
                                   <p className="truncate text-[9px] font-semibold leading-tight">
                                     {label && <span className="opacity-70">[{label}] </span>}
+                                    {task.isRecurring && <RecurringMark className="mr-0.5" />}
                                     {task.task_name}
                                   </p>
                                 </button>
@@ -1606,6 +1636,7 @@ export default function ProductivityCalendarPage() {
                         }`}
                       >
                         <p className="truncate text-[11px] font-semibold leading-tight">
+                          {row.recurring && <RecurringMark className="mr-0.5" />}
                           {row.name}
                           {row.detail && <span className="font-normal opacity-80"> | {row.detail}</span>}
                         </p>
@@ -2359,6 +2390,7 @@ export default function ProductivityCalendarPage() {
                           >
                             <p className="truncate text-[10px] font-semibold leading-tight">
                               {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
+                              {task.isRecurring && <RecurringMark className="mr-0.5" />}
                               {task.task_name}
                               {task.task_detail && (
                                 <span className="font-normal opacity-80"> | {task.task_detail}</span>
@@ -2423,6 +2455,7 @@ export default function ProductivityCalendarPage() {
                               the right stays — unlike a grid block, nothing about
                               this row's position says how long it takes. */}
                           <span className="block truncate text-[13px] font-semibold">
+                            {row.recurring && <RecurringMark className="mr-0.5" />}
                             {row.name}
                             {row.detail && <span className="font-normal opacity-80"> | {row.detail}</span>}
                           </span>
@@ -2517,6 +2550,7 @@ export default function ProductivityCalendarPage() {
                                     {label}
                                   </span>
                                 )}
+                                {task.isRecurring && <RecurringMark className="mr-0.5" />}
                                 {task.task_name}
                                 {task.task_detail && (
                                   <span className="font-normal opacity-80"> | {task.task_detail}</span>
