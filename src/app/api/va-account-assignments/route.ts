@@ -33,7 +33,7 @@ async function loadCaller(supabase: Awaited<ReturnType<typeof createClient>>) {
   return { user, isAdmin: hasBroadAdminAccess(profile) };
 }
 
-/** GET ?va_id= — the accounts for that VA, their budgets, and tasks under each. */
+/** GET ?va_id= — the accounts for that VA, with their budgets and assignments. */
 export async function GET(request: Request) {
   const supabase = await createClient();
   const { user, isAdmin } = await loadCaller(supabase);
@@ -45,19 +45,15 @@ export async function GET(request: Request) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const [directRes, accountsRes, projectAssignRes, taskRes] = await Promise.all([
+  const [directRes, accountsRes, projectAssignRes] = await Promise.all([
     supabase
       .from("va_account_assignments")
-      .select("id, account_id, weekly_hours_budget, monthly_hours_budget, assigned_at")
+      .select("id, account_id, weekly_hours_budget, monthly_hours_budget, assignments, assigned_at")
       .eq("va_id", vaId),
     supabase.from("accounts").select("id, name").order("name"),
     supabase
       .from("va_project_assignments")
       .select("project_tag_id, project_tags(account, project_name)")
-      .eq("va_id", vaId),
-    supabase
-      .from("assigned_task_assignees")
-      .select("assigned_task_id, assigned_tasks(id, task_name, account, status, due_date)")
       .eq("va_id", vaId),
   ]);
 
@@ -78,37 +74,12 @@ export async function GET(request: Request) {
     if (tag?.project_name) inherited.get(acc.id)!.push(tag.project_name);
   }
 
-  // Tasks grouped under the account they belong to.
-  type TaskItem = { id: number; task_name: string; status: string; due_date: string | null };
-  const tasksByAccount = new Map<number, TaskItem[]>();
-  type TaskEmbed = {
-    id: number;
-    task_name: string;
-    account: string | null;
-    status: string;
-    due_date: string | null;
-  };
-  for (const row of (taskRes.data ?? []) as unknown as {
-    assigned_tasks: TaskEmbed | TaskEmbed[] | null;
-  }[]) {
-    const task = one(row.assigned_tasks);
-    if (!task?.account) continue;
-    const acc = byName.get(task.account.trim().toLowerCase());
-    if (!acc) continue;
-    if (!tasksByAccount.has(acc.id)) tasksByAccount.set(acc.id, []);
-    tasksByAccount.get(acc.id)!.push({
-      id: task.id,
-      task_name: task.task_name,
-      status: task.status,
-      due_date: task.due_date,
-    });
-  }
-
   const direct = (directRes.data ?? []) as {
     id: number;
     account_id: number;
     weekly_hours_budget: number | null;
     monthly_hours_budget: number | null;
+    assignments: string | null;
   }[];
   const directIds = new Set(direct.map((d) => d.account_id));
 
@@ -121,7 +92,7 @@ export async function GET(request: Request) {
       viaProjects: inherited.get(d.account_id) ?? [],
       weekly_hours_budget: d.weekly_hours_budget,
       monthly_hours_budget: d.monthly_hours_budget,
-      tasks: tasksByAccount.get(d.account_id) ?? [],
+      assignments: d.assignments,
     })),
     ...Array.from(inherited.entries())
       .filter(([accountId]) => !directIds.has(accountId))
@@ -134,7 +105,7 @@ export async function GET(request: Request) {
         // Only a direct assignment can hold a budget.
         weekly_hours_budget: null as number | null,
         monthly_hours_budget: null as number | null,
-        tasks: tasksByAccount.get(accountId) ?? [],
+        assignments: null as string | null,
       })),
   ].sort((a, b) => a.accountName.localeCompare(b.accountName));
 
@@ -173,12 +144,13 @@ export async function PATCH(request: Request) {
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (!isAdmin) return Response.json({ error: "Forbidden" }, { status: 403 });
 
-  const { id, weekly_hours_budget, monthly_hours_budget } = await request.json();
+  const { id, weekly_hours_budget, monthly_hours_budget, assignments } = await request.json();
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
 
   const updates: Record<string, unknown> = {};
   if (weekly_hours_budget !== undefined) updates.weekly_hours_budget = weekly_hours_budget;
   if (monthly_hours_budget !== undefined) updates.monthly_hours_budget = monthly_hours_budget;
+  if (assignments !== undefined) updates.assignments = assignments || null;
 
   const { error } = await supabase.from("va_account_assignments").update(updates).eq("id", id);
   if (error) return Response.json({ error: error.message }, { status: 400 });

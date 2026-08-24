@@ -16,13 +16,6 @@ import { useCallback, useEffect, useState } from "react";
  * turn it into one.
  */
 
-type TaskItem = {
-  id: number;
-  task_name: string;
-  status: string;
-  due_date: string | null;
-};
-
 type AssignmentRow = {
   assignmentId: number | null;
   accountId: number;
@@ -31,27 +24,12 @@ type AssignmentRow = {
   viaProjects: string[];
   weekly_hours_budget: number | null;
   monthly_hours_budget: number | null;
-  tasks: TaskItem[];
+  /* Free text, typed in by an admin — deliberately not pulled from the task
+     list, so it says whatever the account actually needs it to say. */
+  assignments: string | null;
 };
 
 type AccountOption = { id: number; name: string };
-
-const STATUS_CLS: Record<string, string> = {
-  on_queue: "bg-stone/10 text-stone border-stone/20",
-  pending: "bg-stone/10 text-stone border-stone/20",
-  in_progress: "bg-amber-50 text-amber-500 border-amber-200",
-  submitted: "bg-sky-50 text-sky-600 border-sky-200",
-  reviewing: "bg-violet-50 text-violet-600 border-violet-200",
-  revision_needed: "bg-amber-50 text-amber-600 border-amber-200",
-  approved: "bg-emerald-50 text-emerald-600 border-emerald-200",
-  completed: "bg-sage-soft text-sage border-sage/20",
-  paid: "bg-purple-50 text-purple-600 border-purple-200",
-  cancelled: "bg-red-50 text-red-500 border-red-200",
-};
-
-function statusLabel(status: string) {
-  return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 export default function VaAccountAssignments({
   vaId,
@@ -69,6 +47,8 @@ export default function VaAccountAssignments({
   const [editingBudgetId, setEditingBudgetId] = useState<number | null>(null);
   const [editWeekly, setEditWeekly] = useState("");
   const [editMonthly, setEditMonthly] = useState("");
+  const [editingAssignId, setEditingAssignId] = useState<number | null>(null);
+  const [editAssignments, setEditAssignments] = useState("");
 
   const fetchRows = useCallback(async () => {
     try {
@@ -133,6 +113,18 @@ export default function VaAccountAssignments({
     fetchRows();
   };
 
+  const saveAssignments = async (assignmentId: number) => {
+    setSaving(true);
+    await fetch("/api/va-account-assignments", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: assignmentId, assignments: editAssignments }),
+    });
+    setEditingAssignId(null);
+    setSaving(false);
+    fetchRows();
+  };
+
   const linkable = allAccounts.filter((a) => !rows.some((r) => r.accountId === a.id && !r.inherited));
 
   if (loading) {
@@ -189,7 +181,7 @@ export default function VaAccountAssignments({
                   className="flex flex-1 items-center gap-2 text-left group"
                 >
                   <span className="w-3 shrink-0 text-[10px] text-bark group-hover:text-espresso transition-colors">
-                    {row.tasks.length > 0 ? (isOpen ? "▾" : "▸") : ""}
+                    {row.inherited ? "" : isOpen ? "▾" : "▸"}
                   </span>
                   <span className="text-[13px] font-semibold text-espresso">{row.accountName}</span>
                   {row.inherited && (
@@ -204,9 +196,9 @@ export default function VaAccountAssignments({
                       via project
                     </span>
                   )}
-                  {row.tasks.length > 0 && (
-                    <span className="text-[11px] text-stone/80">
-                      {row.tasks.length} assignment{row.tasks.length !== 1 ? "s" : ""}
+                  {row.assignments && (
+                    <span className="text-[11px] text-stone/80 truncate max-w-[220px]">
+                      {row.assignments.split(String.fromCharCode(10))[0]}
                     </span>
                   )}
                 </button>
@@ -293,29 +285,50 @@ export default function VaAccountAssignments({
                 )}
               </div>
 
-              {isOpen && row.tasks.length > 0 && (
+              {isOpen && !row.inherited && (
                 <div className="border-t border-parchment px-3 py-2.5 space-y-1.5">
                   <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Assignments</p>
-                  {row.tasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="flex items-start justify-between gap-2 py-1.5 px-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors"
-                    >
-                      <span className="text-[12px] text-espresso leading-tight">{task.task_name}</span>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        {task.due_date && (
-                          <span className="text-[10px] text-stone/80">{task.due_date}</span>
-                        )}
-                        <span
-                          className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
-                            STATUS_CLS[task.status] ?? "bg-stone/10 text-stone border-stone/20"
-                          }`}
+                  {editable && editingAssignId === row.assignmentId ? (
+                    <div className="space-y-1.5">
+                      <textarea
+                        value={editAssignments}
+                        onChange={(e) => setEditAssignments(e.target.value)}
+                        rows={4}
+                        autoFocus
+                        placeholder="What they handle on this account — one per line"
+                        className="w-full rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+                      />
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => row.assignmentId && saveAssignments(row.assignmentId)}
+                          disabled={saving}
+                          className="px-3 py-1 rounded-lg bg-sage text-white text-[11px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50"
                         >
-                          {statusLabel(task.status)}
-                        </span>
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingAssignId(null)}
+                          className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+                        >
+                          Cancel
+                        </button>
                       </div>
                     </div>
-                  ))}
+                  ) : (
+                    <button
+                      onClick={() => {
+                        if (!editable || !row.assignmentId) return;
+                        setEditingAssignId(row.assignmentId);
+                        setEditAssignments(row.assignments ?? "");
+                      }}
+                      disabled={!editable}
+                      className={`w-full text-left text-[12px] whitespace-pre-wrap transition-colors ${
+                        editable ? "cursor-pointer hover:text-terracotta" : "cursor-default"
+                      } ${row.assignments ? "text-espresso" : "text-bark/50 italic"}`}
+                    >
+                      {row.assignments || (editable ? "Add assignments" : "None listed")}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
