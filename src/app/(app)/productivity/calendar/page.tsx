@@ -876,17 +876,24 @@ export default function ProductivityCalendarPage() {
       rangeGrid[rangeGrid.length - 1] < rangeEnd
   );
 
-  // Always TODAY, regardless of what the calendar is browsing. This used to
-  // follow the view — Month took the 1st of the visible month for BOTH its
-  // week and its month window, so paging to August computed "this week" as
-  // the week containing Aug 1 (July 26-Aug 1), which shared no days with any
-  // of the month's real activity: Weekly read 0m next to a real Monthly
-  // total. A VA's weekly cap is one continuous pool drawn down across every
-  // account they touch — this panel has to report where that pool actually
-  // stands right now, not wherever the calendar happens to be scrolled to.
+  // Tracks selectedDate — the calendar's one real cursor, which Day view
+  // shows directly and Week view anchors its grid to. Browsing to a
+  // different week shows THAT week's budget; Day view has no day-level
+  // budget of its own, so it shows the week containing the day you're on.
+  //
+  // This is NOT the same as following Month view's own prev/next paging.
+  // Those arrows only move monthYear/monthMonth and deliberately leave
+  // selectedDate untouched, which is what keeps this safe: an earlier version
+  // read monthYear/monthMonth directly and asked about day 1 of whatever
+  // month was visible, so paging to August computed "this week" as the week
+  // containing Aug 1 (July 26-Aug 1) — sharing no days with the month's real
+  // activity, which all fell after Aug 18. Weekly read 0m next to a real,
+  // nonzero Monthly total for the same account. selectedDate never does that:
+  // it only moves through explicit navigation (Today, the date picker, or
+  // actually viewing a Day/Week), never by paging Month's own arrows alone.
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/accounts/usage?date=${todayStr}`)
+    fetch(`/api/accounts/usage?date=${selectedDate}`)
       .then((r) => r.json())
       .then((d) => {
         if (!cancelled) {
@@ -903,7 +910,7 @@ export default function ProductivityCalendarPage() {
     return () => {
       cancelled = true;
     };
-  }, [todayStr]);
+  }, [selectedDate]);
   const weekLabel = useMemo(() => {
     const start = weekGrid[0];
     const end = weekGrid[6];
@@ -2063,13 +2070,22 @@ export default function ProductivityCalendarPage() {
           (a) => a.daily_hours_budget != null || a.weekly_hours_budget != null || a.monthly_hours_budget != null
         );
         if (capped.length === 0) return null;
+        // `text` is the bare remaining duration — "12h 1m", or "-2h" if over —
+        // not the full "X left of Y" sentence. That sentence reads fine once;
+        // read down a column of them it's the same six words repeated with
+        // two numbers changing, which is what actually made it hard to scan.
+        // The colour already carries the status (sage/amber/terracotta), and
+        // the full sentence still shows up on hover via `full`.
         const periodBadge = (usedMinutes: number, limitHours: number | null) => {
           if (limitHours == null) return null;
           const limitMinutes = Math.round(limitHours * 60);
           const remaining = limitMinutes - usedMinutes;
-          if (remaining < 0) return { text: `${formatDuration(-remaining)} over ${formatDuration(limitMinutes)}`, over: true, warn: false };
-          const warn = limitMinutes > 0 && usedMinutes / limitMinutes >= BUDGET_WARN_THRESHOLD;
-          return { text: `${formatDuration(remaining)} left of ${formatDuration(limitMinutes)}`, over: false, warn };
+          const over = remaining < 0;
+          const warn = !over && limitMinutes > 0 && usedMinutes / limitMinutes >= BUDGET_WARN_THRESHOLD;
+          const full = over
+            ? `${formatDuration(-remaining)} over ${formatDuration(limitMinutes)}`
+            : `${formatDuration(remaining)} left of ${formatDuration(limitMinutes)}`;
+          return { text: `${over ? "-" : ""}${formatDuration(Math.abs(remaining))}`, full, over, warn };
         };
         return (
           <div className="rounded-xl border border-sand bg-white p-3">
@@ -2179,13 +2195,13 @@ export default function ProductivityCalendarPage() {
                             })}
                             <td
                               className={`border-l border-sand/60 px-2 py-1 text-right font-semibold ${personalWeekly ? budgetTextClass(personalWeekly) : "text-stone/40"}`}
-                              title={personalWeekly?.text}
+                              title={personalWeekly?.full}
                             >
                               {personalWeekly ? personalWeekly.text : "—"}
                             </td>
                             <td
                               className={`px-2 py-1 text-right font-semibold ${personalMonthly ? budgetTextClass(personalMonthly) : "text-stone/40"}`}
-                              title={personalMonthly?.text}
+                              title={personalMonthly?.full}
                             >
                               {personalMonthly ? personalMonthly.text : "—"}
                             </td>
@@ -2200,10 +2216,10 @@ export default function ProductivityCalendarPage() {
                           const weeklyRemain = periodBadge(a.weekly_minutes, a.weekly_hours_budget);
                           const monthlyRemain = periodBadge(a.monthly_minutes, a.monthly_hours_budget);
                           return [
-                            <td key={`${a.id}-w`} className={`border-l border-sand/60 px-2 py-1 text-right ${weeklyRemain ? budgetTextClass(weeklyRemain) : "text-stone/40"}`}>
+                            <td key={`${a.id}-w`} className={`border-l border-sand/60 px-2 py-1 text-right ${weeklyRemain ? budgetTextClass(weeklyRemain) : "text-stone/40"}`} title={weeklyRemain?.full}>
                               {weeklyRemain ? weeklyRemain.text : "—"}
                             </td>,
-                            <td key={`${a.id}-m`} className={`px-2 py-1 text-right ${monthlyRemain ? budgetTextClass(monthlyRemain) : "text-stone/40"}`}>
+                            <td key={`${a.id}-m`} className={`px-2 py-1 text-right ${monthlyRemain ? budgetTextClass(monthlyRemain) : "text-stone/40"}`} title={monthlyRemain?.full}>
                               {monthlyRemain ? monthlyRemain.text : "—"}
                             </td>,
                           ];
