@@ -146,15 +146,18 @@ function buildWeekGrid(dateStr: string): string[] {
 
 // Marks a block as generated from a recurring template. A glyph rather than a
 // word: the blocks it sits on are one line tall and already carry the task name
-// and client detail, so a "Recurring" badge would push the name out. Inherits
-// the block's own colour, so it reads as part of the block rather than a badge
-// stuck on top of it.
+// and client detail, so a "Recurring" badge would push the name out.
+//
+// Amber on its own chip rather than inheriting the block's colour. The blocks
+// are category-coloured, so an inherited mark was dark green on a green Task
+// block — technically legible, invisible in practice. Amber belongs to no
+// category, so it reads as "recurring" on every one of them.
 function RecurringMark({ className = "" }: { className?: string }) {
   return (
     <span
       title="Repeats — generated from a recurring template"
       aria-label="Recurring"
-      className={`shrink-0 opacity-70 ${className}`}
+      className={`inline-flex shrink-0 items-center rounded-sm bg-amber-soft px-[3px] font-bold text-amber ${className}`}
     >
       ↻
     </span>
@@ -217,7 +220,7 @@ function TaskDetails({
         {task.recurring_template_id != null && (
           <span
             title="Repeats — generated from a recurring template"
-            className="shrink-0 rounded-full border border-slate-blue/30 bg-slate-blue-soft px-2 py-[1px] text-[10px] font-semibold text-slate-blue"
+            className="shrink-0 rounded-full border border-amber/30 bg-amber-soft px-2 py-[1px] text-[10px] font-semibold text-amber"
           >
             ↻ Recurring
           </span>
