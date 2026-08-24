@@ -129,6 +129,7 @@ export async function checkStaticScreens(
       // useful thing is for them to check their own captures and decide.
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id as number | null,
+        userId: c.user_id,
         vaName: who,
         topic: "Screen activity",
         message: [
@@ -155,6 +156,7 @@ export async function checkStaticScreens(
       await forceClockOut(c.user_id, c.log_id);
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id as number | null,
+        userId: c.user_id,
         vaName: who,
         topic: "Screen activity",
         message: [
