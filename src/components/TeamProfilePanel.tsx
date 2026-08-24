@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { formatTenure } from "@/lib/utils";
 import ScheduleCard from "@/components/ScheduleCard";
+import AccountBudgetAllocation from "@/components/AccountBudgetAllocation";
 import { createClient } from "@/lib/supabase/client";
 import type { PaymentAccountDetails } from "@/types/database";
 import { shiftHoursFromProfile, vaBudgetType, hourlyRateFromProfile } from "@/lib/budget";
@@ -989,6 +990,17 @@ export function ShiftBudgetSection({
               {displayMonthly != null ? `${formatLimit(displayMonthly)} / month` : "No limit set"}
             </p>
           </div>
+
+          {/* How much of the overall limit is already handed out to accounts.
+              Hours only — an output-based VA is capped in dollars, and the
+              per-account budgets are hours, so the two do not add up. */}
+          {!isOutputBased && (
+            <AccountBudgetAllocation
+              vaId={userId}
+              weeklyLimit={profile?.weekly_budget_limit ?? null}
+              monthlyLimit={profile?.monthly_budget_limit ?? null}
+            />
+          )}
 
         </div>
       )}
