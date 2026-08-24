@@ -620,6 +620,10 @@ export interface RecurringTaskTemplate {
   is_paused?: boolean;
   /** Set with a pause to say when it ends. Null while paused means indefinite. */
   paused_until?: string | null;
+  /** Last date the template generates an occurrence for. Null repeats
+   *  indefinitely (rolling 60-day horizon, topped up nightly) — see
+   *  src/lib/recurringOccurrences.ts. */
+  repeat_until?: string | null;
   created_by?: string | null;
   created_at: string;
   updated_at: string;

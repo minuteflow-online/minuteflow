@@ -181,6 +181,7 @@ export default function RecurringTemplatesManager({
   // Everything else on this panel is TaskEditor's own state.
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>("daily");
   const [isActive, setIsActive] = useState(true);
+  const [repeatUntil, setRepeatUntil] = useState("");
 
   // Self-fetched, same as TaskEditor's own linkedProjects — just for resolving
   // a template's project_id to a name in the table below. TaskEditor already
@@ -289,6 +290,7 @@ export default function RecurringTemplatesManager({
     setEditingTemplate(null);
     setRecurrenceType("daily");
     setIsActive(true);
+    setRepeatUntil("");
     setNotice(null);
     setPanelOpen(true);
   }, []);
@@ -303,6 +305,7 @@ export default function RecurringTemplatesManager({
         : "daily"
     );
     setIsActive(template.is_active);
+    setRepeatUntil(template.repeat_until?.slice(0, 10) ?? "");
     setNotice(null);
     setPanelOpen(true);
   }, []);
@@ -675,7 +678,7 @@ export default function RecurringTemplatesManager({
                   currentUserId={currentUserId ?? ""}
                   isAdminOrManager={!vaMode}
                   teamMembers={editorTeamMembers}
-                  templateExtra={{ recurrence_type: recurrenceType, is_active: isActive }}
+                  templateExtra={{ recurrence_type: recurrenceType, is_active: isActive, repeat_until: repeatUntil || null }}
                   onCancel={closePanel}
                   onSaved={() => {
                     onRefresh();
@@ -700,6 +703,18 @@ export default function RecurringTemplatesManager({
                         </select>
                         <p className="mt-1 text-[11px] text-stone">
                           {RECURRENCE_OPTIONS.find((option) => option.value === recurrenceType)?.helper}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-semibold text-walnut">Repeat until (optional)</label>
+                        <input
+                          type="date"
+                          value={repeatUntil}
+                          onChange={(e) => setRepeatUntil(e.target.value)}
+                          className="w-full rounded-lg border border-sand bg-white px-3 py-2 text-[13px] outline-none focus:border-terracotta"
+                        />
+                        <p className="mt-1 text-[11px] text-stone">
+                          {repeatUntil ? `Stops after ${repeatUntil}.` : "Leave blank to repeat indefinitely."}
                         </p>
                       </div>
                       <label className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-walnut">
