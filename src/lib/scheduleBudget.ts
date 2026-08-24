@@ -10,6 +10,14 @@
 // the overflow is understood to come out of the week, which is what the
 // calendar's daily notice says. The week is the point where there is nothing
 // left to draw on.
+//
+// A full week blocks ADDING time, never editing. Once a week was over budget the
+// old rule rejected every write that carried start_time/end_time, including ones
+// that reduced the load — so someone trying to shorten a block, or unassign a
+// person to get back under, was locked out by the very state they were fixing.
+// A write is now only rejected when it leaves that VA with more scheduled
+// minutes in the week than it found; anything that holds steady or reduces goes
+// through even while over budget.
 
 import { addDaysToDateStr, orgDateOf } from "@/lib/taskSchedule";
 
@@ -46,7 +54,13 @@ export async function weeklyBudgetRejection(
   vaId: string,
   startIso: string,
   endIso: string,
-  excludeTaskId?: string | number | null
+  excludeTaskId?: string | number | null,
+  /**
+   * What this task already contributed to the VA week before the edit, so the
+   * change can be measured rather than the absolute total. Omitted when
+   * creating, where every minute is new.
+   */
+  previous?: { startIso: string | null; endIso: string | null } | null
 ): Promise<string | null> {
   const addedMinutes = minutesBetween(startIso, endIso);
   if (!Number.isFinite(addedMinutes) || addedMinutes <= 0) return null;
@@ -88,8 +102,23 @@ export async function weeklyBudgetRejection(
       0
     );
 
+  // What the task already contributed to THIS week. A block moving in from
+  // another week counts as nothing here, because it genuinely adds to this one.
+  let previousMinutes = 0;
+  if (previous?.startIso && previous?.endIso) {
+    const previousDay = orgDateOf(previous.startIso);
+    if (previousDay >= start && previousDay < endExclusive) {
+      previousMinutes = Math.max(0, minutesBetween(previous.startIso, previous.endIso));
+    }
+  }
+
   const budgetMinutes = Math.round(limitHours * 60);
-  return existingMinutes + addedMinutes > budgetMinutes ? WEEKLY_LIMIT_ERROR : null;
+  const newTotal = existingMinutes + addedMinutes;
+  const oldTotal = existingMinutes + previousMinutes;
+
+  // Over budget alone is not enough — the write also has to be making it worse.
+  if (newTotal <= budgetMinutes) return null;
+  return newTotal > oldTotal ? WEEKLY_LIMIT_ERROR : null;
 }
 
 /**
@@ -102,10 +131,18 @@ export async function weeklyBudgetRejectionForAssignees(
   vaIds: string[],
   startIso: string,
   endIso: string,
-  excludeTaskId?: string | number | null
+  excludeTaskId?: string | number | null,
+  previous?: { startIso: string | null; endIso: string | null } | null
 ): Promise<string | null> {
   for (const vaId of vaIds) {
-    const rejection = await weeklyBudgetRejection(adminSupabase, vaId, startIso, endIso, excludeTaskId);
+    const rejection = await weeklyBudgetRejection(
+      adminSupabase,
+      vaId,
+      startIso,
+      endIso,
+      excludeTaskId,
+      previous
+    );
     if (rejection) return rejection;
   }
   return null;
