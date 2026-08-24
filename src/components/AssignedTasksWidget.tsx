@@ -433,7 +433,6 @@ export default function AssignedTasksWidget({
                           <RevisionBadge count={detail.revision_count ?? 0} />
                           <RecurringBadge
                             fromTemplateId={detail.recurring_template_id}
-                            spawnsTemplateId={detail.spawned_template_id}
                           />
                           {statusBadge(effectiveStatus)}
                           {rate != null && (
