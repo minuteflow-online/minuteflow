@@ -1340,6 +1340,10 @@ export default function ProductivityCalendarPage() {
       : badge.warn
       ? "bg-amber-soft text-amber border-amber/30"
       : "bg-sage-soft text-sage border-sage/20";
+  // Just the text colour, same severity mapping as budgetBadgeClass — for
+  // plain numbers in a table cell, which don't want the pill/border chrome.
+  const budgetTextClass = (badge: { over: boolean; warn: boolean }) =>
+    badge.over ? "text-terracotta" : badge.warn ? "text-amber" : "text-sage";
 
   // Spent when nothing is left. Warned at BUDGET_WARN_THRESHOLD of the budget,
   // the same 90% the rest of the app warns at, so the day says "nearly full"
@@ -2098,205 +2102,73 @@ export default function ProductivityCalendarPage() {
             )}
             {!accountBudgetsCollapsed && (
             <>
-            {/* One bordered block per account rather than everything run
-                together in a single wrapping row — that read as a wall of
-                names and pills with no line telling you where one account's
-                numbers ended and the next one's began. */}
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {capped.map((a) => (
-                <div key={a.id} className="rounded-lg border border-sand bg-cream/40 p-2.5">
-                  <p className="mb-1.5 truncate text-[12px] font-semibold text-espresso">{a.name}</p>
-                  <div className="space-y-1">
-                    {([
-                      ["Daily", a.daily_minutes, a.daily_hours_budget],
-                      ["Weekly", a.weekly_minutes, a.weekly_hours_budget],
-                      ["Monthly", a.monthly_minutes, a.monthly_hours_budget],
-                    ] as const).map(([label, used, limit]) => {
-                      const badge = periodBadge(used, limit);
-                      if (!badge) return null;
-                      return (
-                        <div key={label} className="flex items-center justify-between gap-2">
-                          <span className="w-14 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-walnut">{label}</span>
-                          <span
-                            className={`min-w-0 flex-1 truncate rounded-full border px-2 py-[2px] text-center text-[10px] font-semibold ${budgetBadgeClass(badge)}`}
-                          >
-                            {badge.text}
-                          </span>
-                        </div>
-                      );
-                    })}
+            {/* One simple table per account: VA | Weekly | Monthly | Total
+                Remaining. Weekly/Monthly are plain spent-time numbers for
+                that VA on THIS account. Total Remaining is that VA's own
+                overall cap remaining (profiles.weekly_budget_limit, their
+                personal number — the same figure wherever this VA shows up,
+                since it isn't scoped to any one account). The footer
+                "Remaining" row is the account's own Weekly/Monthly left,
+                colour-coded — the one number that answers "can this account
+                take more work". Everything here is computed, nothing typed
+                in by hand. */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {capped.map((a) => {
+                const weeklyRemain = periodBadge(a.weekly_minutes, a.weekly_hours_budget);
+                const monthlyRemain = periodBadge(a.monthly_minutes, a.monthly_hours_budget);
+                return (
+                  <div key={a.id} className="rounded-lg border border-sand bg-cream/40 p-2.5">
+                    <p className="mb-1.5 truncate text-center text-[12px] font-semibold text-espresso">{a.name}</p>
+                    <table className="w-full text-[10px]">
+                      <thead>
+                        <tr className="border-b border-sand text-[9px] font-bold uppercase tracking-wide text-walnut">
+                          <th className="pb-1 text-left">VA</th>
+                          <th className="pb-1 text-right">Weekly</th>
+                          <th className="pb-1 text-right">Monthly</th>
+                          <th className="pb-1 text-right">Total Remaining</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-sand/60">
+                        {a.by_va.map((v) => {
+                          const personal = vaUsageTotals.find((p) => p.va_id === v.va_id);
+                          const personalRemain =
+                            personal && personal.weekly_hours_budget != null
+                              ? periodBadge(personal.weekly, personal.weekly_hours_budget)
+                              : null;
+                          return (
+                            <tr key={v.va_id}>
+                              <td className="max-w-[80px] truncate py-1 text-espresso" title={v.va_name}>
+                                {v.va_name}
+                              </td>
+                              <td className="py-1 text-right text-espresso">{formatDuration(v.weekly)}</td>
+                              <td className="py-1 text-right text-espresso">{formatDuration(v.monthly)}</td>
+                              <td
+                                className={`py-1 text-right font-semibold ${personalRemain ? budgetTextClass(personalRemain) : "text-stone/40"}`}
+                                title={personalRemain ? `${v.va_name}'s own weekly cap: ${personalRemain.text}` : "No personal weekly cap set"}
+                              >
+                                {personalRemain ? personalRemain.text : "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t border-sand font-semibold">
+                          <td className="pt-1 text-[9px] font-bold uppercase tracking-wide text-walnut">Remaining</td>
+                          <td className={`pt-1 text-right ${weeklyRemain ? budgetTextClass(weeklyRemain) : "text-stone/40"}`}>
+                            {weeklyRemain ? weeklyRemain.text : "—"}
+                          </td>
+                          <td className={`pt-1 text-right ${monthlyRemain ? budgetTextClass(monthlyRemain) : "text-stone/40"}`}>
+                            {monthlyRemain ? monthlyRemain.text : "—"}
+                          </td>
+                          <td className="pt-1" />
+                        </tr>
+                      </tfoot>
+                    </table>
                   </div>
-
-                  {/* Whose time this account's total is made of. Nested under
-                      the account it was spent on rather than a separate tab —
-                      "how much did Arianne share" only means something next to
-                      the account she was working. One row per VA: name, then
-                      a small meter per capped period showing their own
-                      used/limit for that period. Informational only — this
-                      never blocks scheduling, it just tells you where things
-                      stand. */}
-                  {a.by_va.length > 0 && (
-                    <div className="mt-2 space-y-1.5 border-t border-sand pt-2">
-                      {a.by_va.map((v) => (
-                        <div key={v.va_id}>
-                          <p className="mb-0.5 truncate text-[10px] font-semibold text-espresso" title={v.va_name}>
-                            {v.va_name}
-                          </p>
-                          {/* Numbers, not a bar — spent, remaining and the
-                              budget it's measured against, same phrasing the
-                              account-level badges above use, just scoped to
-                              this one VA's share. */}
-                          <div className="flex flex-wrap gap-1">
-                            {([
-                              ["D", v.daily, a.daily_hours_budget],
-                              ["W", v.weekly, a.weekly_hours_budget],
-                              ["M", v.monthly, a.monthly_hours_budget],
-                            ] as const).map(([label, used, limitHours]) => {
-                              if (limitHours == null) return null;
-                              const badge = periodBadge(used, limitHours);
-                              if (!badge) return null;
-                              return (
-                                <span
-                                  key={label}
-                                  title={`${used > 0 ? `${formatDuration(used)} spent · ` : ""}${badge.text}`}
-                                  className={`rounded-full border px-1.5 py-[1px] text-[9px] font-semibold ${budgetBadgeClass(badge)}`}
-                                >
-                                  {label}: {badge.text}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                      {/* Recap after scanning down the list of shares — same
-                          figures the card's own top badges already show,
-                          repeated here so "how much is left overall" doesn't
-                          require scrolling back up past everyone's rows. */}
-                      <div className="flex flex-wrap gap-1 border-t border-sand pt-1.5">
-                        <span className="text-[9px] font-bold uppercase tracking-wide text-walnut">Total:</span>
-                        {([
-                          ["D", a.daily_minutes, a.daily_hours_budget],
-                          ["W", a.weekly_minutes, a.weekly_hours_budget],
-                          ["M", a.monthly_minutes, a.monthly_hours_budget],
-                        ] as const).map(([label, used, limitHours]) => {
-                          if (limitHours == null) return null;
-                          const badge = periodBadge(used, limitHours);
-                          if (!badge) return null;
-                          return (
-                            <span
-                              key={label}
-                              className={`rounded-full border px-1.5 py-[1px] text-[9px] font-semibold ${budgetBadgeClass(badge)}`}
-                            >
-                              {label}: {badge.text}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
-
-            {/* Rows = VA, columns = account, so "how does this account's week
-                break down by person" and "how does this person's week break
-                down by account" are the same table read two ways. Weekly
-                only — three periods per cell would make the grid unreadable,
-                and weekly is the period the rest of this calendar already
-                treats as primary. Cells read remaining/budget (e.g. "2h/4h")
-                rather than the full sentence the cards above use — a whole
-                "Xh left of Yh" per cell would blow out the column width;
-                hover a cell for the spelled-out version. */}
-            {(() => {
-              const weeklyCapped = capped.filter((acc) => acc.weekly_hours_budget != null);
-              const vaIds = Array.from(new Set(weeklyCapped.flatMap((acc) => acc.by_va.map((v) => v.va_id))));
-              if (weeklyCapped.length === 0 || vaIds.length === 0) return null;
-              const vaNameById = new Map(
-                weeklyCapped.flatMap((acc) => acc.by_va.map((v) => [v.va_id, v.va_name] as const))
-              );
-              const cellText = (usedMinutes: number, limitHours: number) => {
-                const limitMinutes = Math.round(limitHours * 60);
-                const remaining = limitMinutes - usedMinutes;
-                const over = remaining < 0;
-                const warn = !over && limitMinutes > 0 && usedMinutes / limitMinutes >= BUDGET_WARN_THRESHOLD;
-                const colorClass = over ? "text-terracotta" : warn ? "text-amber" : "text-espresso";
-                const short = `${over ? "−" : ""}${formatDuration(Math.abs(remaining))}/${formatDuration(limitMinutes)}`;
-                const full = `${formatDuration(usedMinutes)} spent · ${
-                  over ? `${formatDuration(-remaining)} over` : `${formatDuration(remaining)} left`
-                } of ${formatDuration(limitMinutes)}`;
-                return { short, full, colorClass };
-              };
-              return (
-                <div className="mt-3 overflow-x-auto rounded-lg border border-sand">
-                  <table className="w-full text-left text-[10px]">
-                    <thead>
-                      <tr className="border-b border-sand bg-parchment/50 text-[9px] font-bold uppercase tracking-wide text-walnut">
-                        <th className="px-2 py-1.5">VA — Weekly</th>
-                        {weeklyCapped.map((acc) => (
-                          <th key={acc.id} className="px-2 py-1.5 text-right font-bold normal-case text-espresso">
-                            {acc.name}
-                          </th>
-                        ))}
-                        <th className="border-l border-sand px-2 py-1.5 text-right">My Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-sand">
-                      {vaIds.map((vaId) => {
-                        const personal = vaUsageTotals.find((v) => v.va_id === vaId);
-                        return (
-                          <tr key={vaId}>
-                            <td className="max-w-[110px] truncate px-2 py-1 text-espresso" title={vaNameById.get(vaId)}>
-                              {vaNameById.get(vaId)}
-                            </td>
-                            {weeklyCapped.map((acc) => {
-                              const share = acc.by_va.find((v) => v.va_id === vaId);
-                              if (!share || acc.weekly_hours_budget == null) {
-                                return <td key={acc.id} className="px-2 py-1 text-right text-stone/40">—</td>;
-                              }
-                              const cell = cellText(share.weekly, acc.weekly_hours_budget);
-                              return (
-                                <td key={acc.id} className={`px-2 py-1 text-right font-semibold ${cell.colorClass}`} title={cell.full}>
-                                  {cell.short}
-                                </td>
-                              );
-                            })}
-                            <td className="border-l border-sand px-2 py-1 text-right font-semibold">
-                              {personal && personal.weekly_hours_budget != null ? (
-                                (() => {
-                                  const cell = cellText(personal.weekly, personal.weekly_hours_budget);
-                                  return (
-                                    <span className={cell.colorClass} title={`${vaNameById.get(vaId)}'s own weekly cap: ${cell.full}`}>
-                                      {cell.short}
-                                    </span>
-                                  );
-                                })()
-                              ) : (
-                                <span className="text-stone/40">—</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t border-sand bg-cream/50 font-semibold">
-                        <td className="px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-walnut">Account total</td>
-                        {weeklyCapped.map((acc) => {
-                          if (acc.weekly_hours_budget == null) return <td key={acc.id} />;
-                          const cell = cellText(acc.weekly_minutes, acc.weekly_hours_budget);
-                          return (
-                            <td key={acc.id} className={`px-2 py-1 text-right ${cell.colorClass}`} title={cell.full}>
-                              {cell.short}
-                            </td>
-                          );
-                        })}
-                        <td className="border-l border-sand" />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              );
-            })()}
             </>
             )}
           </div>
