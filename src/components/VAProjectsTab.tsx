@@ -1718,7 +1718,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   </div>
                 )
               ) : (
-                renderSubtasksCard()
+                <div className="space-y-3">
+                  {renderSubtasksCard()}
+                  <ProjectFiles projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
+                </div>
               )}
             </div>
           )}
