@@ -1,7 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
-import { notifyVaPrivately } from "@/lib/vaNotify";
 
 export const dynamic = "force-dynamic";
 
@@ -52,11 +51,12 @@ export async function POST(request: NextRequest) {
     // Check existing version before upsert so we can detect upgrades
     const { data: existingStatus } = await supabase
       .from("extension_upload_status")
-      .select("extension_version")
+      .select("extension_version, consecutive_failures")
       .eq("user_id", userId)
       .single();
 
     const previousVersion = existingStatus?.extension_version ?? null;
+    const previousFailures = Number(existingStatus?.consecutive_failures ?? 0);
     const newVersion = version ? String(version) : null;
 
     // Only treat as an upgrade if the new version is strictly greater than what's stored.
@@ -112,8 +112,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Send admin alert exactly when failures hit 3 (once per streak — extension sends flag)
-    if (consecutiveFailures === 3) {
+    // Once per streak, judged against what was stored rather than the number
+    // being equal to three. The extension re-reports the same count on every
+    // 30-second check-in, so "=== 3" fired again each time it repeated itself —
+    // which is how the same warning arrived twice, four minutes apart.
+    const crossedFailureThreshold = previousFailures < 3 && consecutiveFailures >= 3;
+
+    if (crossedFailureThreshold) {
       // Get VA name
       const { data: profile } = await supabase
         .from("profiles")
@@ -123,27 +128,20 @@ export async function POST(request: NextRequest) {
 
       const vaName = profile?.full_name || profile?.username || "A team member";
 
-      // Detail by email — to the VA, whose machine has to be looked at, with
-      // admins copied. The team chat only carries the notice, so nobody is
-      // described as broken in front of everyone.
+      // Email goes to admins only, for the same reason as the Telegram line:
+      // it describes a Drive connection problem, which is not something the
+      // person whose laptop it is can do anything about.
       if (RESEND_API_KEY) {
         const { data: authData } = await supabase.auth.admin.listUsers({ perPage: 1000 });
-        const vaEmail = authData?.users.find((u) => u.id === userId)?.email ?? null;
-
         const { data: adminProfiles } = await supabase
           .from("profiles")
           .select("id")
           .eq("role", "admin");
         const adminIds = new Set((adminProfiles ?? []).map((p) => p.id));
-        const adminEmails =
+        const to =
           authData?.users
-            .filter((u) => adminIds.has(u.id) && u.email && u.email !== vaEmail)
+            .filter((u) => adminIds.has(u.id) && u.email)
             .map((u) => u.email as string) ?? [];
-
-        // With no address for the VA the admins become the recipients, so the
-        // alert still goes somewhere rather than being dropped.
-        const to = vaEmail ? [vaEmail] : adminEmails;
-        const cc = vaEmail ? adminEmails : [];
 
         if (to.length > 0) {
           await fetch("https://api.resend.com/emails", {
@@ -155,7 +153,6 @@ export async function POST(request: NextRequest) {
             body: JSON.stringify({
               from: "MinuteFlow <noreply@minuteflow.click>",
               to,
-              ...(cc.length > 0 ? { cc } : {}),
               subject: `⚠️ Screenshot uploads failing — ${vaName}`,
               html: `
                 <div style="font-family:sans-serif;max-width:520px;margin:0 auto">
@@ -173,21 +170,24 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Straight to the person whose machine it is, plus a log line for Toni.
-      // Nothing goes to the team chat — whose setup is broken is not the
-      // team's business, and the person needs to see it in time to fix it.
-      await notifyVaPrivately({
-        chatId: profile?.telegram_chat_id,
-        userId,
-        vaName,
-        topic: "Screenshot",
-        message: [
-          "📷 <b>Your screenshots are not uploading</b>",
-          "",
-          "Three uploads in a row did not reach Drive. They are saved on your computer and will upload on their own once the connection is back.",
-          "If it keeps happening, check your internet and that the MinuteFlow extension is still enabled in Chrome.",
-        ].join("\n"),
-      });
+      // Toni only. This used to go to the VA as well, and it was the wrong
+      // audience: the message talked about queued files and Drive connections,
+      // none of which a VA can act on, so it read as being told something was
+      // broken and left them with nowhere to go. It also fires when someone
+      // simply closed their laptop, which is not a fault at all.
+      //
+      // VAs still hear about genuine idleness — that one they can act on.
+      if (telegramEnabled("ops")) {
+        await sendTelegram(
+          "ops",
+          [
+            `📷 <b>${esc(vaName)}</b> — screenshots not uploading`,
+            "Three uploads in a row did not reach Drive. They are queued on their machine and will send when the connection returns.",
+            "",
+            "Status: https://minuteflow.click/admin",
+          ].join("\n")
+        );
+      }
     }
 
     return Response.json({ ok: true });

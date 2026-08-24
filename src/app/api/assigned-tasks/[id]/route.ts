@@ -488,6 +488,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     deleted_at,
     review_required,
     spawned_template_id,
+    project_id,
+    parent_task_id,
     scope,
   } = body as {
     va_id?: string;
@@ -523,6 +525,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     deleted_at?: string | null;
     review_required?: boolean;
     spawned_template_id?: string | null;
+    project_id?: string | null;
+    parent_task_id?: number | null;
   };
 
   // Use the service-role client here so VAs who are the task ASSIGNER (assigned_by)
@@ -561,7 +565,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     instructions !== undefined ||
     instructions_locked !== undefined ||
     instructions_append !== undefined ||
-    planned_minutes !== undefined;
+    planned_minutes !== undefined ||
+    project_id !== undefined ||
+    parent_task_id !== undefined;
   // Scheduling (start_time/end_time) is intentionally kept out of hasCoreMetadataUpdate:
   // VAs get a narrow carve-out below to schedule their own tasks without full metadata
   // permissions. Admins/managers reach the same fields via the general metadata path,
@@ -1029,6 +1035,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (end_time !== undefined) updatePayload.end_time = end_time;
     if (assigned_by !== undefined) updatePayload.assigned_by = assigned_by;
     if (spawned_template_id !== undefined) updatePayload.spawned_template_id = spawned_template_id;
+    // The Objective/Operation link. PUT has always written these; PATCH never
+    // read them, so picking "Link to Operations" and saving on any path that
+    // uses PATCH dropped the link with no error — the field simply came back
+    // empty and the task never appeared under the Operation.
+    if (project_id !== undefined) updatePayload.project_id = project_id;
+    if (parent_task_id !== undefined) updatePayload.parent_task_id = parent_task_id;
     if (instructions !== undefined) updatePayload.instructions = instructions;
     if (instructions_locked !== undefined) updatePayload.instructions_locked = Boolean(instructions_locked);
     // Append, never replace — read the current text and add to the end, so two

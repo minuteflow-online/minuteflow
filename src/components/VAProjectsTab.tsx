@@ -2,9 +2,11 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
+import RecurringTemplatePanel from "@/components/RecurringTemplatePanel";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
 import ProjectMessageBoard from "@/components/ProjectMessageBoard";
 import ProjectFiles from "@/components/ProjectFiles";
+import ObjectiveOverview from "@/components/ObjectiveOverview";
 import OperationTileGrid, { type OperationTileKey } from "@/components/OperationTileGrid";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
@@ -136,6 +138,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // Objective Details form is hidden until requested, rather than shown by default.
   // Local/testing-only per Neil — not boss-approved as the permanent default yet.
   const [showDetails, setShowDetails] = useState(false);
+  // Subtasks card collapsible too (open by default), matching the Details/Docs cards.
+  const [showSubtasks, setShowSubtasks] = useState(true);
   // Per-VA "Where They Are" breakdown, collapsed by default — Overall Progress
   // above it already gives the at-a-glance number; this saves the vertical
   // space until someone actually wants the per-VA detail (per Toni).
@@ -193,6 +197,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // section below Subtasks. Objectives don't have this section (kind check
   // at render time); the fetch itself is harmless either way.
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
+  const [openTemplate, setOpenTemplate] = useState<RecurringTaskTemplate | null>(null);
   const [recurringLoading, setRecurringLoading] = useState(false);
 
   // Phase 2 tile grid (Operations only) — null shows the tile grid, a key
@@ -376,7 +381,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setActiveMessageId(null);
     void fetchSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
-    if (kind === "operation") void fetchRecurringForProject(selectedProject.id);
+    void fetchRecurringForProject(selectedProject.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
 
@@ -822,12 +827,67 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
   // Subtasks card — shared between the normal detail layout (List View, narrow
   // column) and the Board View full-width takeover below, so the two never drift.
+  // Recurring templates linked to this node. Objectives show it too now: a
+  // template pointed at an Objective was being saved correctly and then never
+  // shown anywhere, because only the Operation view ever fetched or rendered
+  // this list.
+  const renderRecurringCard = () => (
+    <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Recurring</h3>
+      </div>
+      {recurringLoading ? (
+        <p className="text-[12px] text-stone">Loading…</p>
+      ) : recurringTemplates.length === 0 ? (
+        <p className="text-[12px] text-stone/70">
+          No recurring templates linked yet. Tick &ldquo;Save as a recurring template&rdquo; on a task
+          here, or point a template at this {kind === "objective" ? "Objective" : "Operation"}.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {recurringTemplates.map((template) => (
+            <button
+              key={template.id}
+              type="button"
+              onClick={() => setOpenTemplate(template)}
+              className="flex w-full flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white text-left transition-colors hover:bg-cream"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[13px] font-semibold text-espresso leading-tight">
+                  {template.title || template.task_name || "Untitled template"}
+                </span>
+                <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
+                  template.is_active
+                    ? "bg-sage-soft text-sage border-sage/20"
+                    : "bg-stone/10 text-stone border-stone/20"
+                }`}>
+                  {template.is_active ? "Active" : "Paused"}
+                </span>
+              </div>
+              <div className="text-[11px] text-stone/80">
+                {RECURRENCE_LABEL[template.recurrence_type] ?? template.recurrence_type} · Starts {formatDate(template.start_date)}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   const renderSubtasksCard = () => {
     if (!selectedProject) return null;
     return (
       <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Subtasks</h4>
+          <button
+            type="button"
+            onClick={() => setShowSubtasks((v) => !v)}
+            className="flex items-center gap-2 cursor-pointer"
+          >
+            <span className="text-bark text-[10px] w-3 shrink-0">{showSubtasks ? "▼" : "▶"}</span>
+            <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Subtasks</h4>
+          </button>
+          {showSubtasks && (
           <div className="flex items-center gap-2">
             {subtasksLoading && (
               <span className="text-[11px] text-stone">Loading...</span>
@@ -855,8 +915,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               </button>
             </div>
           </div>
+          )}
         </div>
 
+        {showSubtasks && (
+        <>
         {!subtasksLoading && subtaskView === "list" && subtasks.length === 0 && (
           <p className="text-[12px] text-stone/70">No subtasks yet. Add one below.</p>
         )}
@@ -1086,9 +1149,30 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             />
           )}
         </div>
+        </>
+        )}
       </div>
     );
   };
+
+  const templateEditor = openTemplate ? (
+    <RecurringTemplatePanel
+      key={openTemplate.id}
+      template={openTemplate}
+      currentUserId={currentUserId}
+      teamMembers={activeProfiles.map((p) => ({
+        id: p.id,
+        full_name: p.full_name ?? "",
+        username: p.username ?? "",
+      }))}
+      isAdminOrManager={isAdmin}
+      onCancel={() => setOpenTemplate(null)}
+      onSaved={() => {
+        setOpenTemplate(null);
+        if (selectedProject) void fetchRecurringForProject(selectedProject.id);
+      }}
+    />
+  ) : null;
 
   // Board View is a full-width takeover (Figma correction) — sidebar and the
   // Objective details/Where They Are panel hide entirely while it's active.
@@ -1096,6 +1180,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
   return (
     <div className="space-y-4">
+      {templateEditor}
       {!isBoardTakeover && (
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
@@ -1408,30 +1493,28 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
               {/* Objective name + lighter default view (Figma reference) — Details
                   form is opened on demand instead of shown by default. */}
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap min-w-0">
-                  <h3 className="text-base font-bold text-espresso truncate">{selectedProject.name}</h3>
-                  <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border shrink-0 ${
-                    selectedProject.is_active
-                      ? "bg-sage-soft text-sage border-sage/20"
-                      : "bg-stone/10 text-stone border-stone/20"
-                  }`}>
-                    {selectedProject.is_active ? "Active" : "Inactive"}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setShowDetails((v) => !v)}
-                  className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-amber text-white hover:bg-amber/90 transition-colors shrink-0"
-                >
-                  {showDetails ? `Hide ${kindLabel} Details` : `${kindLabel} Details`}
-                </button>
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <h3 className="text-base font-bold text-espresso truncate">{selectedProject.name}</h3>
+                <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border shrink-0 ${
+                  selectedProject.is_active
+                    ? "bg-sage-soft text-sage border-sage/20"
+                    : "bg-stone/10 text-stone border-stone/20"
+                }`}>
+                  {selectedProject.is_active ? "Active" : "Inactive"}
+                </span>
               </div>
 
               {/* Project edit card — hidden by default, opened via the button above */}
-              {showDetails && (
               <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-4">
                 <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-[13px] font-bold text-espresso">{kindLabel} Details</h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowDetails((v) => !v)}
+                    className="flex items-center gap-2 min-w-0 cursor-pointer"
+                  >
+                    <span className="text-bark text-[10px] w-3 shrink-0">{showDetails ? "▼" : "▶"}</span>
+                    <h4 className="text-[13px] font-bold text-espresso">{kindLabel} Details</h4>
+                  </button>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => void handleToggleActive(selectedProject)}
@@ -1450,6 +1533,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   </div>
                 </div>
 
+                {showDetails && (
+                <>
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                     {kindLabel} Name
@@ -1635,8 +1720,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 >
                   {savingEdit ? "Saving..." : "Save Changes"}
                 </button>
+                </>
+                )}
               </div>
-              )}
 
               {kind === "operation" ? (
                 activeTile === null ? (
@@ -1669,47 +1755,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       />
                     )}
 
-                    {activeTile === "recurring" && (
-                      <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Recurring</h3>
-                        </div>
-                        {recurringLoading ? (
-                          <p className="text-[12px] text-stone">Loading…</p>
-                        ) : recurringTemplates.length === 0 ? (
-                          <p className="text-[12px] text-stone/70">
-                            No recurring templates linked yet. Add one from the Recurring Templates tab and set
-                            &ldquo;Link to Operations&rdquo; to this Operation.
-                          </p>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {recurringTemplates.map((template) => (
-                              <div
-                                key={template.id}
-                                className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white"
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <span className="text-[13px] font-semibold text-espresso leading-tight">
-                                    {template.title || template.task_name || "Untitled template"}
-                                  </span>
-                                  <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${
-                                    template.is_active
-                                      ? "bg-sage-soft text-sage border-sage/20"
-                                      : "bg-stone/10 text-stone border-stone/20"
-                                  }`}>
-                                    {template.is_active ? "Active" : "Paused"}
-                                  </span>
-                                </div>
-                                <div className="text-[11px] text-stone/80">
-                                  {RECURRENCE_LABEL[template.recurrence_type] ?? template.recurrence_type} · Starts {formatDate(template.start_date)}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
+                    {activeTile === "recurring" && renderRecurringCard()}
                     {activeTile === "subtasks" && renderSubtasksCard()}
 
                     {activeTile === "files" && (
@@ -1720,18 +1766,24 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               ) : (
                 <div className="space-y-3">
                   {renderSubtasksCard()}
-                  <ProjectFiles projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
+                  {recurringTemplates.length > 0 && renderRecurringCard()}
+                  <ProjectFiles projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} collapsible />
                 </div>
               )}
             </div>
           )}
 
-          {/* Empty state when nothing selected */}
+          {/* Nothing selected: objectives show a dashboard overview; operations
+              keep the simple prompt. */}
           {!selectedProject && !showCreate && (
-            <div className="rounded-xl border border-sand bg-white p-8 shadow-sm text-center">
-              <p className="text-sm font-medium text-espresso">Select a project</p>
-              <p className="mt-1 text-xs text-stone">Click a project on the left to view and manage its subtasks.</p>
-            </div>
+            kind === "objective" ? (
+              <ObjectiveOverview projects={projects} onSelect={handleSelectProject} />
+            ) : (
+              <div className="rounded-xl border border-sand bg-white p-8 shadow-sm text-center">
+                <p className="text-sm font-medium text-espresso">Select a project</p>
+                <p className="mt-1 text-xs text-stone">Click a project on the left to view and manage its subtasks.</p>
+              </div>
+            )
           )}
         </div>
       </div>

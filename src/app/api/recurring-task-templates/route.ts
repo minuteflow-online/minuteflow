@@ -221,9 +221,13 @@ export async function GET(request: Request) {
     // Admin viewing one specific VA's templates.
     query = query.contains("assigned_to_ids", [viewAsVa]);
   } else if (!isAdminEquivalent || mineOnly) {
-    // VAs always see only their own templates.
-    // Admins also see only their own when ?mine=true (VA task-list context).
-    query = query.contains("assigned_to_ids", [user.id]);
+    // "Mine" is assigned to me OR set up by me. Assignment-only was wrong for
+    // the common case: ticking "save as a recurring template" while assigning
+    // work to someone else produced a template the author could not see on the
+    // Recurring page at all, because it was assigned to the other person.
+    query = query.or(
+      `assigned_to_ids.cs.{${user.id}},assigned_by.eq.${user.id},created_by.eq.${user.id}`
+    );
   }
   // Admin with neither ?mine nor ?viewAsVa: no filter applied — everyone's templates.
   if (projectId) query = query.eq("project_id", projectId);

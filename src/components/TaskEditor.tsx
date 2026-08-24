@@ -867,10 +867,23 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     }
     // Same create-only rule as Review Required — every new task needs a due
     // date on the Calendar, but existing tasks that predate this aren't
-    // retroactively blocked.
-    if (!isEditing && !dueDate) {
+    // retroactively blocked. A recurring template — whether this whole form
+    // IS one (templateMode, the Recurring tab) or it's riding along with a
+    // regular task (alsoSaveAsTemplate) — has no single due date, since each
+    // occurrence gets its own. It anchors on Start Date instead, which is
+    // what the template itself generates from (recurringOccurrences.ts's
+    // fallsOn() refuses to generate anything for a template with no
+    // start_date — that was silently breaking every template created here,
+    // since Start Date was never required and Due Date was blocking the save
+    // instead).
+    const isRecurringFlow = templateMode || alsoSaveAsTemplate;
+    if (!isEditing && !isRecurringFlow && !dueDate) {
       setError("Due Date is required.");
       throw new Error("Due Date is required.");
+    }
+    if (!isEditing && isRecurringFlow && !startDate) {
+      setError("Start Date is required for a recurring task.");
+      throw new Error("Start Date is required for a recurring task.");
     }
     // Computed from the primitives rather than reading the derived
     // needsSchedule, which is declared further down the component body — this
@@ -1237,7 +1250,13 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const needsClientDetail = !taskDetail.trim();
   const needsReviewAnswer = mode === "time_based" && !isEditing && !reviewRequired;
   const needsRate = mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)));
-  const needsDueDate = !isEditing && !dueDate;
+  // templateMode (the Recurring tab) IS a template; alsoSaveAsTemplate rides
+  // one along with a regular task. Either way there's no single due date.
+  const isRecurringFlow = templateMode || alsoSaveAsTemplate;
+  const needsDueDate = !isEditing && !isRecurringFlow && !dueDate;
+  // A recurring task has no single due date — each generated occurrence gets
+  // its own — so Start Date takes over as the required anchor instead.
+  const needsStartDateForRecurring = !isEditing && isRecurringFlow && !startDate;
   // Time-based: a time range OR a duration, either one satisfies it — they're
   // alternatives, not both. Output Based has no time range or duration to
   // offer — Start Date + End Date on the Calendar is its schedule instead.
@@ -1253,7 +1272,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const missingDetails = needsClientDetail ? "Required field/s inside" : null;
   const missingAssignment = needsReviewAnswer ? "Required field/s inside" : null;
   const missingRate = needsRate ? "Required field/s inside" : null;
-  const missingSchedule = needsSchedule || needsDueDate ? "Required field/s inside" : null;
+  const missingSchedule = needsSchedule || needsDueDate || needsStartDateForRecurring ? "Required field/s inside" : null;
 
   // The footer still names them, since that's the "why won't this save" spot.
   const missingRequired = [
@@ -1263,6 +1282,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     needsRate ? "Final Rate" : null,
     needsSchedule ? (mode === "time_based" ? "Time range or Duration" : "Start Date and End Date") : null,
     needsDueDate ? "Due Date" : null,
+    needsStartDateForRecurring ? "Start Date" : null,
   ].filter((m): m is string => Boolean(m));
 
   // An unfilled required input reads amber — a prompt, not an error. Terracotta
@@ -1891,14 +1911,21 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           </p>
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className={labelClass}>Start Date</label>
+              <label className={labelClass}>
+                Start Date {needsStartDateForRecurring && <span className="text-terracotta">*</span>}
+              </label>
               <input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
                 disabled={readOnly}
-                className={mode === "output_based" ? requiredInputClass(Boolean(startDate)) : inputClass}
+                className={
+                  mode === "output_based" || isRecurringFlow ? requiredInputClass(Boolean(startDate)) : inputClass
+                }
               />
+              {isRecurringFlow && !startDate && (
+                <p className="mt-1 text-[11px] text-stone">Required — this is the date the recurring template starts generating from.</p>
+              )}
             </div>
             <div className="flex-1">
               <label className={labelClass}>End Date</label>
@@ -1995,14 +2022,21 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         <div className="rounded-lg border border-sand bg-cream/40 p-3 space-y-2">
           <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-stone">Deadline<InfoTip text="Separate from the work span above — a single moment, not a range." /></p>
           <div>
-            <label className={labelClass}>Due Date {!isEditing && <span className="text-terracotta">*</span>}</label>
+            <label className={labelClass}>
+              Due Date {!isEditing && !isRecurringFlow && <span className="text-terracotta">*</span>}
+            </label>
             <input
               type="date"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
               disabled={readOnly}
-              className={requiredInputClass(Boolean(dueDate))}
+              className={requiredInputClass(Boolean(dueDate) || isRecurringFlow)}
             />
+            {isRecurringFlow && (
+              <p className="mt-1 text-[11px] text-stone">
+                Optional here — a recurring task has no single due date, since each occurrence gets its own.
+              </p>
+            )}
           </div>
           {dueDate && (
             <div>

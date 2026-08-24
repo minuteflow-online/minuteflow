@@ -257,3 +257,56 @@ export function mention(name: string, chatId: number | string | null | undefined
   if (!chatId || Number(chatId) <= 0) return safe;
   return `<a href="tg://user?id=${Number(chatId)}">${safe}</a>`;
 }
+
+/** Telegram accepts a document up to 50MB, five times the photo limit. */
+const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Upload a non-image file to the chat for `topic`.
+ *
+ * sendPhoto only accepts images and rejects everything else, so a PDF, a
+ * spreadsheet or a zip has to go as a document. Telegram shows it with its
+ * filename and a download button rather than inline, which is the right
+ * treatment for something you open rather than glance at.
+ */
+export async function sendTelegramDocument(
+  topic: TelegramTopic,
+  file: Buffer,
+  filename: string,
+  opts: { replyToMessageId?: number; caption?: string } = {}
+): Promise<{ ok: boolean; messageId?: number; error?: string }> {
+  const chatId = chatIdFor(topic);
+  if (!BOT_TOKEN || !chatId) return { ok: false, error: `telegram not configured for "${topic}"` };
+  if (file.byteLength > MAX_DOCUMENT_BYTES) return { ok: false, error: "file over 50MB" };
+
+  try {
+    const form = new FormData();
+    form.append("chat_id", chatId);
+    if (opts.caption) {
+      form.append("caption", opts.caption);
+      form.append("parse_mode", "HTML");
+    }
+    if (opts.replyToMessageId) {
+      form.append(
+        "reply_parameters",
+        JSON.stringify({ message_id: opts.replyToMessageId, allow_sending_without_reply: true })
+      );
+    }
+    form.append("document", new Blob([new Uint8Array(file)]), filename);
+
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) return { ok: false, error: await res.text() };
+
+    let messageId: number | undefined;
+    try {
+      messageId = ((await res.json()) as { result?: { message_id?: number } }).result?.message_id;
+    } catch { /* non-fatal */ }
+    return { ok: true, messageId };
+  } catch (err) {
+    console.error(`telegram document failed (${topic}):`, err);
+    return { ok: false, error: String(err) };
+  }
+}
