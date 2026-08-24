@@ -237,3 +237,23 @@ export async function sendTelegram(
     return { ok: false, error: String(err) };
   }
 }
+
+/**
+ * A person's name as a Telegram mention, falling back to plain text.
+ *
+ * `tg://user?id=` mentions work whether or not someone set a public username,
+ * they notify the person, and Telegram renders them in the theme's accent
+ * colour — the only way to make a name stand out, since message HTML has no
+ * colour of its own.
+ *
+ * For a private chat the chat id and the user id are the same number, so the
+ * `telegram_chat_id` already stored for direct messages doubles as the mention
+ * id. Anyone who has not messaged the bot has neither, and gets their name as
+ * ordinary escaped text rather than a broken link.
+ */
+export function mention(name: string, chatId: number | string | null | undefined): string {
+  const safe = esc(name);
+  // Group ids are negative and cannot be mentioned — only a real person can.
+  if (!chatId || Number(chatId) <= 0) return safe;
+  return `<a href="tg://user?id=${Number(chatId)}">${safe}</a>`;
+}

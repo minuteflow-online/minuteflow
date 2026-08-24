@@ -12,7 +12,8 @@
 // x-session-events-secret matching SESSION_EVENTS_SECRET.
 
 import { createClient } from "@supabase/supabase-js";
-import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { sendTelegram, sendTelegramTo, telegramEnabled, esc } from "@/lib/telegram";
+import { clockInGreeting, clockOutGreeting, timeOfDayGreeting } from "@/lib/clockInGreeting";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
@@ -31,11 +32,19 @@ type WebhookPayload = {
 };
 
 const EVENTS = {
-  clock_in: "🟢 clocked in",
-  clock_out: "⚪ clocked out",
-  break_start: "☕ started a break",
-  break_end: "🔵 is back from break",
+  clock_in: "🟢",
+  clock_out: "⚪",
+  break_start: "☕",
+  break_end: "🔵",
 } as const;
+
+/** Reads as a sentence with a time after it: "clocked in at 8:02 AM ET." */
+const VERBS: Record<keyof typeof EVENTS, string> = {
+  clock_in: "clocked in",
+  clock_out: "clocked out",
+  break_start: "started a break",
+  break_end: "came back from break",
+};
 
 /** Which alert this row change represents, or null when nothing alertable moved.
  *  Only transitions fire — an UPDATE that leaves both flags unchanged (a task
@@ -71,25 +80,81 @@ export async function POST(request: Request) {
 
   const event = classify(payload.record ?? null, payload.old_record ?? null);
   if (!event) return Response.json({ ok: true, skipped: "no transition" });
-  if (!telegramEnabled("submissions")) return Response.json({ ok: true, skipped: "telegram off" });
+  if (!telegramEnabled("ops")) return Response.json({ ok: true, skipped: "telegram off" });
 
   const userId = payload.record?.user_id;
   let who = "Someone";
+  let chatId: number | null = null;
   if (userId) {
     const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
-    const { data: prof } = await admin.from("profiles").select("full_name, username").eq("id", userId).single();
+    const { data: prof } = await admin
+      .from("profiles")
+      .select("full_name, username, telegram_chat_id")
+      .eq("id", userId)
+      .single();
     who = prof?.full_name || prof?.username || "Someone";
+    chatId = (prof?.telegram_chat_id as number | null) ?? null;
   }
 
-  const time = new Date().toLocaleTimeString("en-US", {
+  const now = new Date();
+  const time = now.toLocaleTimeString("en-US", {
     timeZone: ORG_TIMEZONE,
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
   });
 
-  await sendTelegram("submissions", `<b>${esc(who)}</b> ${EVENTS[event]} — ${time} ET`);
-  return Response.json({ ok: true, event });
+  // A word at each end of the day, sent before the log line so the log can say
+  // whether it actually arrived.
+  //
+  // The hour comes from the org's timezone, not the server's — a greeting that
+  // says "good evening" to someone at breakfast is worse than none.
+  let greeting: "sent" | "failed" | "unlinked" | null = null;
+  let greetingText = "";
+  if (event === "clock_in" || event === "clock_out") {
+    if (!chatId) {
+      greeting = "unlinked";
+    } else {
+      const hour = Number(
+        now.toLocaleString("en-US", { timeZone: ORG_TIMEZONE, hour: "numeric", hour12: false })
+      );
+      const firstName = who.split(" ")[0];
+
+      // Kept as a variable so the log below can quote the exact words that were
+      // sent. The lines are picked at random, so "a greeting went out" would
+      // leave Toni unable to tell what any given person actually received.
+      greetingText = event === "clock_in" ? clockInGreeting() : clockOutGreeting();
+      const heading =
+        event === "clock_in"
+          ? `☀️ <b>${timeOfDayGreeting(hour)}, ${esc(firstName)}</b>`
+          : `🌙 <b>Thanks, ${esc(firstName)}</b>`;
+
+      const result = await sendTelegramTo(
+        chatId,
+        [heading, "", esc(greetingText)].join("\n"),
+        "va"
+      );
+      greeting = result.ok ? "sent" : "failed";
+    }
+  }
+
+  // Private, not the team chat. When someone starts and stops work is between
+  // them and Toni — posting it where the whole team reads turns a log into a
+  // scoreboard of who arrived when.
+  //
+  // Delivery is reported on this line rather than as a second message. Toni
+  // asked to know when something reaches a VA privately, and one clock-in
+  // producing two notifications would double the traffic for no extra fact.
+  const lines = [`${EVENTS[event]} <b>${esc(who)}</b> ${VERBS[event]} at ${time} ET.`];
+  // The exact words, not just that something went out. The lines are random,
+  // so "greeting sent" would leave no way to know what a given person read.
+  if (greeting === "sent") lines.push(`Message sent: ${esc(greetingText)}`);
+  if (greeting === "failed") lines.push("⚠️ Message FAILED to send.");
+  if (greeting === "unlinked") lines.push("⚠️ No Telegram link — no message sent.");
+
+  await sendTelegram("ops", lines.join("\n"));
+
+  return Response.json({ ok: true, event, greeting });
 }

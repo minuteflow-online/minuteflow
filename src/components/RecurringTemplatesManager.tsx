@@ -53,6 +53,8 @@ interface RecurringTemplatesManagerProps {
    *  Without this they end up stacked above the panel, reading as page chrome
    *  rather than as a control for the table underneath. */
   headerControls?: React.ReactNode;
+  /** Rendered in the table toolbar row, immediately left of the Columns picker. */
+  columnRowControls?: React.ReactNode;
   currentUserId?: string;
 }
 
@@ -152,6 +154,7 @@ export default function RecurringTemplatesManager({
   vaMode,
   currentUserId,
   headerControls,
+  columnRowControls,
 }: RecurringTemplatesManagerProps) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<RecurringTaskTemplate | null>(null);
@@ -431,7 +434,8 @@ export default function RecurringTemplatesManager({
               Clear filters
             </button>
           )}
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {columnRowControls}
             <ColumnVisibilityPicker
               columns={TEMPLATE_COLUMNS}
               hidden={hiddenColumns}

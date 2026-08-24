@@ -1,3 +1,15 @@
+/**
+ * True when a Supabase/Postgres insert error is the time_logs_one_active_per_user
+ * unique-violation — this user already has an open task or break running
+ * somewhere else (another tab, device, or the browser extension) at the same
+ * moment this insert fired. Lets callers show "you're already tracking
+ * something else" instead of the raw constraint-violation message.
+ */
+export function isDuplicateActiveLogError(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "23505" && (error.message?.includes("time_logs_one_active_per_user") ?? false);
+}
+
 /** Count words in a string (trims and splits on whitespace) */
 export function countWords(text: string): number {
   const trimmed = text.trim();

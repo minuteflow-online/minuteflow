@@ -146,8 +146,12 @@ export async function checkStaticScreens(
       continue;
     }
 
-    // Warned already and still nothing moving — close it.
-    if (Date.now() - warnedAt >= GRACE_MS) {
+    // Warned already and still nothing moving — close it, but only if the
+    // warning could actually have reached them. Someone with no Telegram link
+    // never saw it, and closing a session on a warning nobody received is the
+    // unfairness this whole flow exists to avoid. They stay flagged for Toni
+    // instead, which is visible without being punitive.
+    if (Date.now() - warnedAt >= GRACE_MS && prof.telegram_chat_id) {
       await forceClockOut(c.user_id, c.log_id);
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id as number | null,

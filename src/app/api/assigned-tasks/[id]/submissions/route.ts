@@ -6,7 +6,7 @@ import {
   submissionSummary,
   type SubmissionMessageType,
 } from "@/lib/submissions";
-import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { sendTelegram, telegramEnabled, esc, mention } from "@/lib/telegram";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -361,7 +361,7 @@ export async function POST(request: Request, { params }: RouteContext) {
   if (messageType === "submission" && telegramEnabled("submissions")) {
     const { data: prof } = await admin
       .from("profiles")
-      .select("full_name, username")
+      .select("full_name, username, telegram_chat_id")
       .eq("id", user.id)
       .single();
     const who = prof?.full_name || prof?.username || "A VA";
@@ -375,7 +375,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           : "Waiting for review";
 
     const lines = [
-      `📤 <b>New submission</b> from ${esc(who)}`,
+      `📤 <b>New submission</b> from ${mention(who, prof?.telegram_chat_id)}`,
       `Task: ${esc(task.task_name ?? "a task")}`,
     ];
     if (where) lines.push(`Project: ${esc(where)}`);
