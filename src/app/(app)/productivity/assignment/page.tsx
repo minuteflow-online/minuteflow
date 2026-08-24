@@ -2026,7 +2026,9 @@ export default function TaskListPage() {
                   >
                     <option value="">My View</option>
                     {assignedByProfiles
-                      .filter((p) => p.id !== currentUserId && p.role === "va" && p.position !== "Admin")
+                      .filter((p) => p.id !== currentUserId)
+                      .slice()
+                      .sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""))
                       .map((p) => (
                         <option key={p.id} value={p.id}>{p.full_name}</option>
                       ))}
