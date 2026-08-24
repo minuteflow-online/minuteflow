@@ -307,6 +307,14 @@ export default function ProductivityCalendarPage() {
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
 
+  // Per-account time consumed vs. cap — agency-wide (every VA's hours on an
+  // account count against the same limit), fetched fresh whenever the visible
+  // day/week/month changes. Not scoped by `scope`/dayUserId on purpose: an
+  // account's budget doesn't change depending on whose calendar you're looking at.
+  const [accountUsage, setAccountUsage] = useState<
+    Array<{ id: number; name: string; daily_hours_budget: number | null; weekly_hours_budget: number | null; monthly_hours_budget: number | null; daily_minutes: number; weekly_minutes: number; monthly_minutes: number }>
+  >([]);
+
   const [assignedTasksAll, setAssignedTasksAll] = useState<RawTask[]>([]);
   const [fixedItems, setFixedItems] = useState<DueItem[]>([]);
   // Output Based tasks carry a duration but never an hour block, so they can't
@@ -845,6 +853,31 @@ export default function ProductivityCalendarPage() {
     rangeStart && rangeEnd && rangeEnd >= rangeStart && rangeGrid.length === RANGE_MAX_DAYS &&
       rangeGrid[rangeGrid.length - 1] < rangeEnd
   );
+
+  // Which date to ask the usage endpoint about — it derives the day AND the
+  // week/month containing that day server-side. Month uses the visible
+  // month's first day rather than selectedDate, since selectedDate can sit in
+  // a different month (e.g. after paging Month without touching Day/Week).
+  const usageReferenceDate = useMemo(() => {
+    if (viewMode === "month") return `${monthYear}-${String(monthMonth + 1).padStart(2, "0")}-01`;
+    if (viewMode === "range") return rangeGrid[0] ?? selectedDate;
+    return selectedDate;
+  }, [viewMode, monthYear, monthMonth, rangeGrid, selectedDate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/accounts/usage?date=${usageReferenceDate}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setAccountUsage(d.accounts ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setAccountUsage([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [usageReferenceDate]);
   const weekLabel = useMemo(() => {
     const start = weekGrid[0];
     const end = weekGrid[6];
@@ -1989,6 +2022,56 @@ export default function ProductivityCalendarPage() {
           </span>
         </span>
       </div>
+
+      {/* Account budgets. Agency-wide by design — an account's hours cap is
+          the client's, not any one VA's, so this counts everyone's time on
+          it regardless of whose calendar is open. Only accounts with at
+          least one limit set show here; an account with none configured
+          would just be three dashes, and most accounts don't have a cap. */}
+      {(() => {
+        const capped = accountUsage.filter(
+          (a) => a.daily_hours_budget != null || a.weekly_hours_budget != null || a.monthly_hours_budget != null
+        );
+        if (capped.length === 0) return null;
+        const periodBadge = (usedMinutes: number, limitHours: number | null) => {
+          if (limitHours == null) return null;
+          const limitMinutes = Math.round(limitHours * 60);
+          const remaining = limitMinutes - usedMinutes;
+          if (remaining < 0) return { text: `${formatDuration(-remaining)} over ${formatDuration(limitMinutes)}`, over: true, warn: false };
+          const warn = limitMinutes > 0 && usedMinutes / limitMinutes >= BUDGET_WARN_THRESHOLD;
+          return { text: `${formatDuration(remaining)} left of ${formatDuration(limitMinutes)}`, over: false, warn };
+        };
+        return (
+          <div className="rounded-xl border border-sand bg-white p-3">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-walnut">Account Budgets</p>
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              {capped.map((a) => (
+                <div key={a.id} className="min-w-[220px]">
+                  <p className="mb-1 text-[12px] font-semibold text-espresso">{a.name}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {([
+                      ["Daily", a.daily_minutes, a.daily_hours_budget],
+                      ["Weekly", a.weekly_minutes, a.weekly_hours_budget],
+                      ["Monthly", a.monthly_minutes, a.monthly_hours_budget],
+                    ] as const).map(([label, used, limit]) => {
+                      const badge = periodBadge(used, limit);
+                      if (!badge) return null;
+                      return (
+                        <span
+                          key={label}
+                          className={`rounded-full border px-2 py-[2px] text-[10px] font-semibold ${budgetBadgeClass(badge)}`}
+                        >
+                          {label}: {badge.text}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {viewMode === "month" && (
         <div className="rounded-xl border border-sand bg-white p-4">

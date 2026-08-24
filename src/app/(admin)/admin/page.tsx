@@ -4381,6 +4381,12 @@ interface AccountRow {
   name: string;
   active: boolean;
   billing_rate: number | null;
+  // Hours cap for this account, agency-wide — every VA's time on it counts
+  // against the same limit, since that's what a client hours cap means. The
+  // Calendar reads these to show consumed-vs-limit per account.
+  daily_hours_budget: number | null;
+  weekly_hours_budget: number | null;
+  monthly_hours_budget: number | null;
   created_at: string;
 }
 
@@ -4415,6 +4421,12 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
   const [editName, setEditName] = useState("");
   const [editingRateId, setEditingRateId] = useState<number | null>(null);
   const [editRate, setEditRate] = useState("");
+  // One shared editor for all three periods, rather than three separate
+  // editingXId states — a click opens all three boxes for that account at once.
+  const [editingBudgetId, setEditingBudgetId] = useState<number | null>(null);
+  const [editDailyBudget, setEditDailyBudget] = useState("");
+  const [editWeeklyBudget, setEditWeeklyBudget] = useState("");
+  const [editMonthlyBudget, setEditMonthlyBudget] = useState("");
   const [linkAccountId, setLinkAccountId] = useState<number | null>(null);
   const [linkClientId, setLinkClientId] = useState("");
 
@@ -4483,6 +4495,30 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
     });
     setEditingRateId(null);
     setEditRate("");
+    fetchAccounts();
+  };
+
+  const handleSaveBudgets = async (id: number) => {
+    const parse = (v: string) => {
+      const t = v.trim();
+      if (t === "") return null;
+      const n = parseFloat(t);
+      return Number.isFinite(n) && n >= 0 ? n : undefined;
+    };
+    const daily = parse(editDailyBudget);
+    const weekly = parse(editWeeklyBudget);
+    const monthly = parse(editMonthlyBudget);
+    // A malformed box (not blank, not a valid non-negative number) blocks the
+    // whole save rather than silently dropping just that one field — an admin
+    // fixing the weekly cap shouldn't have their daily cap quietly cleared
+    // because of a typo two boxes over.
+    if (daily === undefined || weekly === undefined || monthly === undefined) return;
+    await fetch("/api/accounts", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, daily_hours_budget: daily, weekly_hours_budget: weekly, monthly_hours_budget: monthly }),
+    });
+    setEditingBudgetId(null);
     fetchAccounts();
   };
 
@@ -4563,6 +4599,7 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
               <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
                 <th className="px-4 py-3">Name</th>
                 <th className="px-3 py-3">Billing Rate</th>
+                <th className="px-3 py-3" title="Hours cap per period, counted across every VA on this account. Read by the Calendar's account budgets.">Time Budget (D/W/M)</th>
                 <th className="px-3 py-3">Status</th>
                 <th className="px-3 py-3">Linked Clients</th>
                 <th className="px-3 py-3 text-center">Actions</th>
@@ -4631,6 +4668,54 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
                             <span className="text-espresso">${Number(acc.billing_rate).toFixed(2)}/hr</span>
                           ) : (
                             <span className="text-bark/50 italic">Set rate</span>
+                          )}
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      {!isFullAdmin ? (
+                        <span title="Hidden" className="text-stone">🔒</span>
+                      ) : editingBudgetId === acc.id ? (
+                        <div className="flex items-center gap-1">
+                          {([
+                            ["D", editDailyBudget, setEditDailyBudget],
+                            ["W", editWeeklyBudget, setEditWeeklyBudget],
+                            ["M", editMonthlyBudget, setEditMonthlyBudget],
+                          ] as const).map(([label, value, setValue]) => (
+                            <span key={label} className="flex items-center gap-0.5">
+                              <span className="text-[9px] text-bark">{label}</span>
+                              <input
+                                value={value}
+                                onChange={(e) => setValue(e.target.value)}
+                                className="w-12 rounded border border-terracotta px-1 py-0.5 text-[11px] outline-none"
+                                placeholder="—"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleSaveBudgets(acc.id);
+                                  if (e.key === "Escape") setEditingBudgetId(null);
+                                }}
+                              />
+                            </span>
+                          ))}
+                          <span className="text-[10px] text-bark">h</span>
+                          <button onClick={() => handleSaveBudgets(acc.id)} className="text-sage text-sm font-bold">OK</button>
+                          <button onClick={() => setEditingBudgetId(null)} className="text-bark hover:text-terracotta text-sm">&times;</button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setEditingBudgetId(acc.id);
+                            setEditDailyBudget(acc.daily_hours_budget != null ? String(acc.daily_hours_budget) : "");
+                            setEditWeeklyBudget(acc.weekly_hours_budget != null ? String(acc.weekly_hours_budget) : "");
+                            setEditMonthlyBudget(acc.monthly_hours_budget != null ? String(acc.monthly_hours_budget) : "");
+                          }}
+                          className="cursor-pointer text-[12px] font-medium transition-colors hover:text-terracotta"
+                        >
+                          {acc.daily_hours_budget == null && acc.weekly_hours_budget == null && acc.monthly_hours_budget == null ? (
+                            <span className="text-bark/50 italic">Set budget</span>
+                          ) : (
+                            <span className="text-espresso">
+                              {acc.daily_hours_budget != null ? `${acc.daily_hours_budget}h` : "—"} / {acc.weekly_hours_budget != null ? `${acc.weekly_hours_budget}h` : "—"} / {acc.monthly_hours_budget != null ? `${acc.monthly_hours_budget}h` : "—"}
+                            </span>
                           )}
                         </button>
                       )}

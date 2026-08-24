@@ -88,18 +88,30 @@ export async function PATCH(request: Request) {
   const isFullAdmin = hasAccountsClientsAccess(callerProfile);
 
   const body = await request.json();
-  const { id, name, active, billing_rate, linkClientId, unlinkClientId } = body;
+  const {
+    id, name, active, billing_rate, linkClientId, unlinkClientId,
+    daily_hours_budget, weekly_hours_budget, monthly_hours_budget,
+  } = body;
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
   }
 
-  // Update name/active/billing_rate
-  if (name !== undefined || active !== undefined || (isFullAdmin && billing_rate !== undefined)) {
+  // Time budgets ride the same isFullAdmin gate as billing_rate — they're the
+  // same kind of client-capacity setting, not something every VA should be
+  // able to change out from under the calendar's own consumed-vs-limit reads.
+  const hasBudgetField =
+    daily_hours_budget !== undefined || weekly_hours_budget !== undefined || monthly_hours_budget !== undefined;
+
+  // Update name/active/billing_rate/hour budgets
+  if (name !== undefined || active !== undefined || (isFullAdmin && (billing_rate !== undefined || hasBudgetField))) {
     const updates: Record<string, unknown> = {};
     if (name !== undefined) updates.name = name.trim();
     if (active !== undefined) updates.active = active;
     if (isFullAdmin && billing_rate !== undefined) updates.billing_rate = billing_rate;
+    if (isFullAdmin && daily_hours_budget !== undefined) updates.daily_hours_budget = daily_hours_budget;
+    if (isFullAdmin && weekly_hours_budget !== undefined) updates.weekly_hours_budget = weekly_hours_budget;
+    if (isFullAdmin && monthly_hours_budget !== undefined) updates.monthly_hours_budget = monthly_hours_budget;
 
     const { error } = await supabase
       .from("accounts")
