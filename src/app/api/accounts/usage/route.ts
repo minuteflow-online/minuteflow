@@ -1,6 +1,7 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { isDateInSpan, orgDateOf, addDaysToDateStr } from "@/lib/taskSchedule";
+import { shiftHoursFromProfile } from "@/lib/budget";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,18 @@ export const dynamic = "force-dynamic";
  * so the by-VA rows can sum to more than the account total on a shared task.
  * A fixed-pay task nobody has claimed yet still counts toward the account
  * total but attributes to no VA, for the same reason.
+ *
+ * `by_va_totals` is a second, ACCOUNT-INDEPENDENT rollup: each VA's minutes
+ * summed across every capped-or-not account they touched, next to their own
+ * personal cap (profiles.shift_hours/weekly_budget_limit/monthly_budget_limit
+ * — the same figures the Calendar's own per-VA Day/Week/Month badges read).
+ * That personal cap has nothing to do with any account's budget; it answers
+ * "how much of Arianne's own time is left", not "how much of TAT Foundation's
+ * time is left". Restricted to tasks that carry an account (same rows the
+ * account totals above are built from) rather than truly everything a VA has
+ * scheduled — in practice that's the same set, since a task without an
+ * account is rare, but it's worth knowing this isn't a from-scratch personal
+ * total independent of the account query.
  */
 
 type Bucket = "daily" | "weekly" | "monthly";
@@ -109,7 +122,9 @@ export async function GET(request: Request) {
       .select("account, start_date, end_date, due_date, planned_minutes, claimed_by")
       .is("deleted_at", null)
       .not("account", "is", null),
-    admin.from("profiles").select("id, full_name, username"),
+    admin
+      .from("profiles")
+      .select("id, full_name, username, shift_hours, shift_start, shift_end, weekly_budget_limit, monthly_budget_limit"),
   ]);
 
   if (accError) return Response.json({ error: accError.message }, { status: 500 });
@@ -122,6 +137,9 @@ export async function GET(request: Request) {
   // account -> bucket -> minutes, and account -> va_id -> bucket -> minutes
   const totals = new Map<string, BucketMinutes>();
   const byVa = new Map<string, Map<string, BucketMinutes>>();
+  // va_id -> bucket -> minutes, collapsed across every account — this is what
+  // "how much of Arianne's own time is left" reads from.
+  const personalTotals = new Map<string, BucketMinutes>();
 
   const add = (account: string | null, bucket: Bucket, minutes: number, vaIds: string[]) => {
     if (!account || minutes <= 0) return;
@@ -135,6 +153,10 @@ export async function GET(request: Request) {
       const vaRow = vaMap.get(vaId) ?? emptyBucket();
       vaRow[bucket] += minutes;
       vaMap.set(vaId, vaRow);
+
+      const personalRow = personalTotals.get(vaId) ?? emptyBucket();
+      personalRow[bucket] += minutes;
+      personalTotals.set(vaId, personalRow);
     }
     byVa.set(account, vaMap);
   };
@@ -221,5 +243,26 @@ export async function GET(request: Request) {
     };
   });
 
-  return Response.json({ date, week, month, accounts: result });
+  const byVaTotals = Array.from(personalTotals.entries())
+    .map(([vaId, minutes]) => {
+      const profile = (profiles ?? []).find((p) => p.id === vaId) ?? null;
+      const dailyHours = profile
+        ? shiftHoursFromProfile({
+            shift_hours: profile.shift_hours,
+            shift_start: profile.shift_start,
+            shift_end: profile.shift_end,
+          })
+        : null;
+      return {
+        va_id: vaId,
+        va_name: nameById.get(vaId) ?? "Unknown",
+        ...round(minutes),
+        daily_hours_budget: dailyHours,
+        weekly_hours_budget: profile?.weekly_budget_limit ?? null,
+        monthly_hours_budget: profile?.monthly_budget_limit ?? null,
+      };
+    })
+    .sort((x, y) => y.weekly - x.weekly || y.monthly - x.monthly || y.daily - x.daily);
+
+  return Response.json({ date, week, month, accounts: result, by_va_totals: byVaTotals });
 }

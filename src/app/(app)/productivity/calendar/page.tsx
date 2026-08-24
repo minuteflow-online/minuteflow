@@ -322,6 +322,15 @@ export default function ProductivityCalendarPage() {
       by_va: Array<{ va_id: string; va_name: string; daily: number; weekly: number; monthly: number }>;
     }>
   >([]);
+  // Each VA's OWN total across every account, next to their personal cap —
+  // "how much of Arianne's time is left", independent of any one account's
+  // budget. The far-right column of the VA-by-account grid.
+  const [vaUsageTotals, setVaUsageTotals] = useState<
+    Array<{
+      va_id: string; va_name: string; daily: number; weekly: number; monthly: number;
+      daily_hours_budget: number | null; weekly_hours_budget: number | null; monthly_hours_budget: number | null;
+    }>
+  >([]);
 
   const [assignedTasksAll, setAssignedTasksAll] = useState<RawTask[]>([]);
   const [fixedItems, setFixedItems] = useState<DueItem[]>([]);
@@ -353,6 +362,11 @@ export default function ProductivityCalendarPage() {
   const [modalTab, setModalTab] = useState<"details" | "edit">("details");
   const [limitNotice, setLimitNotice] = useState<string | null>(null);
   const [unscheduledCollapsed, setUnscheduledCollapsed] = useState(false);
+  // Collapsed by default — Account Budgets sits above every view (Month, Week,
+  // Day all show it), and once the by-VA grid is in it's the tallest thing on
+  // the page before you've scrolled to anything you actually opened the
+  // calendar for.
+  const [accountBudgetsCollapsed, setAccountBudgetsCollapsed] = useState(true);
   const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
   const toggleUnscheduledExpand = (id: number) => {
     setExpandedUnscheduledIds((prev) => {
@@ -877,10 +891,16 @@ export default function ProductivityCalendarPage() {
     fetch(`/api/accounts/usage?date=${usageReferenceDate}`)
       .then((r) => r.json())
       .then((d) => {
-        if (!cancelled) setAccountUsage(d.accounts ?? []);
+        if (!cancelled) {
+          setAccountUsage(d.accounts ?? []);
+          setVaUsageTotals(d.by_va_totals ?? []);
+        }
       })
       .catch(() => {
-        if (!cancelled) setAccountUsage([]);
+        if (!cancelled) {
+          setAccountUsage([]);
+          setVaUsageTotals([]);
+        }
       });
     return () => {
       cancelled = true;
@@ -2049,20 +2069,35 @@ export default function ProductivityCalendarPage() {
           const warn = limitMinutes > 0 && usedMinutes / limitMinutes >= BUDGET_WARN_THRESHOLD;
           return { text: `${formatDuration(remaining)} left of ${formatDuration(limitMinutes)}`, over: false, warn };
         };
-        // The meter fill/colour for one VA's slice of one capped period — same
-        // sage/amber/terracotta severity the badges use, just as a bar instead
-        // of a pill, since a whole row of VAs in badge form would run too tall.
-        const meterFill = (usedMinutes: number, limitHours: number) => {
-          const limitMinutes = Math.round(limitHours * 60);
-          const fraction = limitMinutes > 0 ? usedMinutes / limitMinutes : 0;
-          const over = fraction > 1;
-          const warn = !over && fraction >= BUDGET_WARN_THRESHOLD;
-          const barClass = over ? "bg-terracotta" : warn ? "bg-amber" : "bg-sage";
-          return { widthPct: Math.min(100, fraction * 100), barClass, limitMinutes };
-        };
         return (
           <div className="rounded-xl border border-sand bg-white p-3">
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-walnut">Account Budgets</p>
+            <button
+              type="button"
+              onClick={() => setAccountBudgetsCollapsed((v) => !v)}
+              className={`flex w-full items-center gap-2 cursor-pointer ${accountBudgetsCollapsed ? "" : "mb-2"}`}
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                className={`text-bark transition-transform ${accountBudgetsCollapsed ? "" : "rotate-90"}`}
+              >
+                <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span className="text-[10px] font-bold uppercase tracking-wide text-walnut">Account Budgets</span>
+              <span className="text-[10px] text-stone">({capped.length})</span>
+            </button>
+            {accountBudgetsCollapsed && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {capped.map((a) => (
+                  <span key={a.id} className="rounded-full bg-cream/60 px-2 py-[1px] text-[10px] text-espresso">
+                    {a.name}
+                  </span>
+                ))}
+              </div>
+            )}
+            {!accountBudgetsCollapsed && (
+            <>
             {/* One bordered block per account rather than everything run
                 together in a single wrapping row — that read as a wall of
                 names and pills with no line telling you where one account's
@@ -2101,44 +2136,169 @@ export default function ProductivityCalendarPage() {
                       never blocks scheduling, it just tells you where things
                       stand. */}
                   {a.by_va.length > 0 && (
-                    <div className="mt-2 space-y-1 border-t border-sand pt-2">
+                    <div className="mt-2 space-y-1.5 border-t border-sand pt-2">
                       {a.by_va.map((v) => (
-                        <div key={v.va_id} className="flex items-center gap-1.5">
-                          <span className="w-16 shrink-0 truncate text-[10px] text-espresso" title={v.va_name}>
+                        <div key={v.va_id}>
+                          <p className="mb-0.5 truncate text-[10px] font-semibold text-espresso" title={v.va_name}>
                             {v.va_name}
-                          </span>
-                          <span className="flex flex-1 items-center gap-1">
+                          </p>
+                          {/* Numbers, not a bar — spent, remaining and the
+                              budget it's measured against, same phrasing the
+                              account-level badges above use, just scoped to
+                              this one VA's share. */}
+                          <div className="flex flex-wrap gap-1">
                             {([
                               ["D", v.daily, a.daily_hours_budget],
                               ["W", v.weekly, a.weekly_hours_budget],
                               ["M", v.monthly, a.monthly_hours_budget],
                             ] as const).map(([label, used, limitHours]) => {
                               if (limitHours == null) return null;
-                              const meter = meterFill(used, limitHours);
+                              const badge = periodBadge(used, limitHours);
+                              if (!badge) return null;
                               return (
                                 <span
                                   key={label}
-                                  title={`${label === "D" ? "Daily" : label === "W" ? "Weekly" : "Monthly"}: ${v.va_name} used ${formatDuration(used)} of ${formatDuration(meter.limitMinutes)}`}
-                                  className="flex min-w-0 flex-1 items-center gap-0.5"
+                                  title={`${used > 0 ? `${formatDuration(used)} spent · ` : ""}${badge.text}`}
+                                  className={`rounded-full border px-1.5 py-[1px] text-[9px] font-semibold ${budgetBadgeClass(badge)}`}
                                 >
-                                  <span className="text-[8px] font-semibold text-stone">{label}</span>
-                                  <span className="h-1.5 min-w-[16px] flex-1 overflow-hidden rounded-full bg-stone/15">
-                                    <span
-                                      className={`block h-full rounded-full ${meter.barClass}`}
-                                      style={{ width: `${meter.widthPct}%` }}
-                                    />
-                                  </span>
+                                  {label}: {badge.text}
                                 </span>
                               );
                             })}
-                          </span>
+                          </div>
                         </div>
                       ))}
+                      {/* Recap after scanning down the list of shares — same
+                          figures the card's own top badges already show,
+                          repeated here so "how much is left overall" doesn't
+                          require scrolling back up past everyone's rows. */}
+                      <div className="flex flex-wrap gap-1 border-t border-sand pt-1.5">
+                        <span className="text-[9px] font-bold uppercase tracking-wide text-walnut">Total:</span>
+                        {([
+                          ["D", a.daily_minutes, a.daily_hours_budget],
+                          ["W", a.weekly_minutes, a.weekly_hours_budget],
+                          ["M", a.monthly_minutes, a.monthly_hours_budget],
+                        ] as const).map(([label, used, limitHours]) => {
+                          if (limitHours == null) return null;
+                          const badge = periodBadge(used, limitHours);
+                          if (!badge) return null;
+                          return (
+                            <span
+                              key={label}
+                              className={`rounded-full border px-1.5 py-[1px] text-[9px] font-semibold ${budgetBadgeClass(badge)}`}
+                            >
+                              {label}: {badge.text}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
               ))}
             </div>
+
+            {/* Rows = VA, columns = account, so "how does this account's week
+                break down by person" and "how does this person's week break
+                down by account" are the same table read two ways. Weekly
+                only — three periods per cell would make the grid unreadable,
+                and weekly is the period the rest of this calendar already
+                treats as primary. Cells read remaining/budget (e.g. "2h/4h")
+                rather than the full sentence the cards above use — a whole
+                "Xh left of Yh" per cell would blow out the column width;
+                hover a cell for the spelled-out version. */}
+            {(() => {
+              const weeklyCapped = capped.filter((acc) => acc.weekly_hours_budget != null);
+              const vaIds = Array.from(new Set(weeklyCapped.flatMap((acc) => acc.by_va.map((v) => v.va_id))));
+              if (weeklyCapped.length === 0 || vaIds.length === 0) return null;
+              const vaNameById = new Map(
+                weeklyCapped.flatMap((acc) => acc.by_va.map((v) => [v.va_id, v.va_name] as const))
+              );
+              const cellText = (usedMinutes: number, limitHours: number) => {
+                const limitMinutes = Math.round(limitHours * 60);
+                const remaining = limitMinutes - usedMinutes;
+                const over = remaining < 0;
+                const warn = !over && limitMinutes > 0 && usedMinutes / limitMinutes >= BUDGET_WARN_THRESHOLD;
+                const colorClass = over ? "text-terracotta" : warn ? "text-amber" : "text-espresso";
+                const short = `${over ? "−" : ""}${formatDuration(Math.abs(remaining))}/${formatDuration(limitMinutes)}`;
+                const full = `${formatDuration(usedMinutes)} spent · ${
+                  over ? `${formatDuration(-remaining)} over` : `${formatDuration(remaining)} left`
+                } of ${formatDuration(limitMinutes)}`;
+                return { short, full, colorClass };
+              };
+              return (
+                <div className="mt-3 overflow-x-auto rounded-lg border border-sand">
+                  <table className="w-full text-left text-[10px]">
+                    <thead>
+                      <tr className="border-b border-sand bg-parchment/50 text-[9px] font-bold uppercase tracking-wide text-walnut">
+                        <th className="px-2 py-1.5">VA — Weekly</th>
+                        {weeklyCapped.map((acc) => (
+                          <th key={acc.id} className="px-2 py-1.5 text-right font-bold normal-case text-espresso">
+                            {acc.name}
+                          </th>
+                        ))}
+                        <th className="border-l border-sand px-2 py-1.5 text-right">My Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-sand">
+                      {vaIds.map((vaId) => {
+                        const personal = vaUsageTotals.find((v) => v.va_id === vaId);
+                        return (
+                          <tr key={vaId}>
+                            <td className="max-w-[110px] truncate px-2 py-1 text-espresso" title={vaNameById.get(vaId)}>
+                              {vaNameById.get(vaId)}
+                            </td>
+                            {weeklyCapped.map((acc) => {
+                              const share = acc.by_va.find((v) => v.va_id === vaId);
+                              if (!share || acc.weekly_hours_budget == null) {
+                                return <td key={acc.id} className="px-2 py-1 text-right text-stone/40">—</td>;
+                              }
+                              const cell = cellText(share.weekly, acc.weekly_hours_budget);
+                              return (
+                                <td key={acc.id} className={`px-2 py-1 text-right font-semibold ${cell.colorClass}`} title={cell.full}>
+                                  {cell.short}
+                                </td>
+                              );
+                            })}
+                            <td className="border-l border-sand px-2 py-1 text-right font-semibold">
+                              {personal && personal.weekly_hours_budget != null ? (
+                                (() => {
+                                  const cell = cellText(personal.weekly, personal.weekly_hours_budget);
+                                  return (
+                                    <span className={cell.colorClass} title={`${vaNameById.get(vaId)}'s own weekly cap: ${cell.full}`}>
+                                      {cell.short}
+                                    </span>
+                                  );
+                                })()
+                              ) : (
+                                <span className="text-stone/40">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-sand bg-cream/50 font-semibold">
+                        <td className="px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-walnut">Account total</td>
+                        {weeklyCapped.map((acc) => {
+                          if (acc.weekly_hours_budget == null) return <td key={acc.id} />;
+                          const cell = cellText(acc.weekly_minutes, acc.weekly_hours_budget);
+                          return (
+                            <td key={acc.id} className={`px-2 py-1 text-right ${cell.colorClass}`} title={cell.full}>
+                              {cell.short}
+                            </td>
+                          );
+                        })}
+                        <td className="border-l border-sand" />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              );
+            })()}
+            </>
+            )}
           </div>
         );
       })()}

@@ -4389,6 +4389,15 @@ function TeamManagementTab({
 
 /* ── Accounts Tab ─────────────────────────────────────────── */
 
+// "112h" if it lands on a whole hour, "112h 40m" otherwise — mainly for the
+// derived monthly figure (weekly * 52/12), which almost never comes out whole.
+function formatHoursLabel(hours: number): string {
+  const totalMinutes = Math.round(hours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
 interface AccountRow {
   id: number;
   name: string;
@@ -4439,7 +4448,6 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
   const [editingBudgetId, setEditingBudgetId] = useState<number | null>(null);
   const [editDailyBudget, setEditDailyBudget] = useState("");
   const [editWeeklyBudget, setEditWeeklyBudget] = useState("");
-  const [editMonthlyBudget, setEditMonthlyBudget] = useState("");
   const [linkAccountId, setLinkAccountId] = useState<number | null>(null);
   const [linkClientId, setLinkClientId] = useState("");
   /* Name search sits by the title; the per-column carets filter on exact
@@ -4524,6 +4532,10 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
 
   // Daily/weekly/monthly hour budgets are edited together in one cell — an
   // empty box clears that period's budget rather than storing zero.
+  // Monthly is not typed in — it's always weekly * 52/12 (52 weeks/year over
+  // 12 months), computed server-side whenever weekly is saved, so it can't
+  // drift from it the way a hand-entered figure did (26h/wk had been paired
+  // with 110h/mo instead of the 112h40m the formula gives).
   const handleSaveBudgets = async (id: number) => {
     const parse = (v: string) => {
       const t = v.trim();
@@ -4533,16 +4545,15 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
     };
     const daily = parse(editDailyBudget);
     const weekly = parse(editWeeklyBudget);
-    const monthly = parse(editMonthlyBudget);
     // A malformed box (not blank, not a valid non-negative number) blocks the
     // whole save rather than silently dropping just that one field — an admin
     // fixing the weekly cap shouldn't have their daily cap quietly cleared
-    // because of a typo two boxes over.
-    if (daily === undefined || weekly === undefined || monthly === undefined) return;
+    // because of a typo in the other box.
+    if (daily === undefined || weekly === undefined) return;
     await fetch("/api/accounts", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, daily_hours_budget: daily, weekly_hours_budget: weekly, monthly_hours_budget: monthly }),
+      body: JSON.stringify({ id, daily_hours_budget: daily, weekly_hours_budget: weekly }),
     });
     setEditingBudgetId(null);
     fetchAccounts();
@@ -4791,11 +4802,10 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
                       {!isFullAdmin ? (
                         <span title="Hidden" className="text-stone">🔒</span>
                       ) : editingBudgetId === acc.id ? (
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1.5">
                           {([
                             ["D", editDailyBudget, setEditDailyBudget],
                             ["W", editWeeklyBudget, setEditWeeklyBudget],
-                            ["M", editMonthlyBudget, setEditMonthlyBudget],
                           ] as const).map(([label, value, setValue]) => (
                             <span key={label} className="flex items-center gap-0.5">
                               <span className="text-[9px] text-bark">{label}</span>
@@ -4812,6 +4822,12 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
                             </span>
                           ))}
                           <span className="text-[10px] text-bark">h</span>
+                          {/* Monthly isn't a box — it's 52 weeks/year over 12
+                              months of whatever Weekly is, live as you type,
+                              so there's nothing here to fall out of sync. */}
+                          <span className="text-[10px] text-bark/70" title="Weekly × 52 ÷ 12 — not independently editable">
+                            → M: {formatHoursLabel((parseFloat(editWeeklyBudget) || 0) * 52 / 12)}
+                          </span>
                           <button onClick={() => handleSaveBudgets(acc.id)} className="text-sage text-sm font-bold">OK</button>
                           <button onClick={() => setEditingBudgetId(null)} className="text-bark hover:text-terracotta text-sm">&times;</button>
                         </div>
@@ -4821,15 +4837,17 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
                             setEditingBudgetId(acc.id);
                             setEditDailyBudget(acc.daily_hours_budget != null ? String(acc.daily_hours_budget) : "");
                             setEditWeeklyBudget(acc.weekly_hours_budget != null ? String(acc.weekly_hours_budget) : "");
-                            setEditMonthlyBudget(acc.monthly_hours_budget != null ? String(acc.monthly_hours_budget) : "");
                           }}
                           className="cursor-pointer text-[12px] font-medium transition-colors hover:text-terracotta"
                         >
-                          {acc.daily_hours_budget == null && acc.weekly_hours_budget == null && acc.monthly_hours_budget == null ? (
+                          {acc.daily_hours_budget == null && acc.weekly_hours_budget == null ? (
                             <span className="text-bark/50 italic">Set budget</span>
                           ) : (
                             <span className="text-espresso">
-                              {acc.daily_hours_budget != null ? `${acc.daily_hours_budget}h` : "—"} / {acc.weekly_hours_budget != null ? `${acc.weekly_hours_budget}h` : "—"} / {acc.monthly_hours_budget != null ? `${acc.monthly_hours_budget}h` : "—"}
+                              {acc.daily_hours_budget != null ? `${acc.daily_hours_budget}h` : "—"} / {acc.weekly_hours_budget != null ? `${acc.weekly_hours_budget}h` : "—"}
+                              {acc.monthly_hours_budget != null && (
+                                <span className="text-bark/60"> ({formatHoursLabel(acc.monthly_hours_budget)}/mo)</span>
+                              )}
                             </span>
                           )}
                         </button>

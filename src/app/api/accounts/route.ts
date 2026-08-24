@@ -90,7 +90,7 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const {
     id, name, active, billing_rate, linkClientId, unlinkClientId,
-    daily_hours_budget, weekly_hours_budget, monthly_hours_budget,
+    daily_hours_budget, weekly_hours_budget,
   } = body;
 
   if (!id) {
@@ -100,8 +100,7 @@ export async function PATCH(request: Request) {
   // Time budgets ride the same isFullAdmin gate as billing_rate — they're the
   // same kind of client-capacity setting, not something every VA should be
   // able to change out from under the calendar's own consumed-vs-limit reads.
-  const hasBudgetField =
-    daily_hours_budget !== undefined || weekly_hours_budget !== undefined || monthly_hours_budget !== undefined;
+  const hasBudgetField = daily_hours_budget !== undefined || weekly_hours_budget !== undefined;
 
   // Update name/active/billing_rate/hour budgets
   if (name !== undefined || active !== undefined || (isFullAdmin && (billing_rate !== undefined || hasBudgetField))) {
@@ -110,8 +109,15 @@ export async function PATCH(request: Request) {
     if (active !== undefined) updates.active = active;
     if (isFullAdmin && billing_rate !== undefined) updates.billing_rate = billing_rate;
     if (isFullAdmin && daily_hours_budget !== undefined) updates.daily_hours_budget = daily_hours_budget;
-    if (isFullAdmin && weekly_hours_budget !== undefined) updates.weekly_hours_budget = weekly_hours_budget;
-    if (isFullAdmin && monthly_hours_budget !== undefined) updates.monthly_hours_budget = monthly_hours_budget;
+    // Weekly is the one number anyone sets — monthly is always 52 weeks a
+    // year divided across 12 months, never a second typed-in figure that can
+    // drift out of sync with it (TAT Foundation had 26h/wk paired with a
+    // hand-entered 110h/mo, when 26 * 52 / 12 is 112h40m). No weekly cap means
+    // no derived monthly cap either, so clearing one clears both.
+    if (isFullAdmin && weekly_hours_budget !== undefined) {
+      updates.weekly_hours_budget = weekly_hours_budget;
+      updates.monthly_hours_budget = weekly_hours_budget == null ? null : (weekly_hours_budget * 52) / 12;
+    }
 
     const { error } = await supabase
       .from("accounts")
