@@ -449,6 +449,8 @@ export default function TaskListPage() {
   const [availableRefreshKey, setAvailableRefreshKey] = useState(0);
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
   const [recurringLoading, setRecurringLoading] = useState(false);
+  // Recurring VA view (admin only): "mine" | "all" | a specific VA id.
+  const [recurringScope, setRecurringScope] = useState<string>("mine");
   const [selectedVaId, setSelectedVaId] = useState<string | null>(null);
   const [selectedVaName, setSelectedVaName] = useState<string | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -592,8 +594,12 @@ export default function TaskListPage() {
   const fetchRecurringTemplates = useCallback(async () => {
     if (!currentUserId) return;
     setRecurringLoading(true);
+    // Non-admins always see only their own. Admins can pick a VA ("viewAsVa"),
+    // everyone ("all" → no scope param), or their own ("mine").
+    const scope = hasBroadAdminAccess({ role: currentRole }) ? recurringScope : "mine";
+    const qs = scope === "mine" ? "?mine=true" : scope === "all" ? "" : `?viewAsVa=${scope}`;
     try {
-      const res = await fetch("/api/recurring-task-templates?mine=true", { cache: "no-store" });
+      const res = await fetch(`/api/recurring-task-templates${qs}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json();
       setRecurringTemplates((d.templates ?? []) as RecurringTaskTemplate[]);
@@ -602,7 +608,12 @@ export default function TaskListPage() {
     } finally {
       setRecurringLoading(false);
     }
-  }, [currentUserId]);
+  }, [currentUserId, currentRole, recurringScope]);
+
+  // Refetch when the admin changes the VA scope while on the Recurring tab.
+  useEffect(() => {
+    if (activeView === "recurring") void fetchRecurringTemplates();
+  }, [recurringScope, activeView, fetchRecurringTemplates]);
 
   const fetchFormOptions = useCallback(async () => {
     try {
@@ -2215,7 +2226,23 @@ export default function TaskListPage() {
               <FixedPayTasksPanel refreshKey={availableRefreshKey} />
             </div>
           ) : activeView === "recurring" ? (
-            <div className="p-4">
+            <div className="p-4 space-y-3">
+              {isAdmin && (
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-walnut">VA view</label>
+                  <select
+                    value={recurringScope}
+                    onChange={(e) => setRecurringScope(e.target.value)}
+                    className="rounded-lg border border-sand px-2 py-1 text-[12px] text-espresso outline-none bg-white"
+                  >
+                    <option value="mine">Mine</option>
+                    <option value="all">All team members</option>
+                    {assignedByProfiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.full_name || p.username}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <RecurringTemplatesManager
                 templates={recurringTemplates}
                 loading={recurringLoading}
