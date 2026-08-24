@@ -124,6 +124,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // A linked Operation opened for read-only viewing from an Objective (edited at
   // its origin in the Operations tab).
   const [viewOperation, setViewOperation] = useState<Project | null>(null);
+  const [viewOperationSubtasks, setViewOperationSubtasks] = useState<SubtaskRow[]>([]);
+  const [viewOperationSubtasksLoading, setViewOperationSubtasksLoading] = useState(false);
   const [objectiveOptions, setObjectiveOptions] = useState<Project[]>([]);
   // Reverse of objectiveOptions: on the Objective tab, the Operations that link
   // to each objective (read-only here — edited at their origin in Operations).
@@ -639,6 +641,25 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     }
     return map;
   }, [linkedOperations]);
+
+  // Load the subtasks of the Operation opened in the read-only viewer.
+  useEffect(() => {
+    if (!viewOperation) { setViewOperationSubtasks([]); return; }
+    let cancelled = false;
+    setViewOperationSubtasksLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/assigned-tasks?projectId=${viewOperation.id}`, { cache: "no-store" });
+        const d = await res.json().catch(() => ({}));
+        if (!cancelled) setViewOperationSubtasks((d.tasks ?? []) as SubtaskRow[]);
+      } catch {
+        if (!cancelled) setViewOperationSubtasks([]);
+      } finally {
+        if (!cancelled) setViewOperationSubtasksLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [viewOperation]);
 
   const openCreateForm = (parentId: string) => {
     setShowCreate(true);
@@ -1740,6 +1761,26 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             ) : (
               <p className="text-[12px] text-stone italic">No details added to this operation yet.</p>
             )}
+
+            <div className="border-t border-sand pt-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-walnut">
+                Subtasks{viewOperationSubtasks.length > 0 ? ` (${viewOperationSubtasks.length})` : ""}
+              </p>
+              {viewOperationSubtasksLoading ? (
+                <p className="text-[12px] text-stone">Loading…</p>
+              ) : viewOperationSubtasks.length === 0 ? (
+                <p className="text-[12px] text-stone italic">No subtasks.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {viewOperationSubtasks.map((st) => (
+                    <div key={st.id} className="flex items-start justify-between gap-2 rounded-lg border border-sand bg-cream px-3 py-2">
+                      <span className="text-[12px] text-espresso leading-tight">{st.task_name}</span>
+                      <StatusBadge status={st.status} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
