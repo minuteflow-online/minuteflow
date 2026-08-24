@@ -123,6 +123,34 @@ async function makeDriveFilePublic(
   }
 }
 
+/**
+ * True while the person is on a break or on personal time.
+ *
+ * Breaks live on sessions.active_task as isBreak; Personal is a task category.
+ * Both mean the same here — time the person is not working.
+ *
+ * Returns false when the session cannot be read. An unreadable session does not
+ * prove someone is on a break, and silently dropping real captures would lose
+ * someone a day of tracked work.
+ */
+async function isOffDuty(userId: string): Promise<boolean> {
+  try {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data } = await supabase
+      .from("sessions")
+      .select("active_task")
+      .eq("user_id", userId)
+      .single();
+    const task = data?.active_task as { isBreak?: boolean; category?: string } | null;
+    if (!task) return false;
+    return Boolean(task.isBreak) || task.category === "Personal";
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     let formData: FormData;
@@ -147,6 +175,17 @@ export async function POST(request: NextRequest) {
         { error: "Missing required fields: file, userId, logId, screenshotType" },
         { status: 400 }
       );
+    }
+
+    // Nothing captured during a break or personal time is kept. The extension
+    // stops capturing on its own from 1.2.2, but older builds keep going and
+    // most of the fleet updates on Chrome's schedule rather than ours — so the
+    // refusal lives here too, where it protects everyone immediately.
+    //
+    // A break is time away from work. Discarding rather than storing means it
+    // never reaches Drive and never appears in anyone's timeline.
+    if (await isOffDuty(userId)) {
+      return Response.json({ ok: true, skipped: "on break" });
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
