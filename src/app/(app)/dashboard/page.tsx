@@ -1214,15 +1214,22 @@ export default function DashboardPage() {
     setSessionActionPending(true);
     const now = new Date().toISOString();
 
-    // ─── Safety net: close any orphaned open task logs before clocking out ───
+    // ─── Safety net: close any orphaned open logs before clocking out ───
     // Catches logs that were missed by state-based stopCurrentTask calls.
+    //
+    // Breaks are included. They used to be skipped, which left an open break row
+    // behind whenever someone clocked out without pressing End Break first. That
+    // was invisible — a break log with no end time contributes zero to every
+    // total — until the one-active-log unique index made it fatal: the stale row
+    // rejected that person's NEXT clock-in, with an error telling them to
+    // refresh, which could not help. Nobody is on a break after clocking out, so
+    // the break ends when the shift does.
     {
       const { data: orphanedLogs } = await supabase
         .from("time_logs")
         .select("id, start_time")
         .eq("user_id", userId)
         .is("end_time", null)
-        .neq("category", "Break")
         .neq("category", "Clock Out");
 
       if (orphanedLogs && orphanedLogs.length > 0) {
