@@ -187,6 +187,31 @@ async function fetchActiveLogIdFromDB(userId) {
 }
 
 /**
+ * True while the person is on a break or on personal time.
+ *
+ * Breaks are stored on sessions.active_task as isBreak; Personal is a task
+ * category. Both mean the same thing here — time the person is not working and
+ * their screen is their own.
+ *
+ * Returns false when the answer cannot be fetched. A network blip must not
+ * quietly stop captures for a whole shift; a missed pause is recoverable, a
+ * silently empty day of tracking is not.
+ */
+async function isOnBreak(userId) {
+  try {
+    const rows = await DB.query('sessions', {
+      filters: `user_id=eq.${userId}&select=active_task&limit=1`,
+    });
+    const activeTask = rows && rows[0] ? rows[0].active_task : null;
+    if (!activeTask) return false;
+    return Boolean(activeTask.isBreak) || activeTask.category === 'Personal';
+  } catch (err) {
+    console.warn('[MinuteFlow] isOnBreak check failed:', err.message);
+    return false;
+  }
+}
+
+/**
  * Convert a Blob to a base64 data URL for storage in chrome.storage.local.
  * Uses chunked encoding to handle large files safely in a service worker.
  */
@@ -659,13 +684,19 @@ async function captureAndUpload(screenshotType = 'manual', logId = null, capture
 async function runScheduledCapture() {
   if (!isClockedIn) return; // Off the clock — nothing to account for.
 
+  const session = await DB.getSession();
+  if (!session) return;
+
+  // A break is time away from work, and photographing someone's screen through
+  // it is not something a time tracker should do. Checked against the server
+  // rather than in-memory state, because the service worker restarts freely and
+  // a lost flag would silently resume capturing mid-break.
+  if (await isOnBreak(session.user.id)) return;
+
   if (currentTaskLogId) {
     await captureLocalThenUpload('progress', currentTaskLogId);
     return;
   }
-
-  const session = await DB.getSession();
-  if (!session) return;
 
   // The service worker restarts freely, so an in-memory null may just be lost
   // state rather than a genuinely absent task. Ask the server before concluding.
