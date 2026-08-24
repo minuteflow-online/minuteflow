@@ -12,7 +12,8 @@
 // x-session-events-secret matching SESSION_EVENTS_SECRET.
 
 import { createClient } from "@supabase/supabase-js";
-import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { sendTelegram, sendTelegramTo, telegramEnabled, esc } from "@/lib/telegram";
+import { clockInGreeting, timeOfDayGreeting } from "@/lib/clockInGreeting";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
@@ -75,15 +76,22 @@ export async function POST(request: Request) {
 
   const userId = payload.record?.user_id;
   let who = "Someone";
+  let chatId: number | null = null;
   if (userId) {
     const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
-    const { data: prof } = await admin.from("profiles").select("full_name, username").eq("id", userId).single();
+    const { data: prof } = await admin
+      .from("profiles")
+      .select("full_name, username, telegram_chat_id")
+      .eq("id", userId)
+      .single();
     who = prof?.full_name || prof?.username || "Someone";
+    chatId = (prof?.telegram_chat_id as number | null) ?? null;
   }
 
-  const time = new Date().toLocaleTimeString("en-US", {
+  const now = new Date();
+  const time = now.toLocaleTimeString("en-US", {
     timeZone: ORG_TIMEZONE,
     hour: "numeric",
     minute: "2-digit",
@@ -91,5 +99,30 @@ export async function POST(request: Request) {
   });
 
   await sendTelegram("submissions", `<b>${esc(who)}</b> ${EVENTS[event]} — ${time} ET`);
+
+  // A word to the person starting their day. Sent straight to them rather than
+  // through notifyVaPrivately: Toni already gets the clock-in line above, and a
+  // second log line saying a greeting went out would be noise.
+  //
+  // Everything here is in the org's timezone, not the server's — a greeting
+  // that says "good evening" to someone at breakfast is worse than none.
+  if (event === "clock_in" && chatId) {
+    const hour = Number(
+      now.toLocaleString("en-US", { timeZone: ORG_TIMEZONE, hour: "numeric", hour12: false })
+    );
+    const dateKey = now.toLocaleDateString("en-CA", { timeZone: ORG_TIMEZONE });
+    const firstName = who.split(" ")[0];
+
+    await sendTelegramTo(
+      chatId,
+      [
+        `☀️ <b>${timeOfDayGreeting(hour)}, ${esc(firstName)}</b>`,
+        "",
+        esc(clockInGreeting(who, dateKey)),
+      ].join("\n"),
+      "va"
+    );
+  }
+
   return Response.json({ ok: true, event });
 }
