@@ -2044,11 +2044,15 @@ export default function ProductivityCalendarPage() {
         return (
           <div className="rounded-xl border border-sand bg-white p-3">
             <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-walnut">Account Budgets</p>
-            <div className="flex flex-wrap gap-x-6 gap-y-2">
+            {/* One bordered block per account rather than everything run
+                together in a single wrapping row — that read as a wall of
+                names and pills with no line telling you where one account's
+                numbers ended and the next one's began. */}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {capped.map((a) => (
-                <div key={a.id} className="min-w-[220px]">
-                  <p className="mb-1 text-[12px] font-semibold text-espresso">{a.name}</p>
-                  <div className="flex flex-wrap gap-1.5">
+                <div key={a.id} className="rounded-lg border border-sand bg-cream/40 p-2.5">
+                  <p className="mb-1.5 truncate text-[12px] font-semibold text-espresso">{a.name}</p>
+                  <div className="space-y-1">
                     {([
                       ["Daily", a.daily_minutes, a.daily_hours_budget],
                       ["Weekly", a.weekly_minutes, a.weekly_hours_budget],
@@ -2057,12 +2061,14 @@ export default function ProductivityCalendarPage() {
                       const badge = periodBadge(used, limit);
                       if (!badge) return null;
                       return (
-                        <span
-                          key={label}
-                          className={`rounded-full border px-2 py-[2px] text-[10px] font-semibold ${budgetBadgeClass(badge)}`}
-                        >
-                          {label}: {badge.text}
-                        </span>
+                        <div key={label} className="flex items-center justify-between gap-2">
+                          <span className="w-14 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-walnut">{label}</span>
+                          <span
+                            className={`min-w-0 flex-1 truncate rounded-full border px-2 py-[2px] text-center text-[10px] font-semibold ${budgetBadgeClass(badge)}`}
+                          >
+                            {badge.text}
+                          </span>
+                        </div>
                       );
                     })}
                   </div>
