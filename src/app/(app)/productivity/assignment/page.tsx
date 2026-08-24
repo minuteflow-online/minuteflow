@@ -451,6 +451,9 @@ export default function TaskListPage() {
   const [recurringLoading, setRecurringLoading] = useState(false);
   // Recurring VA view (admin only): "mine" | "all" | a specific VA id.
   const [recurringScope, setRecurringScope] = useState<string>("mine");
+  // Every active team member (not just staff) — used to populate the Recurring
+  // VA-view picker. Kept separate from assignedByProfiles (task-recipient list).
+  const [allTeamMembers, setAllTeamMembers] = useState<ProfileOption[]>([]);
   const [selectedVaId, setSelectedVaId] = useState<string | null>(null);
   const [selectedVaName, setSelectedVaName] = useState<string | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
@@ -614,6 +617,21 @@ export default function TaskListPage() {
   useEffect(() => {
     if (activeView === "recurring") void fetchRecurringTemplates();
   }, [recurringScope, activeView, fetchRecurringTemplates]);
+
+  // Load every active team member for the Recurring VA-view picker.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/team-members?all=true", { cache: "no-store" });
+        const d = await res.json();
+        if (!cancelled && Array.isArray(d.members)) setAllTeamMembers(d.members as ProfileOption[]);
+      } catch {
+        // leave empty; picker falls back to the recipient list
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const fetchFormOptions = useCallback(async () => {
     try {
@@ -2237,7 +2255,7 @@ export default function TaskListPage() {
                   >
                     <option value="mine">Mine</option>
                     <option value="all">All team members</option>
-                    {assignedByProfiles.map((p) => (
+                    {(allTeamMembers.length > 0 ? allTeamMembers : assignedByProfiles).map((p) => (
                       <option key={p.id} value={p.id}>{p.full_name || p.username}</option>
                     ))}
                   </select>
