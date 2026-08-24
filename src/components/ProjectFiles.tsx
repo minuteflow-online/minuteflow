@@ -27,6 +27,8 @@ interface ProjectFilesProps {
   projectId: string;
   currentUserId: string;
   isAdmin: boolean;
+  /** When true, the header collapses/expands the body (starts open). */
+  collapsible?: boolean;
 }
 
 function uploaderName(u: Uploader): string {
@@ -72,7 +74,8 @@ function fileTypeOf(mime: string | null): Exclude<FileTypeFilter, "all"> {
   return "other";
 }
 
-export default function ProjectFiles({ projectId, currentUserId, isAdmin }: ProjectFilesProps) {
+export default function ProjectFiles({ projectId, currentUserId, isAdmin, collapsible = false }: ProjectFilesProps) {
+  const [open, setOpen] = useState(true);
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -142,7 +145,19 @@ export default function ProjectFiles({ projectId, currentUserId, isAdmin }: Proj
   return (
     <div className="rounded-xl border border-sand bg-white p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Docs &amp; Files</h3>
+        {collapsible ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="flex items-center gap-2 cursor-pointer"
+          >
+            <span className="text-bark text-[10px] w-3 shrink-0">{open ? "▼" : "▶"}</span>
+            <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Docs &amp; Files</h3>
+          </button>
+        ) : (
+          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Docs &amp; Files</h3>
+        )}
+        {(!collapsible || open) && (
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
@@ -151,6 +166,7 @@ export default function ProjectFiles({ projectId, currentUserId, isAdmin }: Proj
         >
           {uploading ? "Uploading…" : "+ Upload File"}
         </button>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -164,6 +180,8 @@ export default function ProjectFiles({ projectId, currentUserId, isAdmin }: Proj
         />
       </div>
 
+      {(!collapsible || open) && (
+      <>
       {error && <p className="text-[11px] text-terracotta">{error}</p>}
 
       {files.length > 0 && (
@@ -237,6 +255,8 @@ export default function ProjectFiles({ projectId, currentUserId, isAdmin }: Proj
             );
           })}
         </div>
+      )}
+      </>
       )}
     </div>
   );
