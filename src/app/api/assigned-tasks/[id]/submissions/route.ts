@@ -6,7 +6,8 @@ import {
   submissionSummary,
   type SubmissionMessageType,
 } from "@/lib/submissions";
-import { sendTelegram, telegramEnabled, esc, mention } from "@/lib/telegram";
+import { sendTelegram, sendTelegramPhoto, telegramEnabled, esc, mention } from "@/lib/telegram";
+import { reviewLinks } from "@/lib/reviewLinks";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -89,6 +90,52 @@ async function withAttachments(
   );
 
   return submissions.map((s) => ({ ...s, attachments: bySubmission.get(s.id) ?? [] }));
+}
+
+/** Enough to show the work without turning one submission into a wall of
+ *  images. Anything past this stays in the admin panel. */
+const MAX_FILES_POSTED = 5;
+
+/**
+ * Posts a submission's files into the submissions chat, under its alert.
+ *
+ * Only images are sent as photos — a PDF or a spreadsheet would be rejected by
+ * sendPhoto, and naming it in the alert is more use than a failed upload.
+ *
+ * Entirely best-effort: the submission is saved and the alert delivered before
+ * this runs, so a file that will not load costs nothing.
+ */
+async function postSubmissionFiles(
+  admin: ReturnType<typeof adminClient>,
+  submissionId: number,
+  replyToMessageId?: number
+): Promise<void> {
+  try {
+    const { data: files } = await admin
+      .from("assigned_task_attachments")
+      .select("filename, storage_path, mime_type")
+      .eq("submission_id", submissionId)
+      .limit(MAX_FILES_POSTED);
+
+    for (const file of files ?? []) {
+      if (!String(file.mime_type ?? "").startsWith("image/")) continue;
+
+      const { data: signed } = await admin.storage
+        .from("task-attachments")
+        .createSignedUrl(file.storage_path as string, 300);
+      if (!signed?.signedUrl) continue;
+
+      const res = await fetch(signed.signedUrl);
+      if (!res.ok) continue;
+      const bytes = Buffer.from(await res.arrayBuffer());
+
+      await sendTelegramPhoto("submissions", bytes, String(file.filename ?? "file.png"), {
+        replyToMessageId,
+      });
+    }
+  } catch (err) {
+    console.error("submission files to telegram failed:", err);
+  }
 }
 
 /**
@@ -379,9 +426,30 @@ export async function POST(request: Request, { params }: RouteContext) {
       `Task: ${esc(task.task_name ?? "a task")}`,
     ];
     if (where) lines.push(`Project: ${esc(where)}`);
-    lines.push(outcome, "", "Review: https://minuteflow.click/admin");
+    lines.push(outcome);
 
-    await sendTelegram("submissions", lines.join("\n"));
+    // Decide from the chat. Only offered where a decision is still open —
+    // auto-approved work has already closed, and putting an Approve link on it
+    // would invite a tap that does nothing.
+    if (!autoStatus) {
+      const links = reviewLinks(Number(id));
+      lines.push(
+        "",
+        `<a href="${links.approve}">✅ Approve</a>  •  <a href="${links.revision}">🔁 Needs revision</a>`
+      );
+    }
+    lines.push("", "Review: https://minuteflow.click/admin");
+
+    const sent = await sendTelegram("submissions", lines.join("\n"));
+
+    // The submitted files themselves, under the alert. Work handed in is
+    // usually judged by looking at it, and a link into the admin panel is a
+    // detour when the picture could just be there.
+    //
+    // These live in Supabase Storage rather than Drive, so they are pulled
+    // through a short-lived signed URL — the bucket is private and Telegram
+    // fetching the path itself would get nothing.
+    await postSubmissionFiles(admin, submission.id as number, sent.messageId);
   }
 
   const [withFiles] = await withAttachments(admin, [submission as never]);
