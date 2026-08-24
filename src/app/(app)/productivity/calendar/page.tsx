@@ -876,19 +876,17 @@ export default function ProductivityCalendarPage() {
       rangeGrid[rangeGrid.length - 1] < rangeEnd
   );
 
-  // Which date to ask the usage endpoint about — it derives the day AND the
-  // week/month containing that day server-side. Month uses the visible
-  // month's first day rather than selectedDate, since selectedDate can sit in
-  // a different month (e.g. after paging Month without touching Day/Week).
-  const usageReferenceDate = useMemo(() => {
-    if (viewMode === "month") return `${monthYear}-${String(monthMonth + 1).padStart(2, "0")}-01`;
-    if (viewMode === "range") return rangeGrid[0] ?? selectedDate;
-    return selectedDate;
-  }, [viewMode, monthYear, monthMonth, rangeGrid, selectedDate]);
-
+  // Always TODAY, regardless of what the calendar is browsing. This used to
+  // follow the view — Month took the 1st of the visible month for BOTH its
+  // week and its month window, so paging to August computed "this week" as
+  // the week containing Aug 1 (July 26-Aug 1), which shared no days with any
+  // of the month's real activity: Weekly read 0m next to a real Monthly
+  // total. A VA's weekly cap is one continuous pool drawn down across every
+  // account they touch — this panel has to report where that pool actually
+  // stands right now, not wherever the calendar happens to be scrolled to.
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/accounts/usage?date=${usageReferenceDate}`)
+    fetch(`/api/accounts/usage?date=${todayStr}`)
       .then((r) => r.json())
       .then((d) => {
         if (!cancelled) {
@@ -905,7 +903,7 @@ export default function ProductivityCalendarPage() {
     return () => {
       cancelled = true;
     };
-  }, [usageReferenceDate]);
+  }, [todayStr]);
   const weekLabel = useMemo(() => {
     const start = weekGrid[0];
     const end = weekGrid[6];
@@ -2102,16 +2100,59 @@ export default function ProductivityCalendarPage() {
             )}
             {!accountBudgetsCollapsed && (
             <>
-            {/* One simple table per account: VA | Weekly | Monthly | Total
-                Remaining. Weekly/Monthly are plain spent-time numbers for
-                that VA on THIS account. Total Remaining is that VA's own
-                overall cap remaining (profiles.weekly_budget_limit, their
-                personal number — the same figure wherever this VA shows up,
-                since it isn't scoped to any one account). The footer
-                "Remaining" row is the account's own Weekly/Monthly left,
-                colour-coded — the one number that answers "can this account
-                take more work". Everything here is computed, nothing typed
-                in by hand. */}
+            {/* Starting point, read first: each VA's own weekly budget and
+                what's left of it, before any of the per-account detail below.
+                Their cap is one pool spent across every account they're
+                assigned to, so this is computed once here rather than
+                repeated (and duplicated) inside every account's own table. */}
+            {(() => {
+              const vaIds = Array.from(new Set(capped.flatMap((acc) => acc.by_va.map((v) => v.va_id))));
+              if (vaIds.length === 0) return null;
+              const vaNameById = new Map(capped.flatMap((acc) => acc.by_va.map((v) => [v.va_id, v.va_name] as const)));
+              return (
+                <div className="mb-3 rounded-lg border border-sand bg-cream/40 p-2.5">
+                  <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-walnut">
+                    VA Weekly Budget — across every account they&apos;re assigned to
+                  </p>
+                  <table className="w-full text-[10px]">
+                    <thead>
+                      <tr className="border-b border-sand text-[9px] font-bold uppercase tracking-wide text-walnut">
+                        <th className="pb-1 text-left">VA</th>
+                        <th className="pb-1 text-right">Remaining</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-sand/60">
+                      {vaIds.map((vaId) => {
+                        const personal = vaUsageTotals.find((p) => p.va_id === vaId);
+                        const remain =
+                          personal && personal.weekly_hours_budget != null
+                            ? periodBadge(personal.weekly, personal.weekly_hours_budget)
+                            : null;
+                        return (
+                          <tr key={vaId}>
+                            <td className="py-1 text-espresso">{vaNameById.get(vaId)}</td>
+                            <td
+                              className={`py-1 text-right font-semibold ${remain ? budgetTextClass(remain) : "text-stone/40"}`}
+                              title={remain ? undefined : "No personal weekly cap set"}
+                            >
+                              {remain ? remain.text : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            {/* One simple table per account: VA | Weekly | Monthly. Plain
+                spent-time numbers for that VA on THIS account — this is the
+                account's own budget, unrelated to any VA's personal cap above.
+                The footer "Remaining" row is THIS account's own Weekly/Monthly
+                left, colour-coded — the one number that answers "can this
+                account take more work". Everything here is computed, nothing
+                typed in by hand. */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {capped.map((a) => {
                 const weeklyRemain = periodBadge(a.weekly_minutes, a.weekly_hours_budget);
@@ -2125,32 +2166,18 @@ export default function ProductivityCalendarPage() {
                           <th className="pb-1 text-left">VA</th>
                           <th className="pb-1 text-right">Weekly</th>
                           <th className="pb-1 text-right">Monthly</th>
-                          <th className="pb-1 text-right">Total Remaining</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-sand/60">
-                        {a.by_va.map((v) => {
-                          const personal = vaUsageTotals.find((p) => p.va_id === v.va_id);
-                          const personalRemain =
-                            personal && personal.weekly_hours_budget != null
-                              ? periodBadge(personal.weekly, personal.weekly_hours_budget)
-                              : null;
-                          return (
-                            <tr key={v.va_id}>
-                              <td className="max-w-[80px] truncate py-1 text-espresso" title={v.va_name}>
-                                {v.va_name}
-                              </td>
-                              <td className="py-1 text-right text-espresso">{formatDuration(v.weekly)}</td>
-                              <td className="py-1 text-right text-espresso">{formatDuration(v.monthly)}</td>
-                              <td
-                                className={`py-1 text-right font-semibold ${personalRemain ? budgetTextClass(personalRemain) : "text-stone/40"}`}
-                                title={personalRemain ? `${v.va_name}'s own weekly cap: ${personalRemain.text}` : "No personal weekly cap set"}
-                              >
-                                {personalRemain ? personalRemain.text : "—"}
-                              </td>
-                            </tr>
-                          );
-                        })}
+                        {a.by_va.map((v) => (
+                          <tr key={v.va_id}>
+                            <td className="max-w-[90px] truncate py-1 text-espresso" title={v.va_name}>
+                              {v.va_name}
+                            </td>
+                            <td className="py-1 text-right text-espresso">{formatDuration(v.weekly)}</td>
+                            <td className="py-1 text-right text-espresso">{formatDuration(v.monthly)}</td>
+                          </tr>
+                        ))}
                       </tbody>
                       <tfoot>
                         <tr className="border-t border-sand font-semibold">
@@ -2161,7 +2188,6 @@ export default function ProductivityCalendarPage() {
                           <td className={`pt-1 text-right ${monthlyRemain ? budgetTextClass(monthlyRemain) : "text-stone/40"}`}>
                             {monthlyRemain ? monthlyRemain.text : "—"}
                           </td>
-                          <td className="pt-1" />
                         </tr>
                       </tfoot>
                     </table>
