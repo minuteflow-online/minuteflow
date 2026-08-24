@@ -2100,101 +2100,122 @@ export default function ProductivityCalendarPage() {
             )}
             {!accountBudgetsCollapsed && (
             <>
-            {/* Starting point, read first: each VA's own weekly budget and
-                what's left of it, before any of the per-account detail below.
-                Their cap is one pool spent across every account they're
-                assigned to, so this is computed once here rather than
-                repeated (and duplicated) inside every account's own table. */}
+            {/* One table. Rows are VAs, each account gets a Weekly|Monthly
+                column pair headed by that account's own budget, and the last
+                column is the VA's own personal Weekly|Monthly remaining
+                (their cap is one pool spent across every account below, not
+                a separate number per account). The footer row is each
+                account's own remaining — budget minus the column's own VA
+                cells, nothing hand-entered. */}
             {(() => {
               const vaIds = Array.from(new Set(capped.flatMap((acc) => acc.by_va.map((v) => v.va_id))));
               if (vaIds.length === 0) return null;
               const vaNameById = new Map(capped.flatMap((acc) => acc.by_va.map((v) => [v.va_id, v.va_name] as const)));
+              const thCls = "border-b border-sand px-2 pb-1 text-right text-[9px] font-bold uppercase tracking-wide text-walnut";
               return (
-                <div className="mb-3 rounded-lg border border-sand bg-cream/40 p-2.5">
-                  <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-walnut">
-                    VA Weekly Budget — across every account they&apos;re assigned to
-                  </p>
+                <div className="overflow-x-auto rounded-lg border border-sand">
                   <table className="w-full text-[10px]">
                     <thead>
-                      <tr className="border-b border-sand text-[9px] font-bold uppercase tracking-wide text-walnut">
-                        <th className="pb-1 text-left">VA</th>
-                        <th className="pb-1 text-right">Remaining</th>
+                      <tr>
+                        <th className="border-b border-sand px-2 pb-1 text-left text-[9px] font-bold uppercase tracking-wide text-walnut">
+                          VA Names
+                        </th>
+                        {capped.map((a) => (
+                          <th key={a.id} colSpan={2} className="border-b border-sand border-l px-2 pb-1 text-center text-[11px] font-bold text-espresso">
+                            {a.name}
+                          </th>
+                        ))}
+                        <th colSpan={2} className="border-b border-sand border-l px-2 pb-1 text-center text-[9px] font-bold uppercase tracking-wide text-walnut">
+                          Remaining Time
+                        </th>
+                      </tr>
+                      <tr>
+                        <th className="pb-1" />
+                        {capped.flatMap((a) => [
+                          <th key={`${a.id}-w`} className={`${thCls} border-l`}>
+                            {a.weekly_hours_budget != null ? `${a.weekly_hours_budget}h/wk` : "—"}
+                          </th>,
+                          <th key={`${a.id}-m`} className={thCls}>
+                            {a.monthly_hours_budget != null ? `${a.monthly_hours_budget}h/mo` : "—"}
+                          </th>,
+                        ])}
+                        <th className={`${thCls} border-l`}>Weekly</th>
+                        <th className={thCls}>Monthly</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-sand/60">
                       {vaIds.map((vaId) => {
+                        const name = vaNameById.get(vaId);
                         const personal = vaUsageTotals.find((p) => p.va_id === vaId);
-                        const remain =
+                        const personalWeekly =
                           personal && personal.weekly_hours_budget != null
                             ? periodBadge(personal.weekly, personal.weekly_hours_budget)
                             : null;
+                        const personalMonthly =
+                          personal && personal.monthly_hours_budget != null
+                            ? periodBadge(personal.monthly, personal.monthly_hours_budget)
+                            : null;
                         return (
                           <tr key={vaId}>
-                            <td className="py-1 text-espresso">{vaNameById.get(vaId)}</td>
+                            <td className="max-w-[130px] truncate px-2 py-1 text-espresso" title={name}>
+                              {name}
+                              {personal && (personal.weekly_hours_budget != null || personal.monthly_hours_budget != null) && (
+                                <span className="ml-1 text-[9px] font-normal text-stone">
+                                  ({personal.weekly_hours_budget != null ? `${personal.weekly_hours_budget}h/wk` : "—"} |{" "}
+                                  {personal.monthly_hours_budget != null ? `${personal.monthly_hours_budget}h/mo` : "—"})
+                                </span>
+                              )}
+                            </td>
+                            {capped.flatMap((a) => {
+                              const share = a.by_va.find((v) => v.va_id === vaId);
+                              return [
+                                <td key={`${a.id}-w`} className="border-l border-sand/60 px-2 py-1 text-right text-espresso">
+                                  {share ? formatDuration(share.weekly) : "—"}
+                                </td>,
+                                <td key={`${a.id}-m`} className="px-2 py-1 text-right text-espresso">
+                                  {share ? formatDuration(share.monthly) : "—"}
+                                </td>,
+                              ];
+                            })}
                             <td
-                              className={`py-1 text-right font-semibold ${remain ? budgetTextClass(remain) : "text-stone/40"}`}
-                              title={remain ? undefined : "No personal weekly cap set"}
+                              className={`border-l border-sand/60 px-2 py-1 text-right font-semibold ${personalWeekly ? budgetTextClass(personalWeekly) : "text-stone/40"}`}
+                              title={personalWeekly?.text}
                             >
-                              {remain ? remain.text : "—"}
+                              {personalWeekly ? personalWeekly.text : "—"}
+                            </td>
+                            <td
+                              className={`px-2 py-1 text-right font-semibold ${personalMonthly ? budgetTextClass(personalMonthly) : "text-stone/40"}`}
+                              title={personalMonthly?.text}
+                            >
+                              {personalMonthly ? personalMonthly.text : "—"}
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
+                    <tfoot>
+                      <tr className="border-t border-sand font-semibold">
+                        <td className="px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-walnut">Remaining time</td>
+                        {capped.flatMap((a) => {
+                          const weeklyRemain = periodBadge(a.weekly_minutes, a.weekly_hours_budget);
+                          const monthlyRemain = periodBadge(a.monthly_minutes, a.monthly_hours_budget);
+                          return [
+                            <td key={`${a.id}-w`} className={`border-l border-sand/60 px-2 py-1 text-right ${weeklyRemain ? budgetTextClass(weeklyRemain) : "text-stone/40"}`}>
+                              {weeklyRemain ? weeklyRemain.text : "—"}
+                            </td>,
+                            <td key={`${a.id}-m`} className={`px-2 py-1 text-right ${monthlyRemain ? budgetTextClass(monthlyRemain) : "text-stone/40"}`}>
+                              {monthlyRemain ? monthlyRemain.text : "—"}
+                            </td>,
+                          ];
+                        })}
+                        <td className="border-l border-sand/60" />
+                        <td />
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               );
             })()}
-
-            {/* One simple table per account: VA | Weekly | Monthly. Plain
-                spent-time numbers for that VA on THIS account — this is the
-                account's own budget, unrelated to any VA's personal cap above.
-                The footer "Remaining" row is THIS account's own Weekly/Monthly
-                left, colour-coded — the one number that answers "can this
-                account take more work". Everything here is computed, nothing
-                typed in by hand. */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {capped.map((a) => {
-                const weeklyRemain = periodBadge(a.weekly_minutes, a.weekly_hours_budget);
-                const monthlyRemain = periodBadge(a.monthly_minutes, a.monthly_hours_budget);
-                return (
-                  <div key={a.id} className="rounded-lg border border-sand bg-cream/40 p-2.5">
-                    <p className="mb-1.5 truncate text-center text-[12px] font-semibold text-espresso">{a.name}</p>
-                    <table className="w-full text-[10px]">
-                      <thead>
-                        <tr className="border-b border-sand text-[9px] font-bold uppercase tracking-wide text-walnut">
-                          <th className="pb-1 text-left">VA</th>
-                          <th className="pb-1 text-right">Weekly</th>
-                          <th className="pb-1 text-right">Monthly</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-sand/60">
-                        {a.by_va.map((v) => (
-                          <tr key={v.va_id}>
-                            <td className="max-w-[90px] truncate py-1 text-espresso" title={v.va_name}>
-                              {v.va_name}
-                            </td>
-                            <td className="py-1 text-right text-espresso">{formatDuration(v.weekly)}</td>
-                            <td className="py-1 text-right text-espresso">{formatDuration(v.monthly)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr className="border-t border-sand font-semibold">
-                          <td className="pt-1 text-[9px] font-bold uppercase tracking-wide text-walnut">Remaining</td>
-                          <td className={`pt-1 text-right ${weeklyRemain ? budgetTextClass(weeklyRemain) : "text-stone/40"}`}>
-                            {weeklyRemain ? weeklyRemain.text : "—"}
-                          </td>
-                          <td className={`pt-1 text-right ${monthlyRemain ? budgetTextClass(monthlyRemain) : "text-stone/40"}`}>
-                            {monthlyRemain ? monthlyRemain.text : "—"}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                );
-              })}
-            </div>
             </>
             )}
           </div>
