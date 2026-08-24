@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
+import ColumnHeader from "@/components/table/ColumnHeader";
 import {
   VA_POSITION_OPTIONS,
   DEPARTMENT_OPTIONS,
@@ -4429,6 +4430,17 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
   const [editMonthlyBudget, setEditMonthlyBudget] = useState("");
   const [linkAccountId, setLinkAccountId] = useState<number | null>(null);
   const [linkClientId, setLinkClientId] = useState("");
+  /* Name search sits by the title; the per-column carets filter on exact
+     values. Widths are local — this table has no saved column prefs. */
+  const [search, setSearch] = useState("");
+  const [filterRates, setFilterRates] = useState<string[]>([]);
+  const [filterStatuses, setFilterStatuses] = useState<string[]>([]);
+  const [filterClients, setFilterClients] = useState<string[]>([]);
+  const [colWidths, setColWidths] = useState<Record<string, number>>({
+    name: 220, rate: 130, budget: 150, status: 110, clients: 260,
+  });
+  const setColumnWidth = (key: string, w: number) =>
+    setColWidths((prev) => ({ ...prev, [key]: w }));
 
   const fetchAccounts = useCallback(async () => {
     const [accRes, cliRes] = await Promise.all([
@@ -4498,6 +4510,8 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
     fetchAccounts();
   };
 
+  // Daily/weekly/monthly hour budgets are edited together in one cell — an
+  // empty box clears that period's budget rather than storing zero.
   const handleSaveBudgets = async (id: number) => {
     const parse = (v: string) => {
       const t = v.trim();
@@ -4549,14 +4563,61 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       .map((m) => m.clients!);
   };
 
+  const rateLabel = (a: AccountRow) =>
+    a.billing_rate != null ? "$" + Number(a.billing_rate).toFixed(2) + "/hr" : "No rate";
+
+  const rateFilterOptions = Array.from(new Set(accounts.map(rateLabel))).sort();
+  const clientFilterOptions = Array.from(
+    new Set(mappings.map((m) => m.clients?.name).filter((n): n is string => !!n))
+  ).sort();
+
+  const visibleAccounts = accounts.filter((acc) => {
+    if (search.trim() && !acc.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    if (filterRates.length > 0 && !filterRates.includes(rateLabel(acc))) return false;
+    if (filterStatuses.length > 0 && !filterStatuses.includes(acc.active ? "Active" : "Inactive")) return false;
+    if (filterClients.length > 0) {
+      const names = getLinkedClients(acc.id).map((c) => c.name);
+      if (!names.some((n) => filterClients.includes(n))) return false;
+    }
+    return true;
+  });
+
+  const filterCount =
+    (search.trim() ? 1 : 0) + (filterRates.length > 0 ? 1 : 0) +
+    (filterStatuses.length > 0 ? 1 : 0) + (filterClients.length > 0 ? 1 : 0);
+
+  const clearFilters = () => {
+    setSearch(""); setFilterRates([]); setFilterStatuses([]); setFilterClients([]);
+  };
+
   if (loading) {
     return <div className="h-48 animate-pulse rounded-xl border border-sand bg-white" />;
   }
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-between">
-        <span className="text-[13px] text-bark">{accounts.length} accounts</span>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="text-[13px] text-bark">
+            {filterCount > 0
+              ? visibleAccounts.length + " of " + accounts.length + " accounts"
+              : accounts.length + " accounts"}
+          </span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search accounts..."
+            className="w-52 rounded-lg border border-sand px-2 py-1.5 text-xs text-espresso outline-none bg-white"
+          />
+          {filterCount > 0 && (
+            <button
+              onClick={clearFilters}
+              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
           className="rounded-lg bg-terracotta px-4 py-2 text-[13px] font-semibold text-white transition-all hover:bg-[#a85840] cursor-pointer"
@@ -4596,17 +4657,59 @@ function AccountsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
         <div className="overflow-x-auto">
           <table className="w-full text-left text-[12px]">
             <thead>
-              <tr className="border-b border-parchment bg-parchment/30 text-[10px] font-semibold uppercase tracking-wider text-bark">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-3 py-3">Billing Rate</th>
-                <th className="px-3 py-3" title="Hours cap per period, counted across every VA on this account. Read by the Calendar's account budgets.">Time Budget (D/W/M)</th>
-                <th className="px-3 py-3">Status</th>
-                <th className="px-3 py-3">Linked Clients</th>
-                <th className="px-3 py-3 text-center">Actions</th>
+              <tr className="border-b border-parchment bg-parchment/30">
+                <ColumnHeader
+                  label="Name"
+                  width={colWidths.name}
+                  onResize={(w) => setColumnWidth("name", w)}
+                />
+                <ColumnHeader
+                  label="Billing Rate"
+                  width={colWidths.rate}
+                  onResize={(w) => setColumnWidth("rate", w)}
+                  filterOptions={rateFilterOptions.map((v) => ({ value: v, label: v }))}
+                  selected={filterRates}
+                  onFilterChange={setFilterRates}
+                />
+                <ColumnHeader
+                  label="Time Budget (D/W/M)"
+                  width={colWidths.budget}
+                  onResize={(w) => setColumnWidth("budget", w)}
+                />
+                <ColumnHeader
+                  label="Status"
+                  width={colWidths.status}
+                  onResize={(w) => setColumnWidth("status", w)}
+                  filterOptions={[
+                    { value: "Active", label: "Active" },
+                    { value: "Inactive", label: "Inactive" },
+                  ]}
+                  selected={filterStatuses}
+                  onFilterChange={setFilterStatuses}
+                />
+                <ColumnHeader
+                  label="Linked Clients"
+                  width={colWidths.clients}
+                  onResize={(w) => setColumnWidth("clients", w)}
+                  filterOptions={clientFilterOptions.map((v) => ({ value: v, label: v }))}
+                  selected={filterClients}
+                  onFilterChange={setFilterClients}
+                  searchable
+                />
+                <th className="border-b border-sand bg-parchment px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-walnut">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-parchment">
-              {accounts.map((acc) => {
+              {visibleAccounts.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-10 text-center text-[13px] text-bark">
+                    No accounts match your filters.
+                  </td>
+                </tr>
+              )}
+              {visibleAccounts.map((acc) => {
                 const linked = getLinkedClients(acc.id);
                 const unlinkedClients = allClients.filter(
                   (c) => !linked.some((l) => l.id === c.id)
@@ -4845,6 +4948,8 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
     payment_terms: "due_on_receipt" as string,
     currency: "USD",
     default_hourly_rate: "",
+    weekly_hours_budget: "",
+    monthly_hours_budget: "",
     tax_id: "",
     notes: "",
     active: true,
@@ -4886,6 +4991,8 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       payment_terms: client.payment_terms || "due_on_receipt",
       currency: client.currency || "USD",
       default_hourly_rate: client.default_hourly_rate != null ? String(client.default_hourly_rate) : "",
+      weekly_hours_budget: client.weekly_hours_budget != null ? String(client.weekly_hours_budget) : "",
+      monthly_hours_budget: client.monthly_hours_budget != null ? String(client.monthly_hours_budget) : "",
       tax_id: client.tax_id || "",
       notes: client.notes || "",
       active: client.active,
@@ -4912,6 +5019,8 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       payment_terms: "due_on_receipt",
       currency: "USD",
       default_hourly_rate: "",
+    weekly_hours_budget: "",
+    monthly_hours_budget: "",
       tax_id: "",
       notes: "",
       active: true,
@@ -4980,6 +5089,8 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       payment_terms: form.payment_terms,
       currency: form.currency,
       default_hourly_rate: form.default_hourly_rate ? parseFloat(form.default_hourly_rate) : null,
+      weekly_hours_budget: form.weekly_hours_budget ? parseFloat(form.weekly_hours_budget) : null,
+      monthly_hours_budget: form.monthly_hours_budget ? parseFloat(form.monthly_hours_budget) : null,
       tax_id: form.tax_id.trim(),
       notes: form.notes.trim(),
       active: form.active,
@@ -5273,6 +5384,30 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
                   🔒 Hidden
                 </div>
               )}
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Weekly Hours Budget</label>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={form.weekly_hours_budget}
+                onChange={(e) => updateForm("weekly_hours_budget", e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                placeholder="No limit"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Monthly Hours Budget</label>
+              <input
+                type="number"
+                step="0.5"
+                min="0"
+                value={form.monthly_hours_budget}
+                onChange={(e) => updateForm("monthly_hours_budget", e.target.value)}
+                className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] text-espresso outline-none transition-colors focus:border-terracotta"
+                placeholder="No limit"
+              />
             </div>
             <div>
               <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-bark">Tax ID</label>

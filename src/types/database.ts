@@ -316,6 +316,10 @@ export interface Client {
   currency: string;
   tax_id: string | null;
   default_hourly_rate: number | null;
+  /* Hour budgets for the client — informational targets, not enforced caps.
+     Accounts carry the same pair; a budget can be set on either. */
+  weekly_hours_budget: number | null;
+  monthly_hours_budget: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string;

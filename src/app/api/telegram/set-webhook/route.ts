@@ -56,8 +56,10 @@ export async function POST() {
       // Only what the webhook acts on. Asking for everything would have
       // Telegram post every edit and reaction at us for nothing.
       allowed_updates: ["message"],
-      // Anything queued from before this was set up is stale by definition.
-      drop_pending_updates: true,
+      // Kept, not dropped. People are told to message the bot before the
+      // webhook is switched on, so the queue holds exactly the /starts we most
+      // want — discarding it would silently lose everyone who acted promptly.
+      drop_pending_updates: false,
     }),
   });
 
