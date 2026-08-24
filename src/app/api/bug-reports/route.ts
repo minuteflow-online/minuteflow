@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { canReviewBugReports } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
-import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { sendTelegram, telegramEnabled, esc, mention } from "@/lib/telegram";
 import { sendDriveFilesToTelegram } from "@/lib/driveFetch";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("username, full_name")
+    .select("username, full_name, telegram_chat_id")
     .eq("id", user.id)
     .single();
 
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     const sent = await sendTelegram(
       "bugs",
       [
-        `${heading} from ${esc(who)}`,
+        `${heading} from ${mention(who, profile?.telegram_chat_id)}`,
         esc(title.trim()),
         "",
         esc(desc.length > 400 ? desc.slice(0, 400) + "…" : desc),
@@ -303,6 +303,12 @@ export async function PATCH(request: NextRequest) {
   if (status && status !== existing.status && telegramEnabled("bugs")) {
     const kind = data.report_type === "feature" ? "Feature request" : "Bug report";
     const filedBy = data.full_name || data.username || "someone";
+    // Tag whoever raised it — a status change is news for them above anyone.
+    const { data: filer } = await supabase
+      .from("profiles")
+      .select("telegram_chat_id")
+      .eq("id", existing.user_id)
+      .single();
     // Reply to the message that announced the report, so its whole history
     // reads as one thread. Looked up on its own and tolerated as missing —
     // reports filed before this existed have no stored id.
@@ -316,7 +322,7 @@ export async function PATCH(request: NextRequest) {
     const lines = [
       `${STATUS_EMOJI[status] ?? "🔄"} <b>${kind} — ${esc(STATUS_LABELS[status] ?? status)}</b>`,
       esc(data.title ?? ""),
-      `Filed by ${esc(filedBy)} · was ${esc(STATUS_LABELS[existing.status] ?? existing.status)}`,
+      `Filed by ${mention(filedBy, filer?.telegram_chat_id)} · was ${esc(STATUS_LABELS[existing.status] ?? existing.status)}`,
     ];
 
     // Why it was dismissed is the whole point of the message. It is new

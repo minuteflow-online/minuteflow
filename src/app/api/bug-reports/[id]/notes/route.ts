@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { canReviewBugReports } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
-import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { sendTelegram, telegramEnabled, esc, mention } from "@/lib/telegram";
 import { sendDriveFilesToTelegram } from "@/lib/driveFetch";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +31,7 @@ async function loadContext(reportId: number) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, department, full_name, username")
+    .select("role, department, full_name, username, telegram_chat_id")
     .eq("id", user.id)
     .single();
 
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const who = ctx.profile?.full_name || ctx.profile?.username || "Someone";
     const shown = text.length > 400 ? text.slice(0, 400) + "…" : text;
 
-    const lines = [`📝 <b>Note on ${kind}</b> — ${esc(ctx.report.title ?? "")}`, `${esc(who)}:`];
+    const lines = [`📝 <b>Note on ${kind}</b> — ${esc(ctx.report.title ?? "")}`, `${mention(who, ctx.profile?.telegram_chat_id)}:`];
     // A note can be an attachment with no words; say so rather than posting a
     // name followed by nothing.
     lines.push(
