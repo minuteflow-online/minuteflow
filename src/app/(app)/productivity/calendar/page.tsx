@@ -312,7 +312,15 @@ export default function ProductivityCalendarPage() {
   // day/week/month changes. Not scoped by `scope`/dayUserId on purpose: an
   // account's budget doesn't change depending on whose calendar you're looking at.
   const [accountUsage, setAccountUsage] = useState<
-    Array<{ id: number; name: string; daily_hours_budget: number | null; weekly_hours_budget: number | null; monthly_hours_budget: number | null; daily_minutes: number; weekly_minutes: number; monthly_minutes: number }>
+    Array<{
+      id: number; name: string;
+      daily_hours_budget: number | null; weekly_hours_budget: number | null; monthly_hours_budget: number | null;
+      daily_minutes: number; weekly_minutes: number; monthly_minutes: number;
+      // Same account total, broken down by who spent it — a task with several
+      // assignees credits its full length to each of them, so these can sum
+      // to more than the account total on shared work.
+      by_va: Array<{ va_id: string; va_name: string; daily: number; weekly: number; monthly: number }>;
+    }>
   >([]);
 
   const [assignedTasksAll, setAssignedTasksAll] = useState<RawTask[]>([]);
@@ -2041,6 +2049,17 @@ export default function ProductivityCalendarPage() {
           const warn = limitMinutes > 0 && usedMinutes / limitMinutes >= BUDGET_WARN_THRESHOLD;
           return { text: `${formatDuration(remaining)} left of ${formatDuration(limitMinutes)}`, over: false, warn };
         };
+        // The meter fill/colour for one VA's slice of one capped period — same
+        // sage/amber/terracotta severity the badges use, just as a bar instead
+        // of a pill, since a whole row of VAs in badge form would run too tall.
+        const meterFill = (usedMinutes: number, limitHours: number) => {
+          const limitMinutes = Math.round(limitHours * 60);
+          const fraction = limitMinutes > 0 ? usedMinutes / limitMinutes : 0;
+          const over = fraction > 1;
+          const warn = !over && fraction >= BUDGET_WARN_THRESHOLD;
+          const barClass = over ? "bg-terracotta" : warn ? "bg-amber" : "bg-sage";
+          return { widthPct: Math.min(100, fraction * 100), barClass, limitMinutes };
+        };
         return (
           <div className="rounded-xl border border-sand bg-white p-3">
             <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-walnut">Account Budgets</p>
@@ -2072,6 +2091,51 @@ export default function ProductivityCalendarPage() {
                       );
                     })}
                   </div>
+
+                  {/* Whose time this account's total is made of. Nested under
+                      the account it was spent on rather than a separate tab —
+                      "how much did Arianne share" only means something next to
+                      the account she was working. One row per VA: name, then
+                      a small meter per capped period showing their own
+                      used/limit for that period. Informational only — this
+                      never blocks scheduling, it just tells you where things
+                      stand. */}
+                  {a.by_va.length > 0 && (
+                    <div className="mt-2 space-y-1 border-t border-sand pt-2">
+                      {a.by_va.map((v) => (
+                        <div key={v.va_id} className="flex items-center gap-1.5">
+                          <span className="w-16 shrink-0 truncate text-[10px] text-espresso" title={v.va_name}>
+                            {v.va_name}
+                          </span>
+                          <span className="flex flex-1 items-center gap-1">
+                            {([
+                              ["D", v.daily, a.daily_hours_budget],
+                              ["W", v.weekly, a.weekly_hours_budget],
+                              ["M", v.monthly, a.monthly_hours_budget],
+                            ] as const).map(([label, used, limitHours]) => {
+                              if (limitHours == null) return null;
+                              const meter = meterFill(used, limitHours);
+                              return (
+                                <span
+                                  key={label}
+                                  title={`${label === "D" ? "Daily" : label === "W" ? "Weekly" : "Monthly"}: ${v.va_name} used ${formatDuration(used)} of ${formatDuration(meter.limitMinutes)}`}
+                                  className="flex min-w-0 flex-1 items-center gap-0.5"
+                                >
+                                  <span className="text-[8px] font-semibold text-stone">{label}</span>
+                                  <span className="h-1.5 min-w-[16px] flex-1 overflow-hidden rounded-full bg-stone/15">
+                                    <span
+                                      className={`block h-full rounded-full ${meter.barClass}`}
+                                      style={{ width: `${meter.widthPct}%` }}
+                                    />
+                                  </span>
+                                </span>
+                              );
+                            })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
