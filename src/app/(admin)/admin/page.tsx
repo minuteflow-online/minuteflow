@@ -3944,6 +3944,17 @@ function TeamManagementTab({
                           <div className="mt-4 pt-4 border-t border-sand/50" onClick={(e) => e.stopPropagation()}>
                             <VaAccountAssignments vaId={p.id} editable={isFullAdmin} />
                           </div>
+                          {/* Budget and Limit — carries the overview of how much
+                              of the limit the account budgets above already
+                              claim, so it reads directly under them. */}
+                          <div className="mt-4 pt-4 border-t border-sand/50" onClick={(e) => e.stopPropagation()}>
+                            <ShiftBudgetSection profile={p} userId={p.id} isAdmin={isFullAdmin} onRefresh={fetchData} />
+                          </div>
+                          {/* Schedule — the same card the member sees in their
+                              portal, so both sides read one control. */}
+                          <div className="mt-4 pt-4 border-t border-sand/50" onClick={(e) => e.stopPropagation()}>
+                            <ScheduleCard profile={p} userId={p.id} canEdit={isFullAdmin} onSaved={fetchData} />
+                          </div>
                           {/* Admin Access — grant a VA narrow admin-panel access without
                               touching role or department. Founder/Accounting only. */}
                           {isFullAdmin && (
@@ -3981,12 +3992,6 @@ function TeamManagementTab({
                               </div>
                             </div>
                           )}
-                          {/* Schedule — the same card the member sees in their
-                              portal, so both sides read one control. */}
-                          <div className="mt-4 pt-4 border-t border-sand/50 space-y-3" onClick={(e) => e.stopPropagation()}>
-                            <ScheduleCard profile={p} userId={p.id} canEdit={isFullAdmin} onSaved={fetchData} />
-                            <ShiftBudgetSection profile={p} userId={p.id} isAdmin={isFullAdmin} onRefresh={fetchData} />
-                          </div>
                         </div>
                       )}
 
