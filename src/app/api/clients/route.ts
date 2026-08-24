@@ -58,7 +58,7 @@ export async function POST(request: Request) {
   const isFullAdmin = hasAccountsClientsAccess(callerProfile);
 
   const body = await request.json();
-  const { name, contact_name, email, phone, address, city, state, zip, country, logo_url, payment_terms, currency, tax_id, default_hourly_rate, notes } = body;
+  const { name, contact_name, email, phone, address, city, state, zip, country, logo_url, payment_terms, currency, tax_id, default_hourly_rate, weekly_hours_budget, monthly_hours_budget, notes } = body;
 
   if (!name?.trim()) {
     return Response.json({ error: "Name is required" }, { status: 400 });
@@ -78,6 +78,10 @@ export async function POST(request: Request) {
   if (currency !== undefined) insert.currency = currency;
   if (tax_id !== undefined) insert.tax_id = tax_id || null;
   if (isFullAdmin && default_hourly_rate !== undefined) insert.default_hourly_rate = default_hourly_rate || null;
+  // Hour budgets are not money, so unlike default_hourly_rate they are not
+  // behind the accounts-financial gate.
+  if (weekly_hours_budget !== undefined) insert.weekly_hours_budget = weekly_hours_budget;
+  if (monthly_hours_budget !== undefined) insert.monthly_hours_budget = monthly_hours_budget;
   if (notes !== undefined) insert.notes = notes || null;
 
   const { data, error } = await supabase
@@ -110,7 +114,7 @@ export async function PATCH(request: Request) {
   const isFullAdmin = hasAccountsClientsAccess(callerProfile);
 
   const body = await request.json();
-  const { id, name, active, contact_name, email, phone, address, city, state, zip, country, logo_url, payment_terms, currency, tax_id, default_hourly_rate, notes } = body;
+  const { id, name, active, contact_name, email, phone, address, city, state, zip, country, logo_url, payment_terms, currency, tax_id, default_hourly_rate, weekly_hours_budget, monthly_hours_budget, notes } = body;
 
   if (!id) {
     return Response.json({ error: "id is required" }, { status: 400 });
@@ -132,6 +136,8 @@ export async function PATCH(request: Request) {
   if (currency !== undefined) updates.currency = currency;
   if (tax_id !== undefined) updates.tax_id = tax_id || null;
   if (isFullAdmin && default_hourly_rate !== undefined) updates.default_hourly_rate = default_hourly_rate || null;
+  if (weekly_hours_budget !== undefined) updates.weekly_hours_budget = weekly_hours_budget;
+  if (monthly_hours_budget !== undefined) updates.monthly_hours_budget = monthly_hours_budget;
   if (notes !== undefined) updates.notes = notes || null;
 
   const { error } = await supabase
