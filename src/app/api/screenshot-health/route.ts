@@ -215,6 +215,7 @@ export async function GET(request: NextRequest) {
         const name = p?.full_name || p?.username || "Someone";
         await notifyVaPrivately({
           chatId: p?.telegram_chat_id,
+          userId: s.user_id as string,
           vaName: name,
           topic: "Extension update",
           message: [

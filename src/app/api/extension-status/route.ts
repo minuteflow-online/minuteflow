@@ -178,6 +178,7 @@ export async function POST(request: NextRequest) {
       // team's business, and the person needs to see it in time to fix it.
       await notifyVaPrivately({
         chatId: profile?.telegram_chat_id,
+        userId,
         vaName,
         topic: "Screenshot",
         message: [

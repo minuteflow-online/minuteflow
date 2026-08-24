@@ -263,6 +263,7 @@ export async function GET(request: NextRequest) {
       await emailIdleWarning(c.user_id, who);
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id,
+        userId: c.user_id,
         vaName: who,
         topic: "Activity",
         message: [
@@ -310,6 +311,7 @@ export async function GET(request: NextRequest) {
       await emailForcedClockOut(c.user_id, who, now);
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id,
+        userId: c.user_id,
         vaName: who,
         topic: "Activity",
         message: [
