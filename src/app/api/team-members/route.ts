@@ -3,13 +3,19 @@ import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
 export const dynamic = "force-dynamic";
 
-/** GET: Return active admin/broad-access + VA profiles for recipient selection */
-export async function GET() {
+/**
+ * GET: Return active admin/broad-access + VA profiles for recipient selection.
+ * Pass ?all=true to return every active team member regardless of role (used by
+ * the Team workload view, which shows the whole team, not just staff).
+ */
+export async function GET(request: Request) {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  const includeAll = new URL(request.url).searchParams.get("all") === "true";
 
   const { data: members, error } = await supabase
     .from("profiles")
@@ -21,9 +27,9 @@ export async function GET() {
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
-  const filteredMembers = (members || []).filter(
-    (member) => member.role === "va" || hasBroadAdminAccess(member)
-  );
+  const filteredMembers = includeAll
+    ? (members || [])
+    : (members || []).filter((member) => member.role === "va" || hasBroadAdminAccess(member));
 
   return Response.json({ members: filteredMembers });
 }

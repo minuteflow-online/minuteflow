@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   type RawTask,
   getDateInTimezone,
@@ -28,6 +28,40 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
   const [schedules, setSchedules] = useState<Record<string, RawTask[]>>({});
   const [loading, setLoading] = useState(false);
 
+  // Show the whole team, not just staff (va/admin). Fetch every active member;
+  // fall back to the passed-in list if the request fails.
+  const [allMembers, setAllMembers] = useState<TeamMemberOption[]>(teamMembers);
+  // Which members' columns are shown. Empty until the member list loads, then
+  // seeded to "all" once (a ref guards against clobbering the user's choice on
+  // later refetches).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const seededRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/team-members?all=true", { cache: "no-store" });
+        const d = await res.json();
+        if (!cancelled && Array.isArray(d.members)) {
+          setAllMembers(d.members.map((m: TeamMemberOption) => ({ id: m.id, full_name: m.full_name, username: m.username })));
+        }
+      } catch {
+        // keep the passed-in list
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!seededRef.current && allMembers.length > 0) {
+      setSelectedIds(new Set(allMembers.map((m) => m.id)));
+      seededRef.current = true;
+    }
+  }, [allMembers]);
+
+  const visibleMembers = allMembers.filter((m) => selectedIds.has(m.id));
+
   const [showForm, setShowForm] = useState(false);
   const [editingBlockId, setEditingBlockId] = useState<number | null>(null);
   const [formTaskName, setFormTaskName] = useState("");
@@ -37,11 +71,11 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
   const [savingBlock, setSavingBlock] = useState(false);
 
   const fetchSchedules = useCallback(async () => {
-    if (teamMembers.length === 0) return;
+    if (allMembers.length === 0) return;
     setLoading(true);
     try {
       const entries = await Promise.all(
-        teamMembers.map(async (m) => {
+        allMembers.map(async (m) => {
           const url =
             m.id === currentUserId
               ? "/api/assigned-tasks?selfOnly=true&view=active"
@@ -59,7 +93,17 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
     } finally {
       setLoading(false);
     }
-  }, [teamMembers, currentUserId]);
+  }, [allMembers, currentUserId]);
+
+  const toggleMember = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const selectAllMembers = () => setSelectedIds(new Set(allMembers.map((m) => m.id)));
+  const clearMembers = () => setSelectedIds(new Set());
 
   useEffect(() => {
     void fetchSchedules();
@@ -127,11 +171,40 @@ export default function TeamWorkloadView({ currentUserId, teamMembers, orgTimezo
         </button>
       </div>
 
+      {allMembers.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 border-b border-sand pb-3">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-walnut mr-1">Show</span>
+          {allMembers.map((m) => {
+            const on = selectedIds.has(m.id);
+            return (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => toggleMember(m.id)}
+                className={`text-[11px] font-semibold px-2 py-[3px] rounded-full border transition-colors ${
+                  on
+                    ? "bg-sage-soft text-sage border-sage/20"
+                    : "bg-stone/10 text-stone border-stone/20 hover:bg-stone/20"
+                }`}
+              >
+                {m.full_name || m.username}
+              </button>
+            );
+          })}
+          <span className="mx-1 h-4 w-px bg-sand" />
+          <button type="button" onClick={selectAllMembers} className="text-[10px] font-semibold text-bark hover:text-espresso px-1">All</button>
+          <button type="button" onClick={clearMembers} className="text-[10px] font-semibold text-bark hover:text-espresso px-1">None</button>
+        </div>
+      )}
+
       {loading ? (
         <div className="py-8 text-center text-xs text-stone">Loading team schedules…</div>
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
-          {teamMembers.map((m) => {
+          {visibleMembers.length === 0 && (
+            <p className="py-8 text-center text-xs text-stone w-full">No team members selected.</p>
+          )}
+          {visibleMembers.map((m) => {
             const rawDayTasks = (schedules[m.id] ?? [])
               .filter((t) => t.start_time && t.end_time && orgDateOf(t.start_time) === selectedDate)
               .sort((a, b) => (a.start_time! < b.start_time! ? -1 : 1));
