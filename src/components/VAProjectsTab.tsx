@@ -136,6 +136,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // Objective Details form is hidden until requested, rather than shown by default.
   // Local/testing-only per Neil — not boss-approved as the permanent default yet.
   const [showDetails, setShowDetails] = useState(false);
+  // Subtasks card collapsible too (open by default), matching the Details/Docs cards.
+  const [showSubtasks, setShowSubtasks] = useState(true);
   // Per-VA "Where They Are" breakdown, collapsed by default — Overall Progress
   // above it already gives the at-a-glance number; this saves the vertical
   // space until someone actually wants the per-VA detail (per Toni).
@@ -827,7 +829,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     return (
       <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-3">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Subtasks</h4>
+          <button
+            type="button"
+            onClick={() => setShowSubtasks((v) => !v)}
+            className="flex items-center gap-2 cursor-pointer"
+          >
+            <span className="text-bark text-[10px] w-3 shrink-0">{showSubtasks ? "▼" : "▶"}</span>
+            <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Subtasks</h4>
+          </button>
+          {showSubtasks && (
           <div className="flex items-center gap-2">
             {subtasksLoading && (
               <span className="text-[11px] text-stone">Loading...</span>
@@ -855,8 +865,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               </button>
             </div>
           </div>
+          )}
         </div>
 
+        {showSubtasks && (
+        <>
         {!subtasksLoading && subtaskView === "list" && subtasks.length === 0 && (
           <p className="text-[12px] text-stone/70">No subtasks yet. Add one below.</p>
         )}
@@ -1086,6 +1099,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             />
           )}
         </div>
+        </>
+        )}
       </div>
     );
   };
@@ -1408,30 +1423,28 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
               {/* Objective name + lighter default view (Figma reference) — Details
                   form is opened on demand instead of shown by default. */}
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap min-w-0">
-                  <h3 className="text-base font-bold text-espresso truncate">{selectedProject.name}</h3>
-                  <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border shrink-0 ${
-                    selectedProject.is_active
-                      ? "bg-sage-soft text-sage border-sage/20"
-                      : "bg-stone/10 text-stone border-stone/20"
-                  }`}>
-                    {selectedProject.is_active ? "Active" : "Inactive"}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setShowDetails((v) => !v)}
-                  className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-amber text-white hover:bg-amber/90 transition-colors shrink-0"
-                >
-                  {showDetails ? `Hide ${kindLabel} Details` : `${kindLabel} Details`}
-                </button>
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <h3 className="text-base font-bold text-espresso truncate">{selectedProject.name}</h3>
+                <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border shrink-0 ${
+                  selectedProject.is_active
+                    ? "bg-sage-soft text-sage border-sage/20"
+                    : "bg-stone/10 text-stone border-stone/20"
+                }`}>
+                  {selectedProject.is_active ? "Active" : "Inactive"}
+                </span>
               </div>
 
               {/* Project edit card — hidden by default, opened via the button above */}
-              {showDetails && (
               <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-4">
                 <div className="flex items-center justify-between gap-2">
-                  <h4 className="text-[13px] font-bold text-espresso">{kindLabel} Details</h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowDetails((v) => !v)}
+                    className="flex items-center gap-2 min-w-0 cursor-pointer"
+                  >
+                    <span className="text-bark text-[10px] w-3 shrink-0">{showDetails ? "▼" : "▶"}</span>
+                    <h4 className="text-[13px] font-bold text-espresso">{kindLabel} Details</h4>
+                  </button>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => void handleToggleActive(selectedProject)}
@@ -1450,6 +1463,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   </div>
                 </div>
 
+                {showDetails && (
+                <>
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-walnut">
                     {kindLabel} Name
@@ -1635,8 +1650,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 >
                   {savingEdit ? "Saving..." : "Save Changes"}
                 </button>
+                </>
+                )}
               </div>
-              )}
 
               {kind === "operation" ? (
                 activeTile === null ? (
@@ -1720,7 +1736,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               ) : (
                 <div className="space-y-3">
                   {renderSubtasksCard()}
-                  <ProjectFiles projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
+                  <ProjectFiles projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} collapsible />
                 </div>
               )}
             </div>
