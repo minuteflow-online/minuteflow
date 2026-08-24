@@ -205,6 +205,29 @@ export async function PATCH(request: Request) {
     if (body.parent_project_id === id) {
       return Response.json({ error: "A project cannot be its own parent" }, { status: 400 });
     }
+    if (body.parent_project_id) {
+      // Walk up the proposed parent's own ancestor chain. If we hit `id`
+      // along the way, the new parent is really a descendant of this
+      // project — re-parenting under it would create a loop in the tree.
+      // The UI already filters descendants out of its picker, but that's
+      // not something the API should have to trust.
+      const getParentId = async (projectId: string): Promise<string | null> => {
+        const res = await supabase.from("projects").select("parent_project_id").eq("id", projectId).maybeSingle();
+        return (res.data?.parent_project_id as string | null | undefined) ?? null;
+      };
+      let cursor: string | null = body.parent_project_id;
+      let hops = 0;
+      while (cursor && hops < 50) {
+        if (cursor === id) {
+          return Response.json(
+            { error: "Cannot nest under one of its own sub-items — that would create a loop." },
+            { status: 400 }
+          );
+        }
+        cursor = await getParentId(cursor);
+        hops++;
+      }
+    }
     updates.parent_project_id = body.parent_project_id || null;
   }
   if (body.target_date !== undefined) updates.target_date = body.target_date || null;
