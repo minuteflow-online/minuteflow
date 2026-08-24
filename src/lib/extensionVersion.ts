@@ -17,7 +17,7 @@ export const EXTENSION_MIN_VERSION = "1.2.0";
  * EXTENSION_MIN_VERSION is the hard floor that makes VAs see a reinstall
  * prompt, so it should only move when a build is genuinely required.
  */
-export const EXTENSION_LATEST_VERSION = "1.2.1";
+export const EXTENSION_LATEST_VERSION = "1.2.2";
 
 /**
  * The Chrome Web Store listing. This is where VAs should install from: a store
