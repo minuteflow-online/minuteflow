@@ -6,6 +6,7 @@ import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import { fetchTodos, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import SubmitWorkModal from "@/components/SubmitWorkModal";
 import RevisionBadge from "@/components/RevisionBadge";
+import RecurringBadge from "@/components/RecurringBadge";
 
 interface AssignedTasksWidgetProps {
   userId: string;
@@ -430,6 +431,10 @@ export default function AssignedTasksWidget({
                         </button>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <RevisionBadge count={detail.revision_count ?? 0} />
+                          <RecurringBadge
+                            fromTemplateId={detail.recurring_template_id}
+                            spawnsTemplateId={detail.spawned_template_id}
+                          />
                           {statusBadge(effectiveStatus)}
                           {rate != null && (
                             <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
