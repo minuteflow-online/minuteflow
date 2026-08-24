@@ -7,6 +7,7 @@ import AvatarUpload from "@/components/AvatarUpload";
 import CollapsibleCard from "@/components/CollapsibleCard";
 import ScheduleCard from "@/components/ScheduleCard";
 import BudgetWidget from "@/components/BudgetWidget";
+import VaAccountAssignments from "@/components/VaAccountAssignments";
 import { vaBudgetType } from "@/lib/budget";
 import { displayRole, formatTenure } from "@/lib/utils";
 
@@ -131,6 +132,9 @@ export default function VAProfileTab({
     <div className="max-w-2xl space-y-5">
       <BasicInfoSection profile={profile} onSaved={onSaved} dateStarted={extProfile?.date_started ?? null} onRefresh={load} />
       <ScheduleCard profile={profile} userId={userId} onSaved={reloadProfile} />
+      <CollapsibleCard title="My Accounts">
+        <VaAccountAssignments vaId={userId} />
+      </CollapsibleCard>
       <BudgetAndRateSection profile={profile} />
       <ExtendedInfoSection extProfile={extProfile} userId={userId} onRefresh={load} />
       <PaymentInfoSection profile={profile} onSaved={onSaved} />

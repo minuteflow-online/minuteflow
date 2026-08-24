@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import ColumnHeader from "@/components/table/ColumnHeader";
+import VaAccountAssignments from "@/components/VaAccountAssignments";
 import {
   VA_POSITION_OPTIONS,
   DEPARTMENT_OPTIONS,
@@ -3936,6 +3937,12 @@ function TeamManagementTab({
                             ) : (
                               <p className="text-[11px] text-bark/40 italic">No payment accounts set. Click Edit to add.</p>
                             )}
+                          </div>
+                          {/* Assigned accounts, their hour budgets, and the
+                              assignments under each. Same component the VA sees
+                              read-only in their own portal. */}
+                          <div className="mt-4 pt-4 border-t border-sand/50" onClick={(e) => e.stopPropagation()}>
+                            <VaAccountAssignments vaId={p.id} editable={isFullAdmin} />
                           </div>
                           {/* Admin Access — grant a VA narrow admin-panel access without
                               touching role or department. Founder/Accounting only. */}
