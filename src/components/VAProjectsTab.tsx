@@ -6,6 +6,7 @@ import RecurringTemplatePanel from "@/components/RecurringTemplatePanel";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
 import ProjectMessageBoard from "@/components/ProjectMessageBoard";
 import ProjectFiles from "@/components/ProjectFiles";
+import ObjectiveOverview from "@/components/ObjectiveOverview";
 import OperationTileGrid, { type OperationTileKey } from "@/components/OperationTileGrid";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
@@ -1772,12 +1773,17 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             </div>
           )}
 
-          {/* Empty state when nothing selected */}
+          {/* Nothing selected: objectives show a dashboard overview; operations
+              keep the simple prompt. */}
           {!selectedProject && !showCreate && (
-            <div className="rounded-xl border border-sand bg-white p-8 shadow-sm text-center">
-              <p className="text-sm font-medium text-espresso">Select a project</p>
-              <p className="mt-1 text-xs text-stone">Click a project on the left to view and manage its subtasks.</p>
-            </div>
+            kind === "objective" ? (
+              <ObjectiveOverview projects={projects} onSelect={handleSelectProject} />
+            ) : (
+              <div className="rounded-xl border border-sand bg-white p-8 shadow-sm text-center">
+                <p className="text-sm font-medium text-espresso">Select a project</p>
+                <p className="mt-1 text-xs text-stone">Click a project on the left to view and manage its subtasks.</p>
+              </div>
+            )
           )}
         </div>
       </div>
