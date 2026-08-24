@@ -121,6 +121,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // A linked Operation opened for read-only viewing from an Objective (edited at
+  // its origin in the Operations tab).
+  const [viewOperation, setViewOperation] = useState<Project | null>(null);
   const [objectiveOptions, setObjectiveOptions] = useState<Project[]>([]);
   // Reverse of objectiveOptions: on the Objective tab, the Operations that link
   // to each objective (read-only here — edited at their origin in Operations).
@@ -750,14 +753,17 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           {kind === "objective" && (operationsByObjective.get(project.id)?.length ?? 0) > 0 && (
             <div className="flex flex-wrap items-center gap-1">
               {operationsByObjective.get(project.id)!.map((op) => (
-                <span
+                <button
                   key={op.id}
-                  title="Operation · read-only here — edit in Operations"
-                  className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-slate-blue-soft text-slate-blue border-slate-blue/20 w-fit inline-flex items-center gap-1"
+                  type="button"
+                  draggable={false}
+                  onClick={(e) => { e.stopPropagation(); setViewOperation(op); }}
+                  title="View operation details (read-only) — edit in Operations"
+                  className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-slate-blue-soft text-slate-blue border-slate-blue/20 w-fit inline-flex items-center gap-1 hover:bg-slate-blue/20 transition-colors cursor-pointer"
                 >
                   <span className="opacity-60 uppercase tracking-wide text-[8px]">Op</span>
                   {op.name}
-                </span>
+                </button>
               ))}
             </div>
           )}
@@ -1665,6 +1671,77 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           )}
         </div>
       </div>
+      )}
+
+      {viewOperation && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 p-4"
+          onClick={() => setViewOperation(null)}
+        >
+          <div
+            className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-xl border border-sand bg-white p-5 shadow-lg space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-slate-blue-soft text-slate-blue border-slate-blue/20 shrink-0">
+                  Operation
+                </span>
+                <h3 className="text-sm font-bold text-espresso">{viewOperation.name}</h3>
+              </div>
+              <button
+                onClick={() => setViewOperation(null)}
+                className="text-bark hover:text-espresso text-xl leading-none cursor-pointer shrink-0"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <p className="text-[11px] text-stone">Read-only — edit this operation in the Operations tab.</p>
+
+            <div className="flex flex-wrap gap-1.5">
+              {viewOperation.status && PROJECT_STATUS_BY_VALUE.has(viewOperation.status) && (
+                <span className={`text-[10px] font-semibold px-2 py-[2px] rounded-full border ${PROJECT_STATUS_BY_VALUE.get(viewOperation.status)!.cls}`}>
+                  {PROJECT_STATUS_BY_VALUE.get(viewOperation.status)!.label}
+                </span>
+              )}
+              {viewOperation.account && (
+                <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-parchment text-walnut border-sand">
+                  {viewOperation.account}
+                </span>
+              )}
+              {viewOperation.start_date && (
+                <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-parchment text-walnut border-sand">
+                  Start: {formatDate(viewOperation.start_date)}
+                </span>
+              )}
+              {viewOperation.target_date && (
+                <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-terracotta-soft text-terracotta border-terracotta/20">
+                  Target: {formatDate(viewOperation.target_date)}
+                </span>
+              )}
+            </div>
+
+            {[
+              { label: "Description", value: viewOperation.description },
+              { label: "Details", value: viewOperation.details },
+              { label: "Notes", value: viewOperation.notes },
+            ].some((f) => f.value) ? (
+              [
+                { label: "Description", value: viewOperation.description },
+                { label: "Details", value: viewOperation.details },
+                { label: "Notes", value: viewOperation.notes },
+              ].map((f) => f.value && (
+                <div key={f.label}>
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-walnut">{f.label}</p>
+                  <p className="text-[13px] text-espresso whitespace-pre-wrap">{f.value}</p>
+                </div>
+              ))
+            ) : (
+              <p className="text-[12px] text-stone italic">No details added to this operation yet.</p>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
