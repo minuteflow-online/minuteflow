@@ -32,11 +32,19 @@ type WebhookPayload = {
 };
 
 const EVENTS = {
-  clock_in: "🟢 clocked in",
-  clock_out: "⚪ clocked out",
-  break_start: "☕ started a break",
-  break_end: "🔵 is back from break",
+  clock_in: "🟢",
+  clock_out: "⚪",
+  break_start: "☕",
+  break_end: "🔵",
 } as const;
+
+/** Reads as a sentence with a time after it: "clocked in at 8:02 AM ET." */
+const VERBS: Record<keyof typeof EVENTS, string> = {
+  clock_in: "clocked in",
+  clock_out: "clocked out",
+  break_start: "started a break",
+  break_end: "came back from break",
+};
 
 /** Which alert this row change represents, or null when nothing alertable moved.
  *  Only transitions fire — an UPDATE that leaves both flags unchanged (a task
@@ -104,6 +112,7 @@ export async function POST(request: Request) {
   // The hour comes from the org's timezone, not the server's — a greeting that
   // says "good evening" to someone at breakfast is worse than none.
   let greeting: "sent" | "failed" | "unlinked" | null = null;
+  let greetingText = "";
   if (event === "clock_in" || event === "clock_out") {
     if (!chatId) {
       greeting = "unlinked";
@@ -113,12 +122,20 @@ export async function POST(request: Request) {
       );
       const firstName = who.split(" ")[0];
 
-      const body =
+      // Kept as a variable so the log below can quote the exact words that were
+      // sent. The lines are picked at random, so "a greeting went out" would
+      // leave Toni unable to tell what any given person actually received.
+      greetingText = event === "clock_in" ? clockInGreeting() : clockOutGreeting();
+      const heading =
         event === "clock_in"
-          ? [`☀️ <b>${timeOfDayGreeting(hour)}, ${esc(firstName)}</b>`, "", esc(clockInGreeting())]
-          : [`🌙 <b>Thanks, ${esc(firstName)}</b>`, "", esc(clockOutGreeting())];
+          ? `☀️ <b>${timeOfDayGreeting(hour)}, ${esc(firstName)}</b>`
+          : `🌙 <b>Thanks, ${esc(firstName)}</b>`;
 
-      const result = await sendTelegramTo(chatId, body.join("\n"), "va");
+      const result = await sendTelegramTo(
+        chatId,
+        [heading, "", esc(greetingText)].join("\n"),
+        "va"
+      );
       greeting = result.ok ? "sent" : "failed";
     }
   }
@@ -130,13 +147,14 @@ export async function POST(request: Request) {
   // Delivery is reported on this line rather than as a second message. Toni
   // asked to know when something reaches a VA privately, and one clock-in
   // producing two notifications would double the traffic for no extra fact.
-  const GREETING_NOTE: Record<string, string> = {
-    sent: " · 📤 greeting sent",
-    failed: " · ⚠️ greeting FAILED",
-    unlinked: " · ⚠️ no Telegram link",
-  };
-  const note = greeting ? GREETING_NOTE[greeting] : "";
-  await sendTelegram("ops", `<b>${esc(who)}</b> ${EVENTS[event]} — ${time} ET${note}`);
+  const lines = [`${EVENTS[event]} <b>${esc(who)}</b> ${VERBS[event]} at ${time} ET.`];
+  // The exact words, not just that something went out. The lines are random,
+  // so "greeting sent" would leave no way to know what a given person read.
+  if (greeting === "sent") lines.push(`Message sent: ${esc(greetingText)}`);
+  if (greeting === "failed") lines.push("⚠️ Message FAILED to send.");
+  if (greeting === "unlinked") lines.push("⚠️ No Telegram link — no message sent.");
+
+  await sendTelegram("ops", lines.join("\n"));
 
   return Response.json({ ok: true, event, greeting });
 }
