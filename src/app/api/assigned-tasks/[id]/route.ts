@@ -52,7 +52,20 @@ async function rejectIfOverWeeklyBudget(
     .map((a: { va_id: string | null }) => a.va_id)
     .filter((v: string | null): v is string => Boolean(v));
   if (vaIds.length === 0) return null;
-  return weeklyBudgetRejectionForAssignees(adminSupabase, vaIds, startIso, endIso, id);
+
+  // The hours this task already held, so the check measures the change rather
+  // than the total — an edit that shortens or leaves the block alone is not a
+  // request for more time, even in a week that is already full.
+  const { data: current } = await adminSupabase
+    .from("assigned_tasks")
+    .select("start_time, end_time")
+    .eq("id", id)
+    .maybeSingle();
+
+  return weeklyBudgetRejectionForAssignees(adminSupabase, vaIds, startIso, endIso, id, {
+    startIso: current?.start_time ?? null,
+    endIso: current?.end_time ?? null,
+  });
 }
 
 /** Columns isReviewLocked needs — select exactly these before calling it. */
