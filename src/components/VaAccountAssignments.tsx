@@ -239,7 +239,19 @@ export default function VaAccountAssignments({
                     </button>
                   </div>
                 ) : (
-                  <span className="text-[11px] text-espresso whitespace-nowrap">
+                  <button
+                    onClick={() => {
+                      if (!editable || row.inherited || !row.assignmentId) return;
+                      setEditingBudgetId(row.assignmentId);
+                      setEditWeekly(row.weekly_hours_budget != null ? String(row.weekly_hours_budget) : "");
+                      setEditMonthly(row.monthly_hours_budget != null ? String(row.monthly_hours_budget) : "");
+                    }}
+                    disabled={!editable || row.inherited}
+                    title={editable && !row.inherited ? "Set weekly / monthly hour budget" : undefined}
+                    className={`text-[11px] text-espresso whitespace-nowrap transition-colors ${
+                      editable && !row.inherited ? "cursor-pointer hover:text-terracotta" : "cursor-default"
+                    }`}
+                  >
                     {hasBudget ? (
                       <>
                         {row.weekly_hours_budget != null ? `${Number(row.weekly_hours_budget)}h` : "—"}
@@ -248,10 +260,12 @@ export default function VaAccountAssignments({
                         {row.monthly_hours_budget != null ? `${Number(row.monthly_hours_budget)}h` : "—"}
                         <span className="text-bark/60"> mo</span>
                       </>
+                    ) : editable && !row.inherited ? (
+                      <span className="text-bark/50 italic">Set budget</span>
                     ) : (
                       <span className="text-bark/50 italic">No budget</span>
                     )}
-                  </span>
+                  </button>
                 )}
 
                 {editable && (
@@ -266,18 +280,6 @@ export default function VaAccountAssignments({
                     </button>
                   ) : (
                     <div className="flex items-center gap-1">
-                      {editingBudgetId !== row.assignmentId && (
-                        <button
-                          onClick={() => {
-                            setEditingBudgetId(row.assignmentId);
-                            setEditWeekly(row.weekly_hours_budget != null ? String(row.weekly_hours_budget) : "");
-                            setEditMonthly(row.monthly_hours_budget != null ? String(row.monthly_hours_budget) : "");
-                          }}
-                          className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
-                        >
-                          Budget
-                        </button>
-                      )}
                       <button
                         onClick={() => row.assignmentId && unlinkAccount(row.assignmentId)}
                         disabled={saving}
