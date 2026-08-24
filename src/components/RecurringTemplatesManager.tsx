@@ -48,6 +48,11 @@ interface RecurringTemplatesManagerProps {
   assignedByOptions: Pick<Profile, "id" | "full_name" | "username">[];
   onRefresh: () => void;
   vaMode?: boolean;
+  /** Rendered in the panel header, left of "New Template" — for controls that
+   *  belong to this panel but are owned by the page (e.g. the VA view scope).
+   *  Without this they end up stacked above the panel, reading as page chrome
+   *  rather than as a control for the table underneath. */
+  headerControls?: React.ReactNode;
   currentUserId?: string;
 }
 
@@ -146,6 +151,7 @@ export default function RecurringTemplatesManager({
   onRefresh,
   vaMode,
   currentUserId,
+  headerControls,
 }: RecurringTemplatesManagerProps) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<RecurringTaskTemplate | null>(null);
@@ -370,6 +376,8 @@ export default function RecurringTemplatesManager({
           <h3 className="text-sm font-semibold text-walnut">Recurring templates</h3>
           <p className="text-xs text-stone">Templates stay out of the active task list and generate tasks on schedule.</p>
         </div>
+        <div className="flex items-center gap-2">
+        {headerControls}
         <button
           onClick={openCreate}
           className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
@@ -380,6 +388,7 @@ export default function RecurringTemplatesManager({
           </svg>
           New Template
         </button>
+        </div>
       </div>
 
       {notice && (
