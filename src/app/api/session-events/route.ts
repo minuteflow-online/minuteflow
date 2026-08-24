@@ -98,30 +98,45 @@ export async function POST(request: Request) {
     hour12: true,
   });
 
-  // Private, not the team chat. When someone starts and stops work is between
-  // them and Toni — posting it where the whole team reads turns a log into a
-  // scoreboard of who arrived when.
-  await sendTelegram("ops", `<b>${esc(who)}</b> ${EVENTS[event]} — ${time} ET`);
-
-  // A word at each end of the day. Sent straight to them rather than through
-  // notifyVaPrivately: Toni already gets the line above, and a second log entry
-  // saying a thank-you went out would be noise.
+  // A word at each end of the day, sent before the log line so the log can say
+  // whether it actually arrived.
   //
   // The hour comes from the org's timezone, not the server's — a greeting that
   // says "good evening" to someone at breakfast is worse than none.
-  if ((event === "clock_in" || event === "clock_out") && chatId) {
-    const hour = Number(
-      now.toLocaleString("en-US", { timeZone: ORG_TIMEZONE, hour: "numeric", hour12: false })
-    );
-    const firstName = who.split(" ")[0];
+  let greeting: "sent" | "failed" | "unlinked" | null = null;
+  if (event === "clock_in" || event === "clock_out") {
+    if (!chatId) {
+      greeting = "unlinked";
+    } else {
+      const hour = Number(
+        now.toLocaleString("en-US", { timeZone: ORG_TIMEZONE, hour: "numeric", hour12: false })
+      );
+      const firstName = who.split(" ")[0];
 
-    const body =
-      event === "clock_in"
-        ? [`☀️ <b>${timeOfDayGreeting(hour)}, ${esc(firstName)}</b>`, "", esc(clockInGreeting())]
-        : [`🌙 <b>Thanks, ${esc(firstName)}</b>`, "", esc(clockOutGreeting())];
+      const body =
+        event === "clock_in"
+          ? [`☀️ <b>${timeOfDayGreeting(hour)}, ${esc(firstName)}</b>`, "", esc(clockInGreeting())]
+          : [`🌙 <b>Thanks, ${esc(firstName)}</b>`, "", esc(clockOutGreeting())];
 
-    await sendTelegramTo(chatId, body.join("\n"), "va");
+      const result = await sendTelegramTo(chatId, body.join("\n"), "va");
+      greeting = result.ok ? "sent" : "failed";
+    }
   }
 
-  return Response.json({ ok: true, event });
+  // Private, not the team chat. When someone starts and stops work is between
+  // them and Toni — posting it where the whole team reads turns a log into a
+  // scoreboard of who arrived when.
+  //
+  // Delivery is reported on this line rather than as a second message. Toni
+  // asked to know when something reaches a VA privately, and one clock-in
+  // producing two notifications would double the traffic for no extra fact.
+  const GREETING_NOTE: Record<string, string> = {
+    sent: " · 📤 greeting sent",
+    failed: " · ⚠️ greeting FAILED",
+    unlinked: " · ⚠️ no Telegram link",
+  };
+  const note = greeting ? GREETING_NOTE[greeting] : "";
+  await sendTelegram("ops", `<b>${esc(who)}</b> ${EVENTS[event]} — ${time} ET${note}`);
+
+  return Response.json({ ok: true, event, greeting });
 }
