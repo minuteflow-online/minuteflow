@@ -51,7 +51,7 @@ export default function ProductivityOperationsPage() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/team-members")
+    fetch("/api/team-members?all=true")
       .then((r) => r.json())
       .then((d) => setTeamMembers(d.members ?? []))
       .catch(() => {});
@@ -126,33 +126,32 @@ export default function ProductivityOperationsPage() {
           </button>
         </div>
 
-        {/* Admin-tier only — VAs always see just their own templates, same
-            as the default "My View" here, so the selector would do nothing
-            for them. */}
-        {isAdminTier && view === "recurring" && (
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold text-stone whitespace-nowrap">View:</span>
-            <select
-              value={templatesViewMode}
-              onChange={(e) => setTemplatesViewMode(e.target.value)}
-              className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
-            >
-              <option value="">My View</option>
-              <option value="all">Everyone</option>
-              {teamMembers
-                .filter((m) => m.id !== userId && m.role === "va" && m.position !== "Admin")
-                .map((m) => (
-                  <option key={m.id} value={m.id}>{m.full_name}</option>
-                ))}
-            </select>
-          </div>
-        )}
       </div>
 
       {view === "tree" ? (
         <VAProjectsTab kind="operation" activeProfiles={teamMembers} currentUserId={userId} isAdmin={isAdminTier} />
       ) : (
         <RecurringTemplatesManager
+          columnRowControls={
+            isAdminTier ? (
+              <span className="flex items-center gap-1.5">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-walnut">Team view</label>
+                <select
+                  value={templatesViewMode}
+                  onChange={(e) => setTemplatesViewMode(e.target.value)}
+                  className="rounded-lg border border-sand px-2 py-1 text-[12px] text-espresso outline-none bg-white"
+                >
+                  <option value="">Mine</option>
+                  <option value="all">All team members</option>
+                  {teamMembers
+                    .filter((m) => m.id !== userId)
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>{m.full_name}</option>
+                    ))}
+                </select>
+              </span>
+            ) : null
+          }
           templates={recurringTemplates}
           loading={recurringLoading}
           activeProfiles={teamMembers}

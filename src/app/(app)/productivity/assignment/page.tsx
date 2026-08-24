@@ -2246,13 +2246,11 @@ export default function TaskListPage() {
           ) : activeView === "recurring" ? (
             <div className="p-4 space-y-3">
               <RecurringTemplatesManager
-                // Sits in the panel's own header next to New Template, rather
-                // than stacked above it where it read as page chrome instead of
-                // a control for the table below.
-                headerControls={
+                // Sits in the table toolbar next to the Columns picker.
+                columnRowControls={
                   isAdmin ? (
                     <span className="flex items-center gap-1.5">
-                      <label className="text-[11px] font-semibold uppercase tracking-wider text-walnut">VA view</label>
+                      <label className="text-[11px] font-semibold uppercase tracking-wider text-walnut">Team view</label>
                       <select
                         value={recurringScope}
                         onChange={(e) => setRecurringScope(e.target.value)}
