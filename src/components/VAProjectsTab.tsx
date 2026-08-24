@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
+import RecurringTemplatePanel from "@/components/RecurringTemplatePanel";
 import SubtaskBoardView from "@/components/SubtaskBoardView";
 import ProjectMessageBoard from "@/components/ProjectMessageBoard";
 import ProjectFiles from "@/components/ProjectFiles";
@@ -193,6 +194,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // section below Subtasks. Objectives don't have this section (kind check
   // at render time); the fetch itself is harmless either way.
   const [recurringTemplates, setRecurringTemplates] = useState<RecurringTaskTemplate[]>([]);
+  const [openTemplate, setOpenTemplate] = useState<RecurringTaskTemplate | null>(null);
   const [recurringLoading, setRecurringLoading] = useState(false);
 
   // Phase 2 tile grid (Operations only) — null shows the tile grid, a key
@@ -841,9 +843,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       ) : (
         <div className="space-y-1.5">
           {recurringTemplates.map((template) => (
-            <div
+            <button
               key={template.id}
-              className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white"
+              type="button"
+              onClick={() => setOpenTemplate(template)}
+              className="flex w-full flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white text-left transition-colors hover:bg-cream"
             >
               <div className="flex items-start justify-between gap-2">
                 <span className="text-[13px] font-semibold text-espresso leading-tight">
@@ -860,7 +864,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               <div className="text-[11px] text-stone/80">
                 {RECURRENCE_LABEL[template.recurrence_type] ?? template.recurrence_type} · Starts {formatDate(template.start_date)}
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -1135,12 +1139,32 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     );
   };
 
+  const templateEditor = openTemplate ? (
+    <RecurringTemplatePanel
+      key={openTemplate.id}
+      template={openTemplate}
+      currentUserId={currentUserId}
+      teamMembers={activeProfiles.map((p) => ({
+        id: p.id,
+        full_name: p.full_name ?? "",
+        username: p.username ?? "",
+      }))}
+      isAdminOrManager={isAdmin}
+      onCancel={() => setOpenTemplate(null)}
+      onSaved={() => {
+        setOpenTemplate(null);
+        if (selectedProject) void fetchRecurringForProject(selectedProject.id);
+      }}
+    />
+  ) : null;
+
   // Board View is a full-width takeover (Figma correction) — sidebar and the
   // Objective details/Where They Are panel hide entirely while it's active.
   const isBoardTakeover = Boolean(selectedProject) && !showCreate && subtaskView === "board";
 
   return (
     <div className="space-y-4">
+      {templateEditor}
       {!isBoardTakeover && (
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
