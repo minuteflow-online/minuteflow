@@ -13,7 +13,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { sendTelegram, sendTelegramTo, telegramEnabled, esc } from "@/lib/telegram";
-import { clockInGreeting, timeOfDayGreeting } from "@/lib/clockInGreeting";
+import { clockInGreeting, clockOutGreeting, timeOfDayGreeting } from "@/lib/clockInGreeting";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
@@ -100,28 +100,24 @@ export async function POST(request: Request) {
 
   await sendTelegram("submissions", `<b>${esc(who)}</b> ${EVENTS[event]} — ${time} ET`);
 
-  // A word to the person starting their day. Sent straight to them rather than
-  // through notifyVaPrivately: Toni already gets the clock-in line above, and a
-  // second log line saying a greeting went out would be noise.
+  // A word at each end of the day. Sent straight to them rather than through
+  // notifyVaPrivately: Toni already gets the line above, and a second log entry
+  // saying a thank-you went out would be noise.
   //
-  // Everything here is in the org's timezone, not the server's — a greeting
-  // that says "good evening" to someone at breakfast is worse than none.
-  if (event === "clock_in" && chatId) {
+  // The hour comes from the org's timezone, not the server's — a greeting that
+  // says "good evening" to someone at breakfast is worse than none.
+  if ((event === "clock_in" || event === "clock_out") && chatId) {
     const hour = Number(
       now.toLocaleString("en-US", { timeZone: ORG_TIMEZONE, hour: "numeric", hour12: false })
     );
-    const dateKey = now.toLocaleDateString("en-CA", { timeZone: ORG_TIMEZONE });
     const firstName = who.split(" ")[0];
 
-    await sendTelegramTo(
-      chatId,
-      [
-        `☀️ <b>${timeOfDayGreeting(hour)}, ${esc(firstName)}</b>`,
-        "",
-        esc(clockInGreeting(who, dateKey)),
-      ].join("\n"),
-      "va"
-    );
+    const body =
+      event === "clock_in"
+        ? [`☀️ <b>${timeOfDayGreeting(hour)}, ${esc(firstName)}</b>`, "", esc(clockInGreeting())]
+        : [`🌙 <b>Thanks, ${esc(firstName)}</b>`, "", esc(clockOutGreeting())];
+
+    await sendTelegramTo(chatId, body.join("\n"), "va");
   }
 
   return Response.json({ ok: true, event });
