@@ -47,6 +47,7 @@ type TopNavProps = {
 };
 
 function Clock() {
+  const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [timezone, setTimezone] = useState<string>("UTC");
   const [tzAbbr, setTzAbbr] = useState("UTC");
@@ -71,6 +72,14 @@ function Clock() {
   useEffect(() => {
     function updateClock() {
       const now = new Date();
+      setDate(
+        now.toLocaleDateString("en-US", {
+          timeZone: timezone,
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+        })
+      );
       setTime(
         now.toLocaleTimeString("en-US", {
           timeZone: timezone,
@@ -89,7 +98,10 @@ function Clock() {
   if (!time) return null;
 
   return (
-    <span className="font-serif text-[11px] leading-none text-bark tabular-nums">{time}</span>
+    <div className="flex flex-col leading-none">
+      <span className="font-serif text-[10px] leading-tight text-stone">{date}</span>
+      <span className="font-serif text-[11px] leading-none text-bark tabular-nums">{time}</span>
+    </div>
   );
 }
 
