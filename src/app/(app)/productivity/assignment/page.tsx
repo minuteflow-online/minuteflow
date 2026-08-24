@@ -2227,23 +2227,28 @@ export default function TaskListPage() {
             </div>
           ) : activeView === "recurring" ? (
             <div className="p-4 space-y-3">
-              {isAdmin && (
-                <div className="flex items-center gap-2">
-                  <label className="text-[11px] font-semibold uppercase tracking-wider text-walnut">VA view</label>
-                  <select
-                    value={recurringScope}
-                    onChange={(e) => setRecurringScope(e.target.value)}
-                    className="rounded-lg border border-sand px-2 py-1 text-[12px] text-espresso outline-none bg-white"
-                  >
-                    <option value="mine">Mine</option>
-                    <option value="all">All team members</option>
-                    {assignedByProfiles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.full_name || p.username}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
               <RecurringTemplatesManager
+                // Sits in the panel's own header next to New Template, rather
+                // than stacked above it where it read as page chrome instead of
+                // a control for the table below.
+                headerControls={
+                  isAdmin ? (
+                    <span className="flex items-center gap-1.5">
+                      <label className="text-[11px] font-semibold uppercase tracking-wider text-walnut">VA view</label>
+                      <select
+                        value={recurringScope}
+                        onChange={(e) => setRecurringScope(e.target.value)}
+                        className="rounded-lg border border-sand px-2 py-1 text-[12px] text-espresso outline-none bg-white"
+                      >
+                        <option value="mine">Mine</option>
+                        <option value="all">All team members</option>
+                        {assignedByProfiles.map((p) => (
+                          <option key={p.id} value={p.id}>{p.full_name || p.username}</option>
+                        ))}
+                      </select>
+                    </span>
+                  ) : null
+                }
                 templates={recurringTemplates}
                 loading={recurringLoading}
                 activeProfiles={assignedByProfiles}
