@@ -85,6 +85,14 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const date = searchParams.get("date") || orgDateOf(new Date().toISOString());
+  // Output Based work IS fixed_pay_tasks — that table is the per-task/
+  // per-output billing path, as opposed to assigned_tasks' hourly one (same
+  // distinction the Duration Block rows already label "Output Based" for).
+  // Excluding it here means skipping that whole source, not trying to guess
+  // which VA counts as "output based" — a VA who's normally hourly but has
+  // one fixed-pay task keeps their hourly work counted; only the fixed-pay
+  // task itself drops out.
+  const excludeOutputBased = searchParams.get("excludeOutputBased") === "true";
 
   const week = weekBounds(date);
   const month = monthBounds(date);
@@ -208,12 +216,14 @@ export async function GET(request: Request) {
     billOccurrence(t.account, minutesPerOccurrence, t.start_date, t.end_date, t.due_date, vaIds);
   }
 
-  for (const t of fixed ?? []) {
-    const minutesPerOccurrence = t.planned_minutes ?? 0;
-    // Fixed-pay tasks carry no start_time/end_time, so this is always the
-    // duration-only path — same per-day billing rule as assigned_tasks' span case.
-    const vaIds = t.claimed_by ? [t.claimed_by] : [];
-    billOccurrence(t.account, minutesPerOccurrence, t.start_date, t.end_date, t.due_date, vaIds);
+  if (!excludeOutputBased) {
+    for (const t of fixed ?? []) {
+      const minutesPerOccurrence = t.planned_minutes ?? 0;
+      // Fixed-pay tasks carry no start_time/end_time, so this is always the
+      // duration-only path — same per-day billing rule as assigned_tasks' span case.
+      const vaIds = t.claimed_by ? [t.claimed_by] : [];
+      billOccurrence(t.account, minutesPerOccurrence, t.start_date, t.end_date, t.due_date, vaIds);
+    }
   }
 
   const round = (b: BucketMinutes) => ({

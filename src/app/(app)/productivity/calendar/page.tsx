@@ -367,6 +367,10 @@ export default function ProductivityCalendarPage() {
   // the page before you've scrolled to anything you actually opened the
   // calendar for.
   const [accountBudgetsCollapsed, setAccountBudgetsCollapsed] = useState(true);
+  // Output Based work (fixed_pay_tasks) isn't hourly, so mixing it into an
+  // hours grid at all is a category error, not just noise — on by default so
+  // the grid reads sanely without having to discover the toggle first.
+  const [excludeOutputBased, setExcludeOutputBased] = useState(true);
   const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
   const toggleUnscheduledExpand = (id: number) => {
     setExpandedUnscheduledIds((prev) => {
@@ -893,7 +897,7 @@ export default function ProductivityCalendarPage() {
   // actually viewing a Day/Week), never by paging Month's own arrows alone.
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/accounts/usage?date=${selectedDate}`)
+    fetch(`/api/accounts/usage?date=${selectedDate}&excludeOutputBased=${excludeOutputBased}`)
       .then((r) => r.json())
       .then((d) => {
         if (!cancelled) {
@@ -910,7 +914,7 @@ export default function ProductivityCalendarPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedDate]);
+  }, [selectedDate, excludeOutputBased]);
   const weekLabel = useMemo(() => {
     const start = weekGrid[0];
     const end = weekGrid[6];
@@ -2089,22 +2093,42 @@ export default function ProductivityCalendarPage() {
         };
         return (
           <div className="rounded-xl border border-sand bg-white p-3">
-            <button
-              type="button"
-              onClick={() => setAccountBudgetsCollapsed((v) => !v)}
-              className={`flex w-full items-center gap-2 cursor-pointer ${accountBudgetsCollapsed ? "" : "mb-2"}`}
-            >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 12 12"
-                className={`text-bark transition-transform ${accountBudgetsCollapsed ? "" : "rotate-90"}`}
+            <div className={`flex w-full items-center justify-between gap-2 ${accountBudgetsCollapsed ? "" : "mb-2"}`}>
+              <button
+                type="button"
+                onClick={() => setAccountBudgetsCollapsed((v) => !v)}
+                className="flex items-center gap-2 cursor-pointer"
               >
-                <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span className="text-[10px] font-bold uppercase tracking-wide text-walnut">Account Budgets</span>
-              <span className="text-[10px] text-stone">({capped.length})</span>
-            </button>
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  className={`text-bark transition-transform ${accountBudgetsCollapsed ? "" : "rotate-90"}`}
+                >
+                  <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-walnut">Account Budgets</span>
+                <span className="text-[10px] text-stone">({capped.length})</span>
+              </button>
+              {/* Output Based work is paid per output, not per hour, so mixing
+                  it into an hours grid is a category error, not just noise —
+                  fixed_pay_tasks entries drop out of every number here when
+                  checked (not just hidden — the account/VA totals recompute
+                  without them). On a separate control from the collapse
+                  toggle, and only shown once expanded, so it isn't reachable
+                  without the numbers it affects being visible. */}
+              {!accountBudgetsCollapsed && (
+                <label className="flex shrink-0 items-center gap-1.5 text-[10px] text-stone cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={excludeOutputBased}
+                    onChange={(e) => setExcludeOutputBased(e.target.checked)}
+                    className="cursor-pointer"
+                  />
+                  Hide Output Based
+                </label>
+              )}
+            </div>
             {accountBudgetsCollapsed && (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {capped.map((a) => (
