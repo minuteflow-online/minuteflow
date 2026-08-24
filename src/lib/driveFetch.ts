@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { sendTelegramPhoto, type TelegramTopic } from "./telegram";
+import { sendTelegramPhoto, sendTelegramDocument, type TelegramTopic } from "./telegram";
 
 /** Enough to show what someone meant without turning one report into a wall of
  *  images. Anything past this stays in the admin panel. */
@@ -56,7 +56,15 @@ export async function sendDriveFilesToTelegram(
   for (const fileId of fileIds.slice(0, MAX_ATTACHMENTS_POSTED)) {
     const bytes = await fetchDriveFile(fileId);
     if (!bytes) continue;
-    const result = await sendTelegramPhoto(topic, bytes, `${fileId}.png`, { replyToMessageId });
+
+    // Try it as a picture first, since that is what most of these are and a
+    // photo can be judged without downloading it. sendPhoto rejects anything
+    // that is not an image, so a rejection is the signal to send it as a file
+    // instead — cheaper than asking Drive for the mime type of every one.
+    let result = await sendTelegramPhoto(topic, bytes, `${fileId}.png`, { replyToMessageId });
+    if (!result.ok) {
+      result = await sendTelegramDocument(topic, bytes, fileId, { replyToMessageId });
+    }
     if (result.ok) posted++;
   }
   return posted;

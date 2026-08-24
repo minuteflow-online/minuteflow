@@ -6,7 +6,7 @@ import {
   submissionSummary,
   type SubmissionMessageType,
 } from "@/lib/submissions";
-import { sendTelegram, sendTelegramPhoto, telegramEnabled, esc, mention } from "@/lib/telegram";
+import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled, esc, mention } from "@/lib/telegram";
 import { reviewLinks } from "@/lib/reviewLinks";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -99,8 +99,10 @@ const MAX_FILES_POSTED = 5;
 /**
  * Posts a submission's files into the submissions chat, under its alert.
  *
- * Only images are sent as photos — a PDF or a spreadsheet would be rejected by
- * sendPhoto, and naming it in the alert is more use than a failed upload.
+ * Images go as photos so they can be judged at a glance; everything else goes
+ * as a document, which Telegram shows by filename with a download button.
+ * sendPhoto rejects anything that is not an image, so the split is required
+ * rather than cosmetic — a PDF sent as a photo simply fails.
  *
  * Entirely best-effort: the submission is saved and the alert delivered before
  * this runs, so a file that will not load costs nothing.
@@ -118,8 +120,8 @@ async function postSubmissionFiles(
       .limit(MAX_FILES_POSTED);
 
     for (const file of files ?? []) {
-      if (!String(file.mime_type ?? "").startsWith("image/")) continue;
-
+      // Five minutes is plenty to fetch it and hand it to Telegram, and short
+      // enough that the URL is useless if it ever escaped a log.
       const { data: signed } = await admin.storage
         .from("task-attachments")
         .createSignedUrl(file.storage_path as string, 300);
@@ -128,10 +130,13 @@ async function postSubmissionFiles(
       const res = await fetch(signed.signedUrl);
       if (!res.ok) continue;
       const bytes = Buffer.from(await res.arrayBuffer());
+      const name = String(file.filename ?? "file");
 
-      await sendTelegramPhoto("submissions", bytes, String(file.filename ?? "file.png"), {
-        replyToMessageId,
-      });
+      if (String(file.mime_type ?? "").startsWith("image/")) {
+        await sendTelegramPhoto("submissions", bytes, name, { replyToMessageId });
+      } else {
+        await sendTelegramDocument("submissions", bytes, name, { replyToMessageId });
+      }
     }
   } catch (err) {
     console.error("submission files to telegram failed:", err);
