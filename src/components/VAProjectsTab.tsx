@@ -188,6 +188,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [boardStatusError, setBoardStatusError] = useState<string | null>(null);
 
   const [editingSubId, setEditingSubId] = useState<number | null>(null);
+  const [deletingSubId, setDeletingSubId] = useState<number | null>(null);
   const [editStatus, setEditStatus] = useState("pending");
   const [savingSub, setSavingSub] = useState(false);
   const [editSubError, setEditSubError] = useState<string | null>(null);
@@ -384,6 +385,34 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     void fetchRecurringForProject(selectedProject.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
+
+  // Trash, not a hard delete: the row keeps its history and can be restored
+  // from the trash filter, same as every other task in the app. Someone adding
+  // a subtask to the wrong Operation had no way to take it back off.
+  const handleDeleteSubtask = useCallback(
+    async (subtaskId: number, taskName: string) => {
+      if (!confirm(`Move "${taskName}" to trash? You can restore it from the trash filter.`)) return;
+      setDeletingSubId(subtaskId);
+      try {
+        const res = await fetch(`/api/assigned-tasks/${subtaskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deleted_at: new Date().toISOString() }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        setSubtasks((prev) => prev.filter((t) => t.id !== subtaskId));
+        setEditingSubId(null);
+      } catch (error) {
+        setEditSubError(error instanceof Error ? error.message : "Failed to delete this subtask.");
+      } finally {
+        setDeletingSubId(null);
+      }
+    },
+    []
+  );
 
   const fetchVaAccess = useCallback(async (projectId: string) => {
     try {
@@ -1112,6 +1141,13 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                           className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
                         >
                           Cancel
+                        </button>
+                        <button
+                          onClick={() => void handleDeleteSubtask(sub.id, sub.task_name)}
+                          disabled={deletingSubId === sub.id}
+                          className="ml-auto px-3 py-1 rounded-lg border border-red-200 text-[11px] font-semibold text-red-600 hover:border-red-400 transition-colors disabled:opacity-50"
+                        >
+                          {deletingSubId === sub.id ? "Deleting..." : "Delete"}
                         </button>
                       </div>
                     </div>
