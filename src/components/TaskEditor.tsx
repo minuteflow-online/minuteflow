@@ -881,7 +881,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
       setError("Due Date is required.");
       throw new Error("Due Date is required.");
     }
-    if (!isEditing && isRecurringFlow && !startDate) {
+    // NOT create-only, unlike the rules above. Clearing Start Date on an
+    // EXISTING template is just as fatal as never setting one — the template
+    // goes on looking fine and quietly stops generating anything from that
+    // point on, which is exactly what "predates the rule" is supposed to
+    // protect against, not cause.
+    if (isRecurringFlow && !startDate) {
       setError("Start Date is required for a recurring task.");
       throw new Error("Start Date is required for a recurring task.");
     }
@@ -1256,7 +1261,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   const needsDueDate = !isEditing && !isRecurringFlow && !dueDate;
   // A recurring task has no single due date — each generated occurrence gets
   // its own — so Start Date takes over as the required anchor instead.
-  const needsStartDateForRecurring = !isEditing && isRecurringFlow && !startDate;
+  // Not create-only (see the matching handleSubmit check) — editing an
+  // existing template's Start Date away is exactly as fatal as never having
+  // set one.
+  const needsStartDateForRecurring = isRecurringFlow && !startDate;
   // Time-based: a time range OR a duration, either one satisfies it — they're
   // alternatives, not both. Output Based has no time range or duration to
   // offer — Start Date + End Date on the Calendar is its schedule instead.
