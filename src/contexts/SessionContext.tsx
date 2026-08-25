@@ -1,5 +1,6 @@
 "use client";
 
+import { isOnBreak } from "@/lib/breakState";
 import {
   createContext,
   useContext,
@@ -86,7 +87,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (s.clock_in_time) {
       setClockInTime(s.clock_in_time);
     }
-    if ((s.active_task as { isBreak?: boolean } | null)?.isBreak) {
+    // Both routes count. The banner's Break button sets isBreak; choosing Break
+    // from the task list makes an ordinary task with category "Break" and no
+    // flag. Checking the flag alone is why Flordeliz's own dashboard showed her
+    // as working through a 90-minute break — she takes the second route.
+    if (isOnBreak(s.active_task as { isBreak?: boolean; category?: string } | null)) {
       setSessionState("on-break");
       const bt = (s.active_task as { start_time?: string }).start_time || null;
       setBreakStartTime(bt);
