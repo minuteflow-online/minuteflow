@@ -301,6 +301,7 @@ export async function POST(request: Request) {
     review_required: booleanOrDefault(body.review_required, false),
     category: stringOrNull(body.category),
     pay_type: stringOrNull(body.pay_type),
+    rate: numberOrNull(body.rate),
     recurrence_type,
     recurrence_days: null,
     recurrence_day_of_month: resolvedDayOfMonth,
@@ -411,6 +412,7 @@ ${existingText}` : addition;
   if (body.end_date !== undefined) updates.end_date = stringOrNull(body.end_date);
   if (body.review_required !== undefined) updates.review_required = booleanOrDefault(body.review_required, false);
   if (body.pay_type !== undefined) updates.pay_type = stringOrNull(body.pay_type);
+  if (body.rate !== undefined) updates.rate = numberOrNull(body.rate);
   if (body.recurrence_type) updates.recurrence_type = parseRecurrenceType(body.recurrence_type);
   // Always clear recurrence_days — schedule is now driven by start_date + recurrence_type
   updates.recurrence_days = null;

@@ -949,7 +949,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           project_id: linkedProjectId || null,
           assigned_to_ids: isAdminOrManager ? vaIds : [currentUserId].filter(Boolean),
           assigned_by: assignedBy || currentUserId || null,
-          pay_type: null,
+          pay_type: mode === "output_based" ? "output_based" : null,
+          rate: mode === "output_based" ? Number(rate) : null,
           ...templateExtra,
         };
 
@@ -971,7 +972,73 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         return;
       }
 
-      let task: { id: number; [key: string]: unknown };
+      // Creating or updating the template that rides along with a task, for
+    // either kind of task. It used to live inside the time-based branch, so
+    // ticking the box on Output Based work did nothing at all — the checkbox
+    // was hidden there, which hid the gap rather than closing it.
+    const saveCompanionTemplate = async (currentId: string | null): Promise<string | null> => {
+      let linkedId = currentId;
+        try {
+          const templatePayload: Record<string, unknown> = {
+            title: taskName.trim(),
+            task_name: taskName.trim(),
+            account: account || null,
+            project: project || null,
+            category: category || null,
+            description: taskDetail.trim() || null,
+            task_detail: taskDetail.trim() || null,
+            task_notes: taskNotes.trim() || null,
+            link: link.trim() || null,
+            instructions: instructions.trim() || null,
+            review_required: reviewRequired === "yes",
+            start_date: startDate || null,
+            end_date: endDate || null,
+            due_time: dueTime || null,
+            // Clock times, not instants — same reasoning as templateMode's
+            // own save branch: each occurrence supplies its own date.
+            start_time: hasSchedule && startTime ? startTime : null,
+            end_time: hasSchedule && endTime ? endTime : null,
+            planned_minutes: hasSchedule ? null : parsedPlannedMinutes,
+            project_id: linkedProjectId || null,
+            assigned_to_ids: effectiveVaIds,
+            assigned_by: assignedBy || currentUserId || null,
+            pay_type: mode === "output_based" ? "output_based" : null,
+            rate: mode === "output_based" ? Number(rate) : null,
+            recurrence_type: templateRecurrenceType,
+            repeat_until: templateRepeatUntil || null,
+            is_active: true,
+          };
+          if (existingTemplateId) {
+            const res = await fetch(`/api/recurring-task-templates?id=${existingTemplateId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: existingTemplateId, ...templatePayload }),
+            });
+            if (res.ok) showToast("success", "Recurring template updated");
+            else showToast("error", "Task saved, but the recurring template failed to update.");
+          } else {
+            const res = await fetch("/api/recurring-task-templates", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(templatePayload),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.template?.id) {
+              linkedId = data.template.id;
+              setExistingTemplateId(data.template.id);
+              showToast("success", "Recurring template created");
+            } else {
+              showToast("error", "Task saved, but the recurring template failed to save.");
+            }
+          }
+        } catch {
+          showToast("error", "Task saved, but the recurring template failed to save.");
+        }
+
+      return linkedId;
+    };
+
+    let task: { id: number; [key: string]: unknown };
 
       if (mode === "time_based") {
         // Companion template create/update happens BEFORE the main task save,
@@ -983,63 +1050,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         // hasCoreMetadataUpdate/hasScheduleUpdate/etc. branches and could be
         // silently dropped — this avoids ever constructing that request.
         let templateIdToLink: string | null = existingTemplateId;
-        if (alsoSaveAsTemplate) {
-          try {
-            const templatePayload: Record<string, unknown> = {
-              title: taskName.trim(),
-              task_name: taskName.trim(),
-              account: account || null,
-              project: project || null,
-              category: category || null,
-              description: taskDetail.trim() || null,
-              task_detail: taskDetail.trim() || null,
-              task_notes: taskNotes.trim() || null,
-              link: link.trim() || null,
-              instructions: instructions.trim() || null,
-              review_required: reviewRequired === "yes",
-              start_date: startDate || null,
-              end_date: endDate || null,
-              due_time: dueTime || null,
-              // Clock times, not instants — same reasoning as templateMode's
-              // own save branch: each occurrence supplies its own date.
-              start_time: hasSchedule && startTime ? startTime : null,
-              end_time: hasSchedule && endTime ? endTime : null,
-              planned_minutes: hasSchedule ? null : parsedPlannedMinutes,
-              project_id: linkedProjectId || null,
-              assigned_to_ids: effectiveVaIds,
-              assigned_by: assignedBy || currentUserId || null,
-              pay_type: null,
-              recurrence_type: templateRecurrenceType,
-              repeat_until: templateRepeatUntil || null,
-              is_active: true,
-            };
-            if (existingTemplateId) {
-              const res = await fetch(`/api/recurring-task-templates?id=${existingTemplateId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: existingTemplateId, ...templatePayload }),
-              });
-              if (res.ok) showToast("success", "Recurring template updated");
-              else showToast("error", "Task saved, but the recurring template failed to update.");
-            } else {
-              const res = await fetch("/api/recurring-task-templates", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(templatePayload),
-              });
-              const data = await res.json().catch(() => ({}));
-              if (res.ok && data.template?.id) {
-                templateIdToLink = data.template.id;
-                setExistingTemplateId(data.template.id);
-                showToast("success", "Recurring template created");
-              } else {
-                showToast("error", "Task saved, but the recurring template failed to save.");
-              }
-            }
-          } catch {
-            showToast("error", "Task saved, but the recurring template failed to save.");
-          }
-        }
+        if (alsoSaveAsTemplate) templateIdToLink = await saveCompanionTemplate(templateIdToLink);
 
         // Creating a brand-new task with "Save as a recurring template"
         // checked doesn't also create a standalone task below — the template
@@ -1174,6 +1185,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           await flushPendingFiles(task.id);
         }
       } else {
+        // Output Based work can repeat too. fixed_pay_tasks has no
+        // spawned_template_id column, so the task does not carry the link back
+        // — the template is managed from the Recurring page after this.
+        if (alsoSaveAsTemplate) await saveCompanionTemplate(existingTemplateId);
+
         const body: Record<string, unknown> = {
           task_name: taskName.trim(),
           account: account || null,
@@ -2081,7 +2097,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           )}
         </div>
 
-        {!templateMode && mode === "time_based" && (
+        {!templateMode && (
           /* Highlighted rather than another grey box — this one turns a one-off
              into a repeating commitment, which is worth noticing before you save. */
           <div className={`rounded-lg border-2 p-3 space-y-2 ${

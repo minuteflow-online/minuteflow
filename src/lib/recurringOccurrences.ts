@@ -106,6 +106,43 @@ export function occurrenceDates(template: OccurrenceTemplate, from: string): str
   return dates;
 }
 
+/** Whether this template produces Output Based work rather than hourly work. */
+export function isOutputBased(template: Record<string, unknown>): boolean {
+  return template.pay_type === "output_based";
+}
+
+/** The fixed_pay_tasks row an Output Based template produces for one date. */
+export function outputRowFor(
+  template: Record<string, unknown>,
+  date: string,
+  assigneeId: string | null
+): Record<string, unknown> {
+  return {
+    task_name: template.title ?? template.task_name ?? "",
+    account: template.account ?? null,
+    project: template.project ?? null,
+    project_id: template.project_id ?? null,
+    category: template.category ?? null,
+    task_detail: template.task_detail ?? template.description ?? null,
+    task_notes: template.task_notes ?? null,
+    link: template.link ?? null,
+    rate: template.rate ?? 0,
+    // The occurrence date is the start. Output Based work has no end date
+    // unless someone sets one, so none is invented here.
+    start_date: date,
+    end_date: template.end_date ?? null,
+    due_date: template.due_time ? date : null,
+    review_required: Boolean(template.review_required),
+    instructions: template.instructions ?? null,
+    instructions_locked: Boolean(template.instructions_locked),
+    assigned_to: assigneeId,
+    assigned_by: template.assigned_by ?? null,
+    created_by: template.assigned_by ?? null,
+    recurring_template_id: template.id,
+    status: "pending",
+  };
+}
+
 /** The task row a template produces for one date. */
 export function taskRowFor(
   template: Record<string, unknown>,
@@ -178,16 +215,46 @@ export async function generateOccurrences(
   // Removed dates count as taken. A soft-deleted occurrence is a decision —
   // "not this week" — so filtering it out here would have the generator
   // helpfully put it back on the next run.
-  const { data: existing } = await supabase
-    .from("assigned_tasks")
-    .select("due_date")
-    .eq("recurring_template_id", template.id)
-    .in("due_date", wanted);
+  const outputBased = isOutputBased(template);
+  const { data: existing } = outputBased
+    ? await supabase
+        .from("fixed_pay_tasks")
+        .select("start_date")
+        .eq("recurring_template_id", template.id)
+        .in("start_date", wanted)
+    : await supabase
+        .from("assigned_tasks")
+        .select("due_date")
+        .eq("recurring_template_id", template.id)
+        .in("due_date", wanted);
 
-  const already = new Set((existing ?? []).map((r: { due_date: string }) => r.due_date));
+  const already = new Set(
+    (existing ?? []).map((r: { due_date?: string; start_date?: string }) =>
+      outputBased ? r.start_date : r.due_date
+    )
+  );
   const missing = wanted.filter((d) => !already.has(d));
 
   const createdDates: string[] = [];
+
+  // Output Based templates write to fixed_pay_tasks instead — a different
+  // table, one assignee per row rather than a join table, and no calendar
+  // block. Everything above (which dates, which are already taken) is the
+  // same for both kinds.
+  if (outputBased) {
+    for (const date of missing) {
+      let created = false;
+      for (const assigneeId of assigneeIds) {
+        const { error } = await supabase
+          .from("fixed_pay_tasks")
+          .insert(outputRowFor(template, date, assigneeId));
+        if (!error) created = true;
+      }
+      if (created) createdDates.push(date);
+    }
+    return { created: createdDates.length, dates: createdDates };
+  }
+
   for (const date of missing) {
     const { data: task, error } = await supabase
       .from("assigned_tasks")
