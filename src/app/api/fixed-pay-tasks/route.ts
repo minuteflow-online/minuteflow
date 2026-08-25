@@ -130,6 +130,10 @@ export async function GET(request: Request) {
   const { supabase, userId, isPermitted } = auth;
   const { searchParams } = new URL(request.url);
   const view = searchParams.get("view");
+  // Output-based work linked to an Objective or Operation, for the Subtasks
+  // card on that page. Without this the link was saved and then invisible —
+  // that card only ever read assigned_tasks.
+  const projectId = searchParams.get("projectId");
 
   // Permission-granted plain VAs don't pass the DB's is_admin_or_manager()
   // RLS check (role stays "va"), so read via the service-role client once
@@ -137,10 +141,13 @@ export async function GET(request: Request) {
   // real admins/managers.
   const readClient = isPermitted ? makeAdminClient() : supabase;
 
-  const { data, error } = await readClient
+  let listQuery = readClient
     .from("fixed_pay_tasks")
     .select(TASK_SELECT)
     .order("created_at", { ascending: false });
+  if (projectId) listQuery = listQuery.eq("project_id", projectId);
+
+  const { data, error } = await listQuery;
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });

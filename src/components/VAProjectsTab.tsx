@@ -19,6 +19,22 @@ interface VAProjectsTabProps {
   kind: ProjectKind;
 }
 
+/** An Output Based subtask — a fixed_pay_tasks row, not an assigned_tasks one. */
+export interface OutputSubtaskRow {
+  id: number;
+  task_name: string;
+  status: string;
+  rate: number | null;
+  account?: string | null;
+  project?: string | null;
+  category?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  due_date?: string | null;
+  assigned_to?: string | null;
+  created_at?: string | null;
+}
+
 export interface SubtaskRow {
   id: number;
   task_name: string;
@@ -154,6 +170,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // "Add Subtask" form collapsed by default (Figma correction) — same
   // show-on-demand pattern as showDetails above.
   const [showAddSubtask, setShowAddSubtask] = useState(false);
+  const [addSubtaskMode, setAddSubtaskMode] = useState<"time_based" | "output_based">("time_based");
   const [editName, setEditName] = useState("");
   const [editAccount, setEditAccount] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -186,6 +203,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
 
   const [subtasks, setSubtasks] = useState<SubtaskRow[]>([]);
+  const [outputSubtasks, setOutputSubtasks] = useState<OutputSubtaskRow[]>([]);
+  const [editingOutputId, setEditingOutputId] = useState<number | null>(null);
+  const [deletingOutputId, setDeletingOutputId] = useState<number | null>(null);
   const [subtasksLoading, setSubtasksLoading] = useState(false);
   const [addFormKey, setAddFormKey] = useState(0);
   // Surfaced when a Board View drag's status update fails and gets rolled
@@ -376,6 +396,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setEditVaIds([]);
     setEditNotice(null);
     setSubtasks([]);
+    setOutputSubtasks([]);
+    setEditingOutputId(null);
     setAddFormKey((k) => k + 1);
     setEditingSubId(null);
     setShowDetails(false);
@@ -387,6 +409,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setActiveTile(null);
     setActiveMessageId(null);
     void fetchSubtasks(selectedProject.id);
+    void fetchOutputSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
     void fetchRecurringForProject(selectedProject.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -428,6 +451,42 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
       setEditVaIds(d.va_ids ?? []);
     } catch {
       // ignore
+    }
+  }, []);
+
+  const handleDeleteOutputSubtask = useCallback(
+    async (taskId: number, taskName: string) => {
+      if (!confirm(`Move "${taskName}" to trash? You can restore it from the trash filter.`)) return;
+      setDeletingOutputId(taskId);
+      try {
+        const res = await fetch(`/api/fixed-pay-tasks/${taskId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deleted_at: new Date().toISOString() }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+        setOutputSubtasks((prev) => prev.filter((t) => t.id !== taskId));
+        setEditingOutputId(null);
+      } catch (error) {
+        setEditSubError(error instanceof Error ? error.message : "Failed to delete this subtask.");
+      } finally {
+        setDeletingOutputId(null);
+      }
+    },
+    []
+  );
+
+  const fetchOutputSubtasks = useCallback(async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/fixed-pay-tasks?projectId=${projectId}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const d = await res.json();
+      setOutputSubtasks((d.tasks ?? []) as OutputSubtaskRow[]);
+    } catch {
+      // ignore — the ordinary subtasks still render
     }
   }, []);
 
@@ -1175,6 +1234,74 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           </div>
         )}
 
+        {subtaskView === "list" && outputSubtasks.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Output Based</p>
+            {outputSubtasks.map((task) => {
+              const isEditing = editingOutputId === task.id;
+              const who = activeProfiles.find((p) => p.id === task.assigned_to);
+              return (
+                <div key={task.id} className="space-y-1">
+                  <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
+                    <StatusBadge status={task.status} />
+                    <span className="flex-1 text-[13px] font-semibold text-espresso leading-tight truncate">
+                      {task.task_name}
+                    </span>
+                    {who && (
+                      <span className="text-[11px] text-stone shrink-0 hidden sm:block">
+                        {who.full_name || who.username}
+                      </span>
+                    )}
+                    {task.account && (
+                      <span className="text-[11px] text-stone shrink-0 hidden md:block">{task.account}</span>
+                    )}
+                    {task.start_date && (
+                      <span className="text-[11px] text-stone shrink-0 hidden md:block">
+                        Starts: {formatDate(task.start_date)}
+                      </span>
+                    )}
+                    <span className="text-[11px] text-stone capitalize shrink-0 hidden lg:block">output based</span>
+                    <button
+                      onClick={() => setEditingOutputId(isEditing ? null : task.id)}
+                      className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
+                    >
+                      {isEditing ? "Cancel" : "Edit"}
+                    </button>
+                  </div>
+
+                  {isEditing && (
+                    <div className="ml-3 space-y-3 rounded-lg border border-sand bg-parchment p-3">
+                      <TaskEditor
+                        mode="output_based"
+                        editingTaskId={task.id}
+                        initialTask={task as unknown as Record<string, unknown>}
+                        currentUserId={currentUserId}
+                        isAdminOrManager={isAdmin}
+                        teamMembers={activeProfiles}
+                        lockedProjectId={selectedProject.id}
+                        onCancel={() => setEditingOutputId(null)}
+                        onSaved={() => {
+                          setEditingOutputId(null);
+                          void fetchOutputSubtasks(selectedProject.id);
+                        }}
+                      />
+                      <div className="flex">
+                        <button
+                          onClick={() => void handleDeleteOutputSubtask(task.id, task.task_name)}
+                          disabled={deletingOutputId === task.id}
+                          className="ml-auto px-3 py-1 rounded-lg border border-red-200 text-[11px] font-semibold text-red-600 hover:border-red-400 transition-colors disabled:opacity-50"
+                        >
+                          {deletingOutputId === task.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Add subtask form — collapsed by default (Figma correction), same
             show-on-demand pattern as the Objective Details toggle. */}
         <div className="border-t border-sand pt-4 space-y-3">
@@ -1188,9 +1315,27 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             </button>
           </div>
           {showAddSubtask && (
+            <div className="flex gap-2">
+              {(["time_based", "output_based"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => { setAddSubtaskMode(value); setAddFormKey((k) => k + 1); }}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
+                    addSubtaskMode === value
+                      ? "bg-sage text-white"
+                      : "bg-stone/10 text-stone hover:bg-stone/20"
+                  }`}
+                >
+                  {value === "time_based" ? "Time Based" : "Output Based"}
+                </button>
+              ))}
+            </div>
+          )}
+          {showAddSubtask && (
             <TaskEditor
-              key={addFormKey}
-              mode="time_based"
+              key={`${addFormKey}-${addSubtaskMode}`}
+              mode={addSubtaskMode}
               editingTaskId={null}
               initialTask={{ account: selectedProject.account ?? null }}
               currentUserId={currentUserId}
@@ -1198,7 +1343,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               teamMembers={activeProfiles}
               lockedProjectId={selectedProject.id}
               onCancel={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
-              onSaved={() => { handleSubtaskCreated(); setShowAddSubtask(false); }}
+              onSaved={() => {
+                if (addSubtaskMode === "output_based" && selectedProject) {
+                  void fetchOutputSubtasks(selectedProject.id);
+                } else {
+                  handleSubtaskCreated();
+                }
+                setShowAddSubtask(false);
+              }}
             />
           )}
         </div>
