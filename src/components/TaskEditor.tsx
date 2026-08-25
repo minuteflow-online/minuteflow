@@ -903,11 +903,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         setError("Set a time range or a duration.");
         throw new Error("Set a time range or a duration.");
       }
-    } else if (!startDate || !endDate) {
-      // Output Based work has no time slot to fill, so Start Date + End Date
-      // on the Calendar is the schedule commitment — not a duration.
-      setError("Set a Start Date and End Date.");
-      throw new Error("Set a Start Date and End Date.");
+    } else if (!startDate) {
+      // Output Based work has no time slot to fill, so the Start Date is what
+      // puts it on the Calendar. End Date is optional — output-based work is
+      // finished when the deliverable is, not on a date agreed up front.
+      setError("Set a Start Date.");
+      throw new Error("Set a Start Date.");
     }
     if (mode === "output_based" && (!rate.trim() || !Number.isFinite(Number(rate)))) {
       setError("Final Rate is required.");
@@ -1294,8 +1295,10 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // offer — Start Date + End Date on the Calendar is its schedule instead.
   const hasTimeRange = hasSchedule && Boolean(startDate) && Boolean(startTime) && Boolean(endTime);
   const hasDuration = parsedPlannedMinutes != null;
-  const hasDateRange = Boolean(startDate) && Boolean(endDate);
-  const needsSchedule = mode === "time_based" ? !hasTimeRange && !hasDuration : !hasDateRange;
+  // Output Based asks for a start and nothing else. Requiring an end date too
+  // assumed every piece of output-based work has a known finish, which is the
+  // opposite of how it is used — the deliverable is done when it is done.
+  const needsSchedule = mode === "time_based" ? !hasTimeRange && !hasDuration : !startDate;
 
   // Section badges say what kind of gap it is, not which field — the field
   // itself goes amber, so naming it twice was redundant. Basics is entirely
@@ -1312,7 +1315,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
     needsClientDetail ? "Client Detail" : null,
     needsReviewAnswer ? "Review Required" : null,
     needsRate ? "Final Rate" : null,
-    needsSchedule ? (mode === "time_based" ? "Time range or Duration" : "Start Date and End Date") : null,
+    needsSchedule ? (mode === "time_based" ? "Time range or Duration" : "Start Date") : null,
     needsDueDate ? "Due Date" : null,
     needsStartDateForRecurring ? "Start Date" : null,
   ].filter((m): m is string => Boolean(m));
@@ -1936,7 +1939,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 text={
                   mode === "time_based"
                     ? "The days this task runs across. Below, choose whether it takes specific hours on the Calendar or just a duration."
-                    : "The days this task runs across on the Calendar — Output Based work is paid per output and has no duration, so Start Date and End Date are its schedule."
+                    : "The days this task runs across on the Calendar — Output Based work is paid per output and has no duration, so the Start Date is its schedule. Add an End Date only if there is a real deadline."
                 }
               />
             </span>
@@ -1966,7 +1969,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
                 disabled={readOnly}
-                className={mode === "output_based" ? requiredInputClass(Boolean(endDate)) : inputClass}
+                className={inputClass}
               />
             </div>
           </div>
@@ -2046,7 +2049,7 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
             // not per hour, so Start Date + End Date above is the whole
             // schedule commitment. No tabs, no duration input.
             <p className="text-[11px] text-stone">
-              Paid per output, so this doesn&apos;t take a time slot or a duration — the Start Date and End Date above put it on the Calendar.
+              Paid per output, so this doesn&apos;t take a time slot or a duration — the Start Date above puts it on the Calendar.
             </p>
           )}
         </div>
