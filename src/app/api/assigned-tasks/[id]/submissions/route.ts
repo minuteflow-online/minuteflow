@@ -437,7 +437,10 @@ export async function POST(request: Request, { params }: RouteContext) {
     // both of Flordeliz's today were — and the alert named the task without
     // ever showing what was handed in, so reviewing meant opening the admin
     // panel to find out. The buttons underneath are useless without it.
-    if (link) lines.push("", `🔗 ${esc(link)}`);
+    // Only if it is actually a link. People type "N/A" in that box when there
+    // is nothing to give — Flordeliz did, twice today — and "🔗 N/A" reads as
+    // though something was submitted when nothing was.
+    if (/^https?:\/\//i.test(link)) lines.push("", `🔗 ${esc(link)}`);
     if (message) {
       const note = message.length > 400 ? message.slice(0, 400) + "…" : message;
       lines.push("", esc(note));
