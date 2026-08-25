@@ -433,6 +433,16 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (where) lines.push(`Project: ${esc(where)}`);
     lines.push(outcome);
 
+    // The work itself. Most submissions here are a link rather than a file —
+    // both of Flordeliz's today were — and the alert named the task without
+    // ever showing what was handed in, so reviewing meant opening the admin
+    // panel to find out. The buttons underneath are useless without it.
+    if (link) lines.push("", `🔗 ${esc(link)}`);
+    if (message) {
+      const note = message.length > 400 ? message.slice(0, 400) + "…" : message;
+      lines.push("", esc(note));
+    }
+
     // Decide from the chat. Only offered where a decision is still open —
     // auto-approved work has already closed, and putting an Approve link on it
     // would invite a tap that does nothing.
