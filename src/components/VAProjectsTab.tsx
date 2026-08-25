@@ -727,7 +727,12 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setShowCreate(true);
     setSelectedProject(null);
     setCreateName("");
-    setCreateAccount("");
+    // Nesting under a parent that already has an Account set inherits it as
+    // the default — still editable, just saves re-picking the same account
+    // for every child of the same Objective. Top-level creates (parentId "")
+    // stay blank, same as before.
+    const parent = parentId ? projects.find((p) => p.id === parentId) : null;
+    setCreateAccount(parent?.account ?? "");
     setCreateDescription("");
     setCreateDetails("");
     setCreateNotes("");
