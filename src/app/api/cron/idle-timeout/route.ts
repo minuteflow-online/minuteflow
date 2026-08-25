@@ -42,9 +42,15 @@ const IDLE_EXEMPT_CATEGORIES = ["Personal", "Break"];
  * Secured by IDLE_TIMEOUT_CRON_SECRET (VPS crontab, every 10 min).
  */
 export async function GET(request: NextRequest) {
+  // Two callers, two secrets. Vercel's scheduler sends CRON_SECRET; the older
+  // VPS crontab sends IDLE_TIMEOUT_CRON_SECRET. Both are accepted so moving
+  // this onto Vercel's schedule does not depend on someone remembering to
+  // switch the VPS entry off at the same moment.
   const authHeader = request.headers.get("authorization");
-  const expectedSecret = process.env.IDLE_TIMEOUT_CRON_SECRET;
-  if (!expectedSecret || authHeader !== `Bearer ${expectedSecret}`) {
+  const accepted = [process.env.CRON_SECRET, process.env.IDLE_TIMEOUT_CRON_SECRET]
+    .filter(Boolean)
+    .map((s) => `Bearer ${s}`);
+  if (accepted.length === 0 || !authHeader || !accepted.includes(authHeader)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 

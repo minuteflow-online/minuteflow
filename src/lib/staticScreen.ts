@@ -1,5 +1,4 @@
 import { createClient } from "@supabase/supabase-js";
-import { driveChecksum } from "./driveFetch";
 import { notifyVaPrivately } from "./vaNotify";
 import { forceClockOut } from "./forceClockOut";
 import { esc } from "./telegram";
@@ -13,14 +12,16 @@ import { esc } from "./telegram";
  * screen has not moved at all. Comparing the captures themselves is the only
  * way to tell those apart.
  *
- * Drive computes an MD5 on upload, so identical screenshots compare as equal
- * without downloading anything — a metadata call per capture rather than an
- * image transfer per capture, which is what makes this affordable on a cron.
+ * Compares task_screenshots.image_hash, which the extension already computes
+ * on every capture and which the admin screenshot grid already uses to show
+ * its "Unchanged" badge. An earlier version fetched MD5s from Google Drive
+ * instead — slower, and it failed closed: one slow Drive call made the whole
+ * check give up silently, which is why it never fired.
  *
  * Deliberately conservative. Every ambiguous case is treated as "cannot tell"
- * and skipped: a missing checksum, too few captures, or a window that does not
- * actually span the full period. Accusing someone of idling because Drive was
- * briefly unreachable is far worse than missing one genuine case.
+ * and skipped: too few captures, or a window that does not actually span the
+ * period. Rows without a hash are excluded by the query rather than counted as
+ * matching, so an older extension build cannot make someone look idle.
  */
 
 /** How long the screen must be unchanged before it is worth mentioning. */
@@ -72,9 +73,9 @@ export async function checkStaticScreens(
 
     const { data: shots, error } = await supabase
       .from("task_screenshots")
-      .select("drive_file_id, created_at")
+      .select("image_hash, created_at")
       .eq("user_id", c.user_id)
-      .not("drive_file_id", "is", null)
+      .not("image_hash", "is", null)
       .gte("created_at", since)
       .order("created_at", { ascending: true });
 
@@ -95,11 +96,7 @@ export async function checkStaticScreens(
       .single();
     if (!prof) continue;
 
-    const checksums = await Promise.all(
-      shots.map((s) => driveChecksum(s.drive_file_id as string))
-    );
-    // Any unreadable checksum makes the comparison meaningless.
-    if (checksums.some((h) => !h)) continue;
+    const checksums = shots.map((s) => s.image_hash as string);
 
     // The screen moved. Clear any standing warning here rather than in a
     // sweep afterwards — this is the only place that actually knows whose
