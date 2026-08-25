@@ -35,6 +35,10 @@ const GRACE_MS = 15 * 60 * 1000;
  *  check stays silent. */
 const MIN_CAPTURES = 3;
 
+/** Same switch the idle check uses. Both automatic closes are off until turned
+ *  on deliberately — see the note in the idle cron for why. */
+const AUTO_CLOSE_ENABLED = process.env.IDLE_AUTO_CLOSE === "on";
+
 type Candidate = {
   user_id: string;
   category: string | null;
@@ -152,7 +156,7 @@ export async function checkStaticScreens(
     // never saw it, and closing a session on a warning nobody received is the
     // unfairness this whole flow exists to avoid. They stay flagged for Toni
     // instead, which is visible without being punitive.
-    if (Date.now() - warnedAt >= GRACE_MS && prof.telegram_chat_id) {
+    if (Date.now() - warnedAt >= GRACE_MS && prof.telegram_chat_id && AUTO_CLOSE_ENABLED) {
       await forceClockOut(c.user_id, c.log_id, "screen_unchanged");
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id as number | null,

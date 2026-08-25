@@ -21,6 +21,52 @@ const IDLE_EXEMPT_CATEGORIES = ["Personal", "Break"];
 // for REPORTING ONLY — see the note below.
 const STALE_THRESHOLD_MS = 15 * 60 * 1000;
 
+/**
+ * Automatic closing is off unless IDLE_AUTO_CLOSE is explicitly "on".
+ *
+ * On 2026-08-24 this cron clocked out Arianne while she was working. She had
+ * uploaded a screenshot every five minutes throughout, and the check never
+ * looked at them — it trusted sessions.updated_at alone, which is exactly the
+ * unreliable signal that got this behaviour switched off in July.
+ *
+ * Warnings and reporting continue regardless. The close stays behind a switch
+ * so it cannot be turned back on by accident, and so it can be watched for a
+ * few days before anyone's day is ended by it again.
+ */
+const AUTO_CLOSE_ENABLED = process.env.IDLE_AUTO_CLOSE === "on";
+
+/**
+ * True when the person has uploaded a screenshot recently.
+ *
+ * Screenshots are the honest signal. They are produced by the extension every
+ * five minutes from the machine actually being worked on, whereas
+ * sessions.updated_at only moves when a MinuteFlow tab feels like writing to
+ * it — and a VA working in Sheets all morning touches that tab never.
+ *
+ * Any doubt counts as working: an unreadable table returns true, because the
+ * cost of a wrong "yes" is a missed idle case and the cost of a wrong "no" is
+ * taking someone's time away from them.
+ */
+async function hasRecentScreenshots(userId: string, sinceMs: number): Promise<boolean> {
+  try {
+    const supabase = createServiceClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+    const { data, error } = await supabase
+      .from("task_screenshots")
+      .select("id")
+      .eq("user_id", userId)
+      .gte("created_at", new Date(Date.now() - sinceMs).toISOString())
+      .limit(1);
+    if (error) return true;
+    return (data?.length ?? 0) > 0;
+  } catch {
+    return true;
+  }
+}
+
 /** Resolves a user's login email plus every admin's, for the to/cc pair these
  *  notices use. Returns nulls rather than throwing — a mail lookup problem must
  *  not stop the cron finishing its run. */
@@ -240,8 +286,24 @@ export async function GET(request: NextRequest) {
 
   const warned: string[] = [];
   const closed: string[] = [];
+  const wouldClose: string[] = [];
+  const working: string[] = [];
 
   for (const c of candidates) {
+    // Screenshots settle it before anything else is considered. A stale
+    // heartbeat with fresh captures is not an idle person — it is a person
+    // working somewhere other than a MinuteFlow tab, which is most of the day
+    // for most of this team.
+    //
+    // Checked over the same window the staleness is measured against, and it
+    // also clears any standing warning: someone who was quiet and came back
+    // should start from zero rather than resume a countdown.
+    if (await hasRecentScreenshots(c.user_id, STALE_THRESHOLD_MS)) {
+      await supabase.from("profiles").update({ idle_warned_at: null }).eq("id", c.user_id);
+      working.push(c.user_id);
+      continue;
+    }
+
     const { data: prof } = await supabase
       .from("profiles")
       .select("full_name, username, idle_warned_at, telegram_chat_id")
@@ -277,13 +339,18 @@ export async function GET(request: NextRequest) {
       continue;
     }
 
-    // Still silent after the grace period — close the session.
+    // Still silent after the grace period — close the session, if closing is
+    // switched on at all. Off by default after this cron ended sessions that
+    // were plainly active; the warning still goes out either way, so a genuine
+    // case is visible without anyone losing their afternoon to a false one.
     //
     // Through the shared helper rather than inline, so both automatic closes
-    // write the same fields and record why. The copy that used to live here
-    // did not set auto_closed_reason, which is what made a forced clock-out
-    // read exactly like someone finishing their day.
+    // write the same fields and record why.
     if (Date.now() - graceStarted >= GRACE_MS) {
+      if (!AUTO_CLOSE_ENABLED) {
+        wouldClose.push(who);
+        continue;
+      }
       const now = new Date().toISOString();
       await forceClockOut(c.user_id, c.log_id, "idle");
       closed.push(who);
@@ -329,6 +396,9 @@ export async function GET(request: NextRequest) {
   const staticScreens = await checkStaticScreens(liveCandidates, IDLE_EXEMPT_CATEGORIES);
 
   return Response.json({
+    autoCloseEnabled: AUTO_CLOSE_ENABLED,
+    working: working.length,
+    wouldClose: wouldClose.length,
     warned: warned.length,
     closed: closed.length,
     staticScreens: staticScreens.length,
