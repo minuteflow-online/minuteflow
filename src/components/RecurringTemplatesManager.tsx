@@ -94,6 +94,29 @@ function formatDate(iso: string | null | undefined, _tz?: string): string {
   }
 }
 
+// Unlike start_date/paused_until above (calendar dates with no time of their
+// own), created_at is a real instant — two templates created minutes apart
+// on the same day were indistinguishable in the "Created" column, which is
+// exactly what made two people's attempts at the same recurring task look
+// like one. Read in the org timezone, same as every other instant in the
+// app — never the viewer's local time.
+function formatDateTime(iso: string | null | undefined, tz?: string): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("en-US", {
+      timeZone: tz || "America/New_York",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return iso;
+  }
+}
+
 function profileLabel(profile: Pick<Profile, "id" | "full_name" | "username">) {
   return profile.full_name || profile.username || profile.id;
 }
@@ -563,7 +586,7 @@ export default function RecurringTemplatesManager({
                           <div className="truncate max-w-[140px]">
                             {template.created_by_profile?.full_name || template.created_by_profile?.username || "—"}
                           </div>
-                          <div className="text-[11px] text-stone/70">{formatDate(template.created_at, orgTimezone)}</div>
+                          <div className="text-[11px] text-stone/70">{formatDateTime(template.created_at, orgTimezone)}</div>
                         </div>
                       </td>
                     )}

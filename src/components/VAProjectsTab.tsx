@@ -481,7 +481,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
   const fetchOutputSubtasks = useCallback(async (projectId: string) => {
     try {
-      const res = await fetch(`/api/fixed-pay-tasks?projectId=${projectId}`, { cache: "no-store" });
+      const res = await fetch(`/api/fixed-pay-tasks?projectId=${projectId}&view=active`, { cache: "no-store" });
       if (!res.ok) return;
       const d = await res.json();
       setOutputSubtasks((d.tasks ?? []) as OutputSubtaskRow[]);

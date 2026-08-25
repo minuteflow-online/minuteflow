@@ -99,7 +99,12 @@ function matchesTaskView(
   if (view === "trash") return Boolean(task.deleted_at);
   if (view === "inactive") return !task.is_active && !task.archived_at && !task.deleted_at;
   if (view === "active") return Boolean(task.is_active) && !task.archived_at && !task.deleted_at;
-  return true;
+  // No view requested: same default the sibling assigned-tasks route uses —
+  // hide archived/deleted rather than returning everything. A caller that
+  // forgets ?view=active (VAProjectsTab.tsx's Output Based subtasks did)
+  // otherwise gets trashed tasks back forever, no matter how many times the
+  // page is refreshed, since there was nothing here to ever exclude them.
+  return !task.archived_at && !task.deleted_at;
 }
 async function hydrateTaskProfiles(client: Pick<SupabaseClient, "from">, rows: FixedPayTaskWithClaimer[]) {
   const profileIds = [...new Set(rows.flatMap((row) => [row.claimed_by, row.assigned_to, row.assigned_by, row.created_by]).filter((id): id is string => Boolean(id)))];
@@ -178,7 +183,7 @@ export async function GET(request: Request) {
     });
   }
 
-  const filteredRows = view ? rows.filter((task) => matchesTaskView(task, view)) : rows;
+  const filteredRows = rows.filter((task) => matchesTaskView(task, view));
 
   return Response.json({
     tasks: filteredRows.map((t) => ({ ...t, claimed_by_me: t.claimed_by === userId })),
