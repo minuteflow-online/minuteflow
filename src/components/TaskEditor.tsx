@@ -2133,7 +2133,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
                 <p className="mt-1 text-[10px] text-stone">
                   {existingTemplateId
                     ? "Linked to a recurring template — saving updates it to match this task's details."
-                    : "Creates a separate recurring template from this task's details — the task itself saves normally either way."}
+                    : isEditing
+                    ? "Creates a separate recurring template from this task's details — the task itself saves normally either way."
+                    : "Creates the recurring template from these details. Its own occurrences are what show up going forward — nothing separate gets saved here."}
                 </p>
               </div>
             )}
