@@ -1379,6 +1379,27 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     />
   ) : null;
 
+  // Linking a task to this Operation usually happens somewhere else — the
+  // Assignment page, the calendar, another tab — so the subtask list is stale
+  // the moment you come back to it. Refetch on return rather than making
+  // someone reload the page to see work they just linked here.
+  useEffect(() => {
+    if (!selectedProject) return;
+    const projectId = selectedProject.id;
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      void fetchSubtasks(projectId);
+      void fetchOutputSubtasks(projectId);
+      void fetchRecurringForProject(projectId);
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [selectedProject, fetchSubtasks, fetchOutputSubtasks, fetchRecurringForProject]);
+
   // Board View is a full-width takeover (Figma correction) — sidebar and the
   // Objective details/Where They Are panel hide entirely while it's active.
   const isBoardTakeover = Boolean(selectedProject) && !showCreate && subtaskView === "board";
