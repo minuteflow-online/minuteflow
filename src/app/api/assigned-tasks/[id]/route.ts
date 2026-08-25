@@ -1108,7 +1108,12 @@ ${existing}` : addition;
       return Response.json({ error: taskError.message }, { status: 500 });
     }
 
-    // Series-wide edit, when the caller asked for one.
+    // Series-wide change, when the caller asked for one. A trash (deleted_at
+    // set) takes the remove path, not the edit path — seriesFieldsFrom() in
+    // recurringScope.ts doesn't carry deleted_at as a series field, so
+    // applyEditToFuture would silently do nothing for a delete. This mirrors
+    // the VA-only trash branch above, which already got this right; the
+    // general admin path here only ever had the edit half wired up.
     if (scope === "future") {
       const { data: seriesRow } = await adminSupabase
         .from("assigned_tasks")
@@ -1116,14 +1121,18 @@ ${existing}` : addition;
         .eq("id", id)
         .single();
       if (seriesRow?.recurring_template_id && seriesRow?.due_date) {
-        await applyEditToFuture(
-          adminSupabase,
-          seriesRow.recurring_template_id,
-          seriesRow.due_date,
-          id,
-          updatePayload,
-          start_time !== undefined ? { start_time, end_time } : {}
-        );
+        if (hasDeleteUpdate && deleted_at) {
+          await removeOccurrences(adminSupabase, seriesRow.recurring_template_id, seriesRow.due_date, id);
+        } else {
+          await applyEditToFuture(
+            adminSupabase,
+            seriesRow.recurring_template_id,
+            seriesRow.due_date,
+            id,
+            updatePayload,
+            start_time !== undefined ? { start_time, end_time } : {}
+          );
+        }
       }
     }
 

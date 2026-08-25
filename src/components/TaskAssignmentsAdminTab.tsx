@@ -22,6 +22,8 @@ import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPref
 import { useUrlTab } from "@/hooks/useUrlTab";
 import RevisionBadge from "@/components/RevisionBadge";
 import RecurringBadge from "@/components/RecurringBadge";
+import RecurringScopeDialog from "@/components/ui/RecurringScopeDialog";
+import type { RecurringScope } from "@/lib/recurringScope";
 
 const TABLE_COLUMNS: ColumnDef[] = [
   { key: "task_name", label: "Task Name", defaultWidth: 180 },
@@ -485,6 +487,13 @@ export default function TaskAssignmentsAdminTab({
 
   // ── Delete state ─────────────────────────────────────────────────────────────
   const [deleting, setDeleting] = useState<Record<number, boolean>>({});
+  // Asked only when the task being trashed belongs to a recurring series —
+  // same prompt TaskEditor already asks on an edit, reused here for delete.
+  const [scopeAsk, setScopeAsk] = useState<null | { taskName: string; resolve: (s: RecurringScope | null) => void }>(null);
+  const askScope = useCallback(
+    (taskName: string) => new Promise<RecurringScope | null>((resolve) => setScopeAsk({ taskName, resolve })),
+    []
+  );
 
   // ── Filter state ─────────────────────────────────────────────────────────────
   const [filterVaIds, setFilterVaIds] = useState<string[]>([]);
@@ -932,19 +941,26 @@ export default function TaskAssignmentsAdminTab({
     }
   }, [fetchTasks]);
 
-  const handleTrash = useCallback(async (taskId: number) => {
+  const handleTrash = useCallback(async (task: AssignedTaskWithAssignees) => {
+    let scope: RecurringScope | null = null;
+    if (task.recurring_template_id) {
+      scope = await askScope(task.task_name || "This task");
+      setScopeAsk(null);
+      if (scope === null) return; // cancelled
+    }
+    const taskId = task.id;
     setDeleting(d => ({ ...d, [taskId]: true }));
     try {
       await fetch(`/api/assigned-tasks/${taskId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deleted_at: new Date().toISOString() }),
+        body: JSON.stringify({ deleted_at: new Date().toISOString(), ...(scope ? { scope } : {}) }),
       });
       fetchTasks();
     } finally {
       setDeleting(d => { const n = { ...d }; delete n[taskId]; return n; });
     }
-  }, [fetchTasks]);
+  }, [fetchTasks, askScope]);
 
   const handleRestore = useCallback(async (taskId: number) => {
     setDeleting(d => ({ ...d, [taskId]: true }));
@@ -2007,7 +2023,7 @@ export default function TaskAssignmentsAdminTab({
                             </svg>
                           </button>
                           <button
-                            onClick={() => handleTrash(task.id)}
+                            onClick={() => void handleTrash(task)}
                             disabled={!!deleting[task.id]}
                             className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft transition-all cursor-pointer"
                             title="Move to trash"
@@ -2029,7 +2045,7 @@ export default function TaskAssignmentsAdminTab({
                             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.08"/></svg>
                           </button>
                           <button
-                            onClick={() => handleTrash(task.id)}
+                            onClick={() => void handleTrash(task)}
                             disabled={!!deleting[task.id]}
                             className="flex items-center justify-center w-6 h-6 rounded text-stone hover:text-terracotta hover:bg-terracotta-soft transition-all cursor-pointer"
                             title="Move to trash"
@@ -2498,6 +2514,14 @@ export default function TaskAssignmentsAdminTab({
             setLightboxUrls(null);
             setLightboxIndex(0);
           }}
+        />
+      )}
+      {scopeAsk && (
+        <RecurringScopeDialog
+          action="delete"
+          taskName={scopeAsk.taskName}
+          onChoose={(choice) => scopeAsk.resolve(choice)}
+          onCancel={() => scopeAsk.resolve(null)}
         />
       )}
     </div>
