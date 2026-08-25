@@ -22,7 +22,7 @@ type SessionRow = {
   user_id?: string;
   clocked_in?: boolean;
   clock_out_time?: string | null;
-  active_task?: { isBreak?: boolean } | null;
+  active_task?: { isBreak?: boolean; category?: string } | null;
   auto_closed_reason?: string | null;
 };
 
@@ -46,6 +46,8 @@ const EVENTS = {
   clock_out: "⚪",
   break_start: "☕",
   break_end: "🔵",
+  personal_start: "🟣",
+  personal_end: "🔵",
 } as const;
 
 /** Reads as a sentence with a time after it: "clocked in at 8:02 AM ET." */
@@ -54,10 +56,32 @@ const VERBS: Record<keyof typeof EVENTS, string> = {
   clock_out: "clocked out",
   break_start: "started a break",
   break_end: "came back from break",
+  personal_start: "started personal time",
+  personal_end: "came back from personal time",
 };
 
+/**
+ * True while this task is a break.
+ *
+ * Two things have to be checked because there are two ways to start one. The
+ * banner's Break button sets active_task.isBreak; picking Break from the task
+ * list creates an ordinary task whose category is "Break" and sets no flag.
+ *
+ * Flordeliz takes the second route, so her 90-minute break on 2026-08-25 was
+ * recorded in time_logs and reported nowhere — the webhook saw no transition,
+ * and the portal, which reads the same flag, never showed her as away.
+ */
+function isBreakTask(task: SessionRow["active_task"]): boolean {
+  return Boolean(task?.isBreak) || task?.category === "Break";
+}
+
+/** Personal time is a category only; there is no banner button for it. */
+function isPersonalTask(task: SessionRow["active_task"]): boolean {
+  return task?.category === "Personal";
+}
+
 /** Which alert this row change represents, or null when nothing alertable moved.
- *  Only transitions fire — an UPDATE that leaves both flags unchanged (a task
+ *  Only transitions fire — an UPDATE that leaves everything unchanged (a task
  *  switch, a mood write) is silent, which is what keeps this from being noise. */
 function classify(record: SessionRow | null, old: SessionRow | null): keyof typeof EVENTS | null {
   const wasIn = Boolean(old?.clocked_in);
@@ -65,13 +89,19 @@ function classify(record: SessionRow | null, old: SessionRow | null): keyof type
   if (!wasIn && isIn) return "clock_in";
   if (wasIn && !isIn) return "clock_out";
 
-  // Break transitions only count while clocked in, so clearing active_task as
+  // Away-transitions only count while clocked in, so clearing active_task as
   // part of clocking out does not also report a break ending.
   if (!isIn) return null;
-  const wasBreak = Boolean(old?.active_task?.isBreak);
-  const isBreak = Boolean(record?.active_task?.isBreak);
+
+  const wasBreak = isBreakTask(old?.active_task);
+  const isBreak = isBreakTask(record?.active_task);
   if (!wasBreak && isBreak) return "break_start";
   if (wasBreak && !isBreak) return "break_end";
+
+  const wasPersonal = isPersonalTask(old?.active_task);
+  const isPersonal = isPersonalTask(record?.active_task);
+  if (!wasPersonal && isPersonal) return "personal_start";
+  if (wasPersonal && !isPersonal) return "personal_end";
 
   return null;
 }
