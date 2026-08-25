@@ -11,7 +11,21 @@ import { createClient } from "@supabase/supabase-js";
  * The open log is closed only if it is genuinely still open: a task the person
  * already ended by hand must never be rewritten with a later end time.
  */
-export async function forceClockOut(userId: string, logId: number | null): Promise<void> {
+/**
+ * Why a session was ended by something other than the person themselves.
+ *
+ * Recorded on the row so the alert can say which it was. Without it every
+ * close reads as "clocked out", and being shut off for going quiet looks
+ * identical to finishing for the day — including the thank-you that follows,
+ * which is the wrong thing to send someone who was just cut off.
+ */
+export type AutoCloseReason = "idle" | "screen_unchanged" | "admin";
+
+export async function forceClockOut(
+  userId: string,
+  logId: number | null,
+  reason: AutoCloseReason
+): Promise<void> {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -37,9 +51,18 @@ export async function forceClockOut(userId: string, logId: number | null): Promi
     }
   }
 
+  // Written in the same update as clocked_in, so the database webhook that
+  // turns this row change into an alert sees the reason on the record it is
+  // already handed. A second write would arrive after the alert had gone.
   await supabase
     .from("sessions")
-    .update({ clocked_in: false, clock_out_time: now, active_task: null, updated_at: now })
+    .update({
+      clocked_in: false,
+      clock_out_time: now,
+      active_task: null,
+      updated_at: now,
+      auto_closed_reason: reason,
+    })
     .eq("user_id", userId);
 
   // Both markers cleared: whatever triggered this is finished, and the next

@@ -153,7 +153,7 @@ export async function checkStaticScreens(
     // unfairness this whole flow exists to avoid. They stay flagged for Toni
     // instead, which is visible without being punitive.
     if (Date.now() - warnedAt >= GRACE_MS && prof.telegram_chat_id) {
-      await forceClockOut(c.user_id, c.log_id);
+      await forceClockOut(c.user_id, c.log_id, "screen_unchanged");
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id as number | null,
         userId: c.user_id,

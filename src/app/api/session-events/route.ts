@@ -22,6 +22,15 @@ type SessionRow = {
   user_id?: string;
   clocked_in?: boolean;
   active_task?: { isBreak?: boolean } | null;
+  auto_closed_reason?: string | null;
+};
+
+/** How each automatic close reads in the alert. A close nobody chose should
+ *  never look like someone finishing their day. */
+const CLOSE_REASONS: Record<string, string> = {
+  idle: "no activity",
+  screen_unchanged: "unchanged screen activity",
+  admin: "by admin",
 };
 
 type WebhookPayload = {
@@ -111,9 +120,15 @@ export async function POST(request: Request) {
   //
   // The hour comes from the org's timezone, not the server's — a greeting that
   // says "good evening" to someone at breakfast is worse than none.
+  // Nobody is thanked for a session they did not end. "Today's effort went
+  // somewhere real, rest well" landing straight after "you have been clocked
+  // out" reads as mockery, however well meant.
+  const closedBy = payload.record?.auto_closed_reason ?? null;
+  const wasAutomatic = event === "clock_out" && Boolean(closedBy);
+
   let greeting: "sent" | "failed" | "unlinked" | null = null;
   let greetingText = "";
-  if (event === "clock_in" || event === "clock_out") {
+  if ((event === "clock_in" || event === "clock_out") && !wasAutomatic) {
     if (!chatId) {
       greeting = "unlinked";
     } else {
@@ -147,7 +162,14 @@ export async function POST(request: Request) {
   // Delivery is reported on this line rather than as a second message. Toni
   // asked to know when something reaches a VA privately, and one clock-in
   // producing two notifications would double the traffic for no extra fact.
-  const lines = [`${EVENTS[event]} <b>${esc(who)}</b> ${VERBS[event]} at ${time} ET.`];
+  // An automatic close says so in the same breath as the time, rather than
+  // reading exactly like someone finishing their day by choice.
+  const how = wasAutomatic
+    ? ` — automatically (${CLOSE_REASONS[closedBy as string] ?? closedBy})`
+    : "";
+  const lines = [
+    `${wasAutomatic ? "⚠️" : EVENTS[event]} <b>${esc(who)}</b> ${VERBS[event]}${how} at ${time} ET.`,
+  ];
   // The exact words, not just that something went out. The lines are random,
   // so "greeting sent" would leave no way to know what a given person read.
   if (greeting === "sent") lines.push(`Message sent: ${esc(greetingText)}`);

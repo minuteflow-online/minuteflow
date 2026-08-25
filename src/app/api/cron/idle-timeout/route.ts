@@ -2,6 +2,7 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
 import { notifyVaPrivately } from "@/lib/vaNotify";
 import { checkStaticScreens } from "@/lib/staticScreen";
+import { forceClockOut } from "@/lib/forceClockOut";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
 export const dynamic = "force-dynamic";
@@ -277,33 +278,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Still silent after the grace period — close the session.
+    //
+    // Through the shared helper rather than inline, so both automatic closes
+    // write the same fields and record why. The copy that used to live here
+    // did not set auto_closed_reason, which is what made a forced clock-out
+    // read exactly like someone finishing their day.
     if (Date.now() - graceStarted >= GRACE_MS) {
       const now = new Date().toISOString();
-
-      if (c.log_id) {
-        const { data: log } = await supabase
-          .from("time_logs")
-          .select("start_time, end_time")
-          .eq("id", c.log_id)
-          .single();
-        // Only close a log that is genuinely still open, so a task the VA
-        // already ended by hand is never rewritten.
-        if (log && !log.end_time) {
-          await supabase
-            .from("time_logs")
-            .update({
-              end_time: now,
-              duration_ms: new Date(now).getTime() - new Date(log.start_time as string).getTime(),
-            })
-            .eq("id", c.log_id);
-        }
-      }
-
-      await supabase
-        .from("sessions")
-        .update({ clocked_in: false, clock_out_time: now, active_task: null, updated_at: now })
-        .eq("user_id", c.user_id);
-      await supabase.from("profiles").update({ idle_warned_at: null }).eq("id", c.user_id);
+      await forceClockOut(c.user_id, c.log_id, "idle");
       closed.push(who);
 
       // Email is the record they keep; the DM is what they actually see in
