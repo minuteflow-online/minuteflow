@@ -21,6 +21,7 @@ export const dynamic = "force-dynamic";
 type SessionRow = {
   user_id?: string;
   clocked_in?: boolean;
+  clock_out_time?: string | null;
   active_task?: { isBreak?: boolean } | null;
   auto_closed_reason?: string | null;
 };
@@ -105,6 +106,16 @@ export async function POST(request: Request) {
       .single();
     who = prof?.full_name || prof?.username || "Someone";
     chatId = (prof?.telegram_chat_id as number | null) ?? null;
+
+    // A new session starts clean. Belt and braces alongside the freshness
+    // check above: clearing it here means the flag does not survive to be
+    // misread at all, rather than being caught after the fact.
+    //
+    // This write fires the webhook again, which is harmless — the second pass
+    // sees no clocked_in transition and classifies as nothing.
+    if (event === "clock_in" && payload.record?.auto_closed_reason) {
+      await admin.from("sessions").update({ auto_closed_reason: null }).eq("user_id", userId);
+    }
   }
 
   const now = new Date();
@@ -123,8 +134,18 @@ export async function POST(request: Request) {
   // Nobody is thanked for a session they did not end. "Today's effort went
   // somewhere real, rest well" landing straight after "you have been clocked
   // out" reads as mockery, however well meant.
+  //
+  // Only trusted when the close is recent. The flag sits on the session row
+  // until something overwrites it, so a forced close in the morning was still
+  // sitting there when Arianne finished her shift at noon — and her own
+  // clock-out was reported as automatic. A reason older than a couple of
+  // minutes describes some earlier close, not this one.
   const closedBy = payload.record?.auto_closed_reason ?? null;
-  const wasAutomatic = event === "clock_out" && Boolean(closedBy);
+  const closedAt = payload.record?.clock_out_time
+    ? new Date(payload.record.clock_out_time).getTime()
+    : null;
+  const reasonIsFresh = closedAt !== null && Date.now() - closedAt < 2 * 60 * 1000;
+  const wasAutomatic = event === "clock_out" && Boolean(closedBy) && reasonIsFresh;
 
   let greeting: "sent" | "failed" | "unlinked" | null = null;
   let greetingText = "";
