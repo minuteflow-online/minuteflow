@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Session, Profile, TimeLog } from "@/types/database";
 import { formatDuration } from "@/lib/utils";
+import { isOnBreak, isOnPersonal } from "@/lib/breakState";
 
 interface TeamMember {
   profile: Profile;
@@ -42,8 +43,8 @@ function getMemberStatus(
   session: Session | null
 ): "working" | "personal" | "resting" | "away" {
   if (!session || !session.clocked_in) return "away";
-  if (session.active_task?.isBreak) return "resting";
-  if (session.active_task?.category === "Personal") return "personal";
+  if (isOnBreak(session.active_task)) return "resting";
+  if (isOnPersonal(session.active_task)) return "personal";
   return "working";
 }
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import SessionBanner from "@/components/SessionBanner";
 import TaskEntryForm from "@/components/TaskEntryForm";
 import ProjectSidebar from "@/components/ProjectSidebar";
+import { isOnBreak } from "@/lib/breakState";
 import ActivityLog from "@/components/ActivityLog";
 import BudgetWidget from "@/components/BudgetWidget";
 import type { Profile, Session, TimeLog, TaskScreenshot } from "@/types/database";
@@ -83,8 +84,8 @@ export default function LoginAsClient({
   // Determine session state
   let sessionState: "idle" | "clocked-in" | "on-break" = "idle";
   if (!isStale && vaSession?.clocked_in && vaSession.active_task) {
-    const task = vaSession.active_task as { isBreak?: boolean };
-    sessionState = task.isBreak ? "on-break" : "clocked-in";
+    const task = vaSession.active_task as { isBreak?: boolean; category?: string };
+    sessionState = isOnBreak(task) ? "on-break" : "clocked-in";
   }
 
   // Stats

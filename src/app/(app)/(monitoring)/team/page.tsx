@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { isOnBreak, isOnPersonal } from "@/lib/breakState";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
 import AddRateModal from "@/components/AddRateModal";
 import {
@@ -317,12 +318,12 @@ export default function TeamPage() {
         currentTaskMeta = null;
       } else if (session?.clocked_in && session.active_task) {
         const task = session.active_task;
-        if (task.isBreak) {
+        if (isOnBreak(task)) {
           status = "on-break";
           currentTaskName = "On Break";
           currentTaskMeta = "";
         } else {
-          status = task.category === "Personal" ? "personal" : "working";
+          status = isOnPersonal(task) ? "personal" : "working";
           activeCategory = task.category || null;
           currentTaskName = task.task_name || null;
           const parts = [task.account, task.client_name].filter(Boolean);

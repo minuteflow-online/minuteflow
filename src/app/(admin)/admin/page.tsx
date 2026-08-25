@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { isOnBreak, isOnPersonal } from "@/lib/breakState";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import VaAccountAssignments from "@/components/VaAccountAssignments";
@@ -928,10 +929,10 @@ export default function AdminPage() {
       let currentTask = "No activity today";
 
       if (session?.clocked_in && session.active_task) {
-        if (session.active_task.isBreak) {
+        if (isOnBreak(session.active_task)) {
           status = "break";
           currentTask = "On Break";
-        } else if (session.active_task.category === "Personal") {
+        } else if (isOnPersonal(session.active_task)) {
           status = "personal";
           const parts = [session.active_task.task_name, session.active_task.account].filter(Boolean);
           currentTask = parts.join(" -- ") || "Personal";
