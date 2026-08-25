@@ -129,8 +129,13 @@ export function taskRowFor(
     review_required: Boolean(template.review_required),
     review_required_locked: Boolean(template.review_required),
     // Clock times on the template become a real block on that date, read on the
-    // org clock like every other schedule write.
-    start_date: startClock ? date : (template.start_date as string | null) ?? null,
+    // org clock like every other schedule write. Bare Start Date (no clock
+    // time) must NOT fall back to the template's own start_date — that field
+    // is the SAME fixed date on every occurrence the template ever produces,
+    // so every occurrence after the first was landing on the template's
+    // original start date in addition to its own due_date, showing up as a
+    // phantom duplicate stacked on day one of the series.
+    start_date: startClock ? date : null,
     start_time: startClock ? orgWallClockToUtc(date, startClock.slice(0, 5)) : null,
     end_time: endClock ? orgWallClockToUtc(date, endClock.slice(0, 5)) : null,
     assigned_by: template.assigned_by ?? null,
