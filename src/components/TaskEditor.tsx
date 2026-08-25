@@ -1040,6 +1040,30 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           }
         }
 
+        // Creating a brand-new task with "Save as a recurring template"
+        // checked doesn't also create a standalone task below — the template
+        // just created already generates its own real occurrences
+        // (recurringOccurrences.ts runs generateOccurrences() the moment it's
+        // saved), so saving the form a second time as a plain task produced a
+        // redundant extra row sitting right next to the template's own first
+        // occurrence: same name, same date, no recurring_template_id of its
+        // own, and no way for the list-collapse logic to know they were the
+        // same thing. Editing an EXISTING task that also gets linked to a
+        // template is unaffected — that task already had its own life before
+        // the checkbox was ticked, so it keeps saving normally.
+        if (!isEditing && alsoSaveAsTemplate) {
+          if (templateIdToLink) await flushPendingFiles(templateIdToLink);
+          // To-dos are per-occurrence (task_todos keys off assigned_tasks.id),
+          // and there's no standalone task here to attach them to — a
+          // template has no to-do list of its own. Say so rather than
+          // silently dropping whatever was typed.
+          if (pendingTodoTexts.length > 0) {
+            showToast("error", "To-dos aren't saved on a recurring template — add them once the first occurrence exists.");
+          }
+          onSaved({ id: 0, spawned_template_id: templateIdToLink });
+          return;
+        }
+
         const body: Record<string, unknown> = {
           account: account || null,
           project: project || null,
