@@ -371,6 +371,12 @@ export default function ProductivityCalendarPage() {
   // hours grid at all is a category error, not just noise — on by default so
   // the grid reads sanely without having to discover the toggle first.
   const [excludeOutputBased, setExcludeOutputBased] = useState(true);
+  // Manual per-VA override on top of the work-type filter above — everyone
+  // shown by default, individuals dropped by unchecking them (or narrowed to
+  // a specific few via None + re-checking). Ids, not names, so a rename
+  // doesn't silently un-exclude anyone.
+  const [excludedVaIds, setExcludedVaIds] = useState<string[]>([]);
+  const [showVaFilterPicker, setShowVaFilterPicker] = useState(false);
   const [expandedUnscheduledIds, setExpandedUnscheduledIds] = useState<Set<number>>(new Set());
   const toggleUnscheduledExpand = (id: number) => {
     setExpandedUnscheduledIds((prev) => {
@@ -897,7 +903,8 @@ export default function ProductivityCalendarPage() {
   // actually viewing a Day/Week), never by paging Month's own arrows alone.
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/accounts/usage?date=${selectedDate}&excludeOutputBased=${excludeOutputBased}`)
+    const excludeParam = excludedVaIds.length > 0 ? `&excludeVaIds=${excludedVaIds.join(",")}` : "";
+    fetch(`/api/accounts/usage?date=${selectedDate}&excludeOutputBased=${excludeOutputBased}${excludeParam}`)
       .then((r) => r.json())
       .then((d) => {
         if (!cancelled) {
@@ -914,7 +921,8 @@ export default function ProductivityCalendarPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedDate, excludeOutputBased]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, excludeOutputBased, excludedVaIds.join(",")]);
   const weekLabel = useMemo(() => {
     const start = weekGrid[0];
     const end = weekGrid[6];
@@ -2118,15 +2126,71 @@ export default function ProductivityCalendarPage() {
                   toggle, and only shown once expanded, so it isn't reachable
                   without the numbers it affects being visible. */}
               {!accountBudgetsCollapsed && (
-                <label className="flex shrink-0 items-center gap-1.5 text-[10px] text-stone cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={excludeOutputBased}
-                    onChange={(e) => setExcludeOutputBased(e.target.checked)}
-                    className="cursor-pointer"
-                  />
-                  Hide Output Based
-                </label>
+                <div className="flex shrink-0 items-center gap-3">
+                  <label className="flex items-center gap-1.5 text-[10px] text-stone cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={excludeOutputBased}
+                      onChange={(e) => setExcludeOutputBased(e.target.checked)}
+                      className="cursor-pointer"
+                    />
+                    Hide Output Based
+                  </label>
+                  {/* Manual override on top of Hide Output Based — for garbage
+                      data (duplicate rows, a bad import) that isn't actually
+                      Output Based but still needs to drop out of the totals
+                      until it's fixed at the source. */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowVaFilterPicker((v) => !v)}
+                      className={`flex items-center gap-1 rounded-lg border border-sand px-2 py-[3px] text-[10px] font-semibold transition-colors ${
+                        excludedVaIds.length > 0 ? "bg-terracotta-soft text-terracotta" : "bg-white text-stone hover:bg-parchment"
+                      }`}
+                    >
+                      {excludedVaIds.length > 0 ? `VAs (${excludedVaIds.length} hidden)` : "Filter VAs"}
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3 w-3">
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                    {showVaFilterPicker && (
+                      <>
+                        <div className="fixed inset-0 z-20" onClick={() => setShowVaFilterPicker(false)} />
+                        <div className="absolute right-0 z-30 mt-2 w-60 rounded-xl border border-sand bg-white shadow-lg">
+                          <div className="flex items-center justify-between border-b border-sand px-3 py-1.5">
+                            <button type="button" onClick={() => setExcludedVaIds([])} className="text-[10px] font-semibold text-terracotta hover:underline">
+                              All
+                            </button>
+                            <span className="text-[10px] text-stone">unchecked = hidden</span>
+                            <button
+                              type="button"
+                              onClick={() => setExcludedVaIds(teamMembers.map((m) => m.id))}
+                              className="text-[10px] font-semibold text-stone hover:underline"
+                            >
+                              None
+                            </button>
+                          </div>
+                          <div className="max-h-56 overflow-y-auto py-1">
+                            {teamMembers.map((m) => (
+                              <label key={m.id} className="flex cursor-pointer items-center gap-2 px-3 py-1 hover:bg-parchment">
+                                <input
+                                  type="checkbox"
+                                  checked={!excludedVaIds.includes(m.id)}
+                                  onChange={(e) =>
+                                    setExcludedVaIds((prev) =>
+                                      e.target.checked ? prev.filter((id) => id !== m.id) : [...prev, m.id]
+                                    )
+                                  }
+                                />
+                                <span className="text-[12px] text-espresso">{m.full_name || m.username}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
             {accountBudgetsCollapsed && (

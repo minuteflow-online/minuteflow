@@ -93,6 +93,14 @@ export async function GET(request: Request) {
   // one fixed-pay task keeps their hourly work counted; only the fixed-pay
   // task itself drops out.
   const excludeOutputBased = searchParams.get("excludeOutputBased") === "true";
+  // Specific VAs to drop, by id — a deliberate, manual override on top of the
+  // work-type filter above. A VA on this list disappears from every number
+  // (account totals, by_va, personal totals), same "skip the whole occurrence
+  // rather than just hide a row" rule excludeOutputBased follows, so a task
+  // shared with someone NOT excluded still counts that person's full share.
+  const excludeVaIds = new Set(
+    (searchParams.get("excludeVaIds") ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+  );
 
   const week = weekBounds(date);
   const month = monthBounds(date);
@@ -177,6 +185,20 @@ export async function GET(request: Request) {
     return out;
   };
 
+  // Strips excluded VAs out of an occurrence's assignee list. Returns null —
+  // "skip this occurrence entirely, including the account total" — only when
+  // EVERY assignee got excluded; a shared task where one of two assignees is
+  // excluded still counts its full length under the one who wasn't, and
+  // toward the account total, same as before. An originally-unclaimed row
+  // (vaIds already empty) is untouched either way — there's no assignee for
+  // this list to exclude.
+  function applyVaExclusion(vaIds: string[]): string[] | null {
+    if (excludeVaIds.size === 0) return vaIds;
+    const filtered = vaIds.filter((id) => !excludeVaIds.has(id));
+    if (vaIds.length > 0 && filtered.length === 0) return null;
+    return filtered;
+  }
+
   // One row can bill several days (a multi-day span) or just its one anchor
   // day. Capped at a year of iteration so a malformed end_date can't spin —
   // nothing legitimate spans that long.
@@ -212,7 +234,9 @@ export async function GET(request: Request) {
   for (const t of assigned ?? []) {
     const minutesPerOccurrence = t.start_time && t.end_time ? minutesBetween(t.start_time, t.end_time) : t.planned_minutes ?? 0;
     if (minutesPerOccurrence <= 0) continue;
-    const vaIds = (t.assigned_task_assignees ?? []).map((a: { va_id: string }) => a.va_id).filter(Boolean);
+    const rawVaIds = (t.assigned_task_assignees ?? []).map((a: { va_id: string }) => a.va_id).filter(Boolean);
+    const vaIds = applyVaExclusion(rawVaIds);
+    if (vaIds === null) continue;
     billOccurrence(t.account, minutesPerOccurrence, t.start_date, t.end_date, t.due_date, vaIds);
   }
 
@@ -221,7 +245,9 @@ export async function GET(request: Request) {
       const minutesPerOccurrence = t.planned_minutes ?? 0;
       // Fixed-pay tasks carry no start_time/end_time, so this is always the
       // duration-only path — same per-day billing rule as assigned_tasks' span case.
-      const vaIds = t.claimed_by ? [t.claimed_by] : [];
+      const rawVaIds = t.claimed_by ? [t.claimed_by] : [];
+      const vaIds = applyVaExclusion(rawVaIds);
+      if (vaIds === null) continue;
       billOccurrence(t.account, minutesPerOccurrence, t.start_date, t.end_date, t.due_date, vaIds);
     }
   }
