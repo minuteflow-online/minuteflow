@@ -393,3 +393,47 @@ export function formatMinutesInput(minutes: number): string {
   if (hrs === 0) return `${mins}m`;
   return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`;
 }
+
+// Recurring templates now pre-generate a rolling window of real rows (see
+// recurringOccurrences.ts) so the Calendar can show a task on every date it
+// actually falls on. List/table views (Subtasks, Task Assignments) read the
+// exact same rows, but a flat list has no "date" axis to spread them across —
+// every future occurrence just piles up as another row for the same task,
+// which is what made a plain recurring series look like duplicated/broken
+// data (and is what led to occurrences being bulk-archived/deleted by hand).
+//
+// This collapses each recurring series down to the one occurrence that's
+// actually actionable right now: the earliest one not yet finished. Once
+// today's is completed, the next one takes its place automatically — nothing
+// to prune by hand. Non-recurring tasks and single-occurrence series pass
+// through untouched. The Calendar does NOT use this — it keeps showing every
+// real row on its own date, which is the whole point of pre-generating them.
+const SERIES_DONE_STATUSES = new Set(["completed", "paid", "cancelled"]);
+
+export function collapseRecurringSeries<
+  T extends { recurring_template_id?: string | number | null; due_date?: string | null; status?: string | null }
+>(tasks: T[]): T[] {
+  const groups = new Map<string, T[]>();
+  const out: T[] = [];
+  for (const task of tasks) {
+    const templateId = task.recurring_template_id;
+    if (!templateId) {
+      out.push(task);
+      continue;
+    }
+    const key = String(templateId);
+    const group = groups.get(key);
+    if (group) group.push(task);
+    else groups.set(key, [task]);
+  }
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      out.push(group[0]);
+      continue;
+    }
+    const sorted = [...group].sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? ""));
+    const notDone = sorted.filter((t) => !SERIES_DONE_STATUSES.has(t.status ?? ""));
+    out.push(notDone[0] ?? sorted[sorted.length - 1]);
+  }
+  return out;
+}

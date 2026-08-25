@@ -9,6 +9,7 @@ import ProjectFiles from "@/components/ProjectFiles";
 import ObjectiveOverview from "@/components/ObjectiveOverview";
 import OperationTileGrid, { type OperationTileKey } from "@/components/OperationTileGrid";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
+import { collapseRecurringSeries } from "@/lib/taskSchedule";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
 
 interface VAProjectsTabProps {
@@ -35,6 +36,7 @@ export interface SubtaskRow {
   created_by?: string | null;
   created_by_profile?: { id: string; full_name: string; username: string } | null;
   review_required?: boolean;
+  recurring_template_id?: string | null;
   assigned_task_assignees: Array<{
     va_id: string;
     profiles?: { id: string; full_name: string; username: string } | null;
@@ -128,6 +130,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [viewOperation, setViewOperation] = useState<Project | null>(null);
   const [viewOperationSubtasks, setViewOperationSubtasks] = useState<SubtaskRow[]>([]);
   const [viewOperationSubtasksLoading, setViewOperationSubtasksLoading] = useState(false);
+  const visibleViewOperationSubtasks = useMemo(
+    () => collapseRecurringSeries(viewOperationSubtasks),
+    [viewOperationSubtasks]
+  );
   const [objectiveOptions, setObjectiveOptions] = useState<Project[]>([]);
   // Reverse of objectiveOptions: on the Objective tab, the Operations that link
   // to each objective (read-only here — edited at their origin in Operations).
@@ -734,6 +740,12 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setCreateError(null);
   };
 
+  // Every recurring series collapsed to its one actionable occurrence before
+  // any of this gets counted — otherwise a monthly template pre-generated 60
+  // days ahead reads as "60 subtasks, 0 completed" instead of the 1 real
+  // thing there is to do right now. See collapseRecurringSeries.
+  const visibleSubtasks = useMemo(() => collapseRecurringSeries(subtasks), [subtasks]);
+
   // "Where they are" — per assigned VA, completed/total on the selected node's own
   // subtasks. Scoped to this node only (not nested sub-objectives): each sub-objective
   // is browsed as its own node with its own subtasks, so this already works per
@@ -742,24 +754,24 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     return editVaIds
       .map((vaId) => {
         const profile = activeProfiles.find((p) => p.id === vaId);
-        const tasks = subtasks.filter(
+        const tasks = visibleSubtasks.filter(
           (t) => t.status !== "cancelled" && (t.assigned_task_assignees ?? []).some((a) => a.va_id === vaId)
         );
         const completed = tasks.filter((t) => DONE_STATUSES.has(t.status)).length;
         return { vaId, name: profile ? profileLabel(profile) : vaId, total: tasks.length, completed };
       })
       .filter((p) => p.total > 0);
-  }, [editVaIds, activeProfiles, subtasks]);
+  }, [editVaIds, activeProfiles, visibleSubtasks]);
 
   // Whole-project completion, alongside the per-VA breakdown above. Computed
   // straight off the subtask list itself rather than summed from vaProgress —
   // a subtask with more than one assignee would otherwise get counted once
   // per VA and inflate the total past the project's actual subtask count.
   const projectProgress = useMemo(() => {
-    const tasks = subtasks.filter((t) => t.status !== "cancelled");
+    const tasks = visibleSubtasks.filter((t) => t.status !== "cancelled");
     const completed = tasks.filter((t) => DONE_STATUSES.has(t.status)).length;
     return { total: tasks.length, completed };
-  }, [subtasks]);
+  }, [visibleSubtasks]);
 
   const renderNode = (project: Project, depth: number) => {
     const children = childrenByParent.get(project.id) ?? [];
@@ -949,7 +961,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
         {showSubtasks && (
         <>
-        {!subtasksLoading && subtaskView === "list" && subtasks.length === 0 && (
+        {!subtasksLoading && subtaskView === "list" && visibleSubtasks.length === 0 && (
           <p className="text-[12px] text-stone/70">No subtasks yet. Add one below.</p>
         )}
 
@@ -959,7 +971,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
         {subtaskView === "board" && (
           <SubtaskBoardView
-            subtasks={subtasks}
+            subtasks={visibleSubtasks}
             editingSubId={editingSubId}
             onOpenEdit={openSubtaskEdit}
             onStatusChange={handleBoardStatusChange}
@@ -1036,9 +1048,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           );
         })()}
 
-        {subtaskView === "list" && subtasks.length > 0 && (
+        {subtaskView === "list" && visibleSubtasks.length > 0 && (
           <div className="space-y-1.5">
-            {subtasks.map((sub) => {
+            {visibleSubtasks.map((sub) => {
               // Shared with SubtaskBoardView.tsx (src/lib/subtaskDisplay.ts) —
               // keep the two views in sync instead of drifting.
               const names = subtaskAssigneeNames(sub.assigned_task_assignees, activeProfiles);
@@ -1764,7 +1776,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 activeTile === null ? (
                   <OperationTileGrid
                     recurringCount={recurringTemplates.length}
-                    subtaskCount={subtasks.length}
+                    subtaskCount={visibleSubtasks.length}
                     onSelect={setActiveTile}
                   />
                 ) : (
@@ -1895,15 +1907,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
             <div className="border-t border-sand pt-3">
               <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-walnut">
-                Subtasks{viewOperationSubtasks.length > 0 ? ` (${viewOperationSubtasks.length})` : ""}
+                Subtasks{visibleViewOperationSubtasks.length > 0 ? ` (${visibleViewOperationSubtasks.length})` : ""}
               </p>
               {viewOperationSubtasksLoading ? (
                 <p className="text-[12px] text-stone">Loading…</p>
-              ) : viewOperationSubtasks.length === 0 ? (
+              ) : visibleViewOperationSubtasks.length === 0 ? (
                 <p className="text-[12px] text-stone italic">No subtasks.</p>
               ) : (
                 <div className="space-y-1.5">
-                  {viewOperationSubtasks.map((st) => (
+                  {visibleViewOperationSubtasks.map((st) => (
                     <div key={st.id} className="flex items-start justify-between gap-2 rounded-lg border border-sand bg-cream px-3 py-2">
                       <span className="text-[12px] text-espresso leading-tight">{st.task_name}</span>
                       <StatusBadge status={st.status} />
