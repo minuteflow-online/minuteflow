@@ -59,7 +59,7 @@ export async function GET(request: Request) {
     .select(
       "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, " +
         "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
-        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
+        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
     )
     // The whole thread, not just submissions: revision notes, approvals and
     // added notes all belong in the timeline alongside the work.
@@ -94,6 +94,7 @@ export async function GET(request: Request) {
       category: string | null;
       review_required: boolean | null;
       assigned_by: string | null;
+      fixed_pay_task_id: number | null;
       assigned_by_profile?: { id: string; full_name: string | null; username: string | null } | null;
       due_date: string | null;
       due_time: string | null;
@@ -310,6 +311,9 @@ export async function GET(request: Request) {
             category: task.category,
             review_required: task.review_required,
             assigned_by: task.assigned_by,
+            // Distinguishes an output-based task (mirrored from fixed_pay_tasks)
+            // from a regular time-based one, for the Submissions work-type filter.
+            is_output_based: task.fixed_pay_task_id != null,
             assigned_by_name:
               task.assigned_by_profile?.full_name ?? task.assigned_by_profile?.username ?? null,
             due_date: task.due_date,

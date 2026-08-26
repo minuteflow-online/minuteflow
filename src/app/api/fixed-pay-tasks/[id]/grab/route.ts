@@ -56,7 +56,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const { data: task, error: taskError } = await admin
     .from("fixed_pay_tasks")
-    .select("id, task_name, account, category, rate, is_active, archived_at, deleted_at, claimed_by, claimed_at, created_by, created_at, updated_at")
+    .select("id, task_name, account, category, project_id, task_detail, task_notes, due_date, review_required, rate, is_active, archived_at, deleted_at, claimed_by, claimed_at, created_by, created_at, updated_at")
     .eq("id", taskId)
     .single();
 
@@ -92,14 +92,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .insert({
       account: task.account,
       project: task.category,
+      project_id: task.project_id,
+      category: task.category,
       task_name: task.task_name,
-      task_detail: null,
-      task_notes: null,
-      due_date: null,
+      task_detail: task.task_detail,
+      task_notes: task.task_notes,
+      due_date: task.due_date,
+      review_required: task.review_required,
       created_by: userId,
       fixed_pay_task_id: task.id,
     })
-    .select("id, account, project, task_name, task_detail, task_notes, due_date, created_by, fixed_pay_task_id, created_at, updated_at")
+    .select("id, account, project, project_id, category, task_name, task_detail, task_notes, due_date, review_required, created_by, fixed_pay_task_id, created_at, updated_at")
     .single();
 
   if (assignedTaskError || !assignedTask) {
