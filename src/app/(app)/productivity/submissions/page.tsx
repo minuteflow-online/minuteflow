@@ -40,6 +40,7 @@ type FeedItem = {
     review_required: boolean | null;
     assigned_by: string | null;
     assigned_by_name: string | null;
+    is_output_based: boolean;
     due_date: string | null;
     due_time: string | null;
     end_date: string | null;
@@ -96,6 +97,11 @@ const STATUS_OPTIONS = [
   { value: "approved", label: "Approved" },
   { value: "auto_approved", label: "Auto approved" },
   { value: "completed", label: "Completed" },
+];
+
+const WORK_TYPE_OPTIONS = [
+  { value: "time_based", label: "Time-based" },
+  { value: "output_based", label: "Output-based" },
 ];
 
 const SCOPE_OPTIONS: Array<{ value: SubmissionScopeFilter; label: string }> = [
@@ -200,10 +206,15 @@ export default function SubmissionsPage() {
   const [vaFilter, setVaFilter] = useState<Set<string>>(new Set());
   const [scopeFilter, setScopeFilter] = useState<Set<string>>(new Set());
   const [projectFilter, setProjectFilter] = useState<Set<string>>(new Set());
-  // Defaults to Task: Communication/Planning/Collaboration work auto-completes
-  // on submit and isn't something anyone reviews, so it stays out of the way
-  // until deliberately asked for.
-  const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set(["Task"]));
+  const [workTypeFilter, setWorkTypeFilter] = useState<Set<string>>(new Set());
+  // Was defaulted to Task-only, meaning to hide Communication/Planning/
+  // Collaboration noise (those auto-complete on submit). But an empty/null
+  // category -- e.g. an output-based task's mirrored row, which had a real bug
+  // dropping its category entirely -- doesn't match "Task" either, so it
+  // silently vanished the same way the noise was meant to. Defaults to "show
+  // everything" now that the real bug is fixed at the source; the noisy
+  // categories are one click away in this same filter if they get in the way.
+  const [categoryFilter, setCategoryFilter] = useState<Set<string>>(new Set());
   const [accountFilter, setAccountFilter] = useState<Set<string>>(new Set());
   const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
 
@@ -535,6 +546,12 @@ This cannot be undone.`
       rows = rows.filter((r) => categoryFilter.has((r.task?.category ?? "").trim()));
     }
 
+    if (workTypeFilter.size > 0) {
+      rows = rows.filter((r) =>
+        workTypeFilter.has(r.task?.is_output_based ? "output_based" : "time_based")
+      );
+    }
+
     if (accountFilter.size > 0) {
       rows = rows.filter((r) => r.task?.account && accountFilter.has(r.task.account));
     }
@@ -550,7 +567,7 @@ This cannot be undone.`
     }
 
     return rows;
-  }, [items, vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState]);
+  }, [items, vaFilter, scopeFilter, projectFilter, workTypeFilter, categoryFilter, accountFilter, clientFilter, accountsByClient, ownerMode, currentUserId, assignedByFilter, statusFilter, reviewState]);
 
   // Calendar plots every submission on its own date — a resubmission genuinely
   // happened on its own day, so it gets its own square.
@@ -704,6 +721,13 @@ This cannot be undone.`
           selected={scopeFilter}
           onChange={setScopeFilter}
           options={SCOPE_OPTIONS}
+        />
+
+        <MultiSelectFilter
+          allLabel="All task types"
+          selected={workTypeFilter}
+          onChange={setWorkTypeFilter}
+          options={WORK_TYPE_OPTIONS}
         />
 
         <MultiSelectFilter

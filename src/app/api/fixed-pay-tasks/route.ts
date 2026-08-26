@@ -234,6 +234,7 @@ export async function POST(request: Request) {
       task_name: taskName,
       account: normalizeText(body.account),
       category: normalizeText(body.category),
+      review_required: Boolean(body.review_required),
       project: normalizeText(body.project),
       project_id: normalizeText(body.project_id),
       rate,
@@ -271,10 +272,13 @@ export async function POST(request: Request) {
         // Real objective now that fixed_pay_tasks carries one; category was
         // standing in for it before the column existed.
         project: data.project ?? data.category,
+        project_id: data.project_id,
+        category: data.category,
         task_name: data.task_name,
-        task_detail: null,
-        task_notes: null,
-        due_date: null,
+        task_detail: data.task_detail,
+        task_notes: data.task_notes,
+        due_date: data.due_date,
+        review_required: data.review_required,
         created_by: userId,
         fixed_pay_task_id: data.id,
       })

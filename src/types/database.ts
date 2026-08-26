@@ -650,6 +650,10 @@ export interface AssignedTask {
   assigned_by: string | null;
   instructions: string | null;
   instructions_locked: boolean;
+  /** Was missing from this interface even though it's a real column — a
+   *  contributing factor in a bug where output-based tasks silently dropped
+   *  their category when mirrored from fixed_pay_tasks. */
+  category: string | null;
   fixed_pay_task_id: number | null;
   recurring_template_id: string | null;
   /** The template THIS task spawned via "Also save as a recurring template"

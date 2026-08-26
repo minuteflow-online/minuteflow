@@ -1195,6 +1195,11 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           account: account || null,
           project: project || null,
           category: category || null,
+          // Not user-choosable here — the form shows a fixed "Yes" badge for
+          // Output Based tasks (pay only counts once approved), unlike the
+          // interactive toggle time-based tasks get. reviewRequired state is
+          // never touched in this mode, so deriving from it would send false.
+          review_required: true,
           rate: Number(rate),
           start_date: startDate || null,
           due_date: dueDate || null,

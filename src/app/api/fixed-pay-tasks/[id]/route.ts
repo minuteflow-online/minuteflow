@@ -228,7 +228,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const nextArchivedAt = hasArchivedAt ? normalizeTimestamp(body.archived_at) : undefined;
   const nextDeletedAt = hasDeletedAt ? normalizeTimestamp(body.deleted_at) : undefined;
   let currentTaskForAssignment:
-    | { claimed_by: string | null; task_name: string | null; account: string | null; category: string | null; project: string | null }
+    | {
+        claimed_by: string | null;
+        task_name: string | null;
+        account: string | null;
+        category: string | null;
+        project: string | null;
+        project_id: string | null;
+        task_detail: string | null;
+        task_notes: string | null;
+        due_date: string | null;
+        review_required: boolean | null;
+      }
     | null = null;
 
   if ("task_name" in body) {
@@ -250,6 +261,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if ("link" in body) updates.link = normalizeText(body.link);
   if ("instructions" in body) updates.instructions = normalizeText(body.instructions);
   if ("instructions_locked" in body) updates.instructions_locked = Boolean(body.instructions_locked);
+  if ("review_required" in body) updates.review_required = Boolean(body.review_required);
   if ("start_date" in body) updates.start_date = normalizeDate(body.start_date);
   if ("due_date" in body) updates.due_date = normalizeDate(body.due_date);
   if ("end_date" in body) updates.end_date = normalizeDate(body.end_date);
@@ -301,7 +313,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (nextAssignedTo) {
     const { data: currentTask, error: currentTaskError } = await admin
       .from("fixed_pay_tasks")
-      .select("claimed_by, task_name, account, category, project")
+      .select("claimed_by, task_name, account, category, project, project_id, task_detail, task_notes, due_date, review_required")
       .eq("id", taskId)
       .single();
 
@@ -344,6 +356,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       account: data.account,
       category: data.category,
       project: data.project,
+      project_id: data.project_id,
+      task_detail: data.task_detail,
+      task_notes: data.task_notes,
+      due_date: data.due_date,
+      review_required: data.review_required,
     };
 
     const { data: assignedTask, error: assignedTaskError } = await admin
@@ -351,15 +368,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       .insert({
         account: taskForAssignment.account,
         project: taskForAssignment.project ?? taskForAssignment.category,
+        project_id: taskForAssignment.project_id,
+        category: taskForAssignment.category,
         task_name: taskForAssignment.task_name,
-        task_detail: null,
-        task_notes: null,
-        due_date: null,
+        task_detail: taskForAssignment.task_detail,
+        task_notes: taskForAssignment.task_notes,
+        due_date: taskForAssignment.due_date,
+        review_required: taskForAssignment.review_required,
         created_by: auth.userId,
         assigned_by: auth.userId,
         fixed_pay_task_id: taskId,
       })
-      .select("id, account, project, task_name, task_detail, task_notes, due_date, created_by, fixed_pay_task_id, created_at, updated_at")
+      .select("id, account, project, project_id, category, task_name, task_detail, task_notes, due_date, review_required, created_by, fixed_pay_task_id, created_at, updated_at")
       .single();
 
     if (assignedTaskError || !assignedTask) {
