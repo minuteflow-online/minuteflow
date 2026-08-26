@@ -1014,8 +1014,12 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ id: existingTemplateId, ...templatePayload }),
             });
-            if (res.ok) showToast("success", "Recurring template updated");
-            else showToast("error", "Task saved, but the recurring template failed to update.");
+            if (res.ok) {
+              showToast("success", "Recurring template updated");
+            } else {
+              const data = await res.json().catch(() => ({}));
+              showToast("error", data.error ? `Task saved, but: ${data.error}` : "Task saved, but the recurring template failed to update.");
+            }
           } else {
             const res = await fetch("/api/recurring-task-templates", {
               method: "POST",
