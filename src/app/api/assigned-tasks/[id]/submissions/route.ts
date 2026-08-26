@@ -8,6 +8,7 @@ import {
 } from "@/lib/submissions";
 import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled, esc, mention } from "@/lib/telegram";
 import { reviewLinks } from "@/lib/reviewLinks";
+import { notifyRecipients } from "@/lib/notifyRecipients";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -410,6 +411,19 @@ export async function POST(request: Request, { params }: RouteContext) {
   //
   // Best-effort: the submission is already committed and must not fail on a
   // Telegram problem.
+  // Role-based routing: submissions notify the Founder (Toni), in-app + Telegram.
+  if (messageType === "submission") {
+    const { data: sProf } = await admin.from("profiles").select("full_name, username").eq("id", user.id).single();
+    const submitter = sProf?.full_name || sProf?.username || "A VA";
+    await notifyRecipients({
+      roles: ["founder"],
+      actorId: user.id,
+      content: `${submitter} submitted: ${task.task_name ?? "a task"}`,
+      telegramMessage: `📤 <b>New submission</b> from ${esc(submitter)}\n\nTask: ${esc(task.task_name ?? "a task")}`,
+      topic: "submissions",
+    });
+  }
+
   if (messageType === "submission" && telegramEnabled("submissions")) {
     const { data: prof } = await admin
       .from("profiles")

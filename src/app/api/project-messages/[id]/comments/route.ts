@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { canAccessProject, serviceClient } from "@/lib/projectAccess";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
+import { notifyMentions } from "@/lib/notifyMentions";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +36,7 @@ export async function POST(request: Request, { params }: RouteContext) {
   const supabase = serviceClient();
   const { data: message } = await supabase
     .from("project_messages")
-    .select("id, project_id")
+    .select("id, project_id, title")
     .eq("id", messageId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -52,6 +53,15 @@ export async function POST(request: Request, { params }: RouteContext) {
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 400 });
+
+  const author = (Array.isArray(data.author) ? data.author[0] : data.author) as { full_name?: string | null; username?: string | null } | null;
+  await notifyMentions({
+    text: content,
+    senderId: user.id,
+    senderName: author?.full_name || author?.username || "Someone",
+    context: `“${message.title ?? "a thread"}”`,
+  });
+
   return Response.json({ comment: data }, { status: 201 });
 }
 

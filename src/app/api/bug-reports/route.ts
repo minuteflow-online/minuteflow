@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canReviewBugReports } from "@/lib/financialAccess";
 import { NextRequest } from "next/server";
 import { sendTelegram, telegramEnabled, esc, mention } from "@/lib/telegram";
+import { notifyRecipients } from "@/lib/notifyRecipients";
 import { sendDriveFilesToTelegram } from "@/lib/driveFetch";
 
 export const dynamic = "force-dynamic";
@@ -89,6 +90,23 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });
+
+  // Role-based routing: bugs and ideas notify IT (Neil) and the Founder (Toni),
+  // in-app (bell) + Telegram DM. Best-effort; the report is already saved.
+  {
+    const label = reportType === "feature" ? "idea" : "bug";
+    const emoji = reportType === "feature" ? "💡" : "🐞";
+    const from = profile?.full_name || profile?.username || "Someone";
+    await notifyRecipients({
+      roles: ["founder"],
+      departments: ["IT"],
+      actorId: user.id,
+      content: `${from} submitted a ${label}: ${title.trim()}`,
+      telegramMessage: `${emoji} <b>New ${label}</b> from ${esc(from)}\n\n${esc(title.trim())}`,
+      topic: "bugs",
+    });
+  }
+
   // Best-effort ping — the report is already saved, so a send failure is not
   // worth surfacing to the VA who filed it.
   if (telegramEnabled("bugs")) {

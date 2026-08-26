@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from "react";
 import { signOut } from "@/app/actions/auth";
 import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
+import NotificationBell from "@/components/NotificationBell";
 import AvatarUpload from "@/components/AvatarUpload";
 import ReportIssueModal, { BugIcon } from "@/components/ReportIssueModal";
 
@@ -504,6 +505,8 @@ export default function TopNav({ user }: TopNavProps) {
                 </>
               )}
             </div>
+
+            <NotificationBell />
           </div>
         </div>
       </header>

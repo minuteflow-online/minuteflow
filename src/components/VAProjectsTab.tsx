@@ -7,7 +7,6 @@ import SubtaskBoardView from "@/components/SubtaskBoardView";
 import ProjectMessageBoard from "@/components/ProjectMessageBoard";
 import ProjectFiles from "@/components/ProjectFiles";
 import ObjectiveOverview from "@/components/ObjectiveOverview";
-import OperationTileGrid, { type OperationTileKey } from "@/components/OperationTileGrid";
 import { assigneeNames as subtaskAssigneeNames } from "@/lib/subtaskDisplay";
 import { collapseRecurringSeries } from "@/lib/taskSchedule";
 import type { Profile, Project, ProjectKind, RecurringTaskTemplate } from "@/types/database";
@@ -122,6 +121,33 @@ function StatusBadge({ status }: { status: string }) {
 
 const KIND_LABEL: Record<ProjectKind, string> = { objective: "Objective", operation: "Operation" };
 
+// Order a flat project list parent→child and indent sub-items with a ↳ marker,
+// so every objective/operation dropdown shows its hierarchy. Items whose parent
+// isn't in the list are treated as roots.
+function toHierOptions(list: Project[]): { id: string; label: string }[] {
+  const ids = new Set(list.map((p) => p.id));
+  const byParent = new Map<string, Project[]>();
+  const roots: Project[] = [];
+  for (const p of list) {
+    const parent = p.parent_project_id && ids.has(p.parent_project_id) ? p.parent_project_id : null;
+    if (parent) {
+      if (!byParent.has(parent)) byParent.set(parent, []);
+      byParent.get(parent)!.push(p);
+    } else {
+      roots.push(p);
+    }
+  }
+  const out: { id: string; label: string }[] = [];
+  const walk = (nodes: Project[], depth: number) => {
+    for (const p of nodes) {
+      out.push({ id: p.id, label: depth === 0 ? p.name : `${"   ".repeat(depth)}↳ ${p.name}` });
+      walk(byParent.get(p.id) ?? [], depth + 1);
+    }
+  };
+  walk(roots, 0);
+  return out;
+}
+
 // Project-level status (distinct from the Active/Inactive toggle and from subtask status).
 const PROJECT_STATUS_OPTIONS: { value: string; label: string; cls: string }[] = [
   { value: "planning", label: "Planning", cls: "bg-slate-blue-soft text-slate-blue border-slate-blue/20" },
@@ -162,15 +188,25 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [showDetails, setShowDetails] = useState(false);
   // Subtasks card collapsible too (open by default), matching the Details/Docs cards.
   const [showSubtasks, setShowSubtasks] = useState(true);
+  // Search box under "New" that filters the left list by name (self or descendant).
+  const [listSearch, setListSearch] = useState("");
+  // Bumped after a subtask is created so the scoped dashboard re-fetches.
+  const [dashboardRefresh, setDashboardRefresh] = useState(0);
+  // Tab for the inside-a-project view (shared box with tabs).
+  const [scopedTab, setScopedTab] = useState<"board" | "details" | "subtasks" | "overview" | "docs">("board");
+  // Landing overview (nothing selected) is also tab-based — one big box instead
+  // of the 4-card grid, so each section gets room.
+  const [landingTab, setLandingTab] = useState<"board" | "overview" | "docs" | "subtasks">("board");
+  // Add-subtask mode — time-based (hourly) or output-based (fixed pay).
+  const [addSubtaskMode, setAddSubtaskMode] = useState<"time_based" | "output_based">("time_based");
   // Per-VA "Where They Are" breakdown, collapsed by default — Overall Progress
   // above it already gives the at-a-glance number; this saves the vertical
   // space until someone actually wants the per-VA detail (per Toni).
   const [showVaProgress, setShowVaProgress] = useState(false);
-  const [subtaskView, setSubtaskView] = useState<"list" | "board">("list");
+  const [subtaskView, setSubtaskView] = useState<"list" | "board" | "checklist">("list");
   // "Add Subtask" form collapsed by default (Figma correction) — same
   // show-on-demand pattern as showDetails above.
   const [showAddSubtask, setShowAddSubtask] = useState(false);
-  const [addSubtaskMode, setAddSubtaskMode] = useState<"time_based" | "output_based">("time_based");
   const [editName, setEditName] = useState("");
   const [editAccount, setEditAccount] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -211,10 +247,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // Surfaced when a Board View drag's status update fails and gets rolled
   // back — otherwise a failed drag just silently snaps the card back with no
   // explanation, unlike the list-view edit form's editSubError.
-  const [boardStatusError, setBoardStatusError] = useState<string | null>(null);
 
   const [editingSubId, setEditingSubId] = useState<number | null>(null);
   const [deletingSubId, setDeletingSubId] = useState<number | null>(null);
+  const [viewingSubId, setViewingSubId] = useState<number | null>(null);
+  const [subtaskPage, setSubtaskPage] = useState(0);
   const [editStatus, setEditStatus] = useState("pending");
   const [savingSub, setSavingSub] = useState(false);
   const [editSubError, setEditSubError] = useState<string | null>(null);
@@ -227,15 +264,6 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [openTemplate, setOpenTemplate] = useState<RecurringTaskTemplate | null>(null);
   const [recurringLoading, setRecurringLoading] = useState(false);
 
-  // Phase 2 tile grid (Operations only) — null shows the tile grid, a key
-  // opens that tile full-width in its place. Resets to null whenever the
-  // selected Operation changes, same as showDetails/subtaskView below.
-  const [activeTile, setActiveTile] = useState<OperationTileKey | null>(null);
-  // Owned here rather than inside ProjectMessageBoard so this component's own
-  // "← {name}" back button can hide itself while a post's thread is open —
-  // only ProjectMessageBoard's "← Message Board" button should show then,
-  // not both stacked.
-  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
 
   const fetchProjects = useCallback(async () => {
     setLoading(true);
@@ -318,6 +346,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   }, [projects]);
 
   const rootProjects = childrenByParent.get("__root__") ?? [];
+
+  // Left-list search: keep a root if it or any descendant matches by name.
+  const displayRoots = useMemo(() => {
+    const q = listSearch.trim().toLowerCase();
+    if (!q) return rootProjects;
+    const matches = (p: Project): boolean =>
+      p.name.toLowerCase().includes(q) || (childrenByParent.get(p.id) ?? []).some(matches);
+    return rootProjects.filter(matches);
+  }, [rootProjects, listSearch, childrenByParent]);
 
   // Candidates for "Nested Under" when editing an existing Objective: every
   // other Objective except itself and its own descendants — picking a
@@ -404,10 +441,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setShowVaProgress(false);
     setSubtaskView("list");
     setShowAddSubtask(false);
-    setBoardStatusError(null);
     setRecurringTemplates([]);
-    setActiveTile(null);
-    setActiveMessageId(null);
     void fetchSubtasks(selectedProject.id);
     void fetchOutputSubtasks(selectedProject.id);
     void fetchVaAccess(selectedProject.id);
@@ -724,31 +758,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
   // Board View drag-and-drop: dropping a card into a column updates the task's
   // status via the same PATCH endpoint the list-view edit form uses. Optimistic
-  // update with rollback on failure so a drag doesn't silently do nothing.
-  //
-  // Rollback targets only the one subtask that failed (via a functional
-  // setSubtasks, not a whole-array `previous` snapshot) — a whole-array
-  // snapshot taken at call time goes stale the moment a second drag starts
-  // before the first one's fetch resolves, so failing the first drag would
-  // revert the second one's already-applied change too.
-  const handleBoardStatusChange = async (subtaskId: number, status: string) => {
-    const previousStatus = subtasks.find((t) => t.id === subtaskId)?.status;
-    setBoardStatusError(null);
-    setSubtasks((prev) => prev.map((t) => (t.id === subtaskId ? { ...t, status } : t)));
-    try {
-      const res = await fetch(`/api/assigned-tasks/${subtaskId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    } catch {
-      if (previousStatus !== undefined) {
-        setSubtasks((prev) => prev.map((t) => (t.id === subtaskId ? { ...t, status: previousStatus } : t)));
-      }
-      setBoardStatusError("Couldn't update that task's status — try again.");
-    }
-  };
+  // (Board View no longer changes status by dragging — status moves through the
+  // dashboard flow only — so there's no board status-change handler here.)
 
   const objectiveNameById = new Map(objectiveOptions.map((o) => [o.id, o.name]));
   // Group linked operations by the objective they support, for the reverse view.
@@ -989,34 +1000,44 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             onClick={() => setShowSubtasks((v) => !v)}
             className="flex items-center gap-2 cursor-pointer"
           >
-            <span className="text-bark text-[10px] w-3 shrink-0">{showSubtasks ? "▼" : "▶"}</span>
-            <h4 className="text-xs font-bold text-espresso uppercase tracking-wide">Subtasks</h4>
+            <span className="text-amber text-[10px] w-3 shrink-0">{showSubtasks ? "▼" : "▶"}</span>
+            <h4 className="text-xs font-bold text-amber uppercase tracking-wide">Subtask Checklist</h4>
           </button>
           {showSubtasks && (
           <div className="flex items-center gap-2">
             {subtasksLoading && (
               <span className="text-[11px] text-stone">Loading...</span>
             )}
+            {/* One uniform button row: same shape/size for every control. The
+                Checklist toggle and Add Subtask share the amber accent (the
+                "Subtask Checklist" theme); List/Board use the sage accent. */}
             <div className="flex items-center gap-1">
+              {([
+                ["list", "List View", "sage"],
+                ["board", "Board View", "sage"],
+                ["checklist", "Checklist", "amber"],
+              ] as const).map(([v, label, accent]) => {
+                const active = subtaskView === v;
+                const cls = active
+                  ? (accent === "amber" ? "bg-amber text-white" : "bg-sage text-white")
+                  : (accent === "amber" ? "bg-amber-soft text-amber hover:bg-amber-soft/70" : "bg-stone/10 text-stone hover:bg-stone/20");
+                return (
+                  <button
+                    key={v}
+                    onClick={() => setSubtaskView(v)}
+                    className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors ${cls}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+              {/* Add Subtask at the very end of the same row — amber, toggles
+                  the create form at the bottom. */}
               <button
-                onClick={() => setSubtaskView("list")}
-                className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
-                  subtaskView === "list"
-                    ? "bg-sage text-white"
-                    : "bg-stone/10 text-stone hover:bg-stone/20"
-                }`}
+                onClick={() => setShowAddSubtask((v) => !v)}
+                className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-amber text-white hover:bg-amber/90 transition-colors"
               >
-                List View
-              </button>
-              <button
-                onClick={() => setSubtaskView("board")}
-                className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
-                  subtaskView === "board"
-                    ? "bg-sage text-white"
-                    : "bg-stone/10 text-stone hover:bg-stone/20"
-                }`}
-              >
-                Board View
+                {showAddSubtask ? "Cancel" : "+ Add Subtask"}
               </button>
             </div>
           </div>
@@ -1029,16 +1050,11 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           <p className="text-[12px] text-stone/70">No subtasks yet. Add one below.</p>
         )}
 
-        {subtaskView === "board" && boardStatusError && (
-          <p className="text-[11px] text-red-600">{boardStatusError}</p>
-        )}
-
         {subtaskView === "board" && (
           <SubtaskBoardView
             subtasks={visibleSubtasks}
             editingSubId={editingSubId}
             onOpenEdit={openSubtaskEdit}
-            onStatusChange={handleBoardStatusChange}
             formatDate={formatDate}
             StatusBadge={StatusBadge}
             activeProfiles={activeProfiles}
@@ -1112,43 +1128,54 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           );
         })()}
 
-        {subtaskView === "list" && visibleSubtasks.length > 0 && (
+        {subtaskView === "list" && visibleSubtasks.length > 0 && (() => {
+          const SIZE = 8;
+          const pages = Math.max(1, Math.ceil(visibleSubtasks.length / SIZE));
+          const page = Math.min(subtaskPage, pages - 1);
+          const slice = visibleSubtasks.slice(page * SIZE, page * SIZE + SIZE);
+          return (
+          <>
           <div className="space-y-1.5">
-            {visibleSubtasks.map((sub) => {
+            {slice.map((sub) => {
               // Shared with SubtaskBoardView.tsx (src/lib/subtaskDisplay.ts) —
               // keep the two views in sync instead of drifting.
               const names = subtaskAssigneeNames(sub.assigned_task_assignees, activeProfiles);
               const isEditing = editingSubId === sub.id;
+              const isViewing = viewingSubId === sub.id;
 
               return (
                 <div key={sub.id} className="space-y-1">
                   <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-sand bg-white hover:bg-cream transition-colors">
                     <StatusBadge status={sub.status} />
-                    <span className="flex-1 text-[13px] font-semibold text-espresso leading-tight truncate">
+                    <button
+                      type="button"
+                      onClick={() => setViewingSubId(isViewing ? null : sub.id)}
+                      className="flex-1 text-left text-[13px] font-semibold text-espresso leading-tight truncate hover:text-terracotta transition-colors"
+                    >
                       {sub.task_name}
-                    </span>
+                    </button>
                     {(sub.project || sub.category) && (
-                      <span className="text-[11px] text-stone shrink-0 hidden sm:block">
+                      <span className="text-[11px] text-walnut shrink-0 hidden sm:block">
                         {sub.project ?? sub.category}
                       </span>
                     )}
                     {names && (
-                      <span className="text-[11px] text-stone shrink-0 hidden sm:block">
+                      <span className="text-[11px] text-walnut shrink-0 hidden sm:block">
                         {names}
                       </span>
                     )}
                     {sub.account && (
-                      <span className="text-[11px] text-stone shrink-0 hidden md:block">
+                      <span className="text-[11px] text-walnut shrink-0 hidden md:block">
                         {sub.account}
                       </span>
                     )}
                     {sub.due_date && (
-                      <span className="text-[11px] text-stone shrink-0 hidden md:block">
+                      <span className="text-[11px] text-walnut shrink-0 hidden md:block">
                         Due: {formatDate(sub.due_date)}
                       </span>
                     )}
                     {sub.created_at && (
-                      <span className="text-[11px] text-stone/60 shrink-0 hidden lg:block">
+                      <span className="text-[11px] text-bark shrink-0 hidden lg:block">
                         {sub.created_by_profile?.full_name || sub.created_by_profile?.username
                           ? `${sub.created_by_profile.full_name || sub.created_by_profile.username} · `
                           : ""}
@@ -1156,17 +1183,61 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       </span>
                     )}
                     {sub.pay_type && (
-                      <span className="text-[11px] text-stone capitalize shrink-0 hidden lg:block">
+                      <span className="text-[11px] text-walnut capitalize shrink-0 hidden lg:block">
                         {sub.pay_type.replace(/_/g, " ")}
                       </span>
                     )}
-                    <button
-                      onClick={() => (isEditing ? setEditingSubId(null) : openSubtaskEdit(sub))}
-                      className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
-                    >
-                      {isEditing ? "Cancel" : "Edit"}
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => setViewingSubId(isViewing ? null : sub.id)}
+                        className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/15 text-espresso hover:bg-stone/25 transition-colors"
+                      >
+                        {isViewing ? "Hide" : "View"}
+                      </button>
+                      <button
+                        onClick={() => (isEditing ? setEditingSubId(null) : openSubtaskEdit(sub))}
+                        className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors"
+                      >
+                        {isEditing ? "Cancel" : "Edit"}
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Read-only detail — all fields, blank shows "--", with an
+                      optional Edit Task. */}
+                  {isViewing && !isEditing && (
+                    <div className="ml-3 rounded-lg border border-sand overflow-hidden text-[12px]">
+                      {([
+                        ["Status", sub.status?.replace(/_/g, " ")],
+                        ["Category", sub.category],
+                        ["Project", sub.project],
+                        ["Account", sub.account],
+                        ["Pay Type", sub.pay_type?.replace(/_/g, " ")],
+                        ["Staff Involved", names],
+                        ["Assigned By", sub.assigned_by ? (activeProfiles.find((a) => a.id === sub.assigned_by) ? profileLabel(activeProfiles.find((a) => a.id === sub.assigned_by)!) : null) : null],
+                        ["Due Date", sub.due_date ? formatDate(sub.due_date) : null],
+                        ["Client Detail", sub.task_detail],
+                        ["Notes", sub.task_notes],
+                        ["Instructions", sub.instructions],
+                        ["Review Required", sub.review_required ? "Yes" : "No"],
+                        ["Created By", sub.created_by_profile?.full_name || sub.created_by_profile?.username],
+                        ["Created", sub.created_at ? formatDate(sub.created_at) : null],
+                      ] as [string, string | null | undefined][]).map(([label, value]) => (
+                        <div key={label} className="flex border-b border-sand/60 last:border-0">
+                          <div className="w-32 shrink-0 bg-parchment/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-walnut">{label}</div>
+                          <div className={`flex-1 px-3 py-2 whitespace-pre-wrap ${value ? "text-espresso" : "text-stone/50"}`}>{value || "--"}</div>
+                        </div>
+                      ))}
+                      <div className="flex justify-end p-2 border-t border-sand/60">
+                        <button
+                          onClick={() => { setViewingSubId(null); openSubtaskEdit(sub); }}
+                          className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors"
+                        >
+                          Edit Task
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Inline edit form */}
                   {isEditing && (
@@ -1232,7 +1303,16 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               );
             })}
           </div>
-        )}
+          {pages > 1 && (
+            <div className="flex items-center justify-between pt-2 text-[11px] text-bark">
+              <button disabled={page === 0} onClick={() => setSubtaskPage(page - 1)} className="px-2 py-0.5 rounded hover:bg-parchment disabled:opacity-40">‹ Prev</button>
+              <span className="text-stone">{page + 1} / {pages}</span>
+              <button disabled={page >= pages - 1} onClick={() => setSubtaskPage(page + 1)} className="px-2 py-0.5 rounded hover:bg-parchment disabled:opacity-40">Next ›</button>
+            </div>
+          )}
+          </>
+          );
+        })()}
 
         {subtaskView === "list" && outputSubtasks.length > 0 && (
           <div className="space-y-1.5">
@@ -1302,37 +1382,88 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           </div>
         )}
 
-        {/* Add subtask form — collapsed by default (Figma correction), same
-            show-on-demand pattern as the Objective Details toggle. */}
-        <div className="border-t border-sand pt-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Add Subtask</p>
-            <button
-              onClick={() => setShowAddSubtask((v) => !v)}
-              className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
-            >
-              {showAddSubtask ? "Cancel" : "+ Add Subtask"}
-            </button>
+        {/* Checklist view — checkbox list for this project AND all its nested
+            children, in the same window as List/Board. */}
+        {subtaskView === "checklist" && (
+          <ObjectiveOverview
+            projects={projects}
+            onSelect={handleSelectProject}
+            scopeId={selectedProject.id}
+            kindLabel={kindLabel as "Objective" | "Operation"}
+            refreshSignal={dashboardRefresh}
+            showOnly="subtasks"
+          />
+        )}
+
+        {/* Add Subtask form — toggled by the "+ Add Subtask" button in the
+            top-right button row; renders here at the very end when open. */}
+        {showAddSubtask && (
+          <div className="border-t border-sand pt-4 space-y-3">
+            <>
+              <div className="flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1 w-fit">
+                {([["time_based", "Time-based"], ["output_based", "Output-based"]] as const).map(([m, label]) => (
+                  <button key={m} type="button" onClick={() => setAddSubtaskMode(m)}
+                    className={`rounded-md px-3 py-1 text-[11px] font-semibold transition-colors ${addSubtaskMode === m ? "bg-white text-espresso shadow-sm" : "text-walnut hover:text-espresso"}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <TaskEditor
+                key={`end-${addFormKey}-${addSubtaskMode}`}
+                mode={addSubtaskMode}
+                editingTaskId={null}
+                initialTask={{ account: selectedProject.account ?? null }}
+                currentUserId={currentUserId}
+                isAdminOrManager={isAdmin}
+                teamMembers={activeProfiles}
+                lockedProjectId={selectedProject.id}
+                onCancel={() => { setAddFormKey((k) => k + 1); setShowAddSubtask(false); }}
+                onSaved={() => { handleSubtaskCreated(); setShowAddSubtask(false); setDashboardRefresh((k) => k + 1); }}
+              />
+            </>
           </div>
-          {showAddSubtask && (
-            <div className="flex gap-2">
-              {(["time_based", "output_based"] as const).map((value) => (
+        )}
+        </>
+        )}
+      </div>
+    );
+  };
+
+  // The full Add-Subtask form (TaskEditor), pulled out so the scoped dashboard
+  // view can offer real subtask creation (category, assignee, detail, …) rather
+  // than the dashboard's name-only quick-add.
+  const renderAddSubtaskForm = () => {
+    if (!selectedProject) return null;
+    return (
+      <div className="rounded-xl border border-sand bg-white p-4 shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Add Subtask</p>
+          <button
+            onClick={() => setShowAddSubtask((v) => !v)}
+            className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors"
+          >
+            {showAddSubtask ? "Cancel" : "+ Add Subtask"}
+          </button>
+        </div>
+        {showAddSubtask && (
+          <>
+            <div className="flex items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1 w-fit">
+              {([
+                ["time_based", "Time-based"],
+                ["output_based", "Output-based"],
+              ] as const).map(([m, label]) => (
                 <button
-                  key={value}
+                  key={m}
                   type="button"
-                  onClick={() => { setAddSubtaskMode(value); setAddFormKey((k) => k + 1); }}
-                  className={`px-3 py-1 rounded-lg text-[10px] font-semibold transition-colors ${
-                    addSubtaskMode === value
-                      ? "bg-sage text-white"
-                      : "bg-stone/10 text-stone hover:bg-stone/20"
+                  onClick={() => setAddSubtaskMode(m)}
+                  className={`rounded-md px-3 py-1 text-[11px] font-semibold transition-colors ${
+                    addSubtaskMode === m ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
                   }`}
                 >
-                  {value === "time_based" ? "Time Based" : "Output Based"}
+                  {label}
                 </button>
               ))}
             </div>
-          )}
-          {showAddSubtask && (
             <TaskEditor
               key={`${addFormKey}-${addSubtaskMode}`}
               mode={addSubtaskMode}
@@ -1350,11 +1481,10 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   handleSubtaskCreated();
                 }
                 setShowAddSubtask(false);
+                setDashboardRefresh((k) => k + 1);
               }}
             />
-          )}
-        </div>
-        </>
+          </>
         )}
       </div>
     );
@@ -1408,25 +1538,46 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     <div className="space-y-4">
       {templateEditor}
       {!isBoardTakeover && (
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h3 className="text-sm font-semibold text-walnut">My {kindLabel}s</h3>
-            <p className="text-xs text-stone">
-              {kind === "objective"
-                ? "Nest goals and projects, then add subtasks assigned to VAs."
-                : "Recurring, day-to-day work — optionally linked to the Objective it supports."}
-            </p>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <button
+                type="button"
+                onClick={() => { setSelectedProject(null); setShowCreate(false); }}
+                title={`Back to the ${kindLabel.toLowerCase()} overview`}
+                className="group inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <svg className="h-4 w-4 text-bark group-hover:text-terracotta transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+                <span className="text-sm font-bold text-espresso group-hover:text-terracotta underline decoration-dotted decoration-stone/50 underline-offset-4 group-hover:decoration-terracotta transition-colors">
+                  My {kindLabel}s
+                </span>
+              </button>
+              <p className="text-xs text-stone">
+                {kind === "objective"
+                  ? "Nest goals and projects, then add subtasks assigned to VAs."
+                  : "Recurring, day-to-day work — optionally linked to the Objective it supports."}
+              </p>
+            </div>
+            <button
+              onClick={() => openCreateForm("")}
+              className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              New {kindLabel}
+            </button>
           </div>
-          <button
-            onClick={() => openCreateForm("")}
-            className="inline-flex items-center gap-2 rounded-lg bg-terracotta px-4 py-2.5 text-[13px] font-semibold text-white cursor-pointer transition-all hover:bg-[#a85840]"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            New {kindLabel}
-          </button>
+          <input
+            value={listSearch}
+            onChange={(e) => setListSearch(e.target.value)}
+            placeholder={`Search ${kindLabel.toLowerCase()}s…`}
+            className="w-full max-w-xs rounded-lg border border-sand px-3 py-1.5 text-[12px] text-espresso outline-none focus:border-terracotta bg-white"
+          />
         </div>
       )}
 
@@ -1458,7 +1609,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             </div>
           ) : (
             <div className="rounded-xl border border-sand bg-white overflow-hidden shadow-sm divide-y divide-sand">
-              {rootProjects.map((project) => renderNode(project, 0))}
+              {displayRoots.map((project) => renderNode(project, 0))}
             </div>
           )}
         </div>
@@ -1543,8 +1694,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
                   >
                     <option value="">— None —</option>
-                    {objectiveOptions.map((o) => (
-                      <option key={o.id} value={o.id}>{o.name}</option>
+                    {toHierOptions(objectiveOptions).map((o) => (
+                      <option key={o.id} value={o.id}>{o.label}</option>
                     ))}
                   </select>
                 </div>
@@ -1702,7 +1853,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                           <div key={vaId} className="space-y-1.5">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-[12px] font-semibold text-espresso truncate">{name}</span>
-                              <span className="text-[11px] text-stone shrink-0">
+                              <span className="text-[11px] text-walnut shrink-0">
                                 {completed} of {total} completed · {pct}%
                               </span>
                             </div>
@@ -1717,6 +1868,27 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 </div>
               )}
 
+              {/* Breadcrumb — back to the overview and up the parent chain. */}
+              {(() => {
+                const projById = new Map(projects.map((p) => [p.id, p]));
+                const chain: Project[] = [];
+                let pid = selectedProject.parent_project_id;
+                while (pid) { const p = projById.get(pid); if (!p) break; chain.unshift(p); pid = p.parent_project_id; }
+                return (
+                  <div className="flex items-center gap-1 text-[11px] text-bark flex-wrap">
+                    <button type="button" onClick={() => { setSelectedProject(null); setShowCreate(false); }} className="font-semibold hover:text-espresso transition-colors">All {kindLabel}s</button>
+                    {chain.map((a) => (
+                      <React.Fragment key={a.id}>
+                        <span aria-hidden>›</span>
+                        <button type="button" onClick={() => handleSelectProject(a)} className="hover:text-espresso transition-colors truncate max-w-[160px]">{a.name}</button>
+                      </React.Fragment>
+                    ))}
+                    <span aria-hidden>›</span>
+                    <span className="text-espresso font-semibold truncate max-w-[200px]">{selectedProject.name}</span>
+                  </div>
+                );
+              })()}
+
               {/* Objective name + lighter default view (Figma reference) — Details
                   form is opened on demand instead of shown by default. */}
               <div className="flex items-center gap-2 flex-wrap min-w-0">
@@ -1730,18 +1902,39 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 </span>
               </div>
 
-              {/* Project edit card — hidden by default, opened via the button above */}
-              <div className="rounded-xl border border-sand bg-white p-5 shadow-sm space-y-4">
-                <div className="flex items-center justify-between gap-2">
+              {/* Tabs — one shared box for everything inside a project. */}
+              <div className="flex flex-wrap items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
+                {([
+                  ["board", "Message Board"],
+                  ["details", `${kindLabel} Details`],
+                  ["subtasks", "Subtasks"],
+                  ["overview", `Sub-${kindLabel.toLowerCase()}s`],
+                  ["docs", "Docs & Files"],
+                ] as const).map(([key, label]) => (
                   <button
+                    key={key}
                     type="button"
-                    onClick={() => setShowDetails((v) => !v)}
-                    className="flex items-center gap-2 min-w-0 cursor-pointer"
+                    onClick={() => { setScopedTab(key); if (key === "details") setShowDetails(false); }}
+                    className={`rounded-md px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+                      scopedTab === key ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                    }`}
                   >
-                    <span className="text-bark text-[10px] w-3 shrink-0">{showDetails ? "▼" : "▶"}</span>
-                    <h4 className="text-[13px] font-bold text-espresso">{kindLabel} Details</h4>
+                    {label}
                   </button>
+                ))}
+              </div>
+
+              {/* Details tab content */}
+              <div className={scopedTab === "details" ? "rounded-xl border border-sand bg-white p-5 shadow-sm space-y-4 h-[560px] overflow-y-auto" : "hidden"}>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-[13px] font-bold text-espresso">{kindLabel} Details</h4>
                   <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setShowDetails((v) => !v)}
+                      className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors"
+                    >
+                      {showDetails ? "View" : "Edit"}
+                    </button>
                     <button
                       onClick={() => void handleToggleActive(selectedProject)}
                       className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors"
@@ -1758,6 +1951,36 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     )}
                   </div>
                 </div>
+
+                {!showDetails && (
+                  <div className="rounded-lg border border-sand overflow-hidden text-[12px]">
+                    {([
+                      ["Name", selectedProject.name],
+                      ["Status", PROJECT_STATUS_BY_VALUE.get(selectedProject.status ?? "")?.label ?? selectedProject.status],
+                      ["Active", selectedProject.is_active ? "Active" : "Inactive"],
+                      ["Account", selectedProject.account],
+                      ["Start Date", selectedProject.start_date ? formatDate(selectedProject.start_date) : null],
+                      ...((kind === "objective" ? [
+                        ["Target Date", selectedProject.target_date ? formatDate(selectedProject.target_date) : null],
+                        ["Nested Under", selectedProject.parent_project_id ? (projects.find((p) => p.id === selectedProject.parent_project_id)?.name ?? null) : "Top-level"],
+                      ] : []) as [string, string | null][]),
+                      ...((kind === "operation" ? [
+                        ["Supports Objective", selectedProject.linked_objective_id ? (objectiveNameById.get(selectedProject.linked_objective_id) ?? null) : null],
+                      ] : []) as [string, string | null][]),
+                      ["Description", selectedProject.description],
+                      ["Details", selectedProject.details],
+                      ["Notes", selectedProject.notes],
+                      ["Staff Involved", editVaIds.length > 0 ? editVaIds.map((id) => { const p = activeProfiles.find((a) => a.id === id); return p ? profileLabel(p) : null; }).filter(Boolean).join(", ") : null],
+                      ["Created", selectedProject.created_at ? formatDate(selectedProject.created_at) : null],
+                    ] as [string, string | null | undefined][])
+                      .map(([label, value]) => (
+                        <div key={label} className="flex border-b border-sand/60 last:border-0">
+                          <div className="w-32 shrink-0 bg-parchment/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-walnut">{label}</div>
+                          <div className={`flex-1 px-3 py-2 whitespace-pre-wrap ${value ? "text-espresso" : "text-stone/50"}`}>{value || "--"}</div>
+                        </div>
+                      ))}
+                  </div>
+                )}
 
                 {showDetails && (
                 <>
@@ -1825,8 +2048,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                       className="w-full rounded-lg border border-sand px-3 py-2 text-[13px] outline-none focus:border-terracotta bg-white"
                     >
                       <option value="">— Top-level —</option>
-                      {nestableParentOptions.map((o) => (
-                        <option key={o.id} value={o.id}>{o.name}</option>
+                      {toHierOptions(nestableParentOptions).map((o) => (
+                        <option key={o.id} value={o.id}>{o.label}</option>
                       ))}
                     </select>
                   </div>
@@ -1950,66 +2173,59 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 )}
               </div>
 
-              {kind === "operation" ? (
-                activeTile === null ? (
-                  <OperationTileGrid
-                    recurringCount={recurringTemplates.length}
-                    subtaskCount={visibleSubtasks.length}
-                    onSelect={setActiveTile}
-                  />
-                ) : (
-                  <div className="space-y-3">
-                    {/* Hidden while a Message Board post is open — that view has its
-                        own "← Message Board" back button, and showing both stacked
-                        let you skip past the list straight to the tile grid. */}
-                    {!(activeTile === "message_board" && activeMessageId) && (
-                      <button
-                        onClick={() => setActiveTile(null)}
-                        className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-espresso hover:text-terracotta transition-colors cursor-pointer"
-                      >
-                        <span aria-hidden="true">←</span> {selectedProject.name}
-                      </button>
-                    )}
+              {/* Subtasks tab — the operation's OWN subtasks: the original card
+                  with List View / Board View + Edit + Create. */}
+              {scopedTab === "subtasks" && renderSubtasksCard()}
 
-                    {activeTile === "message_board" && (
-                      <ProjectMessageBoard
-                        projectId={selectedProject.id}
-                        currentUserId={currentUserId}
-                        isAdmin={isAdmin}
-                        activeMessageId={activeMessageId}
-                        onActiveMessageChange={setActiveMessageId}
-                      />
-                    )}
-
-                    {activeTile === "recurring" && renderRecurringCard()}
-                    {activeTile === "subtasks" && renderSubtasksCard()}
-
-                    {activeTile === "files" && (
-                      <ProjectFiles projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} />
-                    )}
-                  </div>
-                )
-              ) : (
-                <div className="space-y-3">
-                  {renderSubtasksCard()}
-                  {recurringTemplates.length > 0 && renderRecurringCard()}
-                  <ProjectFiles projectId={selectedProject.id} currentUserId={currentUserId} isAdmin={isAdmin} collapsible />
-                </div>
-              )}
+              {/* Message Board / Checklist / Sub-items / Docs via the dashboard.
+                  The Checklist is the checkbox list (this project + all children)
+                  in a fixed-height box with collapsed groups + pagination. */}
+              <div className={(scopedTab === "board" || scopedTab === "overview" || scopedTab === "docs") ? "" : "hidden"}>
+                <ObjectiveOverview
+                  projects={projects}
+                  onSelect={handleSelectProject}
+                  scopeId={selectedProject.id}
+                  kindLabel={kindLabel as "Objective" | "Operation"}
+                  refreshSignal={dashboardRefresh}
+                  showOnly={scopedTab === "overview" ? "overview" : scopedTab === "docs" ? "docs" : "board"}
+                  onEditProject={(p) => { handleSelectProject(p); setScopedTab("details"); setShowDetails(true); }} currentUserId={currentUserId}
+                />
+              </div>
             </div>
           )}
 
-          {/* Nothing selected: objectives show a dashboard overview; operations
-              keep the simple prompt. */}
+          {/* Nothing selected: the dashboard overview, tab-based (one big box)
+              rather than a 4-card grid so each section has room. */}
           {!selectedProject && !showCreate && (
-            kind === "objective" ? (
-              <ObjectiveOverview projects={projects} onSelect={handleSelectProject} />
-            ) : (
-              <div className="rounded-xl border border-sand bg-white p-8 shadow-sm text-center">
-                <p className="text-sm font-medium text-espresso">Select a project</p>
-                <p className="mt-1 text-xs text-stone">Click a project on the left to view and manage its subtasks.</p>
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-1 rounded-lg border border-sand bg-parchment/40 p-1">
+                {([
+                  ["board", "Message Board"],
+                  ["overview", `${kindLabel} Overview`],
+                  ["subtasks", "Subtasks"],
+                  ["docs", "Docs & Files"],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setLandingTab(key)}
+                    className={`rounded-md px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+                      landingTab === key ? "bg-white text-espresso shadow-sm" : "text-stone hover:text-espresso"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            )
+              <ObjectiveOverview
+                projects={projects}
+                onSelect={handleSelectProject}
+                kindLabel={kindLabel as "Objective" | "Operation"}
+                showOnly={landingTab}
+                onEditProject={(p) => { handleSelectProject(p); setScopedTab("details"); setShowDetails(true); }}
+                currentUserId={currentUserId}
+              />
+            </div>
           )}
         </div>
       </div>

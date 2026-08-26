@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { canAccessProject, serviceClient } from "@/lib/projectAccess";
+import { notifyMentions } from "@/lib/notifyMentions";
 
 export const dynamic = "force-dynamic";
 
@@ -102,6 +103,15 @@ export async function POST(request: Request) {
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 400 });
+
+  const p = profile as { full_name?: string | null; username?: string | null } | null;
+  await notifyMentions({
+    text: content,
+    senderId: user.id,
+    senderName: p?.full_name || p?.username || "Someone",
+    context: `“${title}”`,
+  });
+
   return Response.json({ message: { ...data, project_message_comments: [] } }, { status: 201 });
 }
 

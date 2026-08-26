@@ -49,17 +49,16 @@ export const BOARD_COLUMNS: BoardColumn[] = [
   {
     key: "submitted",
     label: "Submitted",
-    // TBD, pending boss confirmation: `revision_needed` isn't in her 6 labels. Best
-    // guess: group it into Submitted (task was already submitted once, sent back,
-    // still active/pending re-review — closer to Submitted than a fresh Pending).
-    statuses: ["submitted", "revision_needed"],
+    statuses: ["submitted"],
     dropStatus: "submitted",
   },
   {
     key: "reviewed",
-    label: "Reviewed",
-    statuses: ["reviewing"],
-    dropStatus: "reviewing",
+    label: "Revision",
+    // Houses items needing revision. `revision_needed` (sent back to the VA) is
+    // the primary; `reviewing` (with a manager) also lands here per Toni.
+    statuses: ["revision_needed", "reviewing"],
+    dropStatus: "revision_needed",
   },
   {
     key: "approved",

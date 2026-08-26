@@ -18,28 +18,30 @@ interface SubtaskBoardViewProps {
   subtasks: SubtaskRow[];
   editingSubId: number | null;
   onOpenEdit: (sub: SubtaskRow) => void;
-  onStatusChange: (subtaskId: number, status: string) => void | Promise<void>;
   formatDate: (iso: string | null | undefined) => string;
   StatusBadge: React.ComponentType<{ status: string }>;
   activeProfiles: Pick<Profile, "id" | "full_name" | "username">[];
 }
 
+// Cards per column before pagination kicks in. Columns like Pending can hold
+// 100+ tasks, so each column pages independently rather than scrolling forever.
+const PAGE_SIZE = 8;
+
 export default function SubtaskBoardView({
   subtasks,
   editingSubId,
   onOpenEdit,
-  onStatusChange,
   formatDate,
   StatusBadge,
   activeProfiles,
 }: SubtaskBoardViewProps) {
-  const [dragSubId, setDragSubId] = useState<number | null>(null);
-  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+  // Per-column page index. Cards are NOT draggable: status moves through the
+  // dashboard flow (put on queue → submit → review), never by dragging a card
+  // across columns, which would violate the task lifecycle rules.
+  const [pageByCol, setPageByCol] = useState<Record<string, number>>({});
 
   // One pass over `subtasks` builds both the column grouping and the
-  // reference list, so dragging (which re-renders this component on every
-  // dragover via dragOverCol/dragSubId, unrelated to `subtasks` itself)
-  // doesn't re-scan and re-call columnForStatus for every subtask twice.
+  // reference list.
   //
   // Reference list mirrors the columns exactly — "same subtasks in one place
   // regardless of column," per the Figma spec, not a superset. Anything
@@ -62,25 +64,6 @@ export default function SubtaskBoardView({
     }
     return { subtasksByColumn: byColumn, boardSubtasks: inBoard, hiddenCount: hidden };
   }, [subtasks]);
-
-  const handleDrop = (colKey: string) => {
-    setDragOverCol(null);
-    if (dragSubId == null) return;
-    const col = BOARD_COLUMNS.find((c) => c.key === colKey);
-    const sub = subtasks.find((s) => s.id === dragSubId);
-    // Compare by the card's current COLUMN, not its literal status, so
-    // releasing a card back inside the column it's already in (e.g. an
-    // on_queue or unassigned card dropped anywhere in Pending, which holds
-    // three different statuses under one dropStatus) doesn't silently
-    // rewrite its status just because it isn't byte-identical to dropStatus.
-    const sourceCol = sub ? columnForStatus(sub.status) : undefined;
-    if (!col || !sub || sourceCol?.key === col.key) {
-      setDragSubId(null);
-      return;
-    }
-    void onStatusChange(sub.id, col.dropStatus);
-    setDragSubId(null);
-  };
 
   return (
     <div className="flex gap-4 items-start">
@@ -118,41 +101,31 @@ export default function SubtaskBoardView({
         <div className="flex gap-3 min-w-max">
           {BOARD_COLUMNS.map((col) => {
             const colSubtasks = subtasksByColumn.get(col.key) ?? [];
-            const isDragOver = dragOverCol === col.key;
+            const total = colSubtasks.length;
+            const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+            const page = Math.min(pageByCol[col.key] ?? 0, pageCount - 1);
+            const start = page * PAGE_SIZE;
+            const pageSubtasks = colSubtasks.slice(start, start + PAGE_SIZE);
+            const setPage = (next: number) =>
+              setPageByCol((prev) => ({ ...prev, [col.key]: Math.max(0, Math.min(next, pageCount - 1)) }));
             return (
               <div
                 key={col.key}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  if (dragOverCol !== col.key) setDragOverCol(col.key);
-                }}
-                onDragLeave={() => setDragOverCol((prev) => (prev === col.key ? null : prev))}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  handleDrop(col.key);
-                }}
-                className={`w-64 shrink-0 rounded-xl border bg-parchment p-2.5 space-y-2 transition-colors ${
-                  isDragOver ? "border-terracotta" : "border-sand"
-                }`}
+                className="w-64 shrink-0 rounded-xl border border-sand bg-parchment p-2.5 space-y-2"
               >
                 <div className="flex items-center justify-between px-0.5">
                   <p className="text-[11px] font-semibold text-walnut tracking-wide uppercase">{col.label}</p>
                   <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-stone/10 text-stone border border-stone/20">
-                    {colSubtasks.length}
+                    {total}
                   </span>
                 </div>
 
                 <div className="space-y-1.5 min-h-[40px]">
-                  {colSubtasks.map((sub) => (
+                  {pageSubtasks.map((sub) => (
                     <div
                       key={sub.id}
-                      draggable
-                      onDragStart={() => setDragSubId(sub.id)}
-                      onDragEnd={() => { setDragSubId(null); setDragOverCol(null); }}
                       onClick={() => onOpenEdit(sub)}
-                      className={`flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors cursor-grab active:cursor-grabbing ${
-                        dragSubId === sub.id ? "opacity-50" : ""
-                      }`}
+                      className="flex flex-col gap-1.5 py-2.5 px-3 rounded-lg border border-sand bg-white hover:bg-cream transition-colors cursor-pointer"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-[13px] font-semibold text-espresso leading-tight">
@@ -174,6 +147,28 @@ export default function SubtaskBoardView({
                     </div>
                   ))}
                 </div>
+
+                {total > PAGE_SIZE && (
+                  <div className="flex items-center justify-between gap-2 pt-1 text-[10px] text-bark">
+                    <button
+                      type="button"
+                      onClick={() => setPage(page - 1)}
+                      disabled={page === 0}
+                      className="px-2 py-0.5 rounded font-semibold hover:text-espresso disabled:opacity-40 disabled:hover:text-bark"
+                    >
+                      ‹ Prev
+                    </button>
+                    <span>{start + 1}–{Math.min(start + PAGE_SIZE, total)} of {total}</span>
+                    <button
+                      type="button"
+                      onClick={() => setPage(page + 1)}
+                      disabled={page >= pageCount - 1}
+                      className="px-2 py-0.5 rounded font-semibold hover:text-espresso disabled:opacity-40 disabled:hover:text-bark"
+                    >
+                      Next ›
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
