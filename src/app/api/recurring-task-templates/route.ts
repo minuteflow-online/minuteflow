@@ -266,6 +266,35 @@ export async function POST(request: Request) {
   if (!title) return Response.json({ error: "title is required" }, { status: 400 });
   if (assignedToIds.length === 0) return Response.json({ error: "assigned_to_ids is required" }, { status: 400 });
 
+  // Guard against creating a second active template for the same task and
+  // person. This is exactly what produced a ~500-row pileup for one VA (10
+  // separate "WebUpdate Processing" templates, each independently generating
+  // its own 60-day daily series) and smaller versions of the same thing for
+  // several others — someone re-submitting the create form, on different
+  // days in some cases, because nothing told them one already existed.
+  {
+    const { data: activeSameTitle } = await serviceClient()
+      .from("recurring_task_templates")
+      .select("id, assigned_to, assigned_to_ids")
+      .eq("is_active", true)
+      .ilike("title", title.trim());
+
+    const conflict = (activeSameTitle ?? []).find((t) => {
+      const ids = t.assigned_to_ids && t.assigned_to_ids.length > 0 ? t.assigned_to_ids : t.assigned_to ? [t.assigned_to] : [];
+      return ids.some((id: string) => assignedToIds.includes(id));
+    });
+
+    if (conflict) {
+      return Response.json(
+        {
+          error: `An active recurring template for "${title.trim()}" already exists for this person. Edit that one instead of creating a second — open it from the Recurring Templates tab.`,
+          existingTemplateId: conflict.id,
+        },
+        { status: 409 }
+      );
+    }
+  }
+
   // For month-based recurrences, derive day-of-month from start_date if not provided
   const startDate = stringOrNull(body.start_date);
   const resolvedDayOfMonth = recurrence_day_of_month ?? (

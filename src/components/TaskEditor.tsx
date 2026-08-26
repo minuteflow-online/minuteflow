@@ -1028,7 +1028,9 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
               setExistingTemplateId(data.template.id);
               showToast("success", "Recurring template created");
             } else {
-              showToast("error", "Task saved, but the recurring template failed to save.");
+              // Surface the real reason (e.g. the duplicate-template guard)
+              // rather than a generic message that hides why it didn't save.
+              showToast("error", data.error ? `Task saved, but: ${data.error}` : "Task saved, but the recurring template failed to save.");
             }
           }
         } catch {
