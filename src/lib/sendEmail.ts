@@ -13,8 +13,8 @@ import { createClient } from "@supabase/supabase-js";
  * kind of mail — paystubs, broadcasts, budget replies, capture alerts, memos —
  * including any added later, without each one having to remember the rule.
  *
- * Addresses that do not belong to a team member pass through untouched, so
- * client-facing mail (invoices, receipts, payment reminders) is unaffected.
+ * Clients have the same switch, on the client record. An address belonging to
+ * neither a team member nor a client passes through untouched.
  *
  * Deliberately NOT suppressed: password resets and invitations, which are sent
  * through this helper with `alwaysSend` because locking someone out of their own
@@ -65,9 +65,19 @@ export async function suppressedAddresses(candidates: string[]): Promise<Set<str
       .or("is_active.eq.false,emails_disabled.eq.true");
 
     const blockedIds = (blocked ?? []).map((r: { id: string }) => r.id);
-    if (blockedIds.length === 0) return suppressed;
-
     const wanted = new Set(candidates.map((c) => c.trim().toLowerCase()));
+
+    // Clients keep their address on the record itself — no auth lookup needed.
+    const { data: blockedClients } = await supabase
+      .from("clients")
+      .select("email")
+      .eq("emails_disabled", true);
+    for (const row of (blockedClients ?? []) as { email: string | null }[]) {
+      const email = row.email?.trim().toLowerCase();
+      if (email && wanted.has(email)) suppressed.add(email);
+    }
+
+    if (blockedIds.length === 0) return suppressed;
 
     // Resolve each blocked profile to its address, and only keep the ones that
     // actually appear in this send — one lookup per blocked person, not per

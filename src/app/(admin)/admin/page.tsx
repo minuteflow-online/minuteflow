@@ -5035,6 +5035,7 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
     default_hourly_rate: "",
     weekly_hours_budget: "",
     monthly_hours_budget: "",
+    emails_disabled: false,
     tax_id: "",
     notes: "",
     active: true,
@@ -5078,6 +5079,7 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       default_hourly_rate: client.default_hourly_rate != null ? String(client.default_hourly_rate) : "",
       weekly_hours_budget: client.weekly_hours_budget != null ? String(client.weekly_hours_budget) : "",
       monthly_hours_budget: client.monthly_hours_budget != null ? String(client.monthly_hours_budget) : "",
+      emails_disabled: Boolean(client.emails_disabled),
       tax_id: client.tax_id || "",
       notes: client.notes || "",
       active: client.active,
@@ -5104,8 +5106,9 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       payment_terms: "due_on_receipt",
       currency: "USD",
       default_hourly_rate: "",
-    weekly_hours_budget: "",
-    monthly_hours_budget: "",
+      weekly_hours_budget: "",
+      monthly_hours_budget: "",
+      emails_disabled: false,
       tax_id: "",
       notes: "",
       active: true,
@@ -5176,6 +5179,7 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
       default_hourly_rate: form.default_hourly_rate ? parseFloat(form.default_hourly_rate) : null,
       weekly_hours_budget: form.weekly_hours_budget ? parseFloat(form.weekly_hours_budget) : null,
       monthly_hours_budget: form.monthly_hours_budget ? parseFloat(form.monthly_hours_budget) : null,
+      emails_disabled: form.emails_disabled,
       tax_id: form.tax_id.trim(),
       notes: form.notes.trim(),
       active: form.active,
@@ -5523,6 +5527,24 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
                 <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${form.active ? "translate-x-5" : "translate-x-0"}`} />
               </button>
               <span className="text-[13px] font-medium text-espresso">{form.active ? "Active" : "Inactive"}</span>
+            </div>
+            {/* Same switch team members have, on the client side: nothing at all
+                goes to this address — no invoices, receipts or reminders. */}
+            <div className="sm:col-span-2">
+              <label className="flex items-start gap-2 text-[13px] text-espresso cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.emails_disabled)}
+                  onChange={(e) => updateForm("emails_disabled", e.target.checked)}
+                  className="mt-[3px] h-3.5 w-3.5 rounded border-sand accent-terracotta cursor-pointer"
+                />
+                <span>
+                  Turn off emails
+                  <span className="block text-[11px] text-bark">
+                    No invoices, receipts or payment reminders are sent to this client.
+                  </span>
+                </span>
+              </label>
             </div>
           </div>
 

@@ -327,6 +327,8 @@ export interface Client {
      Accounts carry the same pair; a budget can be set on either. */
   weekly_hours_budget: number | null;
   monthly_hours_budget: number | null;
+  /* No invoices, receipts or payment reminders go to this client. */
+  emails_disabled: boolean;
   notes: string | null;
   created_at: string;
   updated_at: string;
