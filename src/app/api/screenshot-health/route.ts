@@ -12,6 +12,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
 import { refreshGoogleToken, getValidAccessToken } from "@/lib/google-token";
@@ -59,7 +60,7 @@ async function sendAlertEmail(errorMessage: string): Promise<void> {
     `,
   };
 
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await sendResendEmail({
     method: "POST",
     headers: {
       Authorization: `Bearer ${resendKey}`,

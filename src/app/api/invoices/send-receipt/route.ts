@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAuthClient } from "@/lib/supabase/server";
 import { hasFinancialAccess } from "@/lib/financialAccess";
 
@@ -114,7 +115,7 @@ export async function POST(request: Request) {
 </body>
 </html>`;
 
-  const resendRes = await fetch("https://api.resend.com/emails", {
+  const resendRes = await sendResendEmail({
     method: "POST",
     headers: {
       Authorization: `Bearer ${RESEND_API_KEY}`,

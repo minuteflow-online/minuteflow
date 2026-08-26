@@ -69,6 +69,13 @@ export interface Profile {
   employment_type: string | null;
   requires_extension: boolean;
   extension_popup_shown: boolean;
+  /* No mail of any kind goes to this person. Inactive members are suppressed
+     the same way without needing the flag — see lib/sendEmail.ts. Password
+     resets and invitations are sent regardless. */
+  emails_disabled: boolean;
+  /* Cannot clock in or start a timer. Output Based members are blocked by
+     their position without needing the flag — see lib/clockInAccess.ts. */
+  clock_in_disabled: boolean;
   // Daily/monthly budget. Time-based VAs (position/pay_rate_type != per_task)
   // are tracked in hours: shift_hours is the direct daily value, or
   // shift_start/shift_end give a time range whose span is used when

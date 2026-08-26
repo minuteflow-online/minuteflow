@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { hasAdminPanelAccess, hasFinancialAccess, canGrantRoles } from "@/lib/financialAccess";
 
@@ -209,7 +210,7 @@ export async function PATCH(request: Request) {
 
     const resetLink = linkData.properties.action_link;
 
-    const resendRes = await fetch("https://api.resend.com/emails", {
+    const resendRes = await sendResendEmail({
       method: "POST",
       headers: {
         Authorization: `Bearer ${RESEND_API_KEY}`,
@@ -297,6 +298,8 @@ export async function PATCH(request: Request) {
     "extension_popup_shown",
     "admin_permissions",
     "assignments_label",
+    "emails_disabled",
+    "clock_in_disabled",
   ];
   for (const field of allowedFields) {
     if (field in updates) {

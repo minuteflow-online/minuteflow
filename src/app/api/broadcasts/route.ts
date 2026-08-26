@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 
@@ -175,7 +176,7 @@ async function sendBroadcastEmail(
   const subject = `${label}: ${broadcast.title}`;
   const htmlBody = buildEmailHtml(broadcast);
 
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await sendResendEmail({
     method: "POST",
     headers: {
       Authorization: `Bearer ${RESEND_API_KEY}`,

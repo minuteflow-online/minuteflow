@@ -1,4 +1,5 @@
 import { sendTelegram, telegramEnabled, esc } from "./telegram";
+import { sendResendEmail } from "@/lib/sendEmail";
 
 // Channel-agnostic admin notifications.
 //
@@ -25,7 +26,7 @@ async function sendEmail(payload: NotifyPayload): Promise<{ ok: boolean; id?: st
   if (!resendKey) return { ok: false, error: "RESEND_API_KEY not configured" };
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const res = await sendResendEmail({
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({

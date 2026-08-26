@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { sendResendEmailAlways } from "@/lib/sendEmail";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
@@ -151,7 +152,7 @@ export async function resetPassword(
   }
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const res = await sendResendEmailAlways({
       method: "POST",
       headers: {
         Authorization: `Bearer ${resendKey}`,

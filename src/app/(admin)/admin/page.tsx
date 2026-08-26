@@ -3914,6 +3914,60 @@ function TeamManagementTab({
                               </div>
                             </div>
                           </div>
+
+                          {/* Per-person switches. Both are overrides on top of a
+                              rule that already applies: an inactive member gets no
+                              mail regardless, and an Output Based member cannot
+                              clock in regardless. The boxes are for everyone else. */}
+                          <div className="mt-4 pt-4 border-t border-sand/50 space-y-2" onClick={(e) => e.stopPropagation()}>
+                            <label className="flex items-start gap-2 text-[12px] text-espresso cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(p.emails_disabled)}
+                                onChange={async (e) => {
+                                  await fetch("/api/users", {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ user_id: p.id, emails_disabled: e.target.checked }),
+                                  });
+                                  fetchData();
+                                }}
+                                className="mt-[2px] h-3.5 w-3.5 rounded border-sand accent-terracotta cursor-pointer"
+                              />
+                              <span>
+                                Turn off emails
+                                <span className="block text-[11px] text-bark">
+                                  {p.is_active === false
+                                    ? "Already off — inactive members are never emailed."
+                                    : "No updates or notifications. Password resets and invitations still go through."}
+                                </span>
+                              </span>
+                            </label>
+
+                            <label className="flex items-start gap-2 text-[12px] text-espresso cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(p.clock_in_disabled)}
+                                onChange={async (e) => {
+                                  await fetch("/api/users", {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ user_id: p.id, clock_in_disabled: e.target.checked }),
+                                  });
+                                  fetchData();
+                                }}
+                                className="mt-[2px] h-3.5 w-3.5 rounded border-sand accent-terracotta cursor-pointer"
+                              />
+                              <span>
+                                Disable clock in
+                                <span className="block text-[11px] text-bark">
+                                  {normalizePosition(p.position) === "Output Based"
+                                    ? "Already off — Output Based work is paid per task, not per hour."
+                                    : "Cannot clock in or start a timer. They can still sign in and work on tasks."}
+                                </span>
+                              </span>
+                            </label>
+                          </div>
                           {/* Payment Accounts */}
                           <div className="mt-4 pt-4 border-t border-sand/50">
                             <div className="flex items-center justify-between mb-2">

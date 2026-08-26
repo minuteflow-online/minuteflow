@@ -1,4 +1,5 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +47,7 @@ export async function GET() {
   const periodWord = "daily";
   const reason = "This is a test of the budget-request notification email.";
 
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await sendResendEmail({
     method: "POST",
     headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({

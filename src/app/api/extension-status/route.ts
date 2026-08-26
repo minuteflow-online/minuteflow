@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { NextRequest } from "next/server";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 
@@ -144,7 +145,7 @@ export async function POST(request: NextRequest) {
             .map((u) => u.email as string) ?? [];
 
         if (to.length > 0) {
-          await fetch("https://api.resend.com/emails", {
+          await sendResendEmail({
             method: "POST",
             headers: {
               Authorization: `Bearer ${RESEND_API_KEY}`,

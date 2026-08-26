@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { createHmac } from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -148,7 +149,7 @@ export async function POST(request: Request) {
         ${referenceId ? `<p style="margin:0 0 12px; color:#666; font-size:13px;">Reference ID: ${referenceId}</p>` : ""}
         <p style="margin:0; color:#999; font-size:12px;">MinuteFlow notification</p>
       </div>`;
-    fetch("https://api.resend.com/emails", {
+    sendResendEmail({
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.RESEND_API_KEY}`,

@@ -1,4 +1,5 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { verifyApprovalToken } from "@/lib/approvalToken";
 import {
   htmlResponse,
@@ -86,7 +87,7 @@ async function emailVa(
       outcome === "proposed" && proposed
         ? `<p><strong>Proposed new time:</strong> ${esc(fmt12(proposed.start))} – ${esc(fmt12(proposed.end))}</p>`
         : "";
-    await fetch("https://api.resend.com/emails", {
+    await sendResendEmail({
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({

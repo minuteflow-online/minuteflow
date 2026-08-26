@@ -1,4 +1,5 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { sendResendEmail } from "@/lib/sendEmail";
 
 export const dynamic = "force-dynamic";
 
@@ -226,7 +227,7 @@ export async function POST(
       receiptUrl,
       currency: invoice.currency || "USD",
     });
-    fetch("https://api.resend.com/emails", {
+    sendResendEmail({
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.RESEND_API_KEY}`,

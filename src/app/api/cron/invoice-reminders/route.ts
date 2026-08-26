@@ -1,4 +1,5 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { sendResendEmail } from "@/lib/sendEmail";
 import type { PaymentScheduleItem } from "@/types/database";
 import { NextRequest } from "next/server";
 
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
       const items = lineItems ?? [];
       const html = buildInvoiceEmail(invoice, items, orgTimezone, orgRegisteredName, orgDba);
 
-      const resendRes = await fetch("https://api.resend.com/emails", {
+      const resendRes = await sendResendEmail({
         method: "POST",
         headers: {
           Authorization: `Bearer ${resendKey}`,
@@ -138,7 +139,7 @@ export async function GET(request: NextRequest) {
     const html = buildSplitReminderEmail(invoice, dueItems, dueAmount, tomorrowStr, payLink);
 
     try {
-      const res = await fetch("https://api.resend.com/emails", {
+      const res = await sendResendEmail({
         method: "POST",
         headers: {
           Authorization: `Bearer ${resendKey}`,

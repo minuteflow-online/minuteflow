@@ -1,4 +1,5 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { verifyApprovalToken } from "@/lib/approvalToken";
 import {
   htmlResponse,
@@ -64,7 +65,7 @@ async function emailVa(
     const per = periodWord(req.period);
     const decided = status === "approved" ? "Approved" : "Declined";
     const color = status === "approved" ? "#6b8f71" : "#c2694f";
-    await fetch("https://api.resend.com/emails", {
+    await sendResendEmail({
       method: "POST",
       headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({

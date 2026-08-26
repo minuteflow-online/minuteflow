@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 
@@ -35,7 +36,7 @@ async function sendTrainingEmail(training: { title: string; description?: string
     </div>
   `;
 
-  await fetch("https://api.resend.com/emails", {
+  await sendResendEmail({
     method: "POST",
     headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({

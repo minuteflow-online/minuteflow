@@ -34,6 +34,7 @@ import type {
   VAAssignedTask,
 } from "@/types/database";
 import { normalizePosition } from "@/types/database";
+import { clockInBlockedReason } from "@/lib/clockInAccess";
 
 type DashboardTaskFormData = TaskFormData & { _skipClockIn?: boolean; _assignedTaskId?: number; _todoLabel?: string };
 
@@ -1084,6 +1085,14 @@ export default function DashboardPage() {
   // ─── Actions ──────────────────────────────────────────────
 
   const clockIn = useCallback(async () => {
+    // Blocked either by the per-person flag or by being Output Based, whose
+    // work is paid per task rather than per hour. Checked before anything is
+    // written, so a blocked attempt leaves no half-started shift behind.
+    const blocked = clockInBlockedReason(profile);
+    if (blocked) {
+      alert(blocked);
+      return;
+    }
     // Check ref synchronously — state check alone has an async race that allows
     // double-clicks to both pass before either setState has landed.
     if (!userId || !profile || sessionActionPendingRef.current) return;

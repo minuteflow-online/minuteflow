@@ -1,4 +1,5 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { makeApprovalToken } from "@/lib/approvalToken";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
@@ -62,7 +63,7 @@ async function notifyAdminsOfRequest(
       if (emails.length > 0) {
         const approveUrl = `https://minuteflow.click/api/budget-requests/action?id=${requestId}&do=approve&t=${makeApprovalToken("budget", requestId, "approve")}`;
         const declineUrl = `https://minuteflow.click/api/budget-requests/action?id=${requestId}&do=decline&t=${makeApprovalToken("budget", requestId, "decline")}`;
-        await fetch("https://api.resend.com/emails", {
+        await sendResendEmail({
           method: "POST",
           headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({

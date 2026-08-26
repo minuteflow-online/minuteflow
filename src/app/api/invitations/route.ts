@@ -1,4 +1,5 @@
 import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { sendResendEmailAlways } from "@/lib/sendEmail";
 import { createClient } from "@/lib/supabase/server";
 import { randomBytes } from "crypto";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
@@ -111,7 +112,7 @@ export async function POST(request: Request) {
   const inviteUrl = `${SITE_URL}/invite?code=${code}`;
   const html = buildInviteEmail({ email, inviteUrl, requires_extension: requires_extension === true, message: message || null });
 
-  const resendRes = await fetch("https://api.resend.com/emails", {
+  const resendRes = await sendResendEmailAlways({
     method: "POST",
     headers: {
       Authorization: `Bearer ${RESEND_API_KEY}`,
@@ -293,7 +294,7 @@ export async function PATCH(request: Request) {
     message: invite.message || null,
   });
 
-  const resendRes = await fetch("https://api.resend.com/emails", {
+  const resendRes = await sendResendEmailAlways({
     method: "POST",
     headers: {
       Authorization: `Bearer ${RESEND_API_KEY}`,

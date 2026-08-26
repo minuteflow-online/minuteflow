@@ -1,4 +1,5 @@
 import { createClient as createServerClient } from "@/lib/supabase/server";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { makeApprovalToken } from "@/lib/approvalToken";
 import { esc } from "@/lib/approvalPages";
@@ -90,7 +91,7 @@ export async function POST(request: Request) {
     if (emails.length > 0) {
       // "Propose a new time" only makes sense for a shift change.
       const proposeBtn = req.type === "schedule_change" ? actionButton("🕑 Propose new time", link("propose"), "#b8860b") : "";
-      await fetch("https://api.resend.com/emails", {
+      await sendResendEmail({
         method: "POST",
         headers: { Authorization: `Bearer ${resendKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import {
   computeHourlyGross,
@@ -349,7 +350,7 @@ export async function POST(request: Request) {
       fee: feeAmount,
     });
 
-    const resendRes = await fetch("https://api.resend.com/emails", {
+    const resendRes = await sendResendEmail({
       method: "POST",
       headers: {
         Authorization: `Bearer ${resendKey}`,

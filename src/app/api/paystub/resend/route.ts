@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { normalizeByDateValue, type ByDateValue, type RateSegment } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
@@ -83,7 +84,7 @@ export async function POST(request: Request) {
     originalSentAt: snap.sent_at as string,
   });
 
-  const resendRes = await fetch("https://api.resend.com/emails", {
+  const resendRes = await sendResendEmail({
     method: "POST",
     headers: {
       Authorization: `Bearer ${resendKey}`,
