@@ -266,28 +266,39 @@ export async function POST(request: Request) {
   if (!title) return Response.json({ error: "title is required" }, { status: 400 });
   if (assignedToIds.length === 0) return Response.json({ error: "assigned_to_ids is required" }, { status: 400 });
 
-  // Guard against creating a second active template for the same task and
-  // person. This is exactly what produced a ~500-row pileup for one VA (10
-  // separate "WebUpdate Processing" templates, each independently generating
-  // its own 60-day daily series) and smaller versions of the same thing for
-  // several others — someone re-submitting the create form, on different
-  // days in some cases, because nothing told them one already existed.
+  // Guard against creating a second active template for the same actual
+  // recurring commitment. Task Name alone is NOT enough to detect this —
+  // it's a predefined dropdown, so one VA legitimately has many different
+  // real responsibilities sharing a generic name like "WebUpdate Processing"
+  // (confirmed live: Shem Delgado has ~10 of these, almost all genuinely
+  // different work — the Detail field is what actually distinguishes them,
+  // e.g. "SEO Work" vs "Weekly Planning" vs "EE Blog Content Batch Posting").
+  // Matching on title alone would block every one of those as a false
+  // "duplicate". The real accidental duplicates match on title AND detail
+  // AND account (confirmed live: three "EE Blog Content Planning (4 blogs)"
+  // templates, one minute apart, identical on all three).
   {
+    const detail = (stringOrNull(body.task_detail) ?? stringOrNull(body.description) ?? "").trim().toLowerCase();
+    const account = (stringOrNull(body.account) ?? "").trim().toLowerCase();
+
     const { data: activeSameTitle } = await serviceClient()
       .from("recurring_task_templates")
-      .select("id, assigned_to, assigned_to_ids")
+      .select("id, assigned_to, assigned_to_ids, task_detail, description, account")
       .eq("is_active", true)
       .ilike("title", title.trim());
 
     const conflict = (activeSameTitle ?? []).find((t) => {
       const ids = t.assigned_to_ids && t.assigned_to_ids.length > 0 ? t.assigned_to_ids : t.assigned_to ? [t.assigned_to] : [];
-      return ids.some((id: string) => assignedToIds.includes(id));
+      if (!ids.some((id: string) => assignedToIds.includes(id))) return false;
+      const existingDetail = ((t.task_detail ?? t.description ?? "") as string).trim().toLowerCase();
+      const existingAccount = ((t.account ?? "") as string).trim().toLowerCase();
+      return existingDetail === detail && existingAccount === account;
     });
 
     if (conflict) {
       return Response.json(
         {
-          error: `An active recurring template for "${title.trim()}" already exists for this person. Edit that one instead of creating a second — open it from the Recurring Templates tab.`,
+          error: `An active recurring template with this same Task Name, Detail, and Account already exists for this person. Edit that one instead of creating a second — open it from the Recurring Templates tab.`,
           existingTemplateId: conflict.id,
         },
         { status: 409 }
