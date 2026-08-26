@@ -3925,10 +3925,21 @@ function TeamManagementTab({
                                 type="checkbox"
                                 checked={Boolean(p.emails_disabled)}
                                 onChange={async (e) => {
+                                  const turningOff = e.target.checked;
+                                  if (
+                                    turningOff &&
+                                    !confirm(
+                                      `Turn off all emails for ${p.full_name || p.username}?
+
+They will stop receiving paystubs, memos, broadcasts, budget replies and every other notification. Password resets and invitations still go through.`
+                                    )
+                                  ) {
+                                    return;
+                                  }
                                   await fetch("/api/users", {
                                     method: "PATCH",
                                     headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ user_id: p.id, emails_disabled: e.target.checked }),
+                                    body: JSON.stringify({ user_id: p.id, emails_disabled: turningOff }),
                                   });
                                   fetchData();
                                 }}
@@ -3949,10 +3960,21 @@ function TeamManagementTab({
                                 type="checkbox"
                                 checked={Boolean(p.clock_in_disabled)}
                                 onChange={async (e) => {
+                                  const turningOff = e.target.checked;
+                                  if (
+                                    turningOff &&
+                                    !confirm(
+                                      `Disable clocking in for ${p.full_name || p.username}?
+
+They will not be able to clock in or start a timer. They can still sign in, work on tasks and submit them.`
+                                    )
+                                  ) {
+                                    return;
+                                  }
                                   await fetch("/api/users", {
                                     method: "PATCH",
                                     headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ user_id: p.id, clock_in_disabled: e.target.checked }),
+                                    body: JSON.stringify({ user_id: p.id, clock_in_disabled: turningOff }),
                                   });
                                   fetchData();
                                 }}
@@ -5535,7 +5557,20 @@ function ClientsTab({ isFullAdmin }: { isFullAdmin: boolean }) {
                 <input
                   type="checkbox"
                   checked={Boolean(form.emails_disabled)}
-                  onChange={(e) => updateForm("emails_disabled", e.target.checked)}
+                  onChange={(e) => {
+                    const turningOff = e.target.checked;
+                    if (
+                      turningOff &&
+                      !confirm(
+                        `Turn off all emails for ${form.name || "this client"}?
+
+No invoices, receipts or payment reminders will be sent to them.`
+                      )
+                    ) {
+                      return;
+                    }
+                    updateForm("emails_disabled", turningOff);
+                  }}
                   className="mt-[3px] h-3.5 w-3.5 rounded border-sand accent-terracotta cursor-pointer"
                 />
                 <span>
