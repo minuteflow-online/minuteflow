@@ -35,7 +35,7 @@
     },
     {
       "path": "/api/cron/team-digest?kind=weekly",
-      "schedule": "0 0 * * 6"
+      "schedule": "0 21 * * 5"
     },
     {
       "path": "/api/cron/team-digest?kind=meeting-tomorrow",
@@ -48,6 +48,10 @@
     {
       "path": "/api/cron/team-digest?kind=meeting-today",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/team-digest?kind=schedule",
+      "schedule": "0 0 * * 6"
     }
   ]
 }

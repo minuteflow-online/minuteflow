@@ -283,3 +283,79 @@ export async function buildMeetingReminder(
   lines.push("", "See you there.");
   return lines.join("\n");
 }
+
+/** 0 = Sunday, matching profiles.work_days. */
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function fmtShift(start: string | null, end: string | null): string | null {
+  if (!start) return null;
+  const short = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    const ap = h >= 12 ? "pm" : "am";
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, "0")}${ap}`;
+  };
+  return end ? `${short(start)}–${short(end)}` : short(start);
+}
+
+/**
+ * Friday's look at the coming week's schedule.
+ *
+ * Thanks the people who have set theirs and names the ones who have not, in
+ * that order and in that tone. Being listed under "still to add" alongside
+ * everyone else's completed schedule is reminder enough; it does not need a
+ * sharper word than that.
+ *
+ * Returns null only when nobody is active, since even a fully-set team is
+ * worth confirming — the point of the post is that the week ahead is known.
+ */
+export async function buildSchedulePost(): Promise<string | null> {
+  const supabase = service();
+  const { data } = await supabase
+    .from("profiles")
+    .select("full_name, username, shift_start, shift_end, shift_hours, work_days, telegram_chat_id")
+    .eq("is_active", true)
+    .neq("role", "admin")
+    .order("full_name");
+
+  const people = data ?? [];
+  if (people.length === 0) return null;
+
+  const set: string[] = [];
+  const missing: string[] = [];
+
+  for (const p of people) {
+    const who = (p.full_name as string) || (p.username as string) || "Someone";
+    const shift = fmtShift(p.shift_start as string | null, p.shift_end as string | null);
+    const days = Array.isArray(p.work_days) ? (p.work_days as number[]) : [];
+
+    // A schedule counts as set when there are hours to work and days to work
+    // them. Either half alone leaves the week genuinely unknown.
+    const hasHours = Boolean(shift) || Boolean(p.shift_hours);
+    if (hasHours && days.length > 0) {
+      const dayList = days.map((d) => DAY_NAMES[d] ?? "?").join(" ");
+      const hours = shift ?? `${p.shift_hours}h`;
+      set.push(`• ${esc(who)} — ${esc(dayList)}, ${esc(hours)}`);
+    } else {
+      missing.push(mention(who, p.telegram_chat_id as number | null));
+    }
+  }
+
+  const lines = ["🗓️ <b>Next week's schedule</b>"];
+
+  if (set.length > 0) {
+    lines.push("", "Thank you to everyone who has theirs in:", ...set);
+  }
+
+  if (missing.length > 0) {
+    lines.push(
+      "",
+      `Still to add: ${missing.join(", ")}`,
+      "When you have a moment, set your days and hours in MinuteFlow so the week ahead is clear for everyone."
+    );
+  } else {
+    lines.push("", "Everyone is set for the week. Thank you.");
+  }
+
+  return lines.join("\n");
+}

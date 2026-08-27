@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { buildTeamDigest, buildWeeklyRecap, buildMeetingReminder } from "@/lib/teamDigest";
+import { buildTeamDigest, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost } from "@/lib/teamDigest";
 import { sendTelegram, sendTelegramSticker, telegramEnabled } from "@/lib/telegram";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
@@ -53,6 +53,13 @@ export async function GET(request: NextRequest) {
     const reminder = await buildMeetingReminder(when);
     if (!reminder) return Response.json({ ok: true, skipped: `no meeting ${when}` });
     await sendTelegram("team", reminder);
+    return Response.json({ ok: true, kind });
+  }
+
+  if (kind === "schedule") {
+    const post = await buildSchedulePost();
+    if (!post) return Response.json({ ok: true, skipped: "nobody active" });
+    await sendTelegram("team", post);
     return Response.json({ ok: true, kind });
   }
 
