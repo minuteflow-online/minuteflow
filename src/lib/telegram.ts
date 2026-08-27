@@ -30,6 +30,11 @@
 //   "board"       → TELEGRAM_BOARD_CHAT_ID ONLY. No fallback either — board
 //                   posts are conversation, not alerts, and would drown an ops
 //                   group that people are meant to be able to skim.
+//   "team"        → TELEGRAM_TEAM_CHAT_ID ONLY. The whole team is in this one:
+//                   birthdays, anniversaries, meeting reminders, what is due,
+//                   who is off, and that a submission landed. No fallback, so a
+//                   missing variable cannot spill team-wide chatter into a
+//                   private chat.
 //   "ops"         → TELEGRAM_OPS_CHAT_ID, falling back to the financial chat.
 //                   Anything that singles a person out: idle warnings, forced
 //                   clock-outs, screenshot failures. These went to the
@@ -42,7 +47,7 @@
 // Adding a category later is one entry here plus one env var; pointing an
 // existing category at a different group is an env change with no code at all.
 
-export type TelegramTopic = "financial" | "submissions" | "bugs" | "board" | "ops";
+export type TelegramTopic = "financial" | "submissions" | "bugs" | "board" | "ops" | "team";
 
 /** Which audience a message is for. Picks the bot, not the destination. */
 export type TelegramBot = "internal" | "va" | "client";
@@ -75,6 +80,8 @@ function chatIdFor(topic: TelegramTopic): string | undefined {
       return process.env.TELEGRAM_BUGS_CHAT_ID || submissions;
     case "ops":
       return process.env.TELEGRAM_OPS_CHAT_ID || process.env.TELEGRAM_BUDGET_CHAT_ID;
+    case "team":
+      return process.env.TELEGRAM_TEAM_CHAT_ID;
   }
 }
 
@@ -307,6 +314,36 @@ export async function sendTelegramDocument(
     return { ok: true, messageId };
   } catch (err) {
     console.error(`telegram document failed (${topic}):`, err);
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Send a sticker to the chat for `topic`.
+ *
+ * Telegram stickers are referenced by a file_id from a public pack — no upload,
+ * no hosting, and they render at full size rather than as a tiny inline emoji.
+ * Worth the separate call for a birthday: a card that fills the screen reads as
+ * an occasion, where the same words with a 🎂 in them read as an alert.
+ */
+export async function sendTelegramSticker(
+  topic: TelegramTopic,
+  stickerFileId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const chatId = chatIdFor(topic);
+  if (!BOT_TOKEN || !chatId) return { ok: false, error: `telegram not configured for "${topic}"` };
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendSticker`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, sticker: stickerFileId }),
+    });
+    if (!res.ok) return { ok: false, error: await res.text() };
+    return { ok: true };
+  } catch (err) {
+    // A missing sticker must never take the greeting down with it.
+    console.error(`telegram sticker failed (${topic}):`, err);
     return { ok: false, error: String(err) };
   }
 }
