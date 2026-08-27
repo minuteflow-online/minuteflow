@@ -1298,11 +1298,11 @@ export default function AdminPage() {
       });
 
       // Recompute billable when the category changes. Every other write path in the app derives
-      // billable from category (billable = category !== "Personal") — this correction-approval
+      // billable from category (never billable for Personal or Break) — this correction-approval
       // path was the one place that didn't, so a log corrected out of "Clock Out"/"Personal" into
       // a real task kept its old (often non-billable) flag instead of picking up the new one.
       if (changes.category) {
-        const newBillable = changes.category !== "Personal";
+        const newBillable = changes.category !== "Personal" && changes.category !== "Break";
         updatePayload.billable = newBillable;
         auditRecords.push({
           log_id: request.log_id,
