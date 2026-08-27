@@ -50,15 +50,18 @@ const SUB_FILTERS: { key: SubFilter; label: string }[] = [
 ];
 const NOT_STARTED = new Set(["pending", "unassigned", "on_queue"]);
 
-// A task counts toward its assignee's position only once it has been SUBMITTED
-// — submission is the trigger, full credit. Everything before that (not
-// started, actively working, or bounced back for revision) stays at the start,
-// so the avatar moves only when work is actually submitted. `cancelled`/unknown
-// are excluded from the average entirely.
+// A task moves its assignee's avatar only once it's been APPROVED (approved/
+// completed/paid = full credit). Everything before that keeps the face where it
+// is. `cancelled`/unknown are excluded from the average entirely.
 const STATUS_WEIGHT: Record<string, number> = {
   pending: 0, unassigned: 0, on_queue: 0, in_progress: 0, revision_needed: 0,
-  submitted: 1, reviewing: 1, approved: 1, completed: 1, paid: 1,
+  submitted: 0, reviewing: 0, approved: 1, completed: 1, paid: 1,
 };
+// A submitted task (awaiting approval) doesn't move the avatar yet, but makes it
+// glow YELLOW so a pending review is visible at a glance. An approved task moves
+// the avatar forward and glows GREEN.
+const PENDING_STATUSES = new Set(["submitted", "reviewing"]);
+const APPROVED_STATUSES = new Set(["approved", "completed", "paid"]);
 const easternToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 function matchesSubFilter(st: SubtaskRow, f: SubFilter, today: string): boolean {
   switch (f) {
@@ -485,17 +488,19 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
       const arr = byProject.get(st.project_id);
       if (arr) arr.push(st); else byProject.set(st.project_id, [st]);
     }
-    const byItem = new Map<string, { id: string; name: string; avatar_url: string | null; pct: number }[]>();
+    const byItem = new Map<string, { id: string; name: string; avatar_url: string | null; pct: number; pending: boolean; approved: boolean }[]>();
     for (const item of overviewItems) {
       const ids = [item.id, ...descendantsOf(item.id)];
-      const agg = new Map<string, { member: Assignee; sum: number; count: number }>();
+      const agg = new Map<string, { member: Assignee; sum: number; count: number; pending: boolean; approved: boolean }>();
       for (const id of ids) {
         for (const st of byProject.get(id) ?? []) {
           const w = STATUS_WEIGHT[st.status];
           if (w === undefined) continue; // cancelled / unknown → excluded
+          const pends = PENDING_STATUSES.has(st.status);
+          const appr = APPROVED_STATUSES.has(st.status);
           for (const a of st.assignees) {
-            const e = agg.get(a.id) ?? { member: a, sum: 0, count: 0 };
-            e.sum += w; e.count += 1;
+            const e = agg.get(a.id) ?? { member: a, sum: 0, count: 0, pending: false, approved: false };
+            e.sum += w; e.count += 1; e.pending = e.pending || pends; e.approved = e.approved || appr;
             agg.set(a.id, e);
           }
         }
@@ -503,7 +508,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
       byItem.set(
         item.id,
         Array.from(agg.values())
-          .map((e) => ({ id: e.member.id, name: e.member.name, avatar_url: e.member.avatar_url, pct: e.count ? (e.sum / e.count) * 100 : 0 }))
+          .map((e) => ({ id: e.member.id, name: e.member.name, avatar_url: e.member.avatar_url, pct: e.count ? (e.sum / e.count) * 100 : 0, pending: e.pending, approved: e.approved }))
           .sort((a, b) => b.pct - a.pct)
       );
     }
@@ -756,16 +761,26 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 overflow-hidden rounded-full bg-parchment">
                               <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
                             </div>
-                            {riders.map((m) => (
+                            {riders.map((m) => {
+                              // Yellow = a submission is awaiting review (actionable now),
+                              // shown even if they also have approved work. Green = approved,
+                              // no pending review. Otherwise no glow.
+                              const glow = m.pending
+                                ? "ring-2 ring-amber shadow-[0_0_10px_2px_rgba(184,134,11,0.8)] animate-pulse"
+                                : m.approved
+                                ? "ring-2 ring-sage shadow-[0_0_10px_2px_rgba(107,143,113,0.8)]"
+                                : "";
+                              return (
                               <span
                                 key={m.id}
-                                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 transition-all duration-500 ease-out"
+                                className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 transition-all duration-500 ease-out rounded-full ${glow}`}
                                 style={{ left: `${Math.max(3, Math.min(97, m.pct))}%` }}
-                                title={`${m.name} · ${Math.round(m.pct)}%`}
+                                title={`${m.name} · ${Math.round(m.pct)}% approved${m.pending ? " · submission awaiting review" : ""}`}
                               >
                                 <Avatar person={m} />
                               </span>
-                            ))}
+                              );
+                            })}
                           </div>
                         );
                       })()}
