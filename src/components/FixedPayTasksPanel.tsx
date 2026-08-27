@@ -9,7 +9,7 @@ import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import ToolbarFilterDropdown from "@/components/table/ToolbarFilterDropdown";
 import TableRowDetailPanel from "@/components/table/TableRowDetailPanel";
-import TaskEditor from "@/components/TaskEditor";
+import TaskEditor, { type TeamMemberOption } from "@/components/TaskEditor";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 
@@ -124,6 +124,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   const [currentPayRateType, setCurrentPayRateType] = useState<string | null>(null);
   const [canSeeAvailableTasks, setCanSeeAvailableTasks] = useState(false);
   const [currentPayRate, setCurrentPayRate] = useState<number | null>(null);
+  const [teamMembers, setTeamMembers] = useState<TeamMemberOption[]>([]);
 
   const [tasks, setTasks] = useState<FixedPayTaskWithClaimer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -232,6 +233,25 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       setProfileLoading(false);
     }
   }, [supabase]);
+
+  // Populates the "Assigned By" dropdown in TaskEditor. Without this the
+  // panel passed teamMembers={[]}, so the select rendered with no <option>s
+  // at all — the field just showed blank, even though assignedBy held a
+  // real value (see TaskEditor's assignByOptions = teamMembers).
+  const fetchTeamMembers = useCallback(async () => {
+    try {
+      const res = await fetch("/api/team-members", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { members?: TeamMemberOption[] };
+      setTeamMembers(data.members ?? []);
+    } catch {
+      // leave it empty — the dropdown just stays blank, same as before
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchTeamMembers();
+  }, [fetchTeamMembers]);
 
   const fetchTasks = useCallback(async () => {
     if (!currentUserId) return;
@@ -997,7 +1017,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                       mode="time_based"
                       currentUserId={currentUserId ?? ""}
                       isAdminOrManager={false}
-                      teamMembers={[]}
+                      teamMembers={teamMembers}
                       onCancel={closePanel}
                       onSaved={handleTaskSaved}
                     />
@@ -1011,7 +1031,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                       initialTask={panelMode === "edit" ? (selectedTask as unknown as Record<string, unknown>) : null}
                       currentUserId={currentUserId ?? ""}
                       isAdminOrManager={isAdminOrManager}
-                      teamMembers={[]}
+                      teamMembers={teamMembers}
                       currentPayRate={currentPayRate ?? undefined}
                       onCancel={closePanel}
                       onSaved={handleTaskSaved}
@@ -1029,7 +1049,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     initialTask={selectedTask as unknown as Record<string, unknown>}
                     currentUserId={currentUserId ?? ""}
                     isAdminOrManager={isAdminOrManager}
-                    teamMembers={[]}
+                    teamMembers={teamMembers}
                     currentPayRate={currentPayRate ?? undefined}
                     readOnly
                     hideFooter
