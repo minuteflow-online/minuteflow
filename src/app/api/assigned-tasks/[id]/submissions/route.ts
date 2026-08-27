@@ -8,6 +8,7 @@ import {
 } from "@/lib/submissions";
 import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled, esc, mention } from "@/lib/telegram";
 import { reviewLinks } from "@/lib/reviewLinks";
+import { submissionCheer } from "@/lib/submissionCheer";
 import { notifyRecipients } from "@/lib/notifyRecipients";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -488,6 +489,26 @@ export async function POST(request: Request, { params }: RouteContext) {
     // through a short-lived signed URL — the bucket is private and Telegram
     // fetching the path itself would get nothing.
     await postSubmissionFiles(admin, submission.id as number, sent.messageId);
+  }
+
+  // The team chat gets the moment, not the paperwork: who submitted and a word
+  // about it, with no files, no link and no review buttons. Those belong in the
+  // reviewer's chat — the team seeing work land is the point here, and the rest
+  // is Toni's to act on.
+  //
+  // This is the only thing the bot says to the whole team that is unambiguously
+  // good news. Everything else it posts there is a reminder or a warning.
+  if (messageType === "submission" && telegramEnabled("team")) {
+    const { data: prof } = await admin
+      .from("profiles")
+      .select("full_name, username, telegram_chat_id")
+      .eq("id", user.id)
+      .single();
+    const who = prof?.full_name || prof?.username || "Someone";
+    await sendTelegram(
+      "team",
+      submissionCheer(mention(who, prof?.telegram_chat_id))
+    );
   }
 
   const [withFiles] = await withAttachments(admin, [submission as never]);
