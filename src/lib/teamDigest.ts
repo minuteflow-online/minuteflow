@@ -239,3 +239,47 @@ export async function buildWeeklyRecap(): Promise<string | null> {
   lines.push("", "Thank you, all of you. Have a good weekend.");
   return lines.join("\n");
 }
+
+/**
+ * A reminder for a meeting that is due today or tomorrow.
+ *
+ * Found by name against the calendar rather than hardcoded to Saturday. Ari
+ * schedules the team meeting as a recurring assigned task, and a fixed weekday
+ * would keep firing at the old time the first week she moves it.
+ *
+ * Returns null when no meeting is on, so the same three clock times can run
+ * every day and simply say nothing six days a week.
+ */
+export async function buildMeetingReminder(
+  when: "today" | "tomorrow"
+): Promise<string | null> {
+  const supabase = service();
+  const date = when === "today" ? orgDate(0) : orgDate(1);
+
+  const { data } = await supabase
+    .from("assigned_tasks")
+    .select("task_name, due_time, status")
+    .eq("due_date", date)
+    .ilike("task_name", "%meeting%")
+    .is("deleted_at", null)
+    .is("archived_at", null);
+
+  const live = (data ?? []).filter(
+    (t) => !["approved", "completed", "cancelled"].includes(String(t.status ?? ""))
+  );
+  if (live.length === 0) return null;
+
+  const lines: string[] = [];
+  for (const m of live) {
+    const name = esc(String(m.task_name ?? "Team meeting"));
+    const at = m.due_time ? ` at ${esc(String(m.due_time).slice(0, 5))}` : "";
+    lines.push(
+      when === "today"
+        ? `🔔 <b>${name} today${at}</b>`
+        : `🔔 <b>${name} tomorrow${at}</b> — ${longDate(date)}`
+    );
+  }
+
+  lines.push("", "See you there.");
+  return lines.join("\n");
+}

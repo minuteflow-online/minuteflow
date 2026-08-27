@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { buildTeamDigest, buildWeeklyRecap } from "@/lib/teamDigest";
+import { buildTeamDigest, buildWeeklyRecap, buildMeetingReminder } from "@/lib/teamDigest";
 import { sendTelegram, sendTelegramSticker, telegramEnabled } from "@/lib/telegram";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
@@ -42,6 +42,18 @@ export async function GET(request: NextRequest) {
   const kind = request.nextUrl.searchParams.get("kind") ?? "today";
   if (!telegramEnabled("team")) {
     return Response.json({ ok: true, skipped: "TELEGRAM_TEAM_CHAT_ID not set" });
+  }
+
+  // Meeting reminders run at three fixed clock times every day and simply say
+  // nothing on the six days there is no meeting. Tying the schedule to a
+  // weekday instead would keep firing at the old time the first week Ari moves
+  // it — the calendar is the source of truth, not the crontab.
+  if (kind === "meeting-tomorrow" || kind === "meeting-today") {
+    const when = kind === "meeting-today" ? "today" : "tomorrow";
+    const reminder = await buildMeetingReminder(when);
+    if (!reminder) return Response.json({ ok: true, skipped: `no meeting ${when}` });
+    await sendTelegram("team", reminder);
+    return Response.json({ ok: true, kind });
   }
 
   if (kind === "weekly") {
