@@ -5,10 +5,14 @@ import { esc, mention } from "./telegram";
 /**
  * The team chat's daily notes: whose day it is, what is due, who is away.
  *
- * Two runs, because one time cannot serve both halves. The morning note is for
- * today — birthdays, anniversaries, what is due. The evening note is a heads-up
- * for tomorrow, which is the only way a 6am Saturday meeting gets mentioned
- * before it happens.
+ * Two runs, because one time cannot serve both halves. The morning note covers
+ * today — what is due, who is away. The evening note covers tomorrow, and is
+ * where birthdays and anniversaries go.
+ *
+ * Birthdays deliberately go out the evening before, Eastern. The team is in
+ * the Philippines, twelve hours ahead, so 7pm here is breakfast there on the
+ * day itself — a greeting sent on the Eastern morning would reach them as
+ * their birthday was already ending.
  *
  * Meetings are not a separate thing to track. Ari schedules the team meeting as
  * a recurring assigned task with a due date, so it arrives through the same
@@ -125,8 +129,8 @@ export async function buildTeamDigest(kind: DigestKind): Promise<{
 } | null> {
   const date = kind === "today" ? orgDate(0) : orgDate(1);
   const [birthdays, anniversaries, due, off] = await Promise.all([
-    kind === "today" ? birthdaysOn(date) : Promise.resolve([]),
-    kind === "today" ? anniversariesOn(date) : Promise.resolve([]),
+    kind === "tomorrow" ? birthdaysOn(date) : Promise.resolve([]),
+    kind === "tomorrow" ? anniversariesOn(date) : Promise.resolve([]),
     dueOn(date),
     offOn(date),
   ]);
