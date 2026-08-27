@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { verifyApprovalToken } from "@/lib/approvalToken";
 import { resultPage } from "@/lib/approvalPages";
+import { cheerApproval } from "@/lib/reviewLinks";
 import type { ReviewAction } from "@/lib/reviewLinks";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
 import { NextRequest } from "next/server";
@@ -100,6 +101,8 @@ export async function GET(request: NextRequest) {
     content: cfg.body,
     submission_comment: cfg.body,
   });
+
+  if (action === "approve") await cheerApproval(id);
 
   if (telegramEnabled("submissions")) {
     const emoji = action === "approve" ? "✅" : "🔁";

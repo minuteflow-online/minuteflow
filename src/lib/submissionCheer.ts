@@ -45,3 +45,35 @@ export function submissionCheer(name: string): string {
   const line = LINES[Math.floor(Math.random() * LINES.length)];
   return line.replace("{name}", name);
 }
+
+/**
+ * What the team chat says when work is approved.
+ *
+ * Separate pool from the submission cheer, and warmer. Submitting is showing
+ * up; approved means it was looked at and it was right — the difference is
+ * worth hearing, and reusing the same sixteen lines for both would flatten it.
+ *
+ * Still no comparisons and no "finally". A congratulation that carries a note
+ * of surprise is not one.
+ */
+const APPROVED_LINES = [
+  "Approved! Congratulations {name} 🎉",
+  "{name}'s work is approved. Beautifully done.",
+  "That's a yes for {name} — congratulations! 🎊",
+  "Approved, {name}. That's how it's done. 👏",
+  "Congratulations {name}, your work is approved!",
+  "{name} nailed it — approved. 🌟",
+  "Signed off and approved. Well done, {name}!",
+  "{name}'s submission is approved. Excellent work.",
+  "Approved! Lovely work, {name}. ✨",
+  "That one's a keeper, {name} — approved!",
+  "Congratulations {name}. Approved and done. 🙌",
+  "{name} delivered and it's approved. Brilliant.",
+  "Approved, {name}! Thank you for the care you put in.",
+  "That's approved, {name}. Really well done. 💫",
+];
+
+/** A congratulation for approved work, named and picked at random. */
+export function approvalCheer(name: string): string {
+  return APPROVED_LINES[Math.floor(Math.random() * APPROVED_LINES.length)].replace("{name}", name);
+}

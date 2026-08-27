@@ -7,7 +7,7 @@ import {
   type SubmissionMessageType,
 } from "@/lib/submissions";
 import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled, esc, mention } from "@/lib/telegram";
-import { reviewLinks } from "@/lib/reviewLinks";
+import { reviewLinks, cheerApproval } from "@/lib/reviewLinks";
 import { submissionCheer } from "@/lib/submissionCheer";
 import { notifyRecipients } from "@/lib/notifyRecipients";
 
@@ -409,6 +409,14 @@ export async function POST(request: Request, { params }: RouteContext) {
       .from("assigned_tasks")
       .update({ status: autoStatus, updated_at: stamp })
       .eq("id", id);
+  }
+
+  // An approval posted from the admin panel arrives here as a message_type of
+  // "approval". Congratulating from both this and the Telegram button matters:
+  // a cheer that only fired from one would depend on which screen the reviewer
+  // happened to be using, which the person receiving it would eventually notice.
+  if (messageType === "approval" || autoStatus === "approved") {
+    await cheerApproval(Number(id));
   }
 
   // Telegram alert on every submission, including the ones that close on

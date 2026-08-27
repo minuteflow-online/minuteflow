@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { buildTeamDigest, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost } from "@/lib/teamDigest";
+import { findProfileGaps, gapMessage } from "@/lib/profileGaps";
+import { notifyVaPrivately } from "@/lib/vaNotify";
 import { sendTelegram, sendTelegramSticker, telegramEnabled } from "@/lib/telegram";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
 
@@ -54,6 +56,23 @@ export async function GET(request: NextRequest) {
     if (!reminder) return Response.json({ ok: true, skipped: `no meeting ${when}` });
     await sendTelegram("team", reminder);
     return Response.json({ ok: true, kind });
+  }
+
+  // Each person hears only about their own profile, privately. A list of
+  // whose details are missing, posted to the team, would be a public tally of
+  // who has not filled in their bank account.
+  if (kind === "profiles") {
+    const gaps = await findProfileGaps();
+    for (const gap of gaps) {
+      await notifyVaPrivately({
+        chatId: gap.chatId,
+        userId: gap.userId,
+        vaName: gap.name,
+        topic: "Profile",
+        message: gapMessage(gap),
+      });
+    }
+    return Response.json({ ok: true, kind, reminded: gaps.length });
   }
 
   if (kind === "schedule") {
