@@ -411,11 +411,17 @@ export async function POST(request: Request, { params }: RouteContext) {
       .eq("id", id);
   }
 
-  // An approval posted from the admin panel arrives here as a message_type of
-  // "approval". Congratulating from both this and the Telegram button matters:
-  // a cheer that only fired from one would depend on which screen the reviewer
-  // happened to be using, which the person receiving it would eventually notice.
-  if (messageType === "approval" || autoStatus === "approved") {
+  // Only an approval somebody actually made. An approval posted from the admin
+  // panel arrives here as message_type "approval"; the Telegram button calls
+  // this from its own route. Congratulating from both matters, or the cheer
+  // would depend on which screen the reviewer happened to use.
+  //
+  // Auto-approval is deliberately excluded. A task with review_required = false
+  // closes on submit without anyone looking at it, so "signed off and approved,
+  // well done" is congratulating a rule rather than a person — and it arrived
+  // in the same breath as the submission notice, which read as the bot talking
+  // to itself.
+  if (messageType === "approval") {
     await cheerApproval(Number(id));
   }
 
