@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
-import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { sendTelegram, telegramEnabled, mention } from "@/lib/telegram";
 import { findProfileGaps } from "@/lib/profileGaps";
 import { NextRequest } from "next/server";
@@ -13,9 +12,10 @@ export const dynamic = "force-dynamic";
  * A general "please finish your profile" note to the team chat, sent when Toni
  * asks for it rather than on a schedule.
  *
- * Nobody is named. The weekly direct messages already tell each person exactly
- * what they are missing; this is the group-level nudge that gives those a
- * reason, and naming people here would turn a reminder into a roll call.
+ * @everyone pings the room, and the people who still have gaps are named at
+ * the end so nobody has to guess whether it means them. What they are missing
+ * stays out of it — the weekly direct messages carry the specifics, and a
+ * public list of whose bank details are blank is a different message entirely.
  *
  * Dry run by default so the count can be checked before anything is posted.
  * Reviewer-only, since it writes to the whole team's chat.
@@ -39,46 +39,21 @@ export async function GET(request: NextRequest) {
 
   const gaps = await findProfileGaps();
 
-  // Telegram has no @everyone. The only way to reach the whole room is to
-  // mention each person, so the "everyone" line is built from the team itself.
-  // Anyone who has not linked Telegram appears as plain text and is not pinged
-  // — nothing can be done about that until they message the bot.
-  const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-  const { data: team } = await admin
-    .from("profiles")
-    .select("full_name, username, telegram_chat_id")
-    .eq("is_active", true)
-    .order("full_name");
-
-  const everyone = (team ?? [])
-    .map((p) =>
-      mention(
-        (p.full_name as string) || (p.username as string) || "Someone",
-        p.telegram_chat_id as number | null
-      )
-    )
-    .join(" ");
-
-  // Named because Toni asked for it: the people who still have gaps are tagged
-  // directly rather than left to work out whether it means them.
-  const named = gaps
-    .map((g) => mention(g.name, g.chatId))
-    .join(", ");
+  // @everyone works when a bot sends it — confirmed in the team chat on
+  // 2026-08-27. That replaced a line that mentioned all eleven people
+  // individually, which pinged the room but opened every message with a wall
+  // of names before it said anything.
+  //
+  // The people with gaps are still mentioned by name, so nobody has to work
+  // out whether the message means them. Anyone not yet linked to Telegram
+  // appears as plain text and is not pinged — nothing can change that until
+  // they message the bot.
+  const named = gaps.map((g) => mention(g.name, g.chatId)).join(", ");
 
   const message = [
     "📋 <b>A quick housekeeping ask</b>",
     "",
-    // Both forms, deliberately. Toni reports @everyone works for her as a
-    // person typing it; whether Telegram honours it from a BOT is the open
-    // question, and one send answers it. The per-person mentions below ping
-    // the room for certain either way, so the test costs nothing if it turns
-    // out to be plain text.
     "@everyone",
-    everyone,
     "",
     "Some profiles are still missing a few details — payment information, address, birthday or a photo.",
     "",

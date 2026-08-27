@@ -521,7 +521,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const who = prof?.full_name || prof?.username || "Someone";
     await sendTelegram(
       "team",
-      submissionCheer(mention(who, prof?.telegram_chat_id))
+      submissionCheer(mention(who, prof?.telegram_chat_id), task.task_name)
     );
   }
 

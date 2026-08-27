@@ -1,3 +1,5 @@
+import { esc } from "@/lib/telegram";
+
 /**
  * What the team chat says when someone hands work in.
  *
@@ -6,6 +8,12 @@
  * the bot is purely a thing that tells people off, and people stop wanting it
  * around. Work landing is the most common good thing that happens all day and
  * it was going unremarked.
+ *
+ * Shape: a bold headline, then who and what. One thin sentence — "X came
+ * through. Submission is in!" — scrolled past like any other line of chat, and
+ * it never said what had actually been handed in, which is the part worth
+ * being pleased about. Naming the work is what makes it a moment rather than a
+ * notification.
  *
  * Rules the lines follow:
  *   - Name the person. "A submission was received" celebrates nobody.
@@ -16,34 +24,58 @@
  *     anything that reads as a ranking turns the chat into a scoreboard.
  */
 
-const LINES = [
-  "Way to go {name}, your submission is in!",
-  "Nice one, {name} — that's submitted.",
-  "{name} just sent work through. 🙌",
-  "Submitted by {name}. Thank you!",
-  "That's in, {name}. Well done.",
-  "{name} got another one over the line.",
-  "Work's in from {name}. 👏",
-  "Good stuff, {name} — submission received.",
-  "{name} just handed something in. Thank you!",
-  "Another one done, {name}. 🎯",
-  "{name} came through. Submission is in!",
-  "Sent and safe, {name}. Nice work.",
-  "{name} just wrapped one up. 💪",
-  "That's a submission from {name}. Thank you!",
-  "Job done, {name} — it's in.",
-  "{name} delivered. 🚀",
+/** Headline and body are drawn separately, so repeats are rare in practice. */
+const HEADLINES = [
+  "🎉 <b>Submission in!</b>",
+  "🙌 <b>That's in!</b>",
+  "🚀 <b>Work just landed!</b>",
+  "⚡ <b>Another one in!</b>",
+  "✨ <b>Handed in!</b>",
+  "🔥 <b>That's submitted!</b>",
+  "🎯 <b>One more over the line!</b>",
+  "💪 <b>Wrapped and sent!</b>",
+  "📬 <b>Fresh submission!</b>",
+  "🏁 <b>Done and in!</b>",
+  "⭐ <b>Work's in!</b>",
+  "🥳 <b>Submission landed!</b>",
 ];
+
+const BODIES = [
+  "{name} just sent through {task}.",
+  "{name} handed in {task}.",
+  "{name} got {task} over the line.",
+  "{name} just submitted {task}.",
+  "{task} is in, from {name}.",
+  "{name} wrapped up {task} and sent it.",
+  "{name} put {task} through.",
+  "That's {task}, submitted by {name}.",
+];
+
+/** Used when the task has no name to show — the moment still gets marked. */
+const TASKLESS_BODIES = [
+  "{name} just sent work through.",
+  "{name} handed something in.",
+  "{name} got another one over the line.",
+  "{name} just submitted.",
+  "Work's in from {name}.",
+];
+
+function pick(pool: string[]): string {
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 
 /**
  * A cheer for one submission, named and picked at random.
  *
- * `name` is inserted already escaped or already a mention, so it is
- * interpolated rather than escaped again here.
+ * `name` arrives already escaped or already a mention, so it is interpolated
+ * rather than escaped again. `taskName` is raw free text and is escaped here.
  */
-export function submissionCheer(name: string): string {
-  const line = LINES[Math.floor(Math.random() * LINES.length)];
-  return line.replace("{name}", name);
+export function submissionCheer(name: string, taskName?: string | null): string {
+  const trimmed = taskName?.trim();
+  const body = trimmed
+    ? pick(BODIES).replace("{task}", `“${esc(trimmed)}”`)
+    : pick(TASKLESS_BODIES);
+  return `${pick(HEADLINES)}\n${body.replace("{name}", name)}`;
 }
 
 /**
@@ -51,29 +83,33 @@ export function submissionCheer(name: string): string {
  *
  * Separate pool from the submission cheer, and warmer. Submitting is showing
  * up; approved means it was looked at and it was right — the difference is
- * worth hearing, and reusing the same sixteen lines for both would flatten it.
+ * worth hearing, and reusing the same lines for both would flatten it. It gets
+ * the same bold shape so it does not read as the smaller of the two events.
  *
  * Still no comparisons and no "finally". A congratulation that carries a note
  * of surprise is not one.
  */
-const APPROVED_LINES = [
-  "Approved! Congratulations {name} 🎉",
-  "{name}'s work is approved. Beautifully done.",
-  "That's a yes for {name} — congratulations! 🎊",
-  "Approved, {name}. That's how it's done. 👏",
-  "Congratulations {name}, your work is approved!",
-  "{name} nailed it — approved. 🌟",
-  "Signed off and approved. Well done, {name}!",
-  "{name}'s submission is approved. Excellent work.",
-  "Approved! Lovely work, {name}. ✨",
-  "That one's a keeper, {name} — approved!",
-  "Congratulations {name}. Approved and done. 🙌",
-  "{name} delivered and it's approved. Brilliant.",
-  "Approved, {name}! Thank you for the care you put in.",
-  "That's approved, {name}. Really well done. 💫",
+const APPROVED_HEADLINES = [
+  "🎊 <b>Approved!</b>",
+  "✅ <b>Approved!</b>",
+  "🌟 <b>That's a yes!</b>",
+  "🎉 <b>Signed off!</b>",
+  "💫 <b>Approved and done!</b>",
+  "🏆 <b>That one's a keeper!</b>",
+];
+
+const APPROVED_BODIES = [
+  "Congratulations {name} — beautifully done.",
+  "{name}, that's how it's done. 👏",
+  "Lovely work, {name}.",
+  "{name} delivered, and it shows.",
+  "Congratulations {name}. Thank you for the care you put in.",
+  "Really well done, {name}.",
+  "{name} nailed it.",
+  "Excellent work, {name}.",
 ];
 
 /** A congratulation for approved work, named and picked at random. */
 export function approvalCheer(name: string): string {
-  return APPROVED_LINES[Math.floor(Math.random() * APPROVED_LINES.length)].replace("{name}", name);
+  return `${pick(APPROVED_HEADLINES)}\n${pick(APPROVED_BODIES).replace("{name}", name)}`;
 }
