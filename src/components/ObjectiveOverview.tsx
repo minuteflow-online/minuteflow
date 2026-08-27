@@ -13,7 +13,7 @@ type SubmittedFileRow = { id: string; project_id: string; filename: string; uplo
 type CommentRow = { id: number; body: string; created_at: string; author: string; author_id: string | null };
 type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[] };
 type Assignee = { id: string; name: string; avatar_url: string | null };
-type SubtaskRow = { id: number; project_id: string; task_name: string; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; assignees: Assignee[] };
+type SubtaskRow = { id: number; project_id: string; task_name: string; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[] };
 
 function initialsOf(name: string) {
   return name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -505,38 +505,42 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     return byItem;
   }, [overviewItems, descendantsOf, stats, filesByProject]);
 
-  // Per-member progress along each overview item's bar — averaged status weight
-  // over every subtask (the item + its descendants) that member is on. Drives
-  // the little avatar faces that ride the bar and nudge forward on each submit.
-  const memberProgress = useMemo(() => {
+  // One avatar per TASK-assignment on each overview item's bar (the item + its
+  // descendants). A task's dot sits at the START until it's approved, then moves
+  // to the END. Glow: yellow while it's a pending submission, green once it's
+  // been reviewed AND approved (auto-approved work moves but doesn't glow). Dots
+  // are fanned within each end so faces in the same spot don't fully overlap.
+  const taskRiders = useMemo(() => {
     const byProject = new Map<string, SubtaskRow[]>();
     for (const st of subtasks) {
       const arr = byProject.get(st.project_id);
       if (arr) arr.push(st); else byProject.set(st.project_id, [st]);
     }
-    const byItem = new Map<string, { id: string; name: string; avatar_url: string | null; pct: number; pending: boolean; approved: boolean }[]>();
+    type Rider = { key: string; name: string; avatar_url: string | null; done: boolean; glow: "yellow" | "green" | "" };
+    const byItem = new Map<string, { key: string; name: string; avatar_url: string | null; pct: number; glow: "yellow" | "green" | "" }[]>();
     for (const item of overviewItems) {
       const ids = [item.id, ...descendantsOf(item.id)];
-      const agg = new Map<string, { member: Assignee; sum: number; count: number; pending: boolean; approved: boolean }>();
+      const raw: Rider[] = [];
       for (const id of ids) {
         for (const st of byProject.get(id) ?? []) {
-          const w = STATUS_WEIGHT[st.status];
-          if (w === undefined) continue; // cancelled / unknown → excluded
-          const pends = PENDING_STATUSES.has(st.status);
-          const appr = APPROVED_STATUSES.has(st.status);
+          if (STATUS_WEIGHT[st.status] === undefined) continue; // cancelled / unknown → excluded
+          const done = APPROVED_STATUSES.has(st.status);
+          const glow: "yellow" | "green" | "" = PENDING_STATUSES.has(st.status)
+            ? "yellow"
+            : (done && st.review_required ? "green" : "");
           for (const a of st.assignees) {
-            const e = agg.get(a.id) ?? { member: a, sum: 0, count: 0, pending: false, approved: false };
-            e.sum += w; e.count += 1; e.pending = e.pending || pends; e.approved = e.approved || appr;
-            agg.set(a.id, e);
+            raw.push({ key: `${st.id}-${a.id}`, name: a.name, avatar_url: a.avatar_url, done, glow });
           }
         }
       }
-      byItem.set(
-        item.id,
-        Array.from(agg.values())
-          .map((e) => ({ id: e.member.id, name: e.member.name, avatar_url: e.member.avatar_url, pct: e.count ? (e.sum / e.count) * 100 : 0, pending: e.pending, approved: e.approved }))
-          .sort((a, b) => b.pct - a.pct)
-      );
+      // Fan each cluster (start / end) so stacked faces stay legible.
+      const STEP = 3.5;
+      const fan = (arr: Rider[], base: number, dir: 1 | -1) =>
+        arr.map((r, i) => ({ key: r.key, name: r.name, avatar_url: r.avatar_url, glow: r.glow, pct: Math.max(3, Math.min(97, base + dir * i * STEP)) }));
+      byItem.set(item.id, [
+        ...fan(raw.filter((r) => !r.done), 4, 1),
+        ...fan(raw.filter((r) => r.done), 96, -1),
+      ]);
     }
     return byItem;
   }, [subtasks, overviewItems, descendantsOf]);
@@ -781,29 +785,28 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                         <span className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${statusCls(p.is_active)}`}>{p.is_active ? "Active" : "Inactive"}</span>
                       </div>
                       {(() => {
-                        const riders = memberProgress.get(p.id) ?? [];
+                        const riders = taskRiders.get(p.id) ?? [];
                         return (
                           <div className="relative h-6 w-full">
                             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 overflow-hidden rounded-full bg-parchment">
                               <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
                             </div>
-                            {riders.map((m) => {
-                              // Yellow = a submission is awaiting review (actionable now),
-                              // shown even if they also have approved work. Green = approved,
-                              // no pending review. Otherwise no glow.
-                              const glow = m.pending
+                            {riders.map((r) => {
+                              // Yellow = submission awaiting review. Green = reviewed
+                              // and approved. Auto-approved work moves but doesn't glow.
+                              const glow = r.glow === "yellow"
                                 ? "ring-2 ring-amber shadow-[0_0_10px_2px_rgba(184,134,11,0.8)] animate-pulse"
-                                : m.approved
+                                : r.glow === "green"
                                 ? "ring-2 ring-sage shadow-[0_0_10px_2px_rgba(107,143,113,0.8)]"
                                 : "";
                               return (
                               <span
-                                key={m.id}
+                                key={r.key}
                                 className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 transition-all duration-500 ease-out rounded-full ${glow}`}
-                                style={{ left: `${Math.max(3, Math.min(97, m.pct))}%` }}
-                                title={`${m.name} · ${Math.round(m.pct)}% approved${m.pending ? " · submission awaiting review" : ""}`}
+                                style={{ left: `${r.pct}%` }}
+                                title={`${r.name}${r.glow === "yellow" ? " · submission awaiting review" : r.glow === "green" ? " · reviewed & approved" : ""}`}
                               >
-                                <Avatar person={m} />
+                                <Avatar person={{ id: r.key, name: r.name, avatar_url: r.avatar_url }} />
                               </span>
                               );
                             })}
