@@ -533,45 +533,26 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
           }
         }
       }
-      // Where each person sits is how far THEY have got, and nothing else.
+      // One dot per TASK (one per assignee on it), not aggregated per person —
+      // so an operation with several tasks reads as a stack of several faces.
       //
-      // This used to fan riders outward by a fixed step — unfinished from the
-      // left, finished pinned near the right end — so a run of twenty riders
-      // marched most of the way across a bar showing 0%. Faces sat far along a
-      // track nobody had walked, which is the opposite of what the bar says.
-      //
-      // Now each person's position is their own completed share of the work
-      // they hold here, scaled into the filled part of the bar. Someone who has
-      // finished everything sits at the leading edge; someone who has started
-      // nothing sits at the start; and when the operation is at 0% everyone
-      // sits together at the left, which is the truth.
-      //
-      // Overlap is fine and expected — several people at the same point means
-      // several people are at the same point.
-      const perPerson = new Map<string, { done: number; total: number; rider: Rider }>();
-      for (const r of raw) {
-        const id = r.personId; // one face per person, not per subtask
-        const acc = perPerson.get(id) ?? { done: 0, total: 0, rider: r };
-        acc.total += 1;
-        if (r.done) acc.done += 1;
-        // Keep a glowing state visible over a plain one — a pending review is
-        // the thing worth noticing on the bar.
-        if (r.glow && !acc.rider.glow) acc.rider = r;
-        perPerson.set(id, acc);
-      }
-
-      // Same number the bar itself draws, so the faces and the fill can never
-      // disagree about how far this operation has come.
+      // A task sits at the START until it's approved, then at the bar's own fill
+      // edge — never past the green, so the faces and the fill always agree, and
+      // at 0% every task sits together at the left rather than marching across a
+      // track nobody has walked.
       const roll = rollup.get(item.id);
       const fill = roll && roll.total ? Math.round((roll.done / roll.total) * 100) : 0;
-      const placed = [...perPerson.values()].map(({ done, total, rider }) => {
-        const ownShare = total > 0 ? done / total : 0;
-        // Never past the filled portion: a face beyond the green would claim
-        // progress the bar itself does not show. The 2% floor keeps an avatar
-        // from hanging off the left edge of its track.
-        const pct = Math.max(2, Math.min(fill, ownShare * fill));
-        return { key: rider.key, name: rider.name, avatar_url: rider.avatar_url, glow: rider.glow, pct };
-      });
+      const placed = raw
+        // Glowing (pending-review) faces render last so they sit on top of the stack.
+        .slice()
+        .sort((a, b) => (a.glow ? 1 : 0) - (b.glow ? 1 : 0))
+        .map((r) => ({
+          key: r.key,
+          name: r.name,
+          avatar_url: r.avatar_url,
+          glow: r.glow,
+          pct: r.done ? Math.max(2, fill) : 2,
+        }));
 
       // People at the same point get a small nudge apart so you can see there
       // is more than one of them — deliberately smaller than an avatar, so
