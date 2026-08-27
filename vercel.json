@@ -24,6 +24,30 @@
     {
       "path": "/api/cron/generate-paystubs",
       "schedule": "0 8 1,16 * *"
+    },
+    {
+      "path": "/api/cron/team-digest?kind=today",
+      "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/team-digest?kind=tomorrow",
+      "schedule": "0 23 * * *"
+    },
+    {
+      "path": "/api/cron/team-digest?kind=weekly",
+      "schedule": "0 0 * * 6"
+    },
+    {
+      "path": "/api/cron/team-digest?kind=meeting-tomorrow",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/team-digest?kind=meeting-tomorrow&slot=evening",
+      "schedule": "0 22 * * *"
+    },
+    {
+      "path": "/api/cron/team-digest?kind=meeting-today",
+      "schedule": "0 9 * * *"
     }
   ]
 }
