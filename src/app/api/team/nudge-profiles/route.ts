@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
-import { sendTelegram, telegramEnabled } from "@/lib/telegram";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { sendTelegram, telegramEnabled, mention } from "@/lib/telegram";
 import { findProfileGaps } from "@/lib/profileGaps";
 import { NextRequest } from "next/server";
 
@@ -38,12 +39,45 @@ export async function GET(request: NextRequest) {
 
   const gaps = await findProfileGaps();
 
+  // Telegram has no @everyone. The only way to reach the whole room is to
+  // mention each person, so the "everyone" line is built from the team itself.
+  // Anyone who has not linked Telegram appears as plain text and is not pinged
+  // — nothing can be done about that until they message the bot.
+  const admin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+  const { data: team } = await admin
+    .from("profiles")
+    .select("full_name, username, telegram_chat_id")
+    .eq("is_active", true)
+    .order("full_name");
+
+  const everyone = (team ?? [])
+    .map((p) =>
+      mention(
+        (p.full_name as string) || (p.username as string) || "Someone",
+        p.telegram_chat_id as number | null
+      )
+    )
+    .join(" ");
+
+  // Named because Toni asked for it: the people who still have gaps are tagged
+  // directly rather than left to work out whether it means them.
+  const named = gaps
+    .map((g) => mention(g.name, g.chatId))
+    .join(", ");
+
   const message = [
     "📋 <b>A quick housekeeping ask</b>",
+    "",
+    everyone,
     "",
     "Some profiles are still missing a few details — payment information, address, birthday or a photo.",
     "",
     "The payment details matter most: they are what your pay is sent against. The birthday is so we know when to celebrate you, and a photo makes the team feel like a team.",
+    ...(named ? ["", `Still to complete: ${named}`] : []),
     "",
     "If you have a spare two minutes, have a look in your Portal: https://minuteflow.click/portal",
     "",
