@@ -437,3 +437,19 @@ export function collapseRecurringSeries<
   }
   return out;
 }
+
+/**
+ * Same idea as collapseRecurringSeries, for callers whose rows nest the
+ * recurring/date/status fields instead of carrying them at the top level —
+ * an assignee row with a nested `assigned_tasks` object (AssignedTasksWidget,
+ * the Assignment page's own-tasks list), rather than an assigned_tasks row
+ * itself. `get` extracts what to group/sort on; the items themselves pass
+ * through unchanged.
+ */
+export function collapseRecurringSeriesBy<T>(
+  items: T[],
+  get: (item: T) => { recurring_template_id?: string | number | null; due_date?: string | null; status?: string | null }
+): T[] {
+  const keyed = items.map((item) => ({ ...get(item), __item: item }));
+  return collapseRecurringSeries(keyed).map((k) => k.__item);
+}
