@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { sendResendEmail } from "@/lib/sendEmail";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import {
-  computeHourlyGross,
+  computeGrossForRateType,
   formatRateSegments,
   type PayRateHistoryRow,
   type RateSegment,
@@ -152,10 +152,12 @@ export async function POST(request: Request) {
     .order("effective_date", { ascending: false });
   const rateHistory = (rateHistoryRaw ?? []) as PayRateHistoryRow[];
 
-  const { grossPay, segments, rateByDate } = computeHourlyGross(
+  // A monthly salary is flat for the period — never hours x rate.
+  const { grossPay, segments, rateByDate } = computeGrossForRateType(
     byDate,
     rateHistory,
-    payRate
+    payRate,
+    vaProfile.pay_rate_type
   );
 
   // Snapshot by_date carries the per-day rate so portal/print can display

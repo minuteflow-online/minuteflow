@@ -3,7 +3,7 @@
 // the money math ad-hoc. The send route stays authoritative at approval time;
 // this drives the DRAFT that Toni reviews.
 
-import { computeHourlyGross, type PayRateHistoryRow } from "@/lib/payroll";
+import { computeGrossForRateType, type PayRateHistoryRow } from "@/lib/payroll";
 import { normalizePosition } from "@/types/database";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
@@ -33,7 +33,7 @@ export async function computePaystubData(
 ): Promise<PaystubComputation | null> {
   const { data: vaProfile } = await admin
     .from("profiles")
-    .select("pay_rate, position")
+    .select("pay_rate, pay_rate_type, position")
     .eq("id", userId)
     .single();
   if (!vaProfile) return null;
@@ -67,10 +67,12 @@ export async function computePaystubData(
     .select("rate_amount, rate_type, effective_date, end_date")
     .eq("user_id", userId)
     .order("effective_date", { ascending: false });
-  const { grossPay, rateByDate } = computeHourlyGross(
+  // A monthly salary is flat for the period — never hours x rate.
+  const { grossPay, rateByDate } = computeGrossForRateType(
     byDate,
     (rateHistoryRaw ?? []) as PayRateHistoryRow[],
-    payRate
+    payRate,
+    vaProfile.pay_rate_type
   );
 
   const byDateWithRates: Record<string, { ms: number; rate: number }> = {};

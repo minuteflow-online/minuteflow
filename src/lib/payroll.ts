@@ -6,10 +6,36 @@
  * (same rule as the invoice shared-subtotal function, CRM ticket 7dbc63e8).
  */
 
+export type PayRateType = "hourly" | "daily" | "monthly" | "per_task";
+
 export interface PayRateHistoryRow {
   rate_amount: number | string;
   effective_date: string; // YYYY-MM-DD
   end_date: string | null; // YYYY-MM-DD or null for the current open rate
+  /** Absent on older rows, which were all hourly. */
+  rate_type?: PayRateType | string | null;
+}
+
+/**
+ * Is this rate a flat amount for the period rather than a price per hour?
+ *
+ * A monthly salary is the whole point of this: it does not get multiplied by
+ * anything. Paying $4,000/month for two logged hours is $4,000, not $8,000.
+ */
+export function isFixedPeriodRate(rateType?: PayRateType | string | null): boolean {
+  return rateType === "monthly";
+}
+
+/**
+ * Hourly equivalent of a rate, for the paths that genuinely need one (budget
+ * estimates, cost-per-hour views). A daily rate assumes an 8-hour day and a
+ * monthly rate a 160-hour month — the same conversion FinancialSummaryTab has
+ * always used. Not used for computing what someone is actually paid.
+ */
+export function toHourlyRate(amount: number, rateType?: PayRateType | string | null): number {
+  if (rateType === "daily") return amount / 8;
+  if (rateType === "monthly") return amount / 160;
+  return amount;
 }
 
 export interface RateSegment {
@@ -51,6 +77,10 @@ export function rateForDate(
 /**
  * Compute hourly gross pay from per-day logged ms, splitting the period
  * across rate changes. E.g. 36h @ $18 + 30h @ $22 = $1308, not 66h at one rate.
+ *
+ * HOURS-BASED RATES ONLY. Pass a monthly salary in here and it is treated as a
+ * price per hour — which is exactly the bug this warning exists to prevent.
+ * For a monthly rate use computeGrossForRateType, which pays the flat amount.
  */
 export function computeHourlyGross(
   byDateMs: Record<string, number>,
@@ -78,6 +108,43 @@ export function computeHourlyGross(
   }
 
   return { grossPay, segments, rateByDate };
+}
+
+/**
+ * Gross pay for a period, respecting how the rate is actually charged.
+ *
+ * A monthly rate is flat: the person is owed their salary for the period no
+ * matter how many hours landed in the log, so hours are reported but never
+ * multiplied. Everything else falls through to the hours-based calculation.
+ *
+ * Worked example, the case that surfaced this: $4,000/month with 2 hours
+ * logged returns grossPay 4000. The old path returned 8000.
+ */
+export function computeGrossForRateType(
+  byDateMs: Record<string, number>,
+  history: PayRateHistoryRow[],
+  fallbackRate: number,
+  rateType?: PayRateType | string | null
+): HourlyGrossResult {
+  if (!isFixedPeriodRate(rateType)) {
+    return computeHourlyGross(byDateMs, history, fallbackRate);
+  }
+
+  // Flat for the period. Rate history still decides WHICH salary applies, by
+  // the latest logged day, but no multiplication happens.
+  const dates = Object.keys(byDateMs).sort();
+  const lastDate = dates[dates.length - 1];
+  const rate = lastDate ? rateForDate(lastDate, history, fallbackRate) : fallbackRate;
+
+  const totalMs = Object.values(byDateMs).reduce((sum, ms) => sum + Number(ms || 0), 0);
+  const rateByDate: Record<string, number> = {};
+  for (const date of dates) rateByDate[date] = rate;
+
+  return {
+    grossPay: rate,
+    segments: [{ rate, ms: totalMs, hours: totalMs / 3_600_000, amount: rate }],
+    rateByDate,
+  };
 }
 
 /** "36.00h @ $18.00/hr + 30.00h @ $22.00/hr" */
