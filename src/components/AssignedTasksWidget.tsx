@@ -7,6 +7,7 @@ import { fetchTodos, todoLabel, type TaskTodo } from "@/lib/taskTodos";
 import SubmitWorkModal from "@/components/SubmitWorkModal";
 import RevisionBadge from "@/components/RevisionBadge";
 import RecurringBadge from "@/components/RecurringBadge";
+import { collapseRecurringSeriesBy } from "@/lib/taskSchedule";
 
 interface AssignedTasksWidgetProps {
   userId: string;
@@ -134,12 +135,16 @@ export default function AssignedTasksWidget({
         const VA_VISIBLE_STATUSES: AssignedTaskStatus[] = [
             'on_queue', 'in_progress',
           ];
-        const visible = data
-          .filter((t) => VA_VISIBLE_STATUSES.includes(t.status))
-          .sort(
-            (a, b) =>
-              (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
-          );
+        const visible = collapseRecurringSeriesBy(
+          data.filter((t) => VA_VISIBLE_STATUSES.includes(t.status)),
+          (t) => ({
+            recurring_template_id: t.assigned_tasks?.recurring_template_id,
+            due_date: t.assigned_tasks?.due_date,
+            status: t.status,
+          })
+        ).sort(
+          (a, b) => (STATUS_SORT_ORDER[a.status] ?? 99) - (STATUS_SORT_ORDER[b.status] ?? 99)
+        );
         setTasks(visible);
         setOptimisticStatuses({});
       }

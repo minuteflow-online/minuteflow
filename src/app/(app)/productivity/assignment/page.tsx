@@ -7,7 +7,8 @@ import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
 import { normalizePosition } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
-import TaskEditor, { type TaskEditorHandle } from "@/components/TaskEditor";
+import TaskEditor, { type TaskEditorHandle, type TaskEditorInitialTask } from "@/components/TaskEditor";
+import TaskDetailsView from "@/components/TaskDetailsView";
 import Section from "@/components/ui/Section";
 import FixedPayTasksPanel from "@/components/FixedPayTasksPanel";
 import ProjectInfoModal from "@/components/ProjectInfoModal";
@@ -20,7 +21,7 @@ import TeamWorkloadView from "@/components/TeamWorkloadView";
 import ObjectiveProgressView from "@/components/ObjectiveProgressView";
 import type { RecurringTaskTemplate } from "@/types/database";
 import { countWords } from "@/lib/utils";
-import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
+import { CATEGORY_OPTIONS, collapseRecurringSeriesBy } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import RevisionBadge from "@/components/RevisionBadge";
 import RecurringBadge from "@/components/RecurringBadge";
@@ -468,6 +469,10 @@ export default function TaskListPage() {
   const [isCreating, setIsCreating] = useState(false);
 
   const [selectedTask, setSelectedTask] = useState<VATaskRow | null>(null);
+  // Same Details-first pattern as the Calendar's task modal: clicking a row
+  // opens on a read-only summary, and "Edit Task" is one click away rather
+  // than the full form appearing immediately.
+  const [panelTab, setPanelTab] = useState<"details" | "edit">("details");
   const [panelStatus, setPanelStatus] = useState<AssignedTaskStatus>("pending");
   const [panelReviewRequired, setPanelReviewRequired] = useState(false);
   const [panelSaving, setPanelSaving] = useState(false);
@@ -571,7 +576,21 @@ export default function TaskListPage() {
           }));
         }
 
-        const sorted = sortTasks(normalized);
+        // Collapse a recurring series to its one current occurrence, same as
+        // the Operation Subtasks card — but only on the live "active" list of
+        // my own work, not the reviewer queue (each submission there needs
+        // its own review) and not Archived/Trash (history views, where every
+        // past occurrence individually is correct).
+        const collapsed =
+          mode === "submitted" || taskView !== "active"
+            ? normalized
+            : collapseRecurringSeriesBy(normalized, (row) => ({
+                recurring_template_id: row.assigned_tasks?.recurring_template_id,
+                due_date: row.assigned_tasks?.due_date,
+                status: row.status,
+              }));
+
+        const sorted = sortTasks(collapsed);
         setTasks(sorted);
         return sorted;
       } catch {
@@ -1621,6 +1640,7 @@ export default function TaskListPage() {
     async (task: VATaskRow) => {
       closeCreate();
       setSelectedTask(task);
+      setPanelTab("details");
       setPanelStatus(task.status);
       setPanelReviewRequired(Boolean(task.assigned_tasks.review_required));
       setPanelMsg(null);
@@ -2862,31 +2882,63 @@ export default function TaskListPage() {
                   Loading...
                 </div>
               ) : (
-                <TaskEditor
-                  // Keyed on the task id: TaskEditor seeds its fields with
-                  // useState, which only runs on mount, so without this the
-                  // panel kept the previously-selected task's form state and a
-                  // save wrote those values over the task now open.
-                  key={selectedTask.assigned_tasks.id}
-                  ref={taskEditorRef}
-                  mode="time_based"
-                  editingTaskId={selectedTask.assigned_tasks.id}
-                  initialTask={selectedTask.assigned_tasks}
-                  currentUserId={currentUserId ?? ""}
-                  isAdminOrManager={isAdmin}
-                  teamMembers={panelAssignedByOptions}
-                  // selectedTask.assigned_tasks (VATaskRow's embedded shape)
-                  // has no assigned_task_assignees array, unlike Calendar's
-                  // dedicated GET — without this, TaskEditor's va_id fallback
-                  // defaults to "" and its PUT wipes the task's assignee.
-                  defaultVaId={selectedTask.va_id}
-                  readOnly={!panelCanEditFields}
-                  hideFooter
-                  onCancel={closePanel}
-                  onSaved={() => void handleMetadataSaved()}
-                />
+                <>
+                  <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                    {([
+                      ["details", "Details"],
+                      ["edit", "Edit Task"],
+                    ] as const).map(([tab, label]) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setPanelTab(tab)}
+                        className={`flex-1 px-3 py-1.5 transition-colors cursor-pointer ${
+                          panelTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {panelTab === "details" ? (
+                    <TaskDetailsView
+                      task={selectedTask.assigned_tasks as unknown as TaskEditorInitialTask}
+                      onEdit={() => setPanelTab("edit")}
+                    />
+                  ) : (
+                    <TaskEditor
+                      // Keyed on the task id: TaskEditor seeds its fields with
+                      // useState, which only runs on mount, so without this the
+                      // panel kept the previously-selected task's form state and a
+                      // save wrote those values over the task now open.
+                      key={selectedTask.assigned_tasks.id}
+                      ref={taskEditorRef}
+                      mode="time_based"
+                      editingTaskId={selectedTask.assigned_tasks.id}
+                      initialTask={selectedTask.assigned_tasks}
+                      currentUserId={currentUserId ?? ""}
+                      isAdminOrManager={isAdmin}
+                      teamMembers={panelAssignedByOptions}
+                      // selectedTask.assigned_tasks (VATaskRow's embedded shape)
+                      // has no assigned_task_assignees array, unlike Calendar's
+                      // dedicated GET — without this, TaskEditor's va_id fallback
+                      // defaults to "" and its PUT wipes the task's assignee.
+                      defaultVaId={selectedTask.va_id}
+                      readOnly={!panelCanEditFields}
+                      hideFooter
+                      onCancel={closePanel}
+                      onSaved={() => void handleMetadataSaved()}
+                    />
+                  )}
+                </>
               )}
 
+              {/* Status & Files, Submitted By, and Review Required are edit-mode
+                  only — Details is meant to read as a plain summary, not mixed
+                  with actionable controls. */}
+              {panelTab === "edit" && (
+                <>
               {isSubmittedView && (
                 <div>
                   <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Submitted By</label>
@@ -2977,6 +3029,8 @@ export default function TaskListPage() {
               </div>
 
               </Section>
+                </>
+              )}
 
               {panelMsg?.type === "err" && <p className="text-xs font-medium text-red-500">{panelMsg.text}</p>}
               {panelMsg?.type === "ok" && <p className="text-xs font-medium text-sage">{panelMsg.text}</p>}
