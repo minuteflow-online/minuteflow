@@ -361,13 +361,19 @@ export async function POST(request: Request, { params }: RouteContext) {
   //     — it completes on submit.
   //   * A task flagged review_required = false is approved on submit, and an
   //     approval entry is written so the thread still records why it closed.
+  // review_required === true always wins over the category rule above — an
+  // output-based task under an account/project the Communication/Planning/
+  // Collaboration auto-category rule matches (autoCategoryForTask, e.g. any
+  // Virtual Concierge task filed under "Team Development") would otherwise
+  // auto-complete on submit with nobody ever reviewing it, silently ignoring
+  // the "Review Required: Yes" the task was explicitly created with.
   // Decided here rather than in the browser so it can't be skipped, and so the
   // approval entry can be written by the system without the caller needing
   // reviewer rights. The status move itself still goes through the client's
   // setAssignedTaskStatus, keeping one status-write path.
   let autoStatus: string | null = null;
 
-  if (messageType === "submission") {
+  if (messageType === "submission" && task.review_required !== true) {
     // Reuses the row fetched for the existence check above. The previous
     // version issued a second lookup and ignored its error, so any failure
     // there silently skipped the whole auto-outcome — which is exactly how
