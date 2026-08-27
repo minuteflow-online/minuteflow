@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { notifyTaskAssigned } from "@/lib/taskAssigned";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
@@ -624,6 +625,17 @@ export async function POST(request: Request) {
       return Response.json({ error: assigneeError.message }, { status: 500 });
 
     assignees = insertedAssignees ?? [];
+
+    // Tell each person privately that work is theirs. Not the team chat: a new
+    // assignment is one person's to pick up, and posting every one of them
+    // would bury the things the whole team does need to see.
+    //
+    // Skipped when someone assigns to themselves — a VA claiming a task does
+    // not need a message telling them they just claimed it.
+    for (const va_id of va_ids) {
+      if (va_id === user.id) continue;
+      await notifyTaskAssigned(va_id, task as { id: number; task_name?: string; account?: string; project?: string; due_date?: string | null });
+    }
   }
 
   return Response.json({ task: { ...task, assigned_task_assignees: assignees } }, { status: 201 });

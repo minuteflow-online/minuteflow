@@ -459,3 +459,48 @@ export async function buildOverdue(): Promise<string | null> {
   lines.push("", "If any of these have moved on, update the due date so the list stays honest.");
   return lines.join("\n");
 }
+
+/**
+ * Work sitting unclaimed, so it does not quietly wait for someone to notice it.
+ *
+ * Each line says whether the task is time-based or output-based, because that
+ * decides who can take it and how they are paid for it — a VA scanning the list
+ * needs it before deciding whether the task is theirs to claim at all.
+ *
+ * The distinction lives in fixed_pay_task_id rather than a billing column:
+ * a task linked to a fixed-pay item is output-based, everything else is hourly.
+ * That is the same test AvailableTasksWidget uses to decide which list a task
+ * belongs in, and the two must not disagree.
+ */
+export async function buildUnclaimed(): Promise<string | null> {
+  const supabase = service();
+
+  const { data } = await supabase
+    .from("assigned_tasks")
+    .select("id, task_name, account, project, due_date, fixed_pay_task_id")
+    .eq("status", "unassigned")
+    .is("deleted_at", null)
+    .is("archived_at", null)
+    .order("due_date", { ascending: true, nullsFirst: false });
+
+  const open = data ?? [];
+  if (open.length === 0) return null;
+
+  const lines = [
+    `🙋 <b>Up for grabs</b> — ${open.length} task${open.length === 1 ? "" : "s"} waiting`,
+    "",
+  ];
+
+  for (const t of open.slice(0, 15)) {
+    const kind = t.fixed_pay_task_id ? "💰 Output-based" : "⏱️ Time-based";
+    const where = [t.account, t.project].filter(Boolean).join(" / ");
+    const due = t.due_date ? ` · due ${esc(longDate(String(t.due_date)))}` : "";
+    lines.push(
+      `• ${esc(String(t.task_name ?? "a task"))} — ${kind}${where ? ` · ${esc(where)}` : ""}${due}`
+    );
+  }
+  if (open.length > 15) lines.push(`…and ${open.length - 15} more`);
+
+  lines.push("", "Claim anything you can take on: https://minuteflow.click/dashboard");
+  return lines.join("\n");
+}

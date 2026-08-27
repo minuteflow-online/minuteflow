@@ -60,6 +60,10 @@
     {
       "path": "/api/cron/team-digest?kind=overdue",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/team-digest?kind=unclaimed",
+      "schedule": "0 0 * * *"
     }
   ]
 }
