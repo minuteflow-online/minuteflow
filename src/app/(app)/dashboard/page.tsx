@@ -129,6 +129,29 @@ function formatHoursMinutes(ms: number): string {
   return `${minutes}m`;
 }
 
+// A stale open log (Clock In left running overnight, a task nobody switched
+// off) closes at 23:59:59.999 of the day it STARTED, not at `now` — same
+// capping closeOpenNonBreakLogs already does. Without this, closing an
+// overnight "Clock In" the next time a real task starts bills the entire
+// dead-of-night gap as worked time: this is what turned one placeholder log
+// into a 15.6-hour billable entry in the August Time Review (Charinade,
+// log 5659). Three other call sites closed stale logs with this same
+// uncapped `now - start_time` math, duplicated inline rather than sharing
+// closeOpenNonBreakLogs — this is the one place all of them now go through.
+function cappedCloseTime(startTime: string | null, now: string): { endTime: string; durationMs: number } {
+  const startMs = startTime ? new Date(startTime).getTime() : new Date(now).getTime();
+  const sameDay = startTime && new Date(startTime).toDateString() === new Date(now).toDateString();
+  let endTime: string;
+  if (!sameDay && startTime) {
+    const endOfDay = new Date(startTime);
+    endOfDay.setHours(23, 59, 59, 999);
+    endTime = endOfDay.toISOString();
+  } else {
+    endTime = now;
+  }
+  return { endTime, durationMs: Math.max(0, new Date(endTime).getTime() - startMs) };
+}
+
 // ─── Page Component ────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -898,27 +921,14 @@ export default function DashboardPage() {
       const { data: openLogs } = await query;
 
       if (openLogs && openLogs.length > 0) {
-        const nowDate = new Date(now).toDateString();
         type ClosedLog = { id: number; end_time: string; duration_ms: number };
         const closedLogs: ClosedLog[] = [];
 
         for (const openLog of openLogs) {
-          const logStartMs = openLog.start_time
-            ? new Date(openLog.start_time).getTime()
-            : Date.now();
-
-          // Logs started on a previous calendar date close at 23:59:59.999 of that day,
-          // so overnight/weekend stragglers don't get impossibly long durations.
-          let endTime: string;
-          if (openLog.start_time && new Date(openLog.start_time).toDateString() !== nowDate) {
-            const endOfDay = new Date(openLog.start_time);
-            endOfDay.setHours(23, 59, 59, 999);
-            endTime = endOfDay.toISOString();
-          } else {
-            endTime = now;
-          }
-
-          const duration_ms = Math.max(0, new Date(endTime).getTime() - logStartMs);
+          // Logs started on a previous calendar date close at 23:59:59.999 of
+          // that day, so overnight/weekend stragglers don't get impossibly
+          // long durations.
+          const { endTime, durationMs: duration_ms } = cappedCloseTime(openLog.start_time, now);
           closedLogs.push({ id: openLog.id, end_time: endTime, duration_ms });
 
           await supabase
@@ -1547,44 +1557,10 @@ export default function DashboardPage() {
       // Safety net: close ANY open non-break task logs at DB level.
       // stopCurrentTask() bails if activeTask.logId is empty (e.g. Clock In Planning log
       // whose insert returned null). This catches those orphaned Planning logs.
-      {
-        const { data: openLogs } = await supabase
-          .from("time_logs")
-          .select("id, start_time")
-          .eq("user_id", userId)
-          .is("end_time", null)
-          .neq("category", "Break")
-          .neq("category", "Clock Out");
-
-        if (openLogs && openLogs.length > 0) {
-          for (const openLog of openLogs) {
-            const logStartMs = openLog.start_time
-              ? new Date(openLog.start_time).getTime()
-              : Date.now();
-            const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
-            await supabase
-              .from("time_logs")
-              .update({ end_time: now, duration_ms: logDurationMs })
-              .eq("id", openLog.id);
-          }
-          setTimeLogs((prev) =>
-            prev.map((log) => {
-              const match = openLogs.find((o) => o.id === log.id);
-              if (match && !log.end_time) {
-                const logStartMs = match.start_time
-                  ? new Date(match.start_time).getTime()
-                  : Date.now();
-                return {
-                  ...log,
-                  end_time: now,
-                  duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
-                } as TimeLog;
-              }
-              return log;
-            })
-          );
-        }
-      }
+      // closeOpenNonBreakLogs caps an overnight-stale one at end-of-day
+      // instead of billing the whole gap until now — this used to be a
+      // separate, uncapped copy of that same close.
+      await closeOpenNonBreakLogs(now);
 
       // Create a break time log
       const { data: logData, error: breakLogError } = await supabase
@@ -1828,46 +1804,11 @@ export default function DashboardPage() {
     // Safety net: close ANY open non-break task logs at DB level.
     // stopCurrentTask() bails if activeTask.logId is empty (e.g. Clock In Planning log
     // whose insert returned null). This catches those orphaned Planning logs.
-    {
-      const { data: openLogs } = await supabase
-        .from("time_logs")
-        .select("id, start_time")
-        .eq("user_id", userId)
-        .is("end_time", null)
-        .neq("category", "Break")
-        .neq("category", "Clock Out");
+    // closeOpenNonBreakLogs caps an overnight-stale one at end-of-day instead
+    // of billing the whole gap until now.
+    await closeOpenNonBreakLogs(now);
 
-      if (openLogs && openLogs.length > 0) {
-        for (const openLog of openLogs) {
-          const logStartMs = openLog.start_time
-            ? new Date(openLog.start_time).getTime()
-            : Date.now();
-          const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
-          await supabase
-            .from("time_logs")
-            .update({ end_time: now, duration_ms: logDurationMs })
-            .eq("id", openLog.id);
-        }
-        setTimeLogs((prev) =>
-          prev.map((log) => {
-            const match = openLogs.find((o) => o.id === log.id);
-            if (match && !log.end_time) {
-              const logStartMs = match.start_time
-                ? new Date(match.start_time).getTime()
-                : Date.now();
-              return {
-                ...log,
-                end_time: now,
-                duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
-              } as TimeLog;
-            }
-            return log;
-          })
-        );
-      }
-    }
-
-    const isBillable = log.category !== "Personal";
+    const isBillable = log.category !== "Personal" && log.category !== "Break";
 
     const { data: logData, error: onHoldLogError } = await supabase
       .from("time_logs")
@@ -1938,7 +1879,7 @@ export default function DashboardPage() {
     } finally {
       setSessionActionPending(false);
     }
-  }, [userId, profile, supabase, session, activeTask, stopCurrentTask, orgTimezone, sessionActionPendingRef, setSessionActionPending]);
+  }, [userId, profile, supabase, session, activeTask, stopCurrentTask, closeOpenNonBreakLogs, orgTimezone, sessionActionPendingRef, setSessionActionPending]);
 
   // ─── Update progress status on a time_log (clickable badge) ───
   const updateLogProgress = useCallback(async (logId: number, progress: string) => {
@@ -2268,7 +2209,7 @@ export default function DashboardPage() {
               start_time: now,
               end_time: now,
               duration_ms: 0,
-              billable: formData.category !== "Personal",
+              billable: formData.category !== "Personal" && formData.category !== "Break",
               client_memo: formData.client_memo || null,
               internal_memo: formData.internal_memo || null,
               form_fill_ms: formData.form_fill_ms || 0,
@@ -2337,14 +2278,16 @@ export default function DashboardPage() {
             .neq("category", "Clock Out");
 
           if (openLogs && openLogs.length > 0) {
+            // A log stale from a previous calendar date (an overnight "Clock
+            // In" nobody switched off) caps at end-of-day instead of billing
+            // the whole dead gap up to now — see cappedCloseTime. Same-day
+            // logs behave exactly as before (end_time = now).
+            const closeTimes = new Map(openLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now)]));
             for (const openLog of openLogs) {
-              const logStartMs = openLog.start_time
-                ? new Date(openLog.start_time).getTime()
-                : Date.now();
-              const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+              const { endTime, durationMs } = closeTimes.get(openLog.id)!;
               const { error: closeError } = await supabase
                 .from("time_logs")
-                .update({ end_time: now, duration_ms: logDurationMs })
+                .update({ end_time: endTime, duration_ms: durationMs })
                 .eq("id", openLog.id);
               if (closeError) {
                 // Bail rather than start a new task on top of one that failed to
@@ -2357,16 +2300,9 @@ export default function DashboardPage() {
             // Sync React state to match
             setTimeLogs((prev) =>
               prev.map((log) => {
-                const match = openLogs.find((o) => o.id === log.id);
-                if (match && !log.end_time) {
-                  const logStartMs = match.start_time
-                    ? new Date(match.start_time).getTime()
-                    : Date.now();
-                  return {
-                    ...log,
-                    end_time: now,
-                    duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
-                  } as TimeLog;
+                const closed = closeTimes.get(log.id);
+                if (closed && !log.end_time) {
+                  return { ...log, end_time: closed.endTime, duration_ms: closed.durationMs } as TimeLog;
                 }
                 return log;
               })
@@ -2377,7 +2313,7 @@ export default function DashboardPage() {
         setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
 
         const isBillable =
-          formData.category !== "Personal";
+          formData.category !== "Personal" && formData.category !== "Break";
 
         // If memos were for the old task (wizard flow), use new_task_client_memo for the new task
         const newTaskClientMemo = formData.task_status
@@ -2916,7 +2852,7 @@ export default function DashboardPage() {
         start_time: gapFillStartTime,
         end_time: now,
         duration_ms: durationMs,
-        billable: category !== "Personal",
+        billable: category !== "Personal" && category !== "Break",
         billing_type: "hourly",
         is_manual: true,
         form_fill_ms: 0,
@@ -2934,7 +2870,7 @@ export default function DashboardPage() {
           start_time: gapFillStartTime,
           end_time: now,
           duration_ms: durationMs,
-          billable: category !== "Personal",
+          billable: category !== "Personal" && category !== "Break",
           is_manual: true,
         } as unknown as TimeLog,
         ...prev,

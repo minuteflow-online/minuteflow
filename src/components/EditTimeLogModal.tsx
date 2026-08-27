@@ -306,7 +306,13 @@ export default function EditTimeLogModal({
       endIso && startIso
         ? Math.max(0, new Date(endIso).getTime() - new Date(startIso).getTime())
         : 0;
-    const isBillable = category !== "Personal";
+    // Break is never billable, same as Personal — this used to only exclude
+    // Personal, so saving any edit to a Break entry (for any reason, on any
+    // field) silently flipped it back to billable=true. Caught in the August
+    // Time Review: five of Flor's Break entries were billed this way, and
+    // since billable wasn't tracked below, the flip left no trace in
+    // time_log_edits.
+    const isBillable = category !== "Personal" && category !== "Break";
 
     if (isCreate) {
       // Find the selected user's profile for denormalized fields
@@ -356,6 +362,12 @@ export default function EditTimeLogModal({
         changes.push({ field: "task_name", oldVal: log.task_name, newVal: taskName.trim() });
       if (category !== log.category)
         changes.push({ field: "category", oldVal: log.category, newVal: category });
+      // billable is derived from category, not directly editable, but it can
+      // still change as a side effect of a category edit — worth its own
+      // audit row since that's exactly the kind of silent flip that went
+      // unnoticed before.
+      if (isBillable !== log.billable)
+        changes.push({ field: "billable", oldVal: String(log.billable), newVal: String(isBillable) });
       if ((account || null) !== (log.account || null))
         changes.push({ field: "account", oldVal: log.account, newVal: account || null });
       if ((clientName || null) !== (log.client_name || null))
