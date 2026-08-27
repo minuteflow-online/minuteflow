@@ -50,6 +50,18 @@ const SUB_FILTERS: { key: SubFilter; label: string }[] = [
 ];
 const NOT_STARTED = new Set(["pending", "unassigned", "on_queue"]);
 
+// Left-border accent for a subtask row: approved → green, overdue → red,
+// submitted → amber, delayed start → pink. First match wins (overdue outranks
+// submitted so a late unreviewed task still reads red); anything else neutral.
+function subtaskAccent(st: SubtaskRow, today: string): string {
+  const s = st.status;
+  if (s === "approved" || s === "completed" || s === "paid") return "border-sage";
+  if (st.due_date && st.due_date < today && !DONE.has(s)) return "border-terracotta";
+  if (s === "submitted" || s === "reviewing") return "border-amber";
+  if (st.start_date && st.start_date < today && NOT_STARTED.has(s)) return "border-clay-rose";
+  return "border-transparent";
+}
+
 // A task moves its assignee's avatar only once it's been APPROVED (approved/
 // completed/paid = full credit). Everything before that keeps the face where it
 // is. `cancelled`/unknown are excluded from the average entirely.
@@ -239,6 +251,8 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   // open group with hundreds of subtasks doesn't make the card enormous.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [subFilters, setSubFilters] = useState<Set<SubFilter>>(new Set());
+  const [memberFilter, setMemberFilter] = useState<string>("");
+  const todayEastern = easternToday();
 
   useEffect(() => {
     let cancelled = false;
@@ -420,13 +434,25 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     }
   };
 
-  // Apply the active filter chips (OR across chips) before grouping.
+  // Distinct assignees across the loaded subtasks — options for the team-member
+  // filter dropdown.
+  const subtaskMembers = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const st of subtasks) for (const a of st.assignees) if (!m.has(a.id)) m.set(a.id, a.name);
+    return Array.from(m.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+  }, [subtasks]);
+
+  // Apply the status chips (OR across chips) and the team-member filter (AND)
+  // before grouping.
   const filteredSubtasks = useMemo(() => {
-    if (subFilters.size === 0) return subtasks;
     const today = easternToday();
     const active = Array.from(subFilters);
-    return subtasks.filter((st) => active.some((f) => matchesSubFilter(st, f, today)));
-  }, [subtasks, subFilters]);
+    return subtasks.filter((st) => {
+      if (memberFilter && !st.assignees.some((a) => a.id === memberFilter)) return false;
+      if (active.length > 0 && !active.some((f) => matchesSubFilter(st, f, today))) return false;
+      return true;
+    });
+  }, [subtasks, subFilters, memberFilter]);
 
   const toggleSubFilter = (f: SubFilter) =>
     setSubFilters((prev) => {
@@ -913,6 +939,18 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
               </button>
             )}
           </div>
+          {subtaskMembers.length > 0 && (
+            <select
+              value={memberFilter}
+              onChange={(e) => setMemberFilter(e.target.value)}
+              className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+            >
+              <option value="">All members</option>
+              {subtaskMembers.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto min-h-0 space-y-3">
         {addSubtaskSlot}
@@ -945,7 +983,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                         const done = DONE.has(effectiveStatus(st));
                         const owners = st.assignees.map((a) => a.name).join(", ");
                         return (
-                          <label key={st.id} className="flex items-center gap-2 py-1.5 px-2 hover:bg-cream transition-colors cursor-pointer">
+                          <label key={st.id} className={`flex items-center gap-2 py-1.5 px-2 border-l-4 ${subtaskAccent(st, todayEastern)} hover:bg-cream transition-colors cursor-pointer`}>
                             <input type="checkbox" checked={done} onChange={() => void toggleSubtask(st)} className="shrink-0 accent-sage" />
                             <span className="min-w-0 flex-1">
                               <span className={`flex items-center gap-1 text-[12px] ${done ? "text-stone line-through" : "text-espresso"}`}>
