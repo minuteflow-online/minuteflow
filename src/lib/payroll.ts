@@ -113,12 +113,15 @@ export function computeHourlyGross(
 /**
  * Gross pay for a period, respecting how the rate is actually charged.
  *
- * A monthly rate is flat: the person is owed their salary for the period no
- * matter how many hours landed in the log, so hours are reported but never
- * multiplied. Everything else falls through to the hours-based calculation.
+ * A monthly rate produces NO computed pay. It is a fixed salary settled outside
+ * the time log, so deriving an amount from hours is wrong however it is done —
+ * multiplying gave $8,000 for a $4,000 salary, and even paying the flat figure
+ * guesses at a period the log knows nothing about. The line is left blank and a
+ * person enters what is actually owed.
  *
- * Worked example, the case that surfaced this: $4,000/month with 2 hours
- * logged returns grossPay 4000. The old path returned 8000.
+ * Hours are still counted and reported; they just do not become money here.
+ *
+ * Everything else falls through to the hours-based calculation unchanged.
  */
 export function computeGrossForRateType(
   byDateMs: Record<string, number>,
@@ -130,21 +133,8 @@ export function computeGrossForRateType(
     return computeHourlyGross(byDateMs, history, fallbackRate);
   }
 
-  // Flat for the period. Rate history still decides WHICH salary applies, by
-  // the latest logged day, but no multiplication happens.
-  const dates = Object.keys(byDateMs).sort();
-  const lastDate = dates[dates.length - 1];
-  const rate = lastDate ? rateForDate(lastDate, history, fallbackRate) : fallbackRate;
-
-  const totalMs = Object.values(byDateMs).reduce((sum, ms) => sum + Number(ms || 0), 0);
-  const rateByDate: Record<string, number> = {};
-  for (const date of dates) rateByDate[date] = rate;
-
-  return {
-    grossPay: rate,
-    segments: [{ rate, ms: totalMs, hours: totalMs / 3_600_000, amount: rate }],
-    rateByDate,
-  };
+  // No segments and no per-day rate: nothing here asserts a figure.
+  return { grossPay: 0, segments: [], rateByDate: {} };
 }
 
 /** "36.00h @ $18.00/hr + 30.00h @ $22.00/hr" */
