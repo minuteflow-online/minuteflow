@@ -516,7 +516,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
       const arr = byProject.get(st.project_id);
       if (arr) arr.push(st); else byProject.set(st.project_id, [st]);
     }
-    type Rider = { key: string; name: string; avatar_url: string | null; done: boolean; glow: "yellow" | "green" | "" };
+    type Rider = { key: string; personId: string; name: string; avatar_url: string | null; done: boolean; glow: "yellow" | "green" | "" };
     const byItem = new Map<string, { key: string; name: string; avatar_url: string | null; pct: number; glow: "yellow" | "green" | "" }[]>();
     for (const item of overviewItems) {
       const ids = [item.id, ...descendantsOf(item.id)];
@@ -529,21 +529,74 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
             ? "yellow"
             : (done && st.review_required ? "green" : "");
           for (const a of st.assignees) {
-            raw.push({ key: `${st.id}-${a.id}`, name: a.name, avatar_url: a.avatar_url, done, glow });
+            raw.push({ key: `${st.id}-${a.id}`, personId: a.id, name: a.name, avatar_url: a.avatar_url, done, glow });
           }
         }
       }
-      // Fan each cluster (start / end) so stacked faces stay legible.
-      const STEP = 3.5;
-      const fan = (arr: Rider[], base: number, dir: 1 | -1) =>
-        arr.map((r, i) => ({ key: r.key, name: r.name, avatar_url: r.avatar_url, glow: r.glow, pct: Math.max(3, Math.min(97, base + dir * i * STEP)) }));
-      byItem.set(item.id, [
-        ...fan(raw.filter((r) => !r.done), 4, 1),
-        ...fan(raw.filter((r) => r.done), 96, -1),
-      ]);
+      // Where each person sits is how far THEY have got, and nothing else.
+      //
+      // This used to fan riders outward by a fixed step — unfinished from the
+      // left, finished pinned near the right end — so a run of twenty riders
+      // marched most of the way across a bar showing 0%. Faces sat far along a
+      // track nobody had walked, which is the opposite of what the bar says.
+      //
+      // Now each person's position is their own completed share of the work
+      // they hold here, scaled into the filled part of the bar. Someone who has
+      // finished everything sits at the leading edge; someone who has started
+      // nothing sits at the start; and when the operation is at 0% everyone
+      // sits together at the left, which is the truth.
+      //
+      // Overlap is fine and expected — several people at the same point means
+      // several people are at the same point.
+      const perPerson = new Map<string, { done: number; total: number; rider: Rider }>();
+      for (const r of raw) {
+        const id = r.personId; // one face per person, not per subtask
+        const acc = perPerson.get(id) ?? { done: 0, total: 0, rider: r };
+        acc.total += 1;
+        if (r.done) acc.done += 1;
+        // Keep a glowing state visible over a plain one — a pending review is
+        // the thing worth noticing on the bar.
+        if (r.glow && !acc.rider.glow) acc.rider = r;
+        perPerson.set(id, acc);
+      }
+
+      // Same number the bar itself draws, so the faces and the fill can never
+      // disagree about how far this operation has come.
+      const roll = rollup.get(item.id);
+      const fill = roll && roll.total ? Math.round((roll.done / roll.total) * 100) : 0;
+      const placed = [...perPerson.values()].map(({ done, total, rider }) => {
+        const ownShare = total > 0 ? done / total : 0;
+        // Never past the filled portion: a face beyond the green would claim
+        // progress the bar itself does not show. The 2% floor keeps an avatar
+        // from hanging off the left edge of its track.
+        const pct = Math.max(2, Math.min(fill, ownShare * fill));
+        return { key: rider.key, name: rider.name, avatar_url: rider.avatar_url, glow: rider.glow, pct };
+      });
+
+      // People at the same point get a small nudge apart so you can see there
+      // is more than one of them — deliberately smaller than an avatar, so
+      // they still read as a stack rather than a queue.
+      //
+      // Capped after a few: without the cap, everyone waiting at the start
+      // marches to the right again, which is the behaviour this replaced. Past
+      // the cap they simply pile on the same spot, and the count is read from
+      // the depth of the stack rather than its width.
+      const NUDGE = 1.6;
+      const MAX_NUDGES = 3;
+      const atPoint = new Map<number, number>();
+      byItem.set(
+        item.id,
+        placed.map((r) => {
+          const slot = Math.round(r.pct);
+          const seen = atPoint.get(slot) ?? 0;
+          atPoint.set(slot, seen + 1);
+          const offset = Math.min(seen, MAX_NUDGES) * NUDGE;
+          return { ...r, pct: Math.max(2, Math.min(fill || 2, r.pct + offset)) };
+        })
+      );
     }
     return byItem;
-  }, [subtasks, overviewItems, descendantsOf]);
+  }, [subtasks, overviewItems, descendantsOf, rollup]);
 
   const effectiveStatus = (st: SubtaskRow) => statusOverride[st.id] ?? st.status;
 
