@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     "",
     "Some profiles are still missing a few details — payment information, address, birthday or a photo.",
     "",
-    "The payment details matter most: they are what your pay is sent against. The birthday is so we know when to celebrate you, and a photo just makes the team feel like a team.",
+    "The payment details matter most: they are what your pay is sent against. The birthday is so we know when to celebrate you, and a photo makes the team feel like a team.",
     "",
     "If you have a spare two minutes, have a look in your Portal: https://minuteflow.click/portal",
     "",
