@@ -146,6 +146,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   const [createMode, setCreateMode] = useState<CreateMode>("fixed_pay");
   const [statusSaving, setStatusSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [grabbing, setGrabbing] = useState(false);
 
   const headerSelectAllRef = useRef<HTMLInputElement | null>(null);
 
@@ -463,6 +464,43 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     []
   );
 
+  // Unclaimed tasks (admin-created, sitting in the open pool, or handed back
+  // via handleRevokeClaim) show up here for every eligible VA, but nothing in
+  // this panel could ever claim one — canEditSelectedTask stays false and the
+  // Edit button never renders, so a VA whose only path to a task is the open
+  // pool had no way to actually start it. Reuses the same claim endpoint the
+  // Dashboard's Available Tasks widget already calls.
+  const handleGrab = useCallback(
+    async (taskId: number) => {
+      setGrabbing(true);
+      setMessage(null);
+      try {
+        const res = await fetch(`/api/fixed-pay-tasks/${taskId}/grab`, { method: "POST" });
+        if (!res.ok) {
+          let errorText = `HTTP ${res.status}`;
+          try {
+            const data = (await res.json()) as { error?: string };
+            if (data.error) errorText = data.error;
+          } catch {
+            // ignore parse failures
+          }
+          throw new Error(errorText);
+        }
+        const { task } = (await res.json()) as { task: FixedPayTaskWithClaimer };
+        const claimed = { ...task, claimed_by_me: true };
+        setTasks((current) => current.map((t) => (t.id === taskId ? { ...t, ...claimed } : t)));
+        setSelectedTask(claimed);
+        setPanelMode("edit");
+        setMessage({ type: "ok", text: "Task claimed — fill it in below." });
+      } catch (error) {
+        setMessage({ type: "err", text: error instanceof Error ? error.message : "Unable to claim task." });
+      } finally {
+        setGrabbing(false);
+      }
+    },
+    []
+  );
+
   // TaskEditor's onSaved callback — lands on the details view instead of
   // closing, so the VA sees exactly what was saved instead of reopening it.
   const handleTaskSaved = useCallback(
@@ -496,6 +534,19 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     (isAdminOrManager ||
       ((selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
         VA_STATUS_OPTIONS.includes(selectedTask.status)))
+  );
+
+  // Mirrors the grab route's own eligibility check — an unclaimed, still-active
+  // task any eligible VA can pick up. Admins/managers don't grab; they already
+  // edit everything directly.
+  const canGrabSelectedTask = Boolean(
+    selectedTask &&
+      !isAdminOrManager &&
+      isEligibleVa &&
+      !selectedTask.claimed_by &&
+      selectedTask.is_active &&
+      !selectedTask.archived_at &&
+      !selectedTask.deleted_at
   );
 
   if (profileLoading) {
@@ -894,6 +945,16 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         className="rounded-lg border border-sand bg-white px-5 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment"
                       >
                         Edit
+                      </button>
+                    )}
+                    {selectedTask && canGrabSelectedTask && (
+                      <button
+                        type="button"
+                        onClick={() => void handleGrab(selectedTask.id)}
+                        disabled={grabbing}
+                        className="rounded-lg bg-sage px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
+                      >
+                        {grabbing ? "Claiming..." : "Grab This Task"}
                       </button>
                     )}
                   </div>
