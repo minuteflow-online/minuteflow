@@ -50,14 +50,14 @@ const SUB_FILTERS: { key: SubFilter; label: string }[] = [
 ];
 const NOT_STARTED = new Set(["pending", "unassigned", "on_queue"]);
 
-// How far along the bar a task pushes its assignee. Progress accrues from the
-// SUBMIT onward — everything before that (not started, actively working) sits
-// at the starting point, so a zero-progress operation shows every face at the
-// left, not floating mid-bar. `cancelled`/unknown are excluded from the average.
+// A task counts toward its assignee's position only once it has been SUBMITTED
+// — submission is the trigger, full credit. Everything before that (not
+// started, actively working, or bounced back for revision) stays at the start,
+// so the avatar moves only when work is actually submitted. `cancelled`/unknown
+// are excluded from the average entirely.
 const STATUS_WEIGHT: Record<string, number> = {
-  pending: 0, unassigned: 0, on_queue: 0, in_progress: 0,
-  revision_needed: 0.3, submitted: 0.6, reviewing: 0.6,
-  approved: 0.85, completed: 1, paid: 1,
+  pending: 0, unassigned: 0, on_queue: 0, in_progress: 0, revision_needed: 0,
+  submitted: 1, reviewing: 1, approved: 1, completed: 1, paid: 1,
 };
 const easternToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 function matchesSubFilter(st: SubtaskRow, f: SubFilter, today: string): boolean {
