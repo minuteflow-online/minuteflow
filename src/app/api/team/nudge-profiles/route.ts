@@ -72,6 +72,12 @@ export async function GET(request: NextRequest) {
   const message = [
     "📋 <b>A quick housekeeping ask</b>",
     "",
+    // Both forms, deliberately. Toni reports @everyone works for her as a
+    // person typing it; whether Telegram honours it from a BOT is the open
+    // question, and one send answers it. The per-person mentions below ping
+    // the room for certain either way, so the test costs nothing if it turns
+    // out to be plain text.
+    "@everyone",
     everyone,
     "",
     "Some profiles are still missing a few details — payment information, address, birthday or a photo.",
