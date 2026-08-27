@@ -301,10 +301,14 @@ function fmtShift(start: string | null, end: string | null): string | null {
 /**
  * Friday's look at the coming week's schedule.
  *
- * Thanks the people who have set theirs and names the ones who have not, in
- * that order and in that tone. Being listed under "still to add" alongside
- * everyone else's completed schedule is reminder enough; it does not need a
- * sharper word than that.
+ * Celebrates whoever has set theirs, by name, and nudges whoever has not.
+ * Praise first and always: being listed after everyone else's finished
+ * calendar is reminder enough, so the nudge can stay light rather than
+ * carrying any weight of its own.
+ *
+ * The wording rotates. A weekly post with identical text becomes one people
+ * scroll past by the third week, and then the week someone genuinely needs to
+ * act they scroll past that too.
  *
  * Returns null only when nobody is active, since even a fully-set team is
  * worth confirming — the point of the post is that the week ahead is known.
@@ -341,21 +345,117 @@ export async function buildSchedulePost(): Promise<string | null> {
     }
   }
 
+  // Varied so a weekly post does not become one block of text people stop
+  // seeing. Praise first and by name; the nudge after, light enough that
+  // being on it is not a telling-off.
+  const PRAISE = [
+    "⭐ Locked in and ready:",
+    "🙌 These legends are all set:",
+    "✅ Calendars in, week sorted:",
+    "💪 Ready to go:",
+    "🎯 All set for the week:",
+  ];
+  const NUDGE = [
+    "👀 Still a blank canvas for:",
+    "🫣 Quietly missing from the calendar:",
+    "📭 Empty diary alert:",
+    "🔍 We cannot find a calendar for:",
+    "⏳ Waiting on:",
+  ];
+  const CLOSER = [
+    "Two minutes in your Portal and you are on the list too. 😄",
+    "Pop your days and hours in and you will be up there next week!",
+    "Sneak into your Portal and fill it in — we would love to see you on the list.",
+    "A quick trip to your Portal is all it takes. We will save you a spot. ✨",
+  ];
+  const ALL_IN = [
+    "🎉 Every single calendar is in. Look at this team!",
+    "🏆 A clean sweep — everyone is set for the week. Brilliant.",
+    "✨ Full house! Every calendar in. Thank you, all of you.",
+  ];
+  const pick = (a: string[]) => a[Math.floor(Math.random() * a.length)];
+
   const lines = ["🗓️ <b>Next week's schedule</b>"];
 
   if (set.length > 0) {
-    lines.push("", "Thank you to everyone who has theirs in:", ...set);
+    lines.push("", pick(PRAISE), ...set);
   }
 
   if (missing.length > 0) {
-    lines.push(
-      "",
-      `Still to add: ${missing.join(", ")}`,
-      "When you have a moment, set your days and hours in MinuteFlow so the week ahead is clear for everyone."
-    );
-  } else {
-    lines.push("", "Everyone is set for the week. Thank you.");
+    lines.push("", `${pick(NUDGE)} ${missing.join(", ")}`, pick(CLOSER));
+  } else if (set.length > 0) {
+    lines.push("", pick(ALL_IN));
   }
 
+  return lines.join("\n");
+}
+
+/**
+ * Work whose due date has passed and which nobody has closed.
+ *
+ * Named per person rather than as a count, because "7 tasks overdue" tells the
+ * team a number and tells nobody what to do. Kept to the group deliberately —
+ * this is coordination, not a reprimand, and the wording stays flat: no "still
+ * not done", no exclamation marks.
+ *
+ * Anything overdue by more than a fortnight is left out of the daily line. Work
+ * that old is a planning conversation, not something a morning reminder will
+ * move, and carrying it forever makes the list unreadable.
+ */
+const OVERDUE_HORIZON_DAYS = 14;
+
+export async function buildOverdue(): Promise<string | null> {
+  const supabase = service();
+  const today = orgDate(0);
+  const horizon = orgDate(-OVERDUE_HORIZON_DAYS);
+
+  const { data } = await supabase
+    .from("assigned_tasks")
+    .select("id, task_name, due_date, account, project, status")
+    .lt("due_date", today)
+    .gte("due_date", horizon)
+    .is("deleted_at", null)
+    .is("archived_at", null)
+    .order("due_date", { ascending: true });
+
+  const open = (data ?? []).filter(
+    (t) => !["approved", "completed", "cancelled"].includes(String(t.status ?? ""))
+  );
+  if (open.length === 0) return null;
+
+  // Who each one belongs to, so the line reaches the person holding it.
+  const { data: assignees } = await supabase
+    .from("assigned_task_assignees")
+    .select("assigned_task_id, va_id")
+    .in("assigned_task_id", open.map((t) => t.id));
+
+  const ids = [...new Set((assignees ?? []).map((a) => a.va_id as string))];
+  const { data: profs } = ids.length
+    ? await supabase.from("profiles").select("id, full_name, username, telegram_chat_id").in("id", ids)
+    : { data: [] };
+
+  const byId = new Map((profs ?? []).map((p) => [p.id as string, p]));
+  const ownerOf = new Map<number, string[]>();
+  for (const a of assignees ?? []) {
+    const list = ownerOf.get(a.assigned_task_id as number) ?? [];
+    list.push(a.va_id as string);
+    ownerOf.set(a.assigned_task_id as number, list);
+  }
+
+  const lines = ["⏰ <b>Past due</b>", ""];
+  for (const t of open.slice(0, 15)) {
+    const owners = (ownerOf.get(t.id as number) ?? [])
+      .map((id) => {
+        const p = byId.get(id);
+        const name = (p?.full_name as string) || (p?.username as string) || "Unassigned";
+        return mention(name, (p?.telegram_chat_id as number | null) ?? null);
+      })
+      .join(", ");
+    const since = longDate(String(t.due_date));
+    lines.push(`• ${esc(String(t.task_name ?? "a task"))} — due ${esc(since)}${owners ? ` · ${owners}` : ""}`);
+  }
+  if (open.length > 15) lines.push(`…and ${open.length - 15} more`);
+
+  lines.push("", "If any of these have moved on, update the due date so the list stays honest.");
   return lines.join("\n");
 }

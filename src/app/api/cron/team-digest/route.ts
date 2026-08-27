@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { buildTeamDigest, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost } from "@/lib/teamDigest";
+import { buildTeamDigest, buildWeeklyRecap, buildMeetingReminder, buildSchedulePost, buildOverdue } from "@/lib/teamDigest";
 import { findProfileGaps, gapMessage } from "@/lib/profileGaps";
 import { notifyVaPrivately } from "@/lib/vaNotify";
 import { sendTelegram, sendTelegramSticker, telegramEnabled } from "@/lib/telegram";
@@ -73,6 +73,13 @@ export async function GET(request: NextRequest) {
       });
     }
     return Response.json({ ok: true, kind, reminded: gaps.length });
+  }
+
+  if (kind === "overdue") {
+    const post = await buildOverdue();
+    if (!post) return Response.json({ ok: true, skipped: "nothing overdue" });
+    await sendTelegram("team", post);
+    return Response.json({ ok: true, kind });
   }
 
   if (kind === "schedule") {
