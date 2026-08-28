@@ -21,13 +21,19 @@ const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archive
 ];
 
 const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"];
+// "reviewing"/"approved" are display-only here — they arrive from the
+// assigned_tasks mirror status sync (see GET /api/fixed-pay-tasks), never
+// from a direct edit, so they're in the label/class maps but deliberately
+// left out of STATUS_OPTIONS above.
 const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "Open",
   pending: "Pending",
   on_queue: "Queue",
   in_progress: "In Progress",
   submitted: "Submit for Review",
+  reviewing: "Reviewing",
   revision_needed: "Revision Needed",
+  approved: "Approved",
   completed: "Completed",
   cancelled: "Cancelled",
   paid: "Paid",
@@ -38,13 +44,15 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   on_queue: "bg-stone/10 text-stone",
   in_progress: "bg-amber-100 text-amber-700",
   submitted: "bg-sky-50 text-sky-600",
+  reviewing: "bg-violet-50 text-violet-600",
   revision_needed: "bg-amber-soft text-amber",
+  approved: "bg-emerald-50 text-emerald-600",
   completed: "bg-sage-soft text-sage",
   cancelled: "bg-red-100 text-red-500",
   paid: "bg-plum-soft text-plum",
 };
 
-type PanelMode = "create" | "edit" | null;
+type PanelMode = "create" | "edit" | "view" | null;
 type ActiveFilter = "all" | "active" | "inactive" | "archived" | "trash";
 
 type ProfileSummary = Pick<Profile, "id" | "full_name" | "username">;
@@ -489,6 +497,12 @@ export default function FixedPayTasksTab() {
     setMessage(null);
   }, []);
 
+  const openViewPanel = useCallback((task: FixedPayTaskWithClaimer) => {
+    setPanelMode("view");
+    setSelectedTask(task);
+    setMessage(null);
+  }, []);
+
   const closePanel = useCallback(() => {
     setPanelMode(null);
     setSelectedTask(null);
@@ -711,8 +725,13 @@ export default function FixedPayTasksTab() {
     }
   }, [fetchAttachments, pendingAttachment, selectedTask]);
 
-  const panelTitle = panelMode === "edit" ? "Edit Task" : "New Task";
-  const panelSubtitle = panelMode === "edit" && selectedTask ? `Editing #${selectedTask.id}` : "Create a task for the Output Based pool.";
+  const panelTitle = panelMode === "view" ? "Task Details" : panelMode === "edit" ? "Edit Task" : "New Task";
+  const panelSubtitle =
+    panelMode === "view" && selectedTask
+      ? `Task #${selectedTask.id}`
+      : panelMode === "edit" && selectedTask
+        ? `Editing #${selectedTask.id}`
+        : "Create a task for the Output Based pool.";
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -981,7 +1000,7 @@ export default function FixedPayTasksTab() {
                         className={`cursor-pointer border-b border-sand last:border-0 transition-colors hover:bg-parchment/30 ${
                           isSelected ? "bg-parchment/50" : ""
                         }`}
-                        onClick={() => openEditPanel(task)}
+                        onClick={() => openViewPanel(task)}
                       >
                         <td className="w-10 px-3 py-3" onClick={(event) => event.stopPropagation()}>
                           <div className="flex items-center gap-2">
@@ -994,7 +1013,7 @@ export default function FixedPayTasksTab() {
                             />
                             <button
                               type="button"
-                              onClick={() => openEditPanel(task)}
+                              onClick={() => openViewPanel(task)}
                               className="flex h-6 w-6 items-center justify-center rounded text-stone transition-colors hover:bg-sand/50 hover:text-walnut"
                               aria-label={`Open ${task.task_name}`}
                             >
@@ -1079,19 +1098,36 @@ export default function FixedPayTasksTab() {
                 {message?.text}
               </div>
 
-              <div className="flex items-center justify-end gap-3">
-                <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleSaveAll()}
-                  disabled={panelSaving}
-                  className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {panelSaving ? "Saving..." : panelMode === "edit" ? "Update Task" : "Create Task"}
-                </button>
-              </div>
+              {panelMode === "view" ? (
+                <div className="flex items-center justify-end gap-3">
+                  <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
+                    Close
+                  </button>
+                  {selectedTask && (
+                    <button
+                      type="button"
+                      onClick={() => openEditPanel(selectedTask)}
+                      className="rounded-lg border border-sand bg-white px-5 py-2 text-[13px] font-semibold text-espresso transition-colors hover:bg-parchment"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-end gap-3">
+                  <button type="button" onClick={closePanel} className="text-xs text-stone hover:text-espresso">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveAll()}
+                    disabled={panelSaving}
+                    className="rounded-lg bg-terracotta px-5 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#a85840] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {panelSaving ? "Saving..." : panelMode === "edit" ? "Update Task" : "Create Task"}
+                  </button>
+                </div>
+              )}
             </>
           }
         >
@@ -1113,21 +1149,58 @@ export default function FixedPayTasksTab() {
                   </button>
                 </div>
               )}
-              <TaskEditor
-                // Task id in the key — a shared "edit" key kept the previous
-                // task's form state and saved it onto the next one.
-                key={panelMode === "create" ? createTaskMode : `edit-${selectedTask?.id ?? "none"}`}
-                ref={taskEditorRef}
-                mode={panelMode === "create" ? createTaskMode : "output_based"}
-                editingTaskId={panelMode === "edit" ? selectedTask?.id ?? null : null}
-                initialTask={panelMode === "edit" ? (selectedTask as unknown as Record<string, unknown>) : null}
-                currentUserId={currentUserId ?? ""}
-                isAdminOrManager
-                teamMembers={activeProfiles}
-                hideFooter
-                onCancel={closePanel}
-                onSaved={handleTaskSaved}
-              />
+              {panelMode === "view" && selectedTask && (
+                <>
+                  <TaskEditor
+                    key={`view-${selectedTask.id}`}
+                    mode="output_based"
+                    editingTaskId={selectedTask.id}
+                    initialTask={selectedTask as unknown as Record<string, unknown>}
+                    currentUserId={currentUserId ?? ""}
+                    isAdminOrManager
+                    teamMembers={activeProfiles}
+                    readOnly
+                    hideFooter
+                    onCancel={closePanel}
+                    onSaved={handleTaskSaved}
+                  />
+                  <div className="flex flex-wrap items-start gap-6">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Status</div>
+                      <span className={`mt-1 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_CLASSES[selectedTask.status]}`}>
+                        {STATUS_LABELS[selectedTask.status]}
+                      </span>
+                    </div>
+                    {selectedTask.claimed_by && (
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Claimed By</div>
+                        <div className="text-[13px] text-espresso">
+                          {selectedClaimer?.full_name || selectedClaimer?.username || selectedTask.claimed_by}
+                        </div>
+                        <div className="text-[11px] text-stone">{formatTimestamp(selectedTask.claimed_at)}</div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {(panelMode === "create" || panelMode === "edit") && (
+                <TaskEditor
+                  // Task id in the key — a shared "edit" key kept the previous
+                  // task's form state and saved it onto the next one.
+                  key={panelMode === "create" ? createTaskMode : `edit-${selectedTask?.id ?? "none"}`}
+                  ref={taskEditorRef}
+                  mode={panelMode === "create" ? createTaskMode : "output_based"}
+                  editingTaskId={panelMode === "edit" ? selectedTask?.id ?? null : null}
+                  initialTask={panelMode === "edit" ? (selectedTask as unknown as Record<string, unknown>) : null}
+                  currentUserId={currentUserId ?? ""}
+                  isAdminOrManager
+                  teamMembers={activeProfiles}
+                  hideFooter
+                  onCancel={closePanel}
+                  onSaved={handleTaskSaved}
+                />
+              )}
 
               {panelMode === "edit" && selectedTask && (
                 <p className="text-[11px] text-stone">

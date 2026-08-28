@@ -735,7 +735,11 @@ export interface FixedPayTaskWithClaimer {
   link: string | null;
   instructions: string | null;
   instructions_locked: boolean;
-  status: "open" | "pending" | "on_queue" | "in_progress" | "submitted" | "revision_needed" | "completed" | "cancelled" | "paid";
+  // "reviewing" and "approved" are never written to this column directly —
+  // they only ever arrive via the assigned_tasks mirror status sync (see
+  // GET /api/fixed-pay-tasks), which uses the fuller AssignedTaskStatus
+  // vocabulary once a task has been claimed and mirrored.
+  status: "open" | "pending" | "on_queue" | "in_progress" | "submitted" | "reviewing" | "revision_needed" | "approved" | "completed" | "cancelled" | "paid";
   start_date: string | null;
   due_date: string | null;
   end_date: string | null;
