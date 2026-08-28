@@ -134,14 +134,16 @@ const CARD_FIELDS: ColumnDef[] = [
   { key: "count", label: "Submission count", defaultWidth: 0 },
 ];
 
-/** What the card leads with. Same data, different thing to scan by. */
+/**
+ * Anything a card can show, it can lead with. Built from CARD_FIELDS rather
+ * than a second hand-written list, so a field added there is immediately
+ * available as a title instead of quietly missing from one of the two.
+ */
 const TITLE_FIELDS = [
   { value: "task", label: "Task" },
-  { value: "client", label: "Client" },
-  { value: "account", label: "Account" },
-  { value: "project", label: "Objective / Operation" },
-] as const;
-type TitleField = (typeof TITLE_FIELDS)[number]["value"];
+  ...CARD_FIELDS.map((f) => ({ value: f.key, label: f.label })),
+];
+type TitleField = string;
 
 const SCOPE_OPTIONS: Array<{ value: SubmissionScopeFilter; label: string }> = [
   { value: "all", label: "All work" },
@@ -1350,38 +1352,50 @@ function ThreadCard({
   const [expanded, setExpanded] = useState(false);
 
   const client = head.task?.account ? clientByAccount.get(head.task.account) : undefined;
-  const clientName = client?.name;
-  // Whatever contact detail the client actually has — an empty field is left
-  // out rather than printed as a gap.
-  const clientDetail = client
-    ? [client.contact_name, client.email, client.phone].filter(Boolean).join(" · ")
-    : undefined;
+
+  // One place decides what every field says, so the title and the detail
+  // lines can never disagree about the same field.
+  const fieldValue = (key: string): string | null => {
+    switch (key) {
+      case "task":
+        return head.task?.task_name ?? null;
+      case "account":
+        return head.task?.account ?? null;
+      case "client":
+        return client?.name ?? null;
+      case "client_detail":
+        // Only the contact detail the client actually has — a blank is left
+        // out rather than printed as a gap.
+        return client
+          ? [client.contact_name, client.email, client.phone].filter(Boolean).join(" · ") || null
+          : null;
+      case "project":
+        return head.task?.project_name ?? null;
+      case "reviewer":
+        return head.task?.assigned_by_name ? `reviewer: ${head.task.assigned_by_name}` : null;
+      case "category":
+        return head.task?.category ?? null;
+      case "submitter":
+        return head.profiles?.full_name || head.profiles?.username || null;
+      case "count":
+        return expanded
+          ? null
+          : `${thread.items.length} submission${thread.items.length === 1 ? "" : "s"}`;
+      default:
+        return null;
+    }
+  };
 
   // Falls back to the task name when the chosen field is empty on this row,
   // so a card is never headed by a blank.
-  const cardTitle =
-    (titleField === "client" ? clientName : undefined) ??
-    (titleField === "account" ? head.task?.account : undefined) ??
-    (titleField === "project" ? head.task?.project_name : undefined) ??
-    head.task?.task_name ??
-    "Task removed";
+  const cardTitle = fieldValue(titleField) ?? head.task?.task_name ?? "Task removed";
 
-  const metaLine = [
-    !hiddenFields.has("account") ? head.task?.account : null,
-    !hiddenFields.has("client") ? clientName : null,
-    !hiddenFields.has("client_detail") ? clientDetail || null : null,
-    !hiddenFields.has("project") ? head.task?.project_name : null,
-    !hiddenFields.has("category") ? head.task?.category : null,
-    !hiddenFields.has("reviewer") && head.task?.assigned_by_name
-      ? `reviewer: ${head.task.assigned_by_name}`
-      : null,
-    !hiddenFields.has("submitter")
-      ? head.profiles?.full_name || head.profiles?.username
-      : null,
-    !hiddenFields.has("count") && !expanded
-      ? `${thread.items.length} submission${thread.items.length === 1 ? "" : "s"}`
-      : null,
-  ]
+  // The field used as the title is skipped here — printing it twice on one
+  // card is never what was wanted.
+  const metaLine = CARD_FIELDS.filter(
+    (f) => !hiddenFields.has(f.key) && f.key !== titleField
+  )
+    .map((f) => fieldValue(f.key))
     .filter(Boolean)
     .join(" · ");
   const [noteDraft, setNoteDraft] = useState("");
