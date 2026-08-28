@@ -266,6 +266,46 @@ export async function POST(request: Request) {
   if (!title) return Response.json({ error: "title is required" }, { status: 400 });
   if (assignedToIds.length === 0) return Response.json({ error: "assigned_to_ids is required" }, { status: 400 });
 
+  // Guard against creating a second active template for the same actual
+  // recurring commitment. Task Name alone is NOT enough to detect this —
+  // it's a predefined dropdown, so one VA legitimately has many different
+  // real responsibilities sharing a generic name like "WebUpdate Processing"
+  // (confirmed live: Shem Delgado has ~10 of these, almost all genuinely
+  // different work — the Detail field is what actually distinguishes them,
+  // e.g. "SEO Work" vs "Weekly Planning" vs "EE Blog Content Batch Posting").
+  // Matching on title alone would block every one of those as a false
+  // "duplicate". The real accidental duplicates match on title AND detail
+  // AND account (confirmed live: three "EE Blog Content Planning (4 blogs)"
+  // templates, one minute apart, identical on all three).
+  {
+    const detail = (stringOrNull(body.task_detail) ?? stringOrNull(body.description) ?? "").trim().toLowerCase();
+    const account = (stringOrNull(body.account) ?? "").trim().toLowerCase();
+
+    const { data: activeSameTitle } = await serviceClient()
+      .from("recurring_task_templates")
+      .select("id, assigned_to, assigned_to_ids, task_detail, description, account")
+      .eq("is_active", true)
+      .ilike("title", title.trim());
+
+    const conflict = (activeSameTitle ?? []).find((t) => {
+      const ids = t.assigned_to_ids && t.assigned_to_ids.length > 0 ? t.assigned_to_ids : t.assigned_to ? [t.assigned_to] : [];
+      if (!ids.some((id: string) => assignedToIds.includes(id))) return false;
+      const existingDetail = ((t.task_detail ?? t.description ?? "") as string).trim().toLowerCase();
+      const existingAccount = ((t.account ?? "") as string).trim().toLowerCase();
+      return existingDetail === detail && existingAccount === account;
+    });
+
+    if (conflict) {
+      return Response.json(
+        {
+          error: `An active recurring template with this same Task Name, Detail, and Account already exists for this person. Edit that one instead of creating a second — open it from the Recurring Templates tab.`,
+          existingTemplateId: conflict.id,
+        },
+        { status: 409 }
+      );
+    }
+  }
+
   // For month-based recurrences, derive day-of-month from start_date if not provided
   const startDate = stringOrNull(body.start_date);
   const resolvedDayOfMonth = recurrence_day_of_month ?? (
@@ -440,6 +480,81 @@ ${existingText}` : addition;
   if (body.is_paused !== undefined) updates.is_active = !booleanOrDefault(body.is_paused, false);
 
   const supabase = serviceClient();
+
+  // Same guard as create, applied to edits: changing Task Name, Detail,
+  // Account, or the assignee can turn this template into a match for
+  // another already-active one just as easily as creating a fresh one can
+  // (confirmed live — editing one "Review" template's Detail to match a
+  // second "Review" template produced an instant duplicate pair). Only
+  // checked when the edit actually touches one of those fields, so an
+  // unrelated edit (rate, repeat_until, pausing, ...) on a template that
+  // predates this guard and already happens to duplicate another isn't
+  // blocked from saving at all.
+  const touchesMatchFields =
+    body.title !== undefined ||
+    body.task_name !== undefined ||
+    body.description !== undefined ||
+    body.task_detail !== undefined ||
+    body.account !== undefined ||
+    body.assigned_to_ids !== undefined ||
+    body.assigned_to !== undefined;
+
+  if (touchesMatchFields) {
+    const { data: current } = await supabase
+      .from("recurring_task_templates")
+      .select("title, description, task_detail, account, assigned_to, assigned_to_ids, is_active")
+      .eq("id", id)
+      .single();
+
+    const effectiveIsActive = updates.is_active !== undefined ? Boolean(updates.is_active) : Boolean(current?.is_active);
+
+    if (effectiveIsActive) {
+      const effectiveTitle = ((updates.title as string | null | undefined) ?? current?.title ?? "").trim();
+      const effectiveDetail = (
+        (updates.description as string | null | undefined) ??
+        (updates.task_detail as string | null | undefined) ??
+        current?.task_detail ??
+        current?.description ??
+        ""
+      ).trim().toLowerCase();
+      const effectiveAccount = ((updates.account as string | null | undefined) ?? current?.account ?? "").trim().toLowerCase();
+      const effectiveIds =
+        (updates.assigned_to_ids as string[] | null | undefined) ??
+        (current?.assigned_to_ids && current.assigned_to_ids.length > 0
+          ? current.assigned_to_ids
+          : current?.assigned_to
+            ? [current.assigned_to]
+            : []);
+
+      if (effectiveTitle && effectiveIds.length > 0) {
+        const { data: activeSameTitle } = await supabase
+          .from("recurring_task_templates")
+          .select("id, assigned_to, assigned_to_ids, task_detail, description, account")
+          .eq("is_active", true)
+          .neq("id", id)
+          .ilike("title", effectiveTitle);
+
+        const conflict = (activeSameTitle ?? []).find((t) => {
+          const ids = t.assigned_to_ids && t.assigned_to_ids.length > 0 ? t.assigned_to_ids : t.assigned_to ? [t.assigned_to] : [];
+          if (!ids.some((tid: string) => effectiveIds.includes(tid))) return false;
+          const existingDetail = ((t.task_detail ?? t.description ?? "") as string).trim().toLowerCase();
+          const existingAccount = ((t.account ?? "") as string).trim().toLowerCase();
+          return existingDetail === effectiveDetail && existingAccount === effectiveAccount;
+        });
+
+        if (conflict) {
+          return Response.json(
+            {
+              error: `Saving this would match another active recurring template on Task Name, Detail, and Account for this person. Adjust one of those, or edit the existing template instead.`,
+              existingTemplateId: conflict.id,
+            },
+            { status: 409 }
+          );
+        }
+      }
+    }
+  }
+
   const { data, error } = await supabase
     .from("recurring_task_templates")
     .update(updates)
