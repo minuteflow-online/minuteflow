@@ -280,7 +280,10 @@ export async function buildMeetingReminder(
     );
   }
 
-  lines.push("", "See you there.");
+  // The one scheduled team post that everybody has to act on, so it pings the
+  // room. The birthdays, recaps and digests deliberately do not — a chat that
+  // notifies for everything is a chat people mute, and then they miss this.
+  lines.push("", "@everyone", "", "See you there.");
   return lines.join("\n");
 }
 
