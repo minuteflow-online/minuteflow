@@ -54,6 +54,15 @@ type Thread = { taskId: number; items: FeedItem[]; latest: FeedItem };
 
 type TeamMember = { id: string; full_name: string; username: string };
 
+/** The client behind an account, as far as a submission card ever needs it. */
+type ClientRow = {
+  id: string;
+  name: string;
+  contact_name: string | null;
+  email: string | null;
+  phone: string | null;
+};
+
 type ViewMode = "timeline" | "calendar";
 
 /**
@@ -117,6 +126,7 @@ const WORK_TYPE_OPTIONS = [
 const CARD_FIELDS: ColumnDef[] = [
   { key: "account", label: "Account", defaultWidth: 0 },
   { key: "client", label: "Client", defaultWidth: 0 },
+  { key: "client_detail", label: "Client detail", defaultWidth: 0 },
   { key: "project", label: "Objective / Operation", defaultWidth: 0 },
   { key: "reviewer", label: "Reviewer", defaultWidth: 0 },
   { key: "category", label: "Category", defaultWidth: 0 },
@@ -269,7 +279,7 @@ export default function SubmissionsPage() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [accounts, setAccounts] = useState<Array<{ id: string; name: string }>>([]);
-  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
+  const [clients, setClients] = useState<ClientRow[]>([]);
   // client id -> the account names billed to that client, since a task points
   // at an account by name and only the mapping table knows the client.
   const [accountsByClient, setAccountsByClient] = useState<Map<string, Set<string>>>(new Map());
@@ -308,7 +318,7 @@ export default function SubmissionsPage() {
     fetch("/api/clients", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
-        setClients(d.clients ?? []);
+        setClients((d.clients ?? []) as ClientRow[]);
         const map = new Map<string, Set<string>>();
         for (const m of (d.mappings ?? []) as Array<{
           client_id: string;
@@ -639,11 +649,11 @@ This cannot be undone.`
   // account name -> client name, the reverse of accountsByClient, so a card
   // can name the client behind the account it already carries.
   const clientByAccount = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, ClientRow>();
     for (const [clientId, accountNames] of accountsByClient) {
       const client = clients.find((c) => c.id === clientId);
       if (!client) continue;
-      for (const name of accountNames) map.set(name, client.name);
+      for (const name of accountNames) map.set(name, client);
     }
     return map;
   }, [accountsByClient, clients]);
@@ -1327,7 +1337,7 @@ function ThreadCard({
   onComplete: (item: FeedItem) => void;
   titleField: TitleField;
   hiddenFields: Set<string>;
-  clientByAccount: Map<string, string>;
+  clientByAccount: Map<string, ClientRow>;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -1339,7 +1349,13 @@ function ThreadCard({
 
   const [expanded, setExpanded] = useState(false);
 
-  const clientName = head.task?.account ? clientByAccount.get(head.task.account) : undefined;
+  const client = head.task?.account ? clientByAccount.get(head.task.account) : undefined;
+  const clientName = client?.name;
+  // Whatever contact detail the client actually has — an empty field is left
+  // out rather than printed as a gap.
+  const clientDetail = client
+    ? [client.contact_name, client.email, client.phone].filter(Boolean).join(" · ")
+    : undefined;
 
   // Falls back to the task name when the chosen field is empty on this row,
   // so a card is never headed by a blank.
@@ -1353,6 +1369,7 @@ function ThreadCard({
   const metaLine = [
     !hiddenFields.has("account") ? head.task?.account : null,
     !hiddenFields.has("client") ? clientName : null,
+    !hiddenFields.has("client_detail") ? clientDetail || null : null,
     !hiddenFields.has("project") ? head.task?.project_name : null,
     !hiddenFields.has("category") ? head.task?.category : null,
     !hiddenFields.has("reviewer") && head.task?.assigned_by_name
@@ -1630,7 +1647,7 @@ function TimelineView({
   onComplete: (item: FeedItem) => void;
   titleField: TitleField;
   hiddenFields: Set<string>;
-  clientByAccount: Map<string, string>;
+  clientByAccount: Map<string, ClientRow>;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
