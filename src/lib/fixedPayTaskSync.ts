@@ -2,20 +2,31 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * Maps an assigned_tasks / assigned_task_assignees status onto the narrower
- * status enum fixed_pay_tasks actually stores. Output Based work has no
- * "unassigned", "reviewing", or "approved" state of its own — it goes
- * straight from submitted/revision_needed to completed — so those collapse
- * onto the closest fixed-pay equivalent. Anything with no sensible
- * equivalent (i.e. missing from this map) is left alone rather than guessed.
+ * status enum fixed_pay_tasks actually stores.
+ *
+ * "reviewing" and "approved" are deliberately NOT mapped here — they're
+ * left alone rather than collapsed onto a fixed-pay equivalent:
+ *
+ *   - GET /api/fixed-pay-tasks already overlays the live assigned_tasks
+ *     mirror status on top of this column for display, so those two states
+ *     show up correctly (as "Reviewing"/"Approved") without this column
+ *     ever needing to say so.
+ *   - "completed" on fixed_pay_tasks is a distinct, deliberate, manual
+ *     signal — paystub.ts and FinancialSummaryTab.tsx sum a VA's pay by
+ *     querying fixed_pay_tasks.status = "completed" directly. Writing
+ *     "completed" the instant a reviewer clicks Approve (rather than
+ *     whatever separate step actually marks a task payroll-ready) would
+ *     count it toward a paystub before it's meant to be.
+ *
+ * "unassigned" has no fixed-pay equivalent either and is left out for the
+ * same reason: nothing here should ever guess at billing-relevant state.
  */
 const FIXED_PAY_STATUS_MAP: Record<string, string> = {
   pending: "pending",
   on_queue: "on_queue",
   in_progress: "in_progress",
   submitted: "submitted",
-  reviewing: "submitted",
   revision_needed: "revision_needed",
-  approved: "completed",
   completed: "completed",
   paid: "paid",
   cancelled: "cancelled",
