@@ -13,7 +13,8 @@ type SubmittedFileRow = { id: string; project_id: string; filename: string; uplo
 type CommentRow = { id: number; body: string; created_at: string; author: string; author_id: string | null };
 type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[] };
 type Assignee = { id: string; name: string; avatar_url: string | null };
-type SubtaskRow = { id: number; project_id: string; task_name: string; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[] };
+type Todo = { id: number; text: string; sort_order: number };
+type SubtaskRow = { id: number; project_id: string; task_name: string; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[]; todos?: Todo[] };
 
 function initialsOf(name: string) {
   return name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -114,7 +115,7 @@ interface ObjectiveOverviewProps {
   isAdmin?: boolean;
 }
 
-type DashboardCard = "board" | "subtasks" | "overview" | "docs";
+type DashboardCard = "board" | "subtasks" | "todos" | "overview" | "docs";
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -584,6 +585,11 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     }
     return byItem;
   }, [subtasks, overviewItems, descendantsOf, rollup]);
+
+  const todoTasks = useMemo(
+    () => filteredSubtasks.filter((st) => (st.todos ?? []).length > 0),
+    [filteredSubtasks]
+  );
 
   const effectiveStatus = (st: SubtaskRow) => statusOverride[st.id] ?? st.status;
 
@@ -1095,6 +1101,53 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
             })}
           </div>
         )}
+        </div>
+      </div>
+
+      {/* To-Do List — the to-do items inside subtasks, pulled up to their own
+          tab. Same scope and the same My/All filter as the checklist. */}
+      <div className={cardClass("todos")}>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <h3 className={`${CARD_TITLE} mb-0`}>To-Do List</h3>
+          {subtaskMembers.length > 0 && (
+            <select
+              value={memberFilter}
+              onChange={(e) => setMemberFilter(e.target.value)}
+              className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+            >
+              <option value={MINE}>My To-Dos</option>
+              <option value="">All members</option>
+              {subtaskMembers.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto min-h-0 mt-2">
+          {todoTasks.length === 0 ? (
+            <p className="text-[12px] text-walnut">No to-dos on these subtasks yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {todoTasks.map((st) => (
+                <div key={st.id} className="rounded-lg border border-sand bg-white p-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-[12px] font-semibold text-espresso leading-tight">{st.task_name}</span>
+                    <span className="text-[10px] text-stone shrink-0">
+                      {st.assignees.map((a) => a.name).join(", ") || "Unassigned"}
+                    </span>
+                  </div>
+                  <ul className="mt-1 space-y-0.5">
+                    {(st.todos ?? []).map((todo) => (
+                      <li key={todo.id} className="text-[11px] text-walnut flex gap-1.5">
+                        <span className="text-stone/60">·</span>
+                        <span>{todo.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

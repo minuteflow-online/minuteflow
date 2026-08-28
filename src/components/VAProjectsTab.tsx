@@ -196,7 +196,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // Bumped after a subtask is created so the scoped dashboard re-fetches.
   const [dashboardRefresh, setDashboardRefresh] = useState(0);
   // Tab for the inside-a-project view (shared box with tabs).
-  const [scopedTab, setScopedTab] = useState<"board" | "details" | "subtasks" | "overview" | "docs">("board");
+  const [scopedTab, setScopedTab] = useState<"board" | "details" | "subtasks" | "todos" | "overview" | "docs">("board");
   // Landing overview (nothing selected) is also tab-based — one big box instead
   // of the 4-card grid, so each section gets room.
   const [landingTab, setLandingTab] = useState<"board" | "overview" | "docs" | "subtasks">("board");
@@ -1941,6 +1941,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   ["board", "Message Board"],
                   ["details", `${kindLabel} Details`],
                   ["subtasks", "Subtasks"],
+                  ["todos", "To-Do List"],
                   ["overview", `Sub-${kindLabel.toLowerCase()}s`],
                   ["docs", "Docs & Files"],
                 ] as const).map(([key, label]) => (
@@ -2213,7 +2214,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               {/* Message Board / Checklist / Sub-items / Docs via the dashboard.
                   The Checklist is the checkbox list (this project + all children)
                   in a fixed-height box with collapsed groups + pagination. */}
-              <div className={(scopedTab === "board" || scopedTab === "overview" || scopedTab === "docs") ? "" : "hidden"}>
+              <div className={(scopedTab === "board" || scopedTab === "overview" || scopedTab === "docs" || scopedTab === "todos") ? "" : "hidden"}>
                 <ObjectiveOverview
             currentUserId={currentUserId}
             isAdmin={isAdmin}
@@ -2222,7 +2223,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   scopeId={selectedProject.id}
                   kindLabel={kindLabel as "Objective" | "Operation"}
                   refreshSignal={dashboardRefresh}
-                  showOnly={scopedTab === "overview" ? "overview" : scopedTab === "docs" ? "docs" : "board"}
+                  showOnly={scopedTab === "overview" ? "overview" : scopedTab === "docs" ? "docs" : scopedTab === "todos" ? "todos" : "board"}
                   onEditProject={(p) => { handleSelectProject(p); setScopedTab("details"); setShowDetails(true); }}
                 />
               </div>
