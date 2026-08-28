@@ -968,12 +968,13 @@ function DayGroup({
     (n, t) => n + t.items.filter((i) => i.message_type === "submission").length,
     0
   );
-  // Auto-approved work is deliberately excluded: nobody is expected to act on
-  // it, so counting it would overstate the queue.
+  // Matches the cards exactly: anything still awaiting a decision counts.
+  // Auto-approved work is already excluded by its state, so testing
+  // review_required as well used to hide a reversed auto-approval — the card
+  // said Needs review while the day header pretended nothing was waiting.
   const needsReview = threads.filter((t) => {
     const state = reviewState[String(t.taskId)];
-    if (state === "revision_requested" || state === "approved") return false;
-    return t.latest.task?.review_required !== false;
+    return state === undefined || state === "awaiting";
   }).length;
 
   return (
