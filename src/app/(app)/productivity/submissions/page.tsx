@@ -1383,12 +1383,24 @@ function ThreadCard({
             the pill states the outcome and there's nothing left to click. */}
         {canReview && latest.task && awaitingReview ? (
           <div className="flex shrink-0 items-center gap-1.5">
+            {/* A task that never required review can't be 'approved' by a
+                person without implying it was graded. Restoring it puts back
+                the same entry the server writes on submit, so a reversal made
+                by mistake leaves no trace of a review that never happened. */}
             <button
-              onClick={() => onReview(latest, "approval")}
+              onClick={() =>
+                onReview(
+                  latest,
+                  "approval",
+                  latest.task?.review_required === false
+                    ? "Auto approved — this task does not require review"
+                    : undefined
+                )
+              }
               disabled={busy}
               className="rounded-lg bg-sage px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-sage/90 disabled:opacity-50"
             >
-              Approve
+              {latest.task?.review_required === false ? "Auto approve" : "Approve"}
             </button>
             <button
               onClick={() => {
