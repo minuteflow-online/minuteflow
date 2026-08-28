@@ -21,13 +21,19 @@ const VIEW_FILTER_PILLS: Array<{ value: "all" | "active" | "inactive" | "archive
 ];
 
 const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted", "revision_needed", "completed", "cancelled", "paid"];
+// "reviewing"/"approved" are display-only here — they arrive from the
+// assigned_tasks mirror status sync (see GET /api/fixed-pay-tasks), never
+// from a direct edit, so they're in the label/class maps but deliberately
+// left out of STATUS_OPTIONS above.
 const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "Open",
   pending: "Pending",
   on_queue: "Queue",
   in_progress: "In Progress",
   submitted: "Submit for Review",
+  reviewing: "Reviewing",
   revision_needed: "Revision Needed",
+  approved: "Approved",
   completed: "Completed",
   cancelled: "Cancelled",
   paid: "Paid",
@@ -38,7 +44,9 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   on_queue: "bg-stone/10 text-stone",
   in_progress: "bg-amber-100 text-amber-700",
   submitted: "bg-sky-50 text-sky-600",
+  reviewing: "bg-violet-50 text-violet-600",
   revision_needed: "bg-amber-soft text-amber",
+  approved: "bg-emerald-50 text-emerald-600",
   completed: "bg-sage-soft text-sage",
   cancelled: "bg-red-100 text-red-500",
   paid: "bg-plum-soft text-plum",

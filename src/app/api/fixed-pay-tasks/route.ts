@@ -158,7 +158,25 @@ export async function GET(request: Request) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = await hydrateTaskProfiles(readClient, (data ?? []) as unknown as FixedPayTaskWithClaimer[]);
+  let rows = await hydrateTaskProfiles(readClient, (data ?? []) as unknown as FixedPayTaskWithClaimer[]);
+
+  // Claiming a fixed_pay_task mirrors it into assigned_tasks (fixed_pay_task_id
+  // links back), and the submit/review flow only ever writes status there —
+  // fixed_pay_tasks.status is never touched again, so it's permanently stuck
+  // at whatever it was when the row was created (almost always "open"). The
+  // mirror is the real status once one exists; fall back to the native
+  // column for tasks that were never claimed (no mirror row to read).
+  const claimedIds = rows.filter((t) => t.claimed_by).map((t) => t.id);
+  if (claimedIds.length > 0) {
+    const { data: mirrorRows } = await readClient
+      .from("assigned_tasks")
+      .select("id, fixed_pay_task_id, status")
+      .in("fixed_pay_task_id", claimedIds);
+    const statusByTaskId = Object.fromEntries(
+      ((mirrorRows ?? []) as { fixed_pay_task_id: string | number; status: string }[]).map((r) => [r.fixed_pay_task_id, r.status])
+    );
+    rows = rows.map((t) => (statusByTaskId[t.id] ? { ...t, status: statusByTaskId[t.id] as FixedPayTaskWithClaimer["status"] } : t));
+  }
 
   if (!isPermitted) {
     const visibleRows = rows.filter((task) => matchesTaskView(task, "active"));

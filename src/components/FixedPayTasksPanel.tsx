@@ -26,13 +26,19 @@ const STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pendi
 // Statuses the VA themselves may pick from the task panel — mirrors
 // VA_EDITABLE_STATUSES on the server, which is the actual enforcement point.
 const VA_STATUS_OPTIONS: Array<FixedPayTaskWithClaimer["status"]> = ["open", "pending", "on_queue", "in_progress", "submitted"];
+// "reviewing"/"approved" are display-only here — they arrive from the
+// assigned_tasks mirror status sync (see GET /api/fixed-pay-tasks), never
+// from a direct edit, so they're in the label/class maps but deliberately
+// left out of STATUS_OPTIONS/VA_STATUS_OPTIONS above.
 const STATUS_LABELS: Record<FixedPayTaskWithClaimer["status"], string> = {
   open: "Open",
   pending: "Pending",
   on_queue: "Queue",
   in_progress: "In Progress",
   submitted: "Submit for Review",
+  reviewing: "Reviewing",
   revision_needed: "Revision Needed",
+  approved: "Approved",
   completed: "Completed",
   cancelled: "Cancelled",
   paid: "Paid",
@@ -43,7 +49,9 @@ const STATUS_CLASSES: Record<FixedPayTaskWithClaimer["status"], string> = {
   on_queue: "bg-stone/10 text-stone",
   in_progress: "bg-amber-100 text-amber-700",
   submitted: "bg-sky-50 text-sky-600",
+  reviewing: "bg-violet-50 text-violet-600",
   revision_needed: "bg-amber-soft text-amber",
+  approved: "bg-emerald-50 text-emerald-600",
   completed: "bg-sage-soft text-sage",
   cancelled: "bg-red-100 text-red-500",
   paid: "bg-plum-soft text-plum",
@@ -65,6 +73,7 @@ type StoredFixedPayFilters = {
   filterClaimStates?: string[];
   filterCreators?: string[];
   filterAssignedBy?: string[];
+  filterVas?: string[];
   filterProjects?: string[];
 };
 
@@ -104,6 +113,7 @@ const TABLE_COLUMNS: ColumnDef[] = [
   { key: "start_date", label: "Start Date", defaultWidth: 110 },
   { key: "due_date", label: "Due Date", defaultWidth: 110 },
   { key: "assigned_by", label: "Assigned By", defaultWidth: 130 },
+  { key: "va", label: "VA", defaultWidth: 140 },
   { key: "claimed", label: "Claimed", defaultWidth: 130 },
   { key: "created", label: "Created", defaultWidth: 150 },
   { key: "active", label: "Active", defaultWidth: 90 },
@@ -140,6 +150,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   const [filterClaimStates, setFilterClaimStates] = useState<string[]>([]);
   const [filterCreators, setFilterCreators] = useState<string[]>([]);
   const [filterAssignedBy, setFilterAssignedBy] = useState<string[]>([]);
+  const [filterVas, setFilterVas] = useState<string[]>([]);
   const [filterProjects, setFilterProjects] = useState<string[]>([]);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [selectedTask, setSelectedTask] = useState<FixedPayTaskWithClaimer | null>(null);
@@ -180,6 +191,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       if (storedFilters.filterClaimStates !== undefined) setFilterClaimStates(storedFilters.filterClaimStates);
       if (storedFilters.filterCreators !== undefined) setFilterCreators(storedFilters.filterCreators);
       if (storedFilters.filterAssignedBy !== undefined) setFilterAssignedBy(storedFilters.filterAssignedBy);
+      if (storedFilters.filterVas !== undefined) setFilterVas(storedFilters.filterVas);
       if (storedFilters.filterProjects !== undefined) setFilterProjects(storedFilters.filterProjects);
     }
   }, [filterPrefsReady, storedFilters]);
@@ -188,11 +200,11 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     if (!filterPrefsReady || !filterPrefsAppliedRef.current) return;
     persistFilters({
       activeFilter, filterTaskNames, filterAccounts, filterCategories, filterStatuses, filterRates,
-      filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterProjects,
+      filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterVas, filterProjects,
     });
   }, [
     filterPrefsReady, activeFilter, filterTaskNames, filterAccounts, filterCategories, filterStatuses, filterRates,
-    filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterProjects, persistFilters,
+    filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterVas, filterProjects, persistFilters,
   ]);
 
   // Same eligibility as the fixed-pay-tasks POST route: Output Based VAs, or hourly VAs
@@ -311,6 +323,13 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       ).sort((a, b) => a.localeCompare(b)),
     [tasks]
   );
+  const vaFilterOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(tasks.map((task) => task.claimed_by_profile?.full_name || task.claimed_by_profile?.username || "").filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b)),
+    [tasks]
+  );
   const projectFilterOptions = useMemo(
     () => Array.from(new Set(tasks.map((task) => task.projects?.name ?? "").filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [tasks]
@@ -364,10 +383,14 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
         const assignedByName = task.assigned_by_profile?.full_name || task.assigned_by_profile?.username || "";
         if (!filterAssignedBy.includes(assignedByName)) return false;
       }
+      if (filterVas.length > 0) {
+        const vaName = task.claimed_by_profile?.full_name || task.claimed_by_profile?.username || "";
+        if (!filterVas.includes(vaName)) return false;
+      }
       if (filterProjects.length > 0 && !filterProjects.includes(task.projects?.name ?? "")) return false;
       return true;
     });
-  }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterProjects, currentUserId]);
+  }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterVas, filterProjects, currentUserId]);
 
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const allVisibleSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
@@ -624,7 +647,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] text-stone">Use the ▾ on a column heading to filter it.</p>
             <div className="flex items-center gap-2">
-              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || filterClaimStates.length > 0 || filterCreators.length > 0 || filterAssignedBy.length > 0 || filterProjects.length > 0 || activeFilter !== "all") && (
+              {(filterTaskNames.length > 0 || filterAccounts.length > 0 || filterCategories.length > 0 || filterStatuses.length > 0 || filterRates.length > 0 || filterStartDates.length > 0 || filterDueDates.length > 0 || filterClaimStates.length > 0 || filterCreators.length > 0 || filterAssignedBy.length > 0 || filterVas.length > 0 || filterProjects.length > 0 || activeFilter !== "all") && (
                 <button
                   type="button"
                   onClick={() => {
@@ -639,6 +662,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     setFilterClaimStates([]);
                     setFilterCreators([]);
                     setFilterAssignedBy([]);
+                    setFilterVas([]);
                     setFilterProjects([]);
                   }}
                   className="cursor-pointer text-[12px] text-stone hover:text-terracotta hover:underline"
@@ -788,6 +812,16 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         onFilterChange={setFilterAssignedBy}
                       />
                     )}
+                    {!hiddenColumns.has("va") && (
+                      <ColumnHeader
+                        label="VA"
+                        width={columnWidths.va}
+                        onResize={(w) => setColumnWidth("va", w)}
+                        filterOptions={vaFilterOptions.map((name) => ({ value: name, label: name }))}
+                        selected={filterVas}
+                        onFilterChange={setFilterVas}
+                      />
+                    )}
                     {!hiddenColumns.has("claimed") && (
                       <ColumnHeader
                         label="Claimed"
@@ -888,6 +922,11 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                         {!hiddenColumns.has("assigned_by") && (
                           <td className="truncate px-3 py-3 text-[13px] text-walnut">
                             {task.assigned_by_profile?.full_name || task.assigned_by_profile?.username || <span className="text-stone/60">—</span>}
+                          </td>
+                        )}
+                        {!hiddenColumns.has("va") && (
+                          <td className="truncate px-3 py-3 text-[13px] text-walnut">
+                            {task.claimed_by_profile?.full_name || task.claimed_by_profile?.username || <span className="text-stone/60">—</span>}
                           </td>
                         )}
                         {!hiddenColumns.has("claimed") && (
