@@ -1417,6 +1417,8 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             children, in the same window as List/Board. */}
         {subtaskView === "checklist" && (
           <ObjectiveOverview
+            currentUserId={currentUserId}
+            isAdmin={isAdmin}
             projects={projects}
             onSelect={handleSelectProject}
             scopeId={selectedProject.id}
@@ -2213,13 +2215,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   in a fixed-height box with collapsed groups + pagination. */}
               <div className={(scopedTab === "board" || scopedTab === "overview" || scopedTab === "docs") ? "" : "hidden"}>
                 <ObjectiveOverview
+            currentUserId={currentUserId}
+            isAdmin={isAdmin}
                   projects={projects}
                   onSelect={handleSelectProject}
                   scopeId={selectedProject.id}
                   kindLabel={kindLabel as "Objective" | "Operation"}
                   refreshSignal={dashboardRefresh}
                   showOnly={scopedTab === "overview" ? "overview" : scopedTab === "docs" ? "docs" : "board"}
-                  onEditProject={(p) => { handleSelectProject(p); setScopedTab("details"); setShowDetails(true); }} currentUserId={currentUserId}
+                  onEditProject={(p) => { handleSelectProject(p); setScopedTab("details"); setShowDetails(true); }}
                 />
               </div>
             </div>
@@ -2249,12 +2253,14 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 ))}
               </div>
               <ObjectiveOverview
+            currentUserId={currentUserId}
+            isAdmin={isAdmin}
                 projects={projects}
                 onSelect={handleSelectProject}
                 kindLabel={kindLabel as "Objective" | "Operation"}
                 showOnly={landingTab}
                 onEditProject={(p) => { handleSelectProject(p); setScopedTab("details"); setShowDetails(true); }}
-                currentUserId={currentUserId}
+               
               />
             </div>
           )}

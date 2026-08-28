@@ -74,6 +74,8 @@ const STATUS_WEIGHT: Record<string, number> = {
 // the avatar forward and glows GREEN.
 const PENDING_STATUSES = new Set(["submitted", "reviewing"]);
 const APPROVED_STATUSES = new Set(["approved", "completed", "paid"]);
+/** Ticked. Approved is deliberately not here: it is what makes a box tickable. */
+const TICKED = new Set(["completed", "paid"]);
 const easternToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 function matchesSubFilter(st: SubtaskRow, f: SubFilter, today: string): boolean {
   switch (f) {
@@ -106,8 +108,10 @@ interface ObjectiveOverviewProps {
   addSubtaskSlot?: React.ReactNode;
   /** Open an overview item straight into its editable Details (Edit button). */
   onEditProject?: (project: Project) => void;
-  /** The signed-in user, for the "My Messages" filter. */
+  /** The signed-in user, for the "My Messages" filter and the My Subtasks default. */
   currentUserId?: string;
+  /** Admins may tick anyone's subtask; everyone else only their own. */
+  isAdmin?: boolean;
 }
 
 type DashboardCard = "board" | "subtasks" | "overview" | "docs";
@@ -206,7 +210,7 @@ function MentionPicker({ members, onPick }: { members: Member[]; onPick: (name: 
  * Overview, Docs & Files, and a Subtasks checkbox board. Shown in the right
  * panel on the landing (all objectives) and, scoped, inside a selected one.
  */
-export default function ObjectiveOverview({ projects, onSelect, scopeId = null, kindLabel = "Objective", refreshSignal = 0, showOnly, addSubtaskSlot, onEditProject, currentUserId }: ObjectiveOverviewProps) {
+export default function ObjectiveOverview({ projects, onSelect, scopeId = null, kindLabel = "Objective", refreshSignal = 0, showOnly, addSubtaskSlot, onEditProject, currentUserId, isAdmin = false }: ObjectiveOverviewProps) {
   const [expandedOverview, setExpandedOverview] = useState<string | null>(null);
   const [msgFilter, setMsgFilter] = useState<"general" | "mine">("general");
   const lc = kindLabel.toLowerCase();
@@ -251,7 +255,8 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
   // open group with hundreds of subtasks doesn't make the card enormous.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [subFilters, setSubFilters] = useState<Set<SubFilter>>(new Set());
-  const [memberFilter, setMemberFilter] = useState<string>("");
+  const MINE = "__mine";
+  const [memberFilter, setMemberFilter] = useState<string>(MINE);
   const todayEastern = easternToday();
 
   useEffect(() => {
@@ -448,11 +453,12 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     const today = easternToday();
     const active = Array.from(subFilters);
     return subtasks.filter((st) => {
-      if (memberFilter && !st.assignees.some((a) => a.id === memberFilter)) return false;
+      const wanted = memberFilter === MINE ? currentUserId : memberFilter;
+      if (wanted && !st.assignees.some((a) => a.id === wanted)) return false;
       if (active.length > 0 && !active.some((f) => matchesSubFilter(st, f, today))) return false;
       return true;
     });
-  }, [subtasks, subFilters, memberFilter]);
+  }, [subtasks, subFilters, memberFilter, currentUserId, MINE]);
 
   const toggleSubFilter = (f: SubFilter) =>
     setSubFilters((prev) => {
@@ -581,9 +587,30 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
 
   const effectiveStatus = (st: SubtaskRow) => statusOverride[st.id] ?? st.status;
 
+  /** Whose task this is. Staff can see everyone's work but only tick their own. */
+  const isMine = (st: SubtaskRow) =>
+    Boolean(currentUserId) && st.assignees.some((a) => a.id === currentUserId);
+
+  /**
+   * Why a box is not tickable, or null when it is.
+   *
+   * Completed is reachable only from approved: ticking is the acknowledgement
+   * that reviewed work is finished, so it cannot be used to skip the review.
+   */
+  const tickBlockedReason = (st: SubtaskRow): string | null => {
+    if (!isAdmin && !isMine(st)) return "Only the person assigned to this can tick it.";
+    const status = effectiveStatus(st);
+    if (TICKED.has(status)) return null; // already done — untick is allowed
+    if (status !== "approved") return "This has to be approved before it can be completed.";
+    return null;
+  };
+
   const toggleSubtask = async (st: SubtaskRow) => {
-    const done = DONE.has(effectiveStatus(st));
-    const next = done ? "on_queue" : "completed";
+    if (tickBlockedReason(st)) return;
+    const done = TICKED.has(effectiveStatus(st));
+    // Unticking returns it to approved rather than to the back of the queue:
+    // the work was reviewed, and undoing the tick does not undo the review.
+    const next = done ? "approved" : "completed";
     setStatusOverride((prev) => ({ ...prev, [st.id]: next }));
     try {
       await fetch(`/api/assigned-tasks/${st.id}`, {
@@ -982,6 +1009,7 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
               onChange={(e) => setMemberFilter(e.target.value)}
               className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
             >
+              <option value={MINE}>My Subtasks</option>
               <option value="">All members</option>
               {subtaskMembers.map(([id, name]) => (
                 <option key={id} value={id}>{name}</option>
@@ -1017,11 +1045,19 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                       {(slice) => (
                     <div className="divide-y divide-sand/50">
                       {list.map((st) => {
-                        const done = DONE.has(effectiveStatus(st));
+                        const done = TICKED.has(effectiveStatus(st));
+                        const blocked = tickBlockedReason(st);
                         const owners = st.assignees.map((a) => a.name).join(", ");
                         return (
-                          <label key={st.id} className={`flex items-center gap-2 py-1.5 px-2 border-l-4 ${subtaskAccent(st, todayEastern)} hover:bg-cream transition-colors cursor-pointer`}>
-                            <input type="checkbox" checked={done} onChange={() => void toggleSubtask(st)} className="shrink-0 accent-sage" />
+                          <label key={st.id} title={blocked ?? undefined} className={`flex items-center gap-2 py-1.5 px-2 border-l-4 ${subtaskAccent(st, todayEastern)} hover:bg-cream transition-colors ${blocked ? "cursor-default" : "cursor-pointer"}`}>
+                            <input
+                              type="checkbox"
+                              checked={done}
+                              disabled={Boolean(blocked)}
+                              title={blocked ?? undefined}
+                              onChange={() => void toggleSubtask(st)}
+                              className="shrink-0 accent-sage disabled:cursor-not-allowed disabled:opacity-40"
+                            />
                             <span className="min-w-0 flex-1">
                               <span className={`flex items-center gap-1 text-[12px] ${done ? "text-stone line-through" : "text-espresso"}`}>
                                 {st.recurring && (

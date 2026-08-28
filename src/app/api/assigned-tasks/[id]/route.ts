@@ -631,6 +631,25 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     return Response.json({ error: "Invalid status value" }, { status: 400 });
   }
 
+  // Completed is reachable only from approved. The checklist tick is the
+  // acknowledgement that reviewed work is finished, and enforcing that here
+  // rather than only in the checkbox is what stops the Assignment list, the
+  // calendar or a stray API call being used to skip the review.
+  if (status === "completed") {
+    const { data: current } = await adminSupabase
+      .from("assigned_tasks")
+      .select("status")
+      .eq("id", id)
+      .single();
+    const from = (current?.status ?? "") as string;
+    if (from !== "approved" && from !== "completed" && from !== "paid") {
+      return Response.json(
+        { error: "A task has to be approved before it can be marked completed." },
+        { status: 409 }
+      );
+    }
+  }
+
   if (task_name !== undefined && task_name.trim().length === 0) {
     return Response.json({ error: "task_name cannot be empty" }, { status: 400 });
   }
