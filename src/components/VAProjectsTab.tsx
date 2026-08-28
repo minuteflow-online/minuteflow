@@ -165,6 +165,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // Which objectives have their linked-operations chips expanded. Collapsed by
+  // default so the list stays calm — the wall of Op pills was overwhelming.
+  const [expandedOpsIds, setExpandedOpsIds] = useState<Set<string>>(new Set());
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   // A linked Operation opened for read-only viewing from an Objective (edited at
@@ -411,6 +414,15 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleOps = (id: string) => {
+    setExpandedOpsIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -914,23 +926,42 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               Supports: {objectiveNameById.get(project.linked_objective_id) ?? "Objective"}
             </span>
           )}
-          {kind === "objective" && (operationsByObjective.get(project.id)?.length ?? 0) > 0 && (
-            <div className="flex flex-wrap items-center gap-1">
-              {operationsByObjective.get(project.id)!.map((op) => (
+          {kind === "objective" && (operationsByObjective.get(project.id)?.length ?? 0) > 0 && (() => {
+            const ops = operationsByObjective.get(project.id)!;
+            const opsOpen = expandedOpsIds.has(project.id);
+            return (
+              <div className="flex flex-col gap-1">
+                {/* Collapsed by default so the row stays calm; expand to see the
+                    linked operations. */}
                 <button
-                  key={op.id}
                   type="button"
                   draggable={false}
-                  onClick={(e) => { e.stopPropagation(); setViewOperation(op); }}
-                  title="View operation details (read-only) — edit in Operations"
-                  className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-slate-blue-soft text-slate-blue border-slate-blue/20 w-fit inline-flex items-center gap-1 hover:bg-slate-blue/20 transition-colors cursor-pointer"
+                  onClick={(e) => { e.stopPropagation(); toggleOps(project.id); }}
+                  className="w-fit inline-flex items-center gap-1 text-[10px] font-semibold text-slate-blue hover:text-espresso transition-colors cursor-pointer"
                 >
-                  <span className="opacity-60 uppercase tracking-wide text-[8px]">Op</span>
-                  {op.name}
+                  <span className="text-[8px] w-2">{opsOpen ? "▼" : "▶"}</span>
+                  {ops.length} operation{ops.length === 1 ? "" : "s"}
                 </button>
-              ))}
-            </div>
-          )}
+                {opsOpen && (
+                  <div className="flex flex-wrap items-center gap-1 pl-3">
+                    {ops.map((op) => (
+                      <button
+                        key={op.id}
+                        type="button"
+                        draggable={false}
+                        onClick={(e) => { e.stopPropagation(); setViewOperation(op); }}
+                        title="View operation details (read-only) — edit in Operations"
+                        className="text-[10px] font-semibold px-2 py-[2px] rounded-full border bg-slate-blue-soft text-slate-blue border-slate-blue/20 w-fit inline-flex items-center gap-1 hover:bg-slate-blue/20 transition-colors cursor-pointer"
+                      >
+                        <span className="opacity-60 uppercase tracking-wide text-[8px]">Op</span>
+                        {op.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {project.description && (
             <p className="text-[11px] text-stone/80 truncate">{project.description}</p>
           )}
