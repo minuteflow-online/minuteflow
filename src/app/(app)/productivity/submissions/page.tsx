@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { setAssignedTaskStatus } from "@/lib/assignedTaskStatus";
 import {
@@ -12,7 +12,6 @@ import {
 } from "@/lib/submissions";
 import RevisionBadge from "@/components/RevisionBadge";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
-import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import type { AssignedTaskStatus, Project } from "@/types/database";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
@@ -764,10 +763,9 @@ This cannot be undone.`
           ))}
         </select>
 
-        <select
-          value={titleField}
-          onChange={(e) => {
-            const next = e.target.value as TitleField;
+        <CardFieldsPicker
+          titleField={titleField}
+          onTitleChange={(next) => {
             setTitleField(next);
             try {
               if (currentUserId) localStorage.setItem(`mf-submissions-title:${currentUserId}`, next);
@@ -775,18 +773,6 @@ This cannot be undone.`
               // Unavailable storage — the choice still applies this session.
             }
           }}
-          className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
-          title="What each card leads with"
-        >
-          {TITLE_FIELDS.map((f) => (
-            <option key={f.value} value={f.value}>
-              Title: {f.label}
-            </option>
-          ))}
-        </select>
-
-        <ColumnVisibilityPicker
-          columns={CARD_FIELDS}
           hidden={hiddenFields}
           onToggle={toggleColumnVisible}
         />
@@ -1077,6 +1063,94 @@ function SubmissionsLegend() {
           </span>
         ))}
       </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Title and detail lines in one control. They are the same decision — what
+ * this card should say — so splitting them across two dropdowns made the
+ * filter bar wider and the relationship between them invisible.
+ */
+function CardFieldsPicker({
+  titleField,
+  onTitleChange,
+  hidden,
+  onToggle,
+}: {
+  titleField: TitleField;
+  onTitleChange: (next: TitleField) => void;
+  hidden: Set<string>;
+  onToggle: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  const shown = CARD_FIELDS.length - hidden.size;
+
+  return (
+    <div className="relative inline-block" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none transition-colors hover:border-walnut"
+      >
+        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="3" width="7" height="18" rx="1" />
+          <rect x="14" y="3" width="7" height="18" rx="1" />
+        </svg>
+        Fields
+        <span className="rounded-full bg-terracotta px-1.5 py-px text-[10px] font-bold leading-none text-white">
+          {shown}
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-9 z-30 w-60 rounded-lg border border-sand bg-white p-2 shadow-lg">
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-walnut">
+            Title
+          </label>
+          <select
+            value={titleField}
+            onChange={(e) => onTitleChange(e.target.value as TitleField)}
+            className="mb-2 w-full rounded-lg border border-sand bg-white px-2 py-1 text-[12px] text-espresso outline-none"
+          >
+            {TITLE_FIELDS.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+
+          <div className="my-1 border-t border-parchment" />
+          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-walnut">
+            Also show
+          </label>
+          {CARD_FIELDS.map((col) => (
+            <label
+              key={col.key}
+              className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-[12px] text-espresso hover:bg-parchment"
+            >
+              <input
+                type="checkbox"
+                checked={!hidden.has(col.key)}
+                onChange={() => onToggle(col.key)}
+                className="cursor-pointer accent-terracotta"
+              />
+              <span className="truncate">{col.label}</span>
+            </label>
+          ))}
         </div>
       )}
     </div>
