@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import TopNav from "@/components/TopNav";
 import type { UserRole } from "@/types/database";
 import { hasAdminPanelAccess } from "@/lib/financialAccess";
+import { ToastProvider } from "@/contexts/ToastProvider";
 
 export default async function AdminLayout({
   children,
@@ -40,9 +41,9 @@ export default async function AdminLayout({
   const role: UserRole = profile.role || "admin";
 
   return (
-    <>
+    <ToastProvider>
       <TopNav user={{ full_name: fullName, role, department: profile.department, admin_permissions: profile.admin_permissions, avatar_url: profile.avatar_url }} />
       <main className="flex-1">{children}</main>
-    </>
+    </ToastProvider>
   );
 }
