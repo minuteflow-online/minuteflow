@@ -4,6 +4,7 @@ import { resultPage } from "@/lib/approvalPages";
 import { cheerApproval } from "@/lib/reviewLinks";
 import type { ReviewAction } from "@/lib/reviewLinks";
 import { sendTelegram, telegramEnabled, esc } from "@/lib/telegram";
+import { syncFixedPayTaskStatus } from "@/lib/fixedPayTaskSync";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -90,6 +91,7 @@ export async function GET(request: NextRequest) {
     .update({ status: cfg.status, updated_at: stamp })
     .eq("assigned_task_id", id);
   await admin.from("assigned_tasks").update({ status: cfg.status, updated_at: stamp }).eq("id", id);
+  await syncFixedPayTaskStatus(admin, id, cfg.status);
 
   // Written into the thread so the decision leaves the same trail it would
   // have from the admin panel, rather than a status that changed with no record.

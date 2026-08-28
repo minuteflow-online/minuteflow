@@ -4,6 +4,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { hasAdminPermission } from "@/lib/adminPermissions";
 import { canChangeLockedReview } from "@/lib/financialAccess";
 import { weeklyBudgetRejection, weeklyBudgetRejectionForAssignees } from "@/lib/scheduleBudget";
+import { syncFixedPayTaskStatus } from "@/lib/fixedPayTaskSync";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -921,6 +922,8 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       }
     }
 
+    await syncFixedPayTaskStatus(adminSupabase, id, status);
+
     return Response.json({ ok: true });
   }
 
@@ -1015,6 +1018,14 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       if (syncError) {
         return Response.json({ error: syncError.message }, { status: 500 });
       }
+    }
+
+    // Covers both the VA's own Submit/Start and an admin's Approve/Revision
+    // from the Submissions page — the latter only ever reaches this branch
+    // (status !== undefined && isAdminOrManager skips the assigned_tasks sync
+    // above), so it must not be gated the same way.
+    if (status !== undefined) {
+      await syncFixedPayTaskStatus(adminSupabase, id, status);
     }
   }
 

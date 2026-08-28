@@ -179,9 +179,15 @@ export async function GET(request: Request) {
   }
 
   if (!isPermitted) {
-    const visibleRows = rows.filter((task) => matchesTaskView(task, "active"));
-    const unclaimed = visibleRows.filter((task) => !task.claimed_by);
-    const mine = visibleRows.filter((task) => task.claimed_by === userId);
+    // Pool tasks (unclaimed) stay gated to "active" — a VA shouldn't be
+    // offered an inactive/archived/trashed task to grab. But a VA's own
+    // claimed tasks ("mine") must NOT be gated the same way: once a task
+    // moves out of "active" (submitted for review, later archived, etc.)
+    // it would otherwise vanish from the response entirely, and the
+    // client's Submitted/Inactive/Archived/Trash tabs would have nothing
+    // to show even though those tabs exist precisely for this.
+    const unclaimed = rows.filter((task) => matchesTaskView(task, "active") && !task.claimed_by);
+    const mine = rows.filter((task) => task.claimed_by === userId);
 
     const mineIds = mine.map((t) => t.id);
     let atMap: Record<string | number, number> = {};

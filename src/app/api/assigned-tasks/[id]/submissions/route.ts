@@ -10,6 +10,7 @@ import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled,
 import { reviewLinks, cheerApproval } from "@/lib/reviewLinks";
 import { submissionCheer } from "@/lib/submissionCheer";
 import { notifyRecipients } from "@/lib/notifyRecipients";
+import { syncFixedPayTaskStatus } from "@/lib/fixedPayTaskSync";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -409,6 +410,7 @@ export async function POST(request: Request, { params }: RouteContext) {
       .from("assigned_tasks")
       .update({ status: autoStatus, updated_at: stamp })
       .eq("id", id);
+    await syncFixedPayTaskStatus(admin, id, autoStatus);
   }
 
   // Only an approval somebody actually made. An approval posted from the admin
