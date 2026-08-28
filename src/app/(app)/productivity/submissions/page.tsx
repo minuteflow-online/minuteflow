@@ -31,6 +31,7 @@ type FeedItem = {
   task: {
     id: number;
     task_name: string;
+    task_detail: string | null;
     account: string | null;
     project: string | null;
     project_id: string | null;
@@ -54,14 +55,8 @@ type Thread = { taskId: number; items: FeedItem[]; latest: FeedItem };
 
 type TeamMember = { id: string; full_name: string; username: string };
 
-/** The client behind an account, as far as a submission card ever needs it. */
-type ClientRow = {
-  id: string;
-  name: string;
-  contact_name: string | null;
-  email: string | null;
-  phone: string | null;
-};
+/** The client behind an account — only its name is shown on a card. */
+type ClientRow = { id: string; name: string };
 
 type ViewMode = "timeline" | "calendar";
 
@@ -1416,11 +1411,10 @@ function ThreadCard({
       case "client":
         return client?.name ?? null;
       case "client_detail":
-        // Only the contact detail the client actually has — a blank is left
-        // out rather than printed as a gap.
-        return client
-          ? [client.contact_name, client.email, client.phone].filter(Boolean).join(" · ") || null
-          : null;
+        // The task editor's Client Detail — assigned_tasks.task_detail, the
+        // text that carries over to the client memo. Not the client profile's
+        // contact information, which is a different thing under a similar name.
+        return head.task?.task_detail ?? null;
       case "project":
         return head.task?.project_name ?? null;
       case "reviewer":

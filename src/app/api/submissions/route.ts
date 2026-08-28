@@ -59,7 +59,7 @@ export async function GET(request: Request) {
     .select(
       "id, assigned_task_id, user_id, message_type, content, submission_link, submission_comment, created_at, edited_at, edited_by, " +
         "profiles!task_submissions_user_id_profiles_fkey(id, full_name, username), " +
-        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
+        "assigned_tasks!task_submissions_assigned_task_id_fkey(id, task_name, task_detail, account, project, project_id, status, due_date, due_time, end_date, end_time, created_at, category, review_required, assigned_by, fixed_pay_task_id, assigned_by_profile:profiles!assigned_tasks_assigned_by_fkey(id, full_name, username), projects(id, name, kind))"
     )
     // The whole thread, not just submissions: revision notes, approvals and
     // added notes all belong in the timeline alongside the work.
@@ -87,6 +87,7 @@ export async function GET(request: Request) {
     assigned_tasks?: {
       id: number;
       task_name: string;
+      task_detail: string | null;
       account: string | null;
       project: string | null;
       project_id: string | null;
@@ -306,6 +307,7 @@ export async function GET(request: Request) {
         ? {
             id: task.id,
             task_name: task.task_name,
+            task_detail: task.task_detail,
             account: task.account,
             project: task.project,
             project_id: task.project_id,
