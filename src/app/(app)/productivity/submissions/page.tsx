@@ -446,6 +446,38 @@ They can be restored from the Trash view.`
     [items, selectedTaskIds, load]
   );
 
+  /**
+   * Cancels a reversal made by mistake: the entry is trashed, and the task
+   * goes back to approved. Nothing is destroyed — the row keeps deleted_at,
+   * so the reversal is still there for anyone auditing the database.
+   */
+  const cancelReversal = useCallback(
+    async (item: FeedItem) => {
+      if (!item.task) return;
+      setBusyId(item.id);
+      try {
+        const res = await fetch(
+          `/api/assigned-tasks/${item.task.id}/submissions?submissionId=${item.id}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error ?? "Unable to cancel the reversal.");
+          return;
+        }
+        await setAssignedTaskStatus({
+          assignedTaskId: item.task.id,
+          status: "approved",
+          vaId: item.user_id,
+        });
+        await load();
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load]
+  );
+
   /** Permanently removes everything in the trash. Founder only, and final. */
   const emptyTrash = useCallback(async () => {
     const count = items.length;
@@ -929,6 +961,7 @@ This cannot be undone.`
           titleField={titleField}
           hiddenFields={hiddenFields}
           clientByAccount={clientByAccount}
+          onCancelReversal={cancelReversal}
         />
       ) : (
         <CalendarView
@@ -1176,12 +1209,16 @@ function SubmissionEntry({
   index,
   roundMs,
   timezone,
+  canCancel,
+  onCancelReversal,
 }: {
   item: FeedItem;
   index: number;
   /** Time logged during this revision round, if any was tracked. */
   roundMs?: number;
   timezone: string;
+  canCancel: boolean;
+  onCancelReversal: (item: FeedItem) => void;
 }) {
   const who = item.profiles?.full_name || item.profiles?.username || "Unknown";
   const time = new Date(item.created_at).toLocaleString("en-US", {
@@ -1210,6 +1247,19 @@ function SubmissionEntry({
             — {who} · {time}
           </span>
         </span>
+
+        {/* A reversal clicked by mistake shouldn't mark the record forever.
+            Cancelling trashes the entry, so the row survives with deleted_at
+            while the thread reads as though it never happened. */}
+        {canCancel && type === "approval_reversed" && (
+          <button
+            onClick={() => onCancelReversal(item)}
+            className="shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
+            title="Cancel this reversal and restore the approval"
+          >
+            Cancel
+          </button>
+        )}
       </div>
     );
   }
@@ -1322,6 +1372,7 @@ function ThreadCard({
   titleField,
   hiddenFields,
   clientByAccount,
+  onCancelReversal,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -1340,6 +1391,7 @@ function ThreadCard({
   titleField: TitleField;
   hiddenFields: Set<string>;
   clientByAccount: Map<string, ClientRow>;
+  onCancelReversal: (item: FeedItem) => void;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -1566,6 +1618,8 @@ function ThreadCard({
                 index={idx}
                 roundMs={item.message_type === "submission" ? rounds[String(idx)] : undefined}
                 timezone={timezone}
+                canCancel={canReview}
+                onCancelReversal={onCancelReversal}
               />
             );
           })}
@@ -1645,6 +1699,7 @@ function TimelineView({
   titleField,
   hiddenFields,
   clientByAccount,
+  onCancelReversal,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -1662,6 +1717,7 @@ function TimelineView({
   titleField: TitleField;
   hiddenFields: Set<string>;
   clientByAccount: Map<string, ClientRow>;
+  onCancelReversal: (item: FeedItem) => void;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -1702,6 +1758,7 @@ function TimelineView({
                 titleField={titleField}
                 hiddenFields={hiddenFields}
                 clientByAccount={clientByAccount}
+                onCancelReversal={onCancelReversal}
               />
             ))}
         </DayGroup>

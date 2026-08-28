@@ -190,7 +190,11 @@ export async function GET(request: Request) {
       admin
         .from("task_submissions")
         .select("assigned_task_id, message_type, created_at")
-        .in("assigned_task_id", taskIds),
+        .in("assigned_task_id", taskIds)
+        // A trashed entry must not decide where the task stands — cancelling
+        // a mistaken reversal works by trashing it, so counting it here would
+        // leave the task stuck in the state the mistake caused.
+        .is("deleted_at", null),
       admin
         .from("assigned_task_assignees")
         .select("assigned_task_id, va_id")
