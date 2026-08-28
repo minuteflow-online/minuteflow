@@ -122,6 +122,7 @@ const CARD_FIELDS: ColumnDef[] = [
   { key: "account", label: "Account", defaultWidth: 0 },
   { key: "client", label: "Client", defaultWidth: 0 },
   { key: "client_detail", label: "Client detail", defaultWidth: 0 },
+  { key: "message", label: "Submission message", defaultWidth: 0 },
   { key: "project", label: "Objective / Operation", defaultWidth: 0 },
   { key: "reviewer", label: "Reviewer", defaultWidth: 0 },
   { key: "category", label: "Category", defaultWidth: 0 },
@@ -1415,6 +1416,11 @@ function ThreadCard({
         // text that carries over to the client memo. Not the client profile's
         // contact information, which is a different thing under a similar name.
         return head.task?.task_detail ?? null;
+      case "message":
+        // What the VA wrote when submitting. Belongs to the submission, not
+        // the task, so a thread with resubmissions has several — the first
+        // one is what a single-line card can carry.
+        return head.submission_comment?.trim() || null;
       case "project":
         return head.task?.project_name ?? null;
       case "reviewer":
@@ -1432,9 +1438,15 @@ function ThreadCard({
     }
   };
 
-  // Falls back to the task name when the chosen field is empty on this row,
-  // so a card is never headed by a blank.
-  const cardTitle = fieldValue(titleField) ?? head.task?.task_name ?? "Task removed";
+  // Chosen field, then the submission's own message, then the task name. A
+  // card is never headed by a blank, and an empty Client Detail falls to what
+  // the person actually wrote when submitting rather than to a task name that
+  // is the same on every card of that kind.
+  const cardTitle =
+    fieldValue(titleField) ??
+    head.submission_comment?.trim() ??
+    head.task?.task_name ??
+    "Task removed";
 
   // The field used as the title is skipped here — printing it twice on one
   // card is never what was wanted.
