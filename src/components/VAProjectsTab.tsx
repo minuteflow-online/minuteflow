@@ -1172,6 +1172,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
               // keep the two views in sync instead of drifting.
               const names = subtaskAssigneeNames(sub.assigned_task_assignees, activeProfiles);
               const isEditing = editingSubId === sub.id;
+              const canEdit =
+                isAdmin ||
+                (sub.assigned_task_assignees ?? []).some((a) => a.va_id === currentUserId);
               const isViewing = viewingSubId === sub.id;
 
               return (
@@ -1350,6 +1353,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
             <p className="text-[10px] font-semibold text-walnut tracking-wide uppercase">Output Based</p>
             {outputSubtasks.map((task) => {
               const isEditing = editingOutputId === task.id;
+              const canEdit = isAdmin || task.assigned_to === currentUserId;
               const who = activeProfiles.find((p) => p.id === task.assigned_to);
               return (
                 <div key={task.id} className="space-y-1">
@@ -1374,7 +1378,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     <span className="text-[11px] text-stone capitalize shrink-0 hidden lg:block">output based</span>
                     <button
                       onClick={() => setEditingOutputId(isEditing ? null : task.id)}
-                      className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0"
+                      disabled={!canEdit}
+                      title={canEdit ? undefined : "Only the person assigned to this can edit it."}
+                      className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-stone/10 text-stone hover:bg-stone/20 transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-stone/10"
                     >
                       {isEditing ? "Cancel" : "Edit"}
                     </button>
