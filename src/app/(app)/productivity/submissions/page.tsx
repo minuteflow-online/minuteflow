@@ -12,6 +12,8 @@ import {
 } from "@/lib/submissions";
 import RevisionBadge from "@/components/RevisionBadge";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
+import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
+import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import type { AssignedTaskStatus, Project } from "@/types/database";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
 
@@ -103,6 +105,34 @@ const WORK_TYPE_OPTIONS = [
   { value: "time_based", label: "Time-based" },
   { value: "output_based", label: "Output-based" },
 ];
+
+/**
+ * What a card shows, chosen per person. A reviewer watching one client wants
+ * different lines than someone scanning their own work, and the card has room
+ * for only a few.
+ *
+ * Reuses the table column-prefs machinery so a choice follows the person
+ * across devices rather than living in one browser. Widths go unused here —
+ * a card is not a grid — but the hook's type asks for them.
+ */
+const CARD_FIELDS: ColumnDef[] = [
+  { key: "account", label: "Account", defaultWidth: 0 },
+  { key: "client", label: "Client", defaultWidth: 0 },
+  { key: "project", label: "Objective / Operation", defaultWidth: 0 },
+  { key: "reviewer", label: "Reviewer", defaultWidth: 0 },
+  { key: "category", label: "Category", defaultWidth: 0 },
+  { key: "submitter", label: "Submitted by", defaultWidth: 0 },
+  { key: "count", label: "Submission count", defaultWidth: 0 },
+];
+
+/** What the card leads with. Same data, different thing to scan by. */
+const TITLE_FIELDS = [
+  { value: "task", label: "Task" },
+  { value: "client", label: "Client" },
+  { value: "account", label: "Account" },
+  { value: "project", label: "Objective / Operation" },
+] as const;
+type TitleField = (typeof TITLE_FIELDS)[number]["value"];
 
 const SCOPE_OPTIONS: Array<{ value: SubmissionScopeFilter; label: string }> = [
   { value: "all", label: "All work" },
@@ -199,6 +229,25 @@ export default function SubmissionsPage() {
   const [ownerMode, setOwnerMode] = useState<OwnerMode>("all");
   const [currentUserId, setCurrentUserId] = useState("");
   const [showTrash, setShowTrash] = useState(false);
+  const { hidden: hiddenFields, toggleColumnVisible } = useColumnPrefs(
+    "submissions-card",
+    currentUserId || null,
+    CARD_FIELDS
+  );
+  const [titleField, setTitleField] = useState<TitleField>("task");
+
+  // Title choice is one string, so it stays in localStorage rather than
+  // riding along in the column-prefs payload, which only models widths and
+  // hidden keys.
+  useEffect(() => {
+    if (!currentUserId) return;
+    try {
+      const saved = localStorage.getItem(`mf-submissions-title:${currentUserId}`);
+      if (saved) setTitleField(saved as TitleField);
+    } catch {
+      // Unavailable storage — the default is fine.
+    }
+  }, [currentUserId]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
@@ -588,6 +637,18 @@ This cannot be undone.`
   // Which revision round each submission belongs to — its position in its
   // task's thread. The calendar shows loose submissions rather than threads, so
   // each chip needs to carry its own round marker.
+  // account name -> client name, the reverse of accountsByClient, so a card
+  // can name the client behind the account it already carries.
+  const clientByAccount = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [clientId, accountNames] of accountsByClient) {
+      const client = clients.find((c) => c.id === clientId);
+      if (!client) continue;
+      for (const name of accountNames) map.set(name, client.name);
+    }
+    return map;
+  }, [accountsByClient, clients]);
+
   // Built from the loaded rows rather than the full staff list, so the filter
   // only ever offers people who actually assigned something here.
   const assignerOptions = useMemo(() => {
@@ -702,6 +763,33 @@ This cannot be undone.`
             </option>
           ))}
         </select>
+
+        <select
+          value={titleField}
+          onChange={(e) => {
+            const next = e.target.value as TitleField;
+            setTitleField(next);
+            try {
+              if (currentUserId) localStorage.setItem(`mf-submissions-title:${currentUserId}`, next);
+            } catch {
+              // Unavailable storage — the choice still applies this session.
+            }
+          }}
+          className="rounded-lg border border-sand bg-white px-2 py-1 text-[11px] text-espresso outline-none"
+          title="What each card leads with"
+        >
+          {TITLE_FIELDS.map((f) => (
+            <option key={f.value} value={f.value}>
+              Title: {f.label}
+            </option>
+          ))}
+        </select>
+
+        <ColumnVisibilityPicker
+          columns={CARD_FIELDS}
+          hidden={hiddenFields}
+          onToggle={toggleColumnVisible}
+        />
 
         {/* Three groups, lightly ruled apart: what you're looking at, how it's
             narrowed, and the actions. Ten chips in an undivided row read as one
@@ -840,6 +928,9 @@ This cannot be undone.`
           selectedTaskIds={selectedTaskIds}
           onSelectChange={handleSelectChange}
           onComplete={completeTask}
+          titleField={titleField}
+          hiddenFields={hiddenFields}
+          clientByAccount={clientByAccount}
         />
       ) : (
         <CalendarView
@@ -1141,6 +1232,9 @@ function ThreadCard({
   selected,
   onSelectChange,
   onComplete,
+  titleField,
+  hiddenFields,
+  clientByAccount,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -1156,6 +1250,9 @@ function ThreadCard({
   selected: boolean;
   onSelectChange: (taskId: number, checked: boolean) => void;
   onComplete: (item: FeedItem) => void;
+  titleField: TitleField;
+  hiddenFields: Set<string>;
+  clientByAccount: Map<string, string>;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -1166,6 +1263,35 @@ function ThreadCard({
   const submissionIndex = new Map(submissions.map((s, i) => [s.id, i]));
 
   const [expanded, setExpanded] = useState(false);
+
+  const clientName = head.task?.account ? clientByAccount.get(head.task.account) : undefined;
+
+  // Falls back to the task name when the chosen field is empty on this row,
+  // so a card is never headed by a blank.
+  const cardTitle =
+    (titleField === "client" ? clientName : undefined) ??
+    (titleField === "account" ? head.task?.account : undefined) ??
+    (titleField === "project" ? head.task?.project_name : undefined) ??
+    head.task?.task_name ??
+    "Task removed";
+
+  const metaLine = [
+    !hiddenFields.has("account") ? head.task?.account : null,
+    !hiddenFields.has("client") ? clientName : null,
+    !hiddenFields.has("project") ? head.task?.project_name : null,
+    !hiddenFields.has("category") ? head.task?.category : null,
+    !hiddenFields.has("reviewer") && head.task?.assigned_by_name
+      ? `reviewer: ${head.task.assigned_by_name}`
+      : null,
+    !hiddenFields.has("submitter")
+      ? head.profiles?.full_name || head.profiles?.username
+      : null,
+    !hiddenFields.has("count") && !expanded
+      ? `${thread.items.length} submission${thread.items.length === 1 ? "" : "s"}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const [noteDraft, setNoteDraft] = useState("");
   const [noteMode, setNoteMode] = useState<null | "revision" | "note">(null);
 
@@ -1224,7 +1350,7 @@ function ThreadCard({
             />
           </svg>
           <span className="truncate text-[13px] font-semibold leading-tight text-espresso transition-colors group-hover:text-terracotta">
-            {head.task?.task_name ?? "Task removed"}
+            {cardTitle}
           </span>
           <RevisionBadge count={resubmissions} />
           <span className="shrink-0 rounded-full border border-stone/20 bg-stone/10 px-2 py-[2px] text-[10px] font-semibold text-stone">
@@ -1307,13 +1433,9 @@ function ThreadCard({
         )}
       </div>
 
-      <div className="mt-0.5 pl-[18px] text-[11px] text-stone/80">
-        {head.task?.account ?? "—"}
-        {head.task?.project_name ? ` · ${head.task.project_name}` : ""}
-        {head.task?.assigned_by_name ? ` · reviewer: ${head.task.assigned_by_name}` : ""}
-        {!expanded &&
-          ` · ${thread.items.length} submission${thread.items.length === 1 ? "" : "s"}`}
-      </div>
+      {metaLine && (
+        <div className="mt-0.5 pl-[18px] text-[11px] text-stone/80">{metaLine}</div>
+      )}
 
       {expanded && (
         <div className="mt-1 space-y-1">
@@ -1402,6 +1524,9 @@ function TimelineView({
   selectedTaskIds,
   onSelectChange,
   onComplete,
+  titleField,
+  hiddenFields,
+  clientByAccount,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -1416,6 +1541,9 @@ function TimelineView({
   selectedTaskIds: Set<number>;
   onSelectChange: (taskId: number, checked: boolean) => void;
   onComplete: (item: FeedItem) => void;
+  titleField: TitleField;
+  hiddenFields: Set<string>;
+  clientByAccount: Map<string, string>;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -1453,6 +1581,9 @@ function TimelineView({
                 selected={selectedTaskIds.has(thread.taskId)}
                 onSelectChange={onSelectChange}
                 onComplete={onComplete}
+                titleField={titleField}
+                hiddenFields={hiddenFields}
+                clientByAccount={clientByAccount}
               />
             ))}
         </DayGroup>
