@@ -287,6 +287,27 @@ export async function PUT(request: Request, { params }: RouteContext) {
     .select()
     .single();
 
+  // Someone editing work that is not theirs leaves a record. This is the path
+  // admins actually save through, so it is the one that matters most — an
+  // assignee otherwise has no way to know their due date or brief moved.
+  if (!updateError) {
+    const { data: onTask } = await adminSupabase
+      .from("assigned_task_assignees")
+      .select("id")
+      .eq("assigned_task_id", id)
+      .eq("va_id", user.id)
+      .limit(1)
+      .maybeSingle();
+    if (!onTask) {
+      const fields = Object.keys(updatePayload).filter((f) => f !== "updated_at");
+      if (fields.length > 0) {
+        await adminSupabase
+          .from("assigned_task_edits")
+          .insert({ assigned_task_id: id, edited_by: user.id, fields });
+      }
+    }
+  }
+
   if (updateError)
     return Response.json({ error: updateError.message }, { status: 500 });
 
@@ -1136,6 +1157,29 @@ ${existing}` : addition;
 
     if (taskError) {
       return Response.json({ error: taskError.message }, { status: 500 });
+    }
+
+    // Log edits made by someone who is not on the task. A person editing their
+    // own work does not need a paper trail; an admin changing someone else's
+    // due date or client detail does, or the assignee has no way to know it
+    // happened. updated_at is dropped from the record — it is on every write
+    // and says nothing.
+    {
+      const { data: onTask } = await adminSupabase
+        .from("assigned_task_assignees")
+        .select("id")
+        .eq("assigned_task_id", id)
+        .eq("va_id", user.id)
+        .limit(1)
+        .maybeSingle();
+      if (!onTask) {
+        const fields = Object.keys(updatePayload).filter((f) => f !== "updated_at");
+        if (fields.length > 0) {
+          await adminSupabase
+            .from("assigned_task_edits")
+            .insert({ assigned_task_id: id, edited_by: user.id, fields });
+        }
+      }
     }
 
     // Series-wide change, when the caller asked for one. A trash (deleted_at

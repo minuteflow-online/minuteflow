@@ -383,6 +383,8 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // that already repeats shows the limit it actually has.
   const [templateRepeatUntil, setTemplateRepeatUntil] = useState("");
   const [pendingUnlinkTemplate, setPendingUnlinkTemplate] = useState(false);
+  const [edits, setEdits] = useState<Array<{ id: number; editor: string; edited_at: string; fields: string[] }>>([]);
+  const [editsOpen, setEditsOpen] = useState(false);
   const [unlinkingTemplate, setUnlinkingTemplate] = useState(false);
 
   // Pre-fills the Repeat dropdown to match the already-linked template's own
@@ -411,6 +413,24 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
   // the wording is append-only from then on — for admins too.
   const instructionsLockedAtLoad = Boolean(initialTask?.instructions_locked);
   const instructionsEditable = !instructionsLockedAtLoad && isAdminOrManager;
+
+  // Who has changed this task from outside. Loaded once per task; the list is
+  // short by design and the endpoint caps it at 50.
+  useEffect(() => {
+    if (!editingTaskId) { setEdits([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/assigned-tasks/${editingTaskId}/edits`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setEdits(data.edits ?? []);
+      } catch {
+        // history is supplementary — never block the form over it
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [editingTaskId]);
   const [showInstructionAdd, setShowInstructionAdd] = useState(false);
   // A VA can add to instructions but not rewrite them — the server rejects
   // `instructions` from a non-admin outright and only accepts this append.
@@ -2273,6 +2293,39 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
         />
       )}
       {error && <p className="text-[12px] text-red-600">{error}</p>}
+
+      {edits.length > 0 && (
+        <div className="rounded-lg border border-sand bg-cream/40">
+          <button
+            type="button"
+            onClick={() => setEditsOpen((open) => !open)}
+            className="flex w-full items-center justify-between px-3 py-2 text-left"
+          >
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-walnut">
+              Edit history ({edits.length})
+            </span>
+            <span className="text-[11px] text-stone">{editsOpen ? "Hide" : "Show"}</span>
+          </button>
+          {editsOpen && (
+            <ul className="space-y-1 px-3 pb-2.5">
+              {edits.map((entry) => (
+                <li key={entry.id} className="text-[11px] text-stone">
+                  <span className="font-semibold text-espresso">{entry.editor}</span>
+                  {" · "}
+                  {new Date(entry.edited_at).toLocaleString("en-US", {
+                    timeZone: "America/New_York",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                  {entry.fields.length > 0 && ` — ${entry.fields.join(", ")}`}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {!hideFooter && (
         <div className="flex items-center gap-2 pt-1">
