@@ -15,6 +15,7 @@ import { createClient } from "@supabase/supabase-js";
 import { sendTelegram, sendTelegramTo, telegramEnabled, esc } from "@/lib/telegram";
 import { clockInGreeting, clockOutGreeting, timeOfDayGreeting } from "@/lib/clockInGreeting";
 import { ORG_TIMEZONE } from "@/lib/taskSchedule";
+import { shiftSummaryLine } from "@/lib/shiftSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,7 @@ type SessionRow = {
   user_id?: string;
   clocked_in?: boolean;
   clock_out_time?: string | null;
+  session_date?: string | null;
   active_task?: { isBreak?: boolean; category?: string } | null;
   auto_closed_reason?: string | null;
 };
@@ -125,10 +127,10 @@ export async function POST(request: Request) {
   const userId = payload.record?.user_id;
   let who = "Someone";
   let chatId: number | null = null;
+  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
   if (userId) {
-    const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
     const { data: prof } = await admin
       .from("profiles")
       .select("full_name, username, telegram_chat_id")
@@ -226,6 +228,14 @@ export async function POST(request: Request) {
   if (greeting === "sent") lines.push(`Message sent: ${esc(greetingText)}`);
   if (greeting === "failed") lines.push("⚠️ Message FAILED to send.");
   if (greeting === "unlinked") lines.push("⚠️ No Telegram link — no message sent.");
+
+  // The day's totals, on the clock-out line only. Answering "how long did she
+  // actually work?" used to mean opening the admin panel every time. Private
+  // to this chat — hours are between Toni and the person, not team reading.
+  if (event === "clock_out" && userId && payload.record?.session_date) {
+    const summary = await shiftSummaryLine(admin, userId, payload.record.session_date);
+    if (summary) lines.push(summary);
+  }
 
   await sendTelegram("ops", lines.join("\n"));
 
