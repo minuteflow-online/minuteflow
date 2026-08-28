@@ -206,7 +206,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // above it already gives the at-a-glance number; this saves the vertical
   // space until someone actually wants the per-VA detail (per Toni).
   const [showVaProgress, setShowVaProgress] = useState(false);
-  const [subtaskView, setSubtaskView] = useState<"list" | "board" | "checklist">("list");
+  const [subtaskView, setSubtaskView] = useState<"list" | "board" | "checklist">("checklist");
   // "Add Subtask" form collapsed by default (Figma correction) — same
   // show-on-demand pattern as showDetails above.
   const [showAddSubtask, setShowAddSubtask] = useState(false);
@@ -451,7 +451,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     setEditingSubId(null);
     setShowDetails(false);
     setShowVaProgress(false);
-    setSubtaskView("list");
+    setSubtaskView("checklist");
     setShowAddSubtask(false);
     setRecurringTemplates([]);
     void fetchSubtasks(selectedProject.id);
@@ -1044,9 +1044,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                 "Subtask Checklist" theme); List/Board use the sage accent. */}
             <div className="flex items-center gap-1">
               {([
+                ["checklist", "Checklist", "amber"],
                 ["list", "List View", "sage"],
                 ["board", "Board View", "sage"],
-                ["checklist", "Checklist", "amber"],
               ] as const).map(([v, label, accent]) => {
                 const active = subtaskView === v;
                 const cls = active
@@ -1618,7 +1618,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
              button + the board at full width. ──────────────────────────────── */
         <div className="space-y-4">
           <button
-            onClick={() => setSubtaskView("list")}
+            onClick={() => setSubtaskView("checklist")}
             className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-espresso hover:text-terracotta transition-colors cursor-pointer"
           >
             <span aria-hidden="true">←</span> {selectedProject.name}
