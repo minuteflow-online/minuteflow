@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   const supabase = serviceClient();
   const { data, error } = await supabase
     .from("assigned_tasks")
-    .select("id, project_id, task_name, status, recurring_template_id, due_date, start_date, account, review_required, assigned_task_assignees(va_id), task_todos(id, text, sort_order, completed)")
+    .select("id, project_id, task_name, task_detail, status, recurring_template_id, due_date, start_date, account, review_required, assigned_task_assignees(va_id), task_todos(id, text, sort_order, completed)")
     .in("project_id", ids)
     .neq("status", "cancelled")
     .is("deleted_at", null)
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
   if (error) return Response.json({ error: error.message }, { status: 500 });
 
   type Row = {
-    id: number; project_id: string; task_name: string; status: string; recurring_template_id: string | null; due_date: string | null; start_date: string | null; account: string | null; review_required: boolean | null;
+    id: number; project_id: string; task_name: string; task_detail: string | null; status: string; recurring_template_id: string | null; due_date: string | null; start_date: string | null; account: string | null; review_required: boolean | null;
     assigned_task_assignees?: Array<{ va_id: string }> | null;
     // Carried through so the To-Do List tab can be built from the same fetch
     // rather than a second pass over the same tasks.
@@ -105,6 +105,7 @@ export async function GET(request: Request) {
     id: t.id,
     project_id: t.project_id,
     task_name: t.task_name,
+    task_detail: t.task_detail ?? null,
     status: t.status,
     recurring: Boolean(t.recurring_template_id),
     due_date: t.due_date ?? null,

@@ -14,7 +14,7 @@ type CommentRow = { id: number; body: string; created_at: string; author: string
 type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[] };
 type Assignee = { id: string; name: string; avatar_url: string | null };
 type Todo = { id: number; text: string; sort_order: number; completed: boolean };
-type SubtaskRow = { id: number; project_id: string; task_name: string; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[]; todos?: Todo[] };
+type SubtaskRow = { id: number; project_id: string; task_name: string; task_detail: string | null; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[]; todos?: Todo[] };
 
 // Mirrors LOCKED_TODO_STATUSES on the server (assigned-tasks/[id]/todos/[todoId]/route.ts)
 // — once a subtask has been handed in, its to-dos freeze in the UI too, not
@@ -1191,7 +1191,15 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                 return (
                   <div key={st.id} className="rounded-lg border border-sand bg-white p-2.5">
                     <div className="flex items-start justify-between gap-2">
-                      <span className="text-[12px] font-semibold text-espresso leading-tight">{st.task_name}</span>
+                      <div className="min-w-0">
+                        <span className="text-[12px] font-semibold text-espresso leading-tight">{st.task_name}</span>
+                        {/* Client Detail, not the task title — several subtasks under one
+                            Objective often share the same task name, so the title alone
+                            doesn't say which one this is. */}
+                        {st.task_detail && (
+                          <p className="text-[10px] text-stone/80 leading-snug mt-0.5">{st.task_detail}</p>
+                        )}
+                      </div>
                       <span className="text-[10px] text-stone shrink-0">
                         {st.assignees.map((a) => a.name).join(", ") || "Unassigned"}
                       </span>
