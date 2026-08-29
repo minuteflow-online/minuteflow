@@ -271,16 +271,23 @@ export default function TopNav({ user }: TopNavProps) {
           else if (shiftHours >= 4) allowedBreakMs = 15 * 60 * 1000;
           else allowedBreakMs = 10 * 60 * 1000; // Under 4 hours: 10 min allowed
 
-          // Reset ALL completed breaks for this date to billable first — includes prior sessions today.
-          // This is idempotent: if a prior session over-flagged, we re-evaluate correctly below.
+          // Breaks are not paid. This used to flip every break to billable and
+          // then trim back whatever exceeded an allowance — 20 minutes at five
+          // hours, 15 at four, 10 below that. In practice the trim only ran on a
+          // clean clock-out in the browser, so across August exactly one break
+          // in forty-five ended up billable, and that one by accident.
+          //
+          // Rather than repair a paid-break scheme nobody was actually getting,
+          // breaks are now unpaid outright. The overage record below still gets
+          // written, because who is running long is worth knowing whether or not
+          // it costs anything.
           await supabase
             .from("time_logs")
-            .update({ billable: true })
+            .update({ billable: false })
             .eq("user_id", authUser.id)
             .eq("category", "Break")
             .eq("session_date", sessionDate)
-            .lte("start_time", now)
-            .not("end_time", "is", null);
+            .lte("start_time", now);
 
           // Fetch ALL completed break logs for this date (all sessions today)
           const { data: breakLogs } = await supabase

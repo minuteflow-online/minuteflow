@@ -1653,9 +1653,26 @@ export default function DashboardPage() {
     if (session?.active_task?.logId) {
       const logId = parseInt(session.active_task.logId, 10);
       if (logId) {
-        const breakDurationMs = breakStartTime
+        // The row's own start_time is the fallback, not zero. breakStartTime
+        // is client state and is gone after a refresh mid-break, which is how
+        // Flordeliz's 26-minute break on 2026-08-28 was stored as 0 ms —
+        // making it invisible to the totals and to the allowance maths.
+        let breakDurationMs = breakStartTime
           ? Math.max(0, Date.now() - new Date(breakStartTime).getTime())
           : 0;
+        if (breakDurationMs === 0) {
+          const { data: breakRow } = await supabase
+            .from("time_logs")
+            .select("start_time")
+            .eq("id", logId)
+            .single();
+          if (breakRow?.start_time) {
+            breakDurationMs = Math.max(
+              0,
+              new Date(now).getTime() - new Date(breakRow.start_time).getTime()
+            );
+          }
+        }
         await supabase
           .from("time_logs")
           .update({ end_time: now, duration_ms: breakDurationMs })
@@ -1671,13 +1688,30 @@ export default function DashboardPage() {
       }
     }
 
-    // Close any other orphaned break logs for this user
-    await supabase
+    // Close any other orphaned break logs for this user.
+    //
+    // This used to close them at duration_ms: 0 outright, so any break the
+    // client had lost track of was recorded as having taken no time at all.
+    // They are read first and closed at their real elapsed length instead.
+    const { data: orphanBreaks } = await supabase
       .from("time_logs")
-      .update({ end_time: now, duration_ms: 0 })
+      .select("id, start_time")
       .eq("user_id", userId)
       .eq("category", "Break")
       .is("end_time", null);
+
+    for (const orphan of orphanBreaks ?? []) {
+      await supabase
+        .from("time_logs")
+        .update({
+          end_time: now,
+          duration_ms: Math.max(
+            0,
+            new Date(now).getTime() - new Date(orphan.start_time as string).getTime()
+          ),
+        })
+        .eq("id", orphan.id);
+    }
 
     await supabase.from("sessions").upsert(
       {
