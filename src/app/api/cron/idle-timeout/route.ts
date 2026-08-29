@@ -31,13 +31,14 @@ const IDLE_EXEMPT_CATEGORIES = ["Personal", "Break"];
  * What replaces it is the only thing that actually shows work: whether the
  * screen changed. That is true in any application, which is the entire point.
  *
- * ── What still cannot be concluded ───────────────────────────────────────
+ * ── Zero captures gets its own path ───────────────────────────────────────
  *
- * No screenshots at all means nothing is known, not that nobody worked. A
- * broken extension, a signed-out extension and an idle person all produce the
- * same silence. staticScreen requires captures that exist AND are identical
- * before it says anything, so silence is reported to Toni and acted on by
- * nobody.
+ * A broken extension, a signed-out extension and an idle person all produce
+ * the same silence, so this cannot say which one happened — but silence for a
+ * full window on a task old enough to have produced several captures is not
+ * "not enough evidence," it is its own signal. staticScreen warns on it (worded
+ * for "nothing is arriving," not "you look idle") the same way it warns on a
+ * frozen screen, on the same reshare-and-recover timeline.
  *
  * Secured by IDLE_TIMEOUT_CRON_SECRET (VPS crontab, every 10 min).
  */
@@ -79,12 +80,14 @@ export async function GET(request: NextRequest) {
       logId?: string;
       category?: string;
       isBreak?: boolean;
+      start_time?: string;
     } | null;
     return {
       user_id: s.user_id as string,
       log_id: activeTask?.logId ? parseInt(activeTask.logId, 10) : null,
       category: activeTask?.category ?? null,
       isBreak: Boolean(activeTask?.isBreak),
+      logStartTime: activeTask?.start_time ?? null,
     };
   });
 
