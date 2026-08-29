@@ -218,10 +218,16 @@ export default function ProductivityCalendarPage() {
       id: number; name: string;
       daily_hours_budget: number | null; weekly_hours_budget: number | null; monthly_hours_budget: number | null;
       daily_minutes: number; weekly_minutes: number; monthly_minutes: number;
+      // Actual logged minutes (time_logs), alongside the scheduled figures
+      // above — the Planned/Actual pair the account-budget table shows per VA.
+      daily_actual: number; weekly_actual: number; monthly_actual: number;
       // Same account total, broken down by who spent it — a task with several
       // assignees credits its full length to each of them, so these can sum
       // to more than the account total on shared work.
-      by_va: Array<{ va_id: string; va_name: string; daily: number; weekly: number; monthly: number }>;
+      by_va: Array<{
+        va_id: string; va_name: string; daily: number; weekly: number; monthly: number;
+        daily_actual: number; weekly_actual: number; monthly_actual: number;
+      }>;
     }>
   >([]);
   // Each VA's OWN total across every account, next to their personal cap —
@@ -230,6 +236,7 @@ export default function ProductivityCalendarPage() {
   const [vaUsageTotals, setVaUsageTotals] = useState<
     Array<{
       va_id: string; va_name: string; daily: number; weekly: number; monthly: number;
+      daily_actual: number; weekly_actual: number; monthly_actual: number;
       daily_hours_budget: number | null; weekly_hours_budget: number | null; monthly_hours_budget: number | null;
     }>
   >([]);
@@ -1564,6 +1571,7 @@ export default function ProductivityCalendarPage() {
                     const { weekday, day } = formatDayShort(dateStr);
                     const isToday = dateStr === todayStr;
                     const badge = budgetBadgeFor(dateStr, "show");
+                    const dayTotals = plannedActualForDate(dayUserId, dateStr);
                     return (
                       <button
                         key={dateStr}
@@ -1575,6 +1583,8 @@ export default function ProductivityCalendarPage() {
                       >
                         <span className="text-[9px] font-semibold text-walnut uppercase tracking-wide">{weekday}</span>
                         <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
+                        {(dayTotals.planned > 0 || dayTotals.actual > 0) &&
+                          plannedActualReadout(dayTotals.planned, dayTotals.actual, dayTotals.off, "xs")}
                         {badge && (
                           <span className={`rounded-full border px-1.5 text-[9px] font-semibold leading-tight ${budgetBadgeClass(badge)}`}>
                             {badge.text}
@@ -2303,11 +2313,15 @@ export default function ProductivityCalendarPage() {
                             {capped.flatMap((a) => {
                               const share = a.by_va.find((v) => v.va_id === vaId);
                               return [
-                                <td key={`${a.id}-w`} className="border-l border-sand/60 px-2 py-1 text-right text-espresso">
-                                  {share ? formatDuration(share.weekly) : "—"}
+                                <td key={`${a.id}-w`} className="border-l border-sand/60 px-2 py-1 text-right">
+                                  {share && (share.weekly > 0 || share.weekly_actual > 0)
+                                    ? plannedActualReadout(share.weekly, share.weekly_actual, false, "xs")
+                                    : <span className="text-espresso">—</span>}
                                 </td>,
-                                <td key={`${a.id}-m`} className="px-2 py-1 text-right text-espresso">
-                                  {share ? formatDuration(share.monthly) : "—"}
+                                <td key={`${a.id}-m`} className="px-2 py-1 text-right">
+                                  {share && (share.monthly > 0 || share.monthly_actual > 0)
+                                    ? plannedActualReadout(share.monthly, share.monthly_actual, false, "xs")
+                                    : <span className="text-espresso">—</span>}
                                 </td>,
                               ];
                             })}
@@ -2510,6 +2524,12 @@ export default function ProductivityCalendarPage() {
             </button>
             <div className="flex flex-col items-center gap-0.5">
               <h2 className="text-sm font-bold text-espresso">{weekLabel}</h2>
+              {plannedActualReadout(
+                weekDates.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0),
+                weekDates.reduce((sum, d) => sum + (dayUserId ? actualMinutesByVaDate.get(`${dayUserId}|${d}`) ?? 0 : 0), 0),
+                false,
+                "sm"
+              )}
               {/* The weekly limit is the one that actually stops booking, so it
                   gets the header slot the day total holds in the Day view. */}
               {weekBudget && (
@@ -2659,6 +2679,10 @@ export default function ProductivityCalendarPage() {
                   {selectedDate === todayStr ? "Today — " : ""}
                   {formatDayLabel(selectedDate)}
                 </h2>
+                {(() => {
+                  const { planned, actual, off } = plannedActualForDate(dayUserId, selectedDate);
+                  return plannedActualReadout(planned, actual, off, "sm");
+                })()}
                 <span
                   className={`text-[13px] font-bold px-3 py-[3px] rounded-full border ${
                     selectedIsOffDay

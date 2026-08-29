@@ -104,6 +104,12 @@ export async function GET(request: Request) {
 
   const week = weekBounds(date);
   const month = monthBounds(date);
+  // The wider of the two — a week can spill into the next/previous month, so
+  // it isn't always inside month.start/month.end. Only bounds the time_logs
+  // query (actual worked time); the scheduled tables below stay unbounded,
+  // matching their existing client-side bucketing.
+  const actualRangeStart = week.start < month.start ? week.start : month.start;
+  const actualRangeEnd = week.end > month.end ? week.end : month.end;
 
   const admin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -116,6 +122,7 @@ export async function GET(request: Request) {
     { data: assigned, error: assignedError },
     { data: fixed, error: fixedError },
     { data: profiles, error: profilesError },
+    { data: logs, error: logsError },
   ] = await Promise.all([
     admin
       .from("accounts")
@@ -141,41 +148,67 @@ export async function GET(request: Request) {
     admin
       .from("profiles")
       .select("id, full_name, username, shift_hours, shift_start, shift_end, weekly_budget_limit, monthly_budget_limit"),
+    // Actual worked time — unlike the two tables above, time_logs is genuinely
+    // large org-wide, so this one IS date-bounded in the query itself.
+    admin
+      .from("time_logs")
+      .select("account, user_id, session_date, duration_ms")
+      .is("deleted_at", null)
+      .not("account", "is", null)
+      .gte("session_date", actualRangeStart)
+      .lte("session_date", actualRangeEnd),
   ]);
 
   if (accError) return Response.json({ error: accError.message }, { status: 500 });
   if (assignedError) return Response.json({ error: assignedError.message }, { status: 500 });
   if (fixedError) return Response.json({ error: fixedError.message }, { status: 500 });
   if (profilesError) return Response.json({ error: profilesError.message }, { status: 500 });
+  if (logsError) return Response.json({ error: logsError.message }, { status: 500 });
 
   const nameById = new Map((profiles ?? []).map((p) => [p.id, p.full_name || p.username || p.id]));
 
-  // account -> bucket -> minutes, and account -> va_id -> bucket -> minutes
+  // account -> bucket -> minutes, and account -> va_id -> bucket -> minutes.
+  // Same shape kept twice — once for scheduled (planned) time, once for
+  // logged (actual) time — rather than tagging one set of maps, so a caller
+  // can't accidentally mix the two totals together.
   const totals = new Map<string, BucketMinutes>();
   const byVa = new Map<string, Map<string, BucketMinutes>>();
   // va_id -> bucket -> minutes, collapsed across every account — this is what
   // "how much of Arianne's own time is left" reads from.
   const personalTotals = new Map<string, BucketMinutes>();
 
-  const add = (account: string | null, bucket: Bucket, minutes: number, vaIds: string[]) => {
-    if (!account || minutes <= 0) return;
-    const row = totals.get(account) ?? emptyBucket();
-    row[bucket] += minutes;
-    totals.set(account, row);
+  const actualTotals = new Map<string, BucketMinutes>();
+  const actualByVa = new Map<string, Map<string, BucketMinutes>>();
+  const actualPersonalTotals = new Map<string, BucketMinutes>();
 
-    if (vaIds.length === 0) return;
-    const vaMap = byVa.get(account) ?? new Map<string, BucketMinutes>();
-    for (const vaId of vaIds) {
-      const vaRow = vaMap.get(vaId) ?? emptyBucket();
-      vaRow[bucket] += minutes;
-      vaMap.set(vaId, vaRow);
+  function makeAdder(
+    totalsMap: Map<string, BucketMinutes>,
+    byVaMap: Map<string, Map<string, BucketMinutes>>,
+    personalMap: Map<string, BucketMinutes>
+  ) {
+    return (account: string | null, bucket: Bucket, minutes: number, vaIds: string[]) => {
+      if (!account || minutes <= 0) return;
+      const row = totalsMap.get(account) ?? emptyBucket();
+      row[bucket] += minutes;
+      totalsMap.set(account, row);
 
-      const personalRow = personalTotals.get(vaId) ?? emptyBucket();
-      personalRow[bucket] += minutes;
-      personalTotals.set(vaId, personalRow);
-    }
-    byVa.set(account, vaMap);
-  };
+      if (vaIds.length === 0) return;
+      const vaMap = byVaMap.get(account) ?? new Map<string, BucketMinutes>();
+      for (const vaId of vaIds) {
+        const vaRow = vaMap.get(vaId) ?? emptyBucket();
+        vaRow[bucket] += minutes;
+        vaMap.set(vaId, vaRow);
+
+        const personalRow = personalMap.get(vaId) ?? emptyBucket();
+        personalRow[bucket] += minutes;
+        personalMap.set(vaId, personalRow);
+      }
+      byVaMap.set(account, vaMap);
+    };
+  }
+
+  const add = makeAdder(totals, byVa, personalTotals);
+  const addActual = makeAdder(actualTotals, actualByVa, actualPersonalTotals);
 
   const bucketsForDate = (d: string): Bucket[] => {
     const out: Bucket[] = [];
@@ -252,20 +285,47 @@ export async function GET(request: Request) {
     }
   }
 
+  // Actual worked time. Each row already anchors to one real day — no span
+  // logic needed, unlike the scheduled tables above. Counted regardless of
+  // excludeOutputBased: that flag skips a BILLING TYPE (fixed_pay_tasks), not
+  // logged hours, and an Output Based VA's own time_logs (if any) are still
+  // real worked time.
+  for (const t of logs ?? []) {
+    const minutes = t.duration_ms && t.duration_ms > 0 ? t.duration_ms / 60000 : 0;
+    if (minutes <= 0 || !t.session_date) continue;
+    const vaIds = applyVaExclusion(t.user_id ? [t.user_id] : []);
+    if (vaIds === null) continue;
+    for (const bucket of bucketsForDate(t.session_date)) addActual(t.account, bucket, minutes, vaIds);
+  }
+
   const round = (b: BucketMinutes) => ({
     daily: Math.round(b.daily),
     weekly: Math.round(b.weekly),
     monthly: Math.round(b.monthly),
   });
+  // Same rounding, "_actual"-suffixed keys — so a row can spread both the
+  // planned {daily, weekly, monthly} and this pair without one clobbering
+  // the other.
+  const roundActual = (b: BucketMinutes) => ({
+    daily_actual: Math.round(b.daily),
+    weekly_actual: Math.round(b.weekly),
+    monthly_actual: Math.round(b.monthly),
+  });
 
   const result = (accounts ?? []).map((a) => {
     const used = round(totals.get(a.name) ?? emptyBucket());
+    const usedActual = roundActual(actualTotals.get(a.name) ?? emptyBucket());
     const vaMap = byVa.get(a.name);
-    const byVaList = vaMap
-      ? Array.from(vaMap.entries())
-          .map(([vaId, minutes]) => ({ va_id: vaId, va_name: nameById.get(vaId) ?? "Unknown", ...round(minutes) }))
-          .sort((x, y) => y.weekly - x.weekly || y.monthly - x.monthly || y.daily - x.daily)
-      : [];
+    const actualVaMap = actualByVa.get(a.name);
+    const vaIds = new Set([...(vaMap?.keys() ?? []), ...(actualVaMap?.keys() ?? [])]);
+    const byVaList = Array.from(vaIds)
+      .map((vaId) => ({
+        va_id: vaId,
+        va_name: nameById.get(vaId) ?? "Unknown",
+        ...round(vaMap?.get(vaId) ?? emptyBucket()),
+        ...roundActual(actualVaMap?.get(vaId) ?? emptyBucket()),
+      }))
+      .sort((x, y) => y.weekly - x.weekly || y.monthly - x.monthly || y.daily - x.daily);
     return {
       id: a.id,
       name: a.name,
@@ -275,12 +335,16 @@ export async function GET(request: Request) {
       daily_minutes: used.daily,
       weekly_minutes: used.weekly,
       monthly_minutes: used.monthly,
+      ...usedActual,
       by_va: byVaList,
     };
   });
 
-  const byVaTotals = Array.from(personalTotals.entries())
-    .map(([vaId, minutes]) => {
+  const vaIdsWithData = new Set([...personalTotals.keys(), ...actualPersonalTotals.keys()]);
+  const byVaTotals = Array.from(vaIdsWithData)
+    .map((vaId) => {
+      const minutes = personalTotals.get(vaId) ?? emptyBucket();
+      const actualMinutes = actualPersonalTotals.get(vaId) ?? emptyBucket();
       const profile = (profiles ?? []).find((p) => p.id === vaId) ?? null;
       const dailyHours = profile
         ? shiftHoursFromProfile({
@@ -293,6 +357,7 @@ export async function GET(request: Request) {
         va_id: vaId,
         va_name: nameById.get(vaId) ?? "Unknown",
         ...round(minutes),
+        ...roundActual(actualMinutes),
         daily_hours_budget: dailyHours,
         weekly_hours_budget: profile?.weekly_budget_limit ?? null,
         monthly_hours_budget: profile?.monthly_budget_limit ?? null,
