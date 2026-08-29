@@ -51,11 +51,21 @@ interface SummaryRow {
  * between the two. Falling back to the elapsed time keeps that last stretch
  * from silently counting as zero.
  */
-function durationOf(row: SummaryRow, now: number): number {
+export function entryDurationMs(
+  row: { start_time: string; end_time: string | null; duration_ms: number | null },
+  now?: number
+): number {
   if (row.duration_ms != null && row.duration_ms > 0) return row.duration_ms;
   const start = new Date(row.start_time).getTime();
-  const end = row.end_time ? new Date(row.end_time).getTime() : now;
-  return Math.max(0, end - start);
+  if (row.end_time) return Math.max(0, new Date(row.end_time).getTime() - start);
+  // Only extrapolate to "now" when the caller says the shift is live. A review
+  // of a past day must not report an entry someone forgot to close as having
+  // run for three weeks.
+  return now == null ? 0 : Math.max(0, now - start);
+}
+
+function durationOf(row: SummaryRow, now: number): number {
+  return entryDurationMs(row, now);
 }
 
 const AWAY_CATEGORIES = new Set(["Break", "Personal"]);
