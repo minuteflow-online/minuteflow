@@ -14,6 +14,7 @@ type CommentRow = { id: number; body: string; created_at: string; author: string
 type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[] };
 type Assignee = { id: string; name: string; avatar_url: string | null };
 type Todo = { id: number; text: string; sort_order: number; completed: boolean };
+type TaskRider = { key: string; name: string; avatar_url: string | null; glow: "yellow" | "green" | "" };
 type SubtaskRow = { id: number; project_id: string; task_name: string; task_detail: string | null; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[]; todos?: Todo[] };
 
 // Mirrors LOCKED_TODO_STATUSES on the server (assigned-tasks/[id]/todos/[todoId]/route.ts)
@@ -528,11 +529,15 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
       const arr = byProject.get(st.project_id);
       if (arr) arr.push(st); else byProject.set(st.project_id, [st]);
     }
-    type Rider = { key: string; personId: string; name: string; avatar_url: string | null; done: boolean; glow: "yellow" | "green" | "" };
-    const byItem = new Map<string, { key: string; name: string; avatar_url: string | null; pct: number; glow: "yellow" | "green" | "" }[]>();
+    // One dot per TASK-assignment, split into two clusters: START (not yet
+    // approved) and END (approved). Each cluster renders as an overlapping
+    // avatar stack so faces PEEK past each other and the depth shows how many
+    // are involved — never a single face hiding the rest.
+    const byItem = new Map<string, { start: TaskRider[]; end: TaskRider[]; fill: number }>();
     for (const item of overviewItems) {
       const ids = [item.id, ...descendantsOf(item.id)];
-      const raw: Rider[] = [];
+      const start: TaskRider[] = [];
+      const end: TaskRider[] = [];
       for (const id of ids) {
         for (const st of byProject.get(id) ?? []) {
           if (STATUS_WEIGHT[st.status] === undefined) continue; // cancelled / unknown → excluded
@@ -541,52 +546,15 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
             ? "yellow"
             : (done && st.review_required ? "green" : "");
           for (const a of st.assignees) {
-            raw.push({ key: `${st.id}-${a.id}`, personId: a.id, name: a.name, avatar_url: a.avatar_url, done, glow });
+            (done ? end : start).push({ key: `${st.id}-${a.id}`, name: a.name, avatar_url: a.avatar_url, glow });
           }
         }
       }
-      // One dot per TASK (one per assignee on it), not aggregated per person —
-      // so an operation with several tasks reads as a stack of several faces.
-      //
-      // A task sits at the START until it's approved, then at the bar's own fill
-      // edge — never past the green, so the faces and the fill always agree, and
-      // at 0% every task sits together at the left rather than marching across a
-      // track nobody has walked.
+      // Glowing (pending / reviewed) faces to the front so they peek on top.
+      const frontGlow = (arr: TaskRider[]) => arr.sort((x, y) => (y.glow ? 1 : 0) - (x.glow ? 1 : 0));
       const roll = rollup.get(item.id);
       const fill = roll && roll.total ? Math.round((roll.done / roll.total) * 100) : 0;
-      const placed = raw
-        // Glowing (pending-review) faces render last so they sit on top of the stack.
-        .slice()
-        .sort((a, b) => (a.glow ? 1 : 0) - (b.glow ? 1 : 0))
-        .map((r) => ({
-          key: r.key,
-          name: r.name,
-          avatar_url: r.avatar_url,
-          glow: r.glow,
-          pct: r.done ? Math.max(2, fill) : 2,
-        }));
-
-      // People at the same point get a small nudge apart so you can see there
-      // is more than one of them — deliberately smaller than an avatar, so
-      // they still read as a stack rather than a queue.
-      //
-      // Capped after a few: without the cap, everyone waiting at the start
-      // marches to the right again, which is the behaviour this replaced. Past
-      // the cap they simply pile on the same spot, and the count is read from
-      // the depth of the stack rather than its width.
-      const NUDGE = 1.6;
-      const MAX_NUDGES = 3;
-      const atPoint = new Map<number, number>();
-      byItem.set(
-        item.id,
-        placed.map((r) => {
-          const slot = Math.round(r.pct);
-          const seen = atPoint.get(slot) ?? 0;
-          atPoint.set(slot, seen + 1);
-          const offset = Math.min(seen, MAX_NUDGES) * NUDGE;
-          return { ...r, pct: Math.max(2, Math.min(fill || 2, r.pct + offset)) };
-        })
-      );
+      byItem.set(item.id, { start: frontGlow(start), end: frontGlow(end), fill });
     }
     return byItem;
   }, [subtasks, overviewItems, descendantsOf, rollup]);
@@ -903,31 +871,54 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                         <span className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${statusCls(p.is_active)}`}>{p.is_active ? "Active" : "Inactive"}</span>
                       </div>
                       {(() => {
-                        const riders = taskRiders.get(p.id) ?? [];
+                        const data = taskRiders.get(p.id) ?? { start: [], end: [], fill: 0 };
+                        const CAP = 6;
+                        const glowRing = (g: "yellow" | "green" | "") =>
+                          g === "yellow"
+                            ? "ring-2 ring-amber shadow-[0_0_7px_1px_rgba(184,134,11,0.85)] animate-pulse"
+                            : g === "green"
+                            ? "ring-2 ring-sage shadow-[0_0_7px_1px_rgba(107,143,113,0.85)]"
+                            : "ring-1 ring-white";
+                        // Overlapping stack: faces peek past each other (-space-x),
+                        // leftmost on top (z-index), capped with a +N count.
+                        const stack = (riders: TaskRider[]) => {
+                          const shown = riders.slice(0, CAP);
+                          const extra = riders.length - shown.length;
+                          return (
+                            <div className="flex items-center">
+                              <div className="flex items-center -space-x-2">
+                                {shown.map((r, i) => (
+                                  <span
+                                    key={r.key}
+                                    title={`${r.name}${r.glow === "yellow" ? " · awaiting review" : r.glow === "green" ? " · reviewed & approved" : ""}`}
+                                    className={`relative rounded-full ${glowRing(r.glow)}`}
+                                    style={{ zIndex: shown.length - i }}
+                                  >
+                                    <Avatar person={{ id: r.key, name: r.name, avatar_url: r.avatar_url }} />
+                                  </span>
+                                ))}
+                              </div>
+                              {extra > 0 && (
+                                <span className="ml-1 h-5 min-w-[20px] px-1 rounded-full bg-stone/25 border border-white text-[9px] font-bold text-espresso flex items-center justify-center">
+                                  +{extra}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        };
                         return (
                           <div className="relative h-6 w-full">
                             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-2 overflow-hidden rounded-full bg-parchment">
                               <div className="h-full rounded-full bg-sage transition-all" style={{ width: `${pct}%` }} />
                             </div>
-                            {riders.map((r) => {
-                              // Yellow = submission awaiting review. Green = reviewed
-                              // and approved. Auto-approved work moves but doesn't glow.
-                              const glow = r.glow === "yellow"
-                                ? "ring-2 ring-amber shadow-[0_0_10px_2px_rgba(184,134,11,0.8)] animate-pulse"
-                                : r.glow === "green"
-                                ? "ring-2 ring-sage shadow-[0_0_10px_2px_rgba(107,143,113,0.8)]"
-                                : "";
-                              return (
-                              <span
-                                key={r.key}
-                                className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 transition-all duration-500 ease-out rounded-full ${glow}`}
-                                style={{ left: `${r.pct}%` }}
-                                title={`${r.name}${r.glow === "yellow" ? " · submission awaiting review" : r.glow === "green" ? " · reviewed & approved" : ""}`}
-                              >
-                                <Avatar person={{ id: r.key, name: r.name, avatar_url: r.avatar_url }} />
-                              </span>
-                              );
-                            })}
+                            {data.start.length > 0 && (
+                              <div className="absolute top-1/2 -translate-y-1/2 left-1">{stack(data.start)}</div>
+                            )}
+                            {data.end.length > 0 && (
+                              <div className="absolute top-1/2 -translate-y-1/2 -translate-x-full" style={{ left: `${Math.max(8, data.fill)}%` }}>
+                                {stack(data.end)}
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
