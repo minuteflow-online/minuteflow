@@ -28,9 +28,14 @@ async function canAccessTodos(supabase: Awaited<ReturnType<typeof createClient>>
   return Boolean(data);
 }
 
+// Once a subtask has been handed in, its to-dos freeze — checking one off
+// after the fact would misrepresent what was actually done during the work.
+// revision_needed sends it back to the VA, so that one stays editable.
+const LOCKED_TODO_STATUSES = new Set(["submitted", "reviewing", "approved", "completed", "paid"]);
+
 /**
  * PATCH /api/assigned-tasks/[id]/todos/[todoId]
- * Body: { text?: string, sort_order?: number }
+ * Body: { text?: string, sort_order?: number, completed?: boolean }
  */
 export async function PATCH(request: Request, { params }: RouteContext) {
   const supabase = await createClient();
@@ -65,6 +70,21 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   if ("sort_order" in body) {
     updates.sort_order = Number(body.sort_order);
   }
+  if ("completed" in body) {
+    // Checking a to-do is an owner-only action, distinct from editing its
+    // text: canAccessTodos already only admits an assignee of this exact
+    // subtask (or admin/manager), which is exactly "owners check their own,
+    // not others" — no separate check needed for that part.
+    const { data: task } = await supabase
+      .from("assigned_tasks")
+      .select("status")
+      .eq("id", id)
+      .single();
+    if (task && LOCKED_TODO_STATUSES.has(task.status)) {
+      return Response.json({ error: "This subtask has already been submitted — its to-dos are locked." }, { status: 403 });
+    }
+    updates.completed = Boolean(body.completed);
+  }
 
   if (Object.keys(updates).length === 0) {
     return Response.json({ error: "No fields to update" }, { status: 400 });
@@ -79,7 +99,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     .update(updates)
     .eq("id", todoId)
     .eq("assigned_task_id", id)
-    .select("id, assigned_task_id, text, sort_order, created_at, created_by")
+    .select("id, assigned_task_id, text, sort_order, completed, created_at, created_by")
     .single();
 
   if (error) return Response.json({ error: error.message }, { status: 500 });

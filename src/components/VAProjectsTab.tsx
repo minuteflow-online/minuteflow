@@ -199,7 +199,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [scopedTab, setScopedTab] = useState<"board" | "details" | "subtasks" | "todos" | "overview" | "docs">("board");
   // Landing overview (nothing selected) is also tab-based — one big box instead
   // of the 4-card grid, so each section gets room.
-  const [landingTab, setLandingTab] = useState<"board" | "overview" | "docs" | "subtasks">("board");
+  const [landingTab, setLandingTab] = useState<"board" | "overview" | "docs" | "subtasks" | "todos">("board");
   // Add-subtask mode — time-based (hourly) or output-based (fixed pay).
   const [addSubtaskMode, setAddSubtaskMode] = useState<"time_based" | "output_based">("time_based");
   // Per-VA "Where They Are" breakdown, collapsed by default — Overall Progress
@@ -2245,6 +2245,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   ["board", "Message Board"],
                   ["overview", `${kindLabel} Overview`],
                   ["subtasks", "Subtasks"],
+                  ["todos", "To-Do List"],
                   ["docs", "Docs & Files"],
                 ] as const).map(([key, label]) => (
                   <button
