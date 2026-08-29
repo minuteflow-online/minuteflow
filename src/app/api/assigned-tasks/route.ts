@@ -91,6 +91,10 @@ export async function GET(request: Request) {
   const unassignedOnly = searchParams.get("unassigned") === "true";
   const asReviewer = searchParams.get("asReviewer") === "true";
   const projectIdParam = searchParams.get("projectId");
+  // Comma-separated for a whole branch (this objective + its sub-objectives) —
+  // a single id is just a one-element list, so every existing caller keeps
+  // working unchanged.
+  const projectIdList = projectIdParam ? projectIdParam.split(",").map((s) => s.trim()).filter(Boolean) : null;
   const viewAsVaParam = searchParams.get("viewAsVa");
 
   const assigneeSelect =
@@ -197,11 +201,11 @@ export async function GET(request: Request) {
   // so VAProjectsTab gets the same structure as admin's ProjectsManager.
   // The default VA path queries assigned_task_assignees (a different structure) and
   // ignores projectIdParam entirely — this special case bypasses that.
-  if (!isPermitted && !selfOnly && projectIdParam) {
+  if (!isPermitted && !selfOnly && projectIdList && projectIdList.length > 0) {
     const { data, error } = await serviceRoleClient
       .from("assigned_tasks")
       .select(taskSelect)
-      .eq("project_id", projectIdParam)
+      .in("project_id", projectIdList)
       .order("created_at", { ascending: false });
     if (error) return Response.json({ error: error.message }, { status: 500 });
     const result = await formatAdminTaskRows(data ?? []);
@@ -283,8 +287,8 @@ export async function GET(request: Request) {
       .select(taskSelect)
       .order("created_at", { ascending: false });
 
-    if (projectIdParam) {
-      query = query.eq("project_id", projectIdParam);
+    if (projectIdList && projectIdList.length > 0) {
+      query = query.in("project_id", projectIdList);
     }
 
     const { data, error } = await query;
