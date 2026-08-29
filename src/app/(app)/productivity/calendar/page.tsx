@@ -1584,34 +1584,30 @@ export default function ProductivityCalendarPage() {
                               const left = `calc(2px + (100% - 4px) * ${col} / ${cols})`;
                               const width = `calc((100% - 4px) / ${cols} - 2px)`;
                               return (
-                                <div key={task.id} className="contents">
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditBlock(task)}
-                                    className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                                    style={{ top, height, left, width }}
-                                  >
-                                    {overlay && (
-                                      <div
-                                        className="pointer-events-none absolute inset-x-0 top-0 bg-ink/25"
-                                        style={{ height: overlay.shadeHeight }}
-                                      />
-                                    )}
-                                    <p className="relative truncate text-[9px] font-semibold leading-tight">
-                                      {label && <span className="opacity-70">[{label}] </span>}
-                                      {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                                      {task.task_name}
-                                    </p>
-                                  </button>
+                                <button
+                                  key={task.id}
+                                  type="button"
+                                  onClick={() => openEditBlock(task)}
+                                  className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                                  style={{ top, height, left, width }}
+                                >
+                                  {overlay && (
+                                    <div
+                                      className="pointer-events-none absolute inset-x-0 top-0 bg-ink/25"
+                                      style={{ height: overlay.shadeHeight }}
+                                    />
+                                  )}
+                                  <p className="relative truncate text-[9px] font-semibold leading-tight">
+                                    {label && <span className="opacity-70">[{label}] </span>}
+                                    {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                                    {task.task_name}
+                                  </p>
                                   {overlay?.isOver && (
-                                    <p
-                                      className="pointer-events-none absolute truncate text-[8px] font-bold text-terracotta leading-none"
-                                      style={{ top: top + height + 1, left, width }}
-                                    >
+                                    <p className="pointer-events-none absolute inset-x-0 bottom-0 truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white">
                                       {overlay.overMinutes}m over
                                     </p>
                                   )}
-                                </div>
+                                </button>
                               );
                             });
                           })()}
@@ -2704,40 +2700,36 @@ export default function ProductivityCalendarPage() {
                         const left = `calc(3.5rem + (100% - 3.5rem) * ${frac} / ${n})`;
                         const width = `calc((100% - 3.5rem) / ${n * cols} - 3px)`;
                         return (
-                          <div key={`${vaId}-${task.id}`} className="contents">
-                            <button
-                              type="button"
-                              onClick={() => openEditBlock(task)}
-                              className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                              style={{ top, height, left, width }}
-                            >
-                              {overlay && (
-                                <div
-                                  className="pointer-events-none absolute inset-x-0 top-0 bg-ink/25"
-                                  style={{ height: overlay.shadeHeight }}
-                                />
+                          <button
+                            key={`${vaId}-${task.id}`}
+                            type="button"
+                            onClick={() => openEditBlock(task)}
+                            className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                            style={{ top, height, left, width }}
+                          >
+                            {overlay && (
+                              <div
+                                className="pointer-events-none absolute inset-x-0 top-0 bg-ink/25"
+                                style={{ height: overlay.shadeHeight }}
+                              />
+                            )}
+                            <p className="relative truncate text-[10px] font-semibold leading-tight">
+                              {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
+                              {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                              {task.task_name}
+                              {task.task_detail && (
+                                <span className="font-normal opacity-80"> | {task.task_detail}</span>
                               )}
-                              <p className="relative truncate text-[10px] font-semibold leading-tight">
-                                {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
-                                {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                                {task.task_name}
-                                {task.task_detail && (
-                                  <span className="font-normal opacity-80"> | {task.task_detail}</span>
-                                )}
-                              </p>
-                              {task.account && (
-                                <p className="relative truncate text-[9px] opacity-80">{task.account}</p>
-                              )}
-                            </button>
+                            </p>
+                            {task.account && (
+                              <p className="relative truncate text-[9px] opacity-80">{task.account}</p>
+                            )}
                             {overlay?.isOver && (
-                              <p
-                                className="pointer-events-none absolute truncate text-[8px] font-bold text-terracotta leading-none"
-                                style={{ top: top + height + 1, left, width }}
-                              >
+                              <p className="pointer-events-none absolute inset-x-0 bottom-0 truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white">
                                 {overlay.overMinutes}m over
                               </p>
                             )}
-                          </div>
+                          </button>
                         );
                       });
                     })}
@@ -2867,69 +2859,65 @@ export default function ProductivityCalendarPage() {
                       const left = `calc(4rem + (100% - 4rem - 0.5rem - ${dueGutter}px) * ${col} / ${cols})`;
                       const width = `calc((100% - 4rem - 0.5rem - ${dueGutter}px) / ${cols} - 4px)`;
                       return (
-                        <div key={task.id} className="contents">
-                          <button
-                            type="button"
-                            onClick={() => openEditBlock(task)}
-                            className={`pointer-events-auto absolute overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                            style={{ top, height, left, width }}
-                          >
-                            {overlay && (
-                              <div
-                                className="pointer-events-none absolute inset-x-0 top-0 bg-ink/25"
-                                style={{ height: overlay.shadeHeight }}
-                              />
-                            )}
-                            <div className="relative flex h-full items-start gap-2">
-                              <div className="min-w-0 shrink-0 max-w-[55%]">
-                                {/* Task and client detail share the top line; the
-                                    account sits underneath. The block's position and
-                                    height already say when it runs, which is why the
-                                    times this used to print were the one thing here
-                                    you could read off the grid anyway. */}
-                                <p className="truncate text-[11px] font-semibold">
-                                  {label && (
-                                    <span className="mr-1 rounded bg-black/10 px-1 text-[9px] font-bold uppercase tracking-wide">
-                                      {label}
-                                    </span>
-                                  )}
-                                  {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                                  {task.task_name}
-                                  {task.task_detail && (
-                                    <span className="font-normal opacity-80"> | {task.task_detail}</span>
-                                  )}
-                                </p>
-                                {task.account && (
-                                  <p className="truncate text-[10px] opacity-80">{task.account}</p>
-                                )}
-                              </div>
-                              {task.todos.length > 0 && (
-                                // Runs alongside the title/time instead of stacking below
-                                // it — a 1hr block is usually wide, not tall, so the to-dos
-                                // get the block's full height to themselves here. Whatever
-                                // doesn't fit is clipped by the block's own overflow.
-                                <div className="min-w-0 flex-1 border-l border-black/10 pl-2">
-                                  <p className="truncate text-[9px] font-semibold opacity-70">
-                                    {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}
-                                  </p>
-                                  {task.todos.map((t) => (
-                                    <p key={t.id} className="truncate text-[9px] opacity-70 leading-tight">
-                                      · {t.text}
-                                    </p>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </button>
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={() => openEditBlock(task)}
+                          className={`pointer-events-auto absolute overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                          style={{ top, height, left, width }}
+                        >
+                          {overlay && (
+                            <div
+                              className="pointer-events-none absolute inset-x-0 top-0 bg-ink/25"
+                              style={{ height: overlay.shadeHeight }}
+                            />
+                          )}
                           {overlay?.isOver && (
-                            <p
-                              className="pointer-events-none absolute truncate text-[8px] font-bold text-terracotta leading-none"
-                              style={{ top: top + height + 1, left, width }}
-                            >
+                            <p className="pointer-events-none absolute inset-x-0 bottom-0 z-10 truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white">
                               {overlay.overMinutes}m over
                             </p>
                           )}
-                        </div>
+                          <div className="relative flex h-full items-start gap-2">
+                            <div className="min-w-0 shrink-0 max-w-[55%]">
+                              {/* Task and client detail share the top line; the
+                                  account sits underneath. The block's position and
+                                  height already say when it runs, which is why the
+                                  times this used to print were the one thing here
+                                  you could read off the grid anyway. */}
+                              <p className="truncate text-[11px] font-semibold">
+                                {label && (
+                                  <span className="mr-1 rounded bg-black/10 px-1 text-[9px] font-bold uppercase tracking-wide">
+                                    {label}
+                                  </span>
+                                )}
+                                {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                                {task.task_name}
+                                {task.task_detail && (
+                                  <span className="font-normal opacity-80"> | {task.task_detail}</span>
+                                )}
+                              </p>
+                              {task.account && (
+                                <p className="truncate text-[10px] opacity-80">{task.account}</p>
+                              )}
+                            </div>
+                            {task.todos.length > 0 && (
+                              // Runs alongside the title/time instead of stacking below
+                              // it — a 1hr block is usually wide, not tall, so the to-dos
+                              // get the block's full height to themselves here. Whatever
+                              // doesn't fit is clipped by the block's own overflow.
+                              <div className="min-w-0 flex-1 border-l border-black/10 pl-2">
+                                <p className="truncate text-[9px] font-semibold opacity-70">
+                                  {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}
+                                </p>
+                                {task.todos.map((t) => (
+                                  <p key={t.id} className="truncate text-[9px] opacity-70 leading-tight">
+                                    · {t.text}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </button>
                       );
                     });
 
