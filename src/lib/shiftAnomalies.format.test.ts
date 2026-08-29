@@ -1,139 +1,214 @@
 import { describe, it, expect } from "vitest";
-import { formatShiftMessage, type ShiftAnomalyResult } from "@/lib/shiftAnomalies";
+import { formatShiftMessage } from "@/lib/shiftAnomalyFormat";
+import { compactSpan, compactDuration } from "@/lib/shiftAnomalyFormat";
+import type { ShiftAnomalyResult } from "@/lib/shiftAnomalies";
 
-// The alert has to be readable at a glance in a phone-width chat, and the
-// isolated window is the whole point of it — the day log says what happened,
-// the window says which minutes are wrong.
+// The first live alert was judged hard to understand: an aligned sixteen-row
+// table that wrapped on a phone, with the one line that mattered buried in it.
+// These tests hold the shape that replaced it — finding first, a few entries
+// of context, nothing padded.
 
-const result: ShiftAnomalyResult = {
+const logs = [
+  {
+    id: 100,
+    task_name: "Clock In",
+    category: "Sorting Tasks",
+    billable: true,
+    start_time: "2026-08-26T18:00:00.000Z",
+    end_time: "2026-08-26T18:01:00.000Z",
+    duration_ms: 60_000,
+  },
+  {
+    id: 101,
+    task_name: "SMC_Planning",
+    category: "Task",
+    billable: true,
+    start_time: "2026-08-26T18:19:00.000Z",
+    end_time: "2026-08-26T20:01:00.000Z",
+    duration_ms: 102 * 60_000,
+  },
+  {
+    // The real shape of the row that broke the first alert: 26 minutes of
+    // elapsed time carrying duration_ms = 0.
+    id: 5815,
+    task_name: "Break",
+    category: "Break",
+    billable: true,
+    start_time: "2026-08-26T20:01:00.000Z",
+    end_time: "2026-08-26T20:27:00.000Z",
+    duration_ms: 0,
+  },
+  {
+    id: 103,
+    task_name: "SMC_Planning",
+    category: "Task",
+    billable: true,
+    start_time: "2026-08-26T20:27:00.000Z",
+    end_time: "2026-08-26T20:29:00.000Z",
+    duration_ms: 2 * 60_000,
+  },
+  {
+    id: 104,
+    task_name: "Lunch",
+    category: "Personal",
+    billable: false,
+    start_time: "2026-08-26T21:00:00.000Z",
+    end_time: "2026-08-26T21:30:00.000Z",
+    duration_ms: 30 * 60_000,
+  },
+];
+
+const billedBreak: ShiftAnomalyResult = {
   clean: false,
+  logs,
   findings: [
     {
       type: "billed_break",
-      logId: 101,
-      logIds: [101],
+      logId: 5815,
+      logIds: [5815],
       taskName: "Break",
-      startTime: "2026-08-26T16:04:00.000Z",
-      endTime: "2026-08-26T16:36:00.000Z",
-      windowStart: "2026-08-26T16:04:00.000Z",
-      windowEnd: "2026-08-26T16:36:00.000Z",
-      minutes: 32,
-      detail: "Break marked billable (32 min)",
-    },
-    {
-      type: "overlap",
-      logId: 103,
-      logIds: [102, 103],
-      taskName: "Design pass",
-      startTime: "2026-08-26T18:10:00.000Z",
-      endTime: "2026-08-26T19:00:00.000Z",
-      windowStart: "2026-08-26T18:10:00.000Z",
-      windowEnd: "2026-08-26T18:28:00.000Z",
-      minutes: 18,
-      detail: '"Design pass" (log 103) overlaps "Client calls" (log 102) by 18 min',
-    },
-  ],
-  logs: [
-    {
-      id: 100,
-      task_name: "Clock In",
-      category: "Sorting Tasks",
-      billable: true,
-      start_time: "2026-08-26T13:02:00.000Z",
-      end_time: "2026-08-26T13:24:00.000Z",
-      duration_ms: 22 * 60_000,
-    },
-    {
-      id: 101,
-      task_name: "Break",
-      category: "Break",
-      billable: true,
-      start_time: "2026-08-26T16:04:00.000Z",
-      end_time: "2026-08-26T16:36:00.000Z",
-      duration_ms: 32 * 60_000,
-    },
-    {
-      id: 102,
-      task_name: "Client calls",
-      category: "Task",
-      billable: true,
-      start_time: "2026-08-26T18:00:00.000Z",
-      end_time: "2026-08-26T18:28:00.000Z",
-      duration_ms: 28 * 60_000,
-    },
-    {
-      id: 103,
-      task_name: "Design pass",
-      category: "Task",
-      billable: true,
-      start_time: "2026-08-26T18:10:00.000Z",
-      end_time: "2026-08-26T19:00:00.000Z",
-      duration_ms: 50 * 60_000,
-    },
-    {
-      id: 104,
-      task_name: "Lunch",
-      category: "Personal",
-      billable: false,
-      start_time: "2026-08-26T19:00:00.000Z",
-      end_time: "2026-08-26T19:30:00.000Z",
-      duration_ms: 30 * 60_000,
+      startTime: "2026-08-26T20:01:00.000Z",
+      endTime: "2026-08-26T20:27:00.000Z",
+      windowStart: "2026-08-26T20:01:00.000Z",
+      windowEnd: "2026-08-26T20:27:00.000Z",
+      minutes: 26,
+      detail: "Break marked billable (26 min)",
     },
   ],
 };
 
+describe("compactSpan", () => {
+  it("prints the meridiem once when both ends share it", () => {
+    expect(compactSpan("2026-08-26T20:01:00.000Z", "2026-08-26T20:27:00.000Z")).toBe("4:01–4:27p");
+  });
+
+  it("prints both when they straddle noon", () => {
+    expect(compactSpan("2026-08-26T15:50:00.000Z", "2026-08-26T16:10:00.000Z")).toBe(
+      "11:50a–12:10p"
+    );
+  });
+
+  it("says so when the entry never closed", () => {
+    expect(compactSpan("2026-08-26T20:01:00.000Z", null)).toBe("4:01p–open");
+  });
+});
+
+describe("compactDuration", () => {
+  it("stays tight, since these sit mid-line", () => {
+    expect(compactDuration(26 * 60_000)).toBe("26m");
+    expect(compactDuration(102 * 60_000)).toBe("1h42m");
+    expect(compactDuration(2 * 3_600_000)).toBe("2h");
+  });
+});
+
 describe("formatShiftMessage", () => {
-  const message = formatShiftMessage("Arianne", "2026-08-26", result);
+  const message = formatShiftMessage("Flordeliz Mandin", "2026-08-26", billedBreak);
 
-  it("numbers each finding so a reply can name one", () => {
-    expect(message).toContain("<b>[1]</b>");
-    expect(message).toContain("<b>[2]</b>");
+  it("names the problem in words, not a column heading", () => {
+    expect(message).toContain("<b>Break billed as work</b>");
   });
 
-  it("shows the isolated window, not the whole entry, for an overlap", () => {
-    // Entry 103 runs 2:10–3:00 PM ET but only 2:10–2:28 is double-counted, so
-    // the finding line points at those 18 minutes. The full-day block below it
-    // still shows the entry's real span — that is what makes the two useful
-    // side by side, so the check is scoped to the findings section.
-    const findingsSection = message.split("<b>Full day</b>")[0];
-    expect(findingsSection).toContain("2:10 PM–2:28 PM");
-    expect(findingsSection).not.toContain("2:10 PM–3:00 PM");
-    expect(message).toContain("2:10 PM–3:00 PM");
+  it("reports the real length of an entry whose duration_ms is 0", () => {
+    // This is the bug the first live alert had: it called this break "0 min",
+    // so the thing being flagged looked like nothing at all.
+    expect(message).toContain("<b>Break billed as work</b> — 26 min");
+    expect(message).not.toContain("0 min");
   });
 
-  it("itemizes the whole day in a monospace block", () => {
-    expect(message).toContain("<pre>");
-    expect(message).toContain("Clock In");
-    expect(message).toContain("Design pass");
+  it("totals billable time by elapsed, not by duration_ms", () => {
+    // 1m + 1h42m + 26m + 2m billable = 2h11m. The Personal 30m is excluded,
+    // and the break's stored zero must not swallow its 26 minutes.
+    expect(message).toContain("Day: <b>2h11m</b> billable · 5 entries");
   });
 
-  it("totals only billable time", () => {
-    // 22 + 32 + 28 + 50 = 132 minutes billable; the 30-minute Personal is out.
-    expect(message).toContain("Billable total: <b>2h 12m</b>");
+  it("shows the flagged entry with one either side, not the whole day", () => {
+    expect(message).toContain("▸ 4:01–4:27p · Break · 26m");
+    expect(message).toContain("  2:19–4:01p · SMC_Planning · 1h42m");
+    expect(message).toContain("  4:27–4:29p · SMC_Planning · 2m");
+    // Entries further away stay out of it.
+    expect(message).not.toContain("Clock In");
+    expect(message).not.toContain("Lunch");
   });
 
-  it("escapes angle brackets in task names so the send is not rejected", () => {
-    // Task names are free text. Telegram's HTML mode only requires & < > to be
-    // escaped, but an unescaped one kills the whole message.
-    const withMarkup = formatShiftMessage("Arianne", "2026-08-26", {
-      ...result,
-      logs: [{ ...result.logs[0], task_name: "R&D <urgent>" }],
+  it("pads nothing, so it reflows instead of shattering on a narrow screen", () => {
+    expect(message).not.toContain("<pre>");
+    expect(message).not.toMatch(/ {3,}\S/);
+  });
+
+  it("drops the item number when only one thing is flagged", () => {
+    expect(message).not.toContain("[1]");
+    expect(message).toContain("Reply “not billable”");
+  });
+
+  it("numbers the items and asks for one when several are flagged", () => {
+    const two = formatShiftMessage("Flordeliz Mandin", "2026-08-26", {
+      ...billedBreak,
+      findings: [
+        billedBreak.findings[0],
+        {
+          type: "overlap",
+          logId: 103,
+          logIds: [101, 103],
+          taskName: "SMC_Planning",
+          startTime: "2026-08-26T20:27:00.000Z",
+          endTime: "2026-08-26T20:29:00.000Z",
+          windowStart: "2026-08-26T20:27:00.000Z",
+          windowEnd: "2026-08-26T20:29:00.000Z",
+          minutes: 2,
+          detail: "overlap",
+        },
+      ],
     });
-    expect(withMarkup).toContain("R&amp;D &lt;urgent&gt;");
-    expect(withMarkup).not.toContain("<urgent>");
+    expect(two).toContain("[1] <b>Break billed as work</b>");
+    expect(two).toContain("[2] <b>Two tasks counted at once</b>");
+    expect(two).toContain("item number");
   });
 
-  it("tells her how to reply", () => {
-    expect(message).toContain("Nothing is written until you confirm");
+  it("marks both entries of an overlap", () => {
+    const overlap = formatShiftMessage("Flordeliz Mandin", "2026-08-26", {
+      clean: false,
+      logs,
+      findings: [
+        {
+          type: "overlap",
+          logId: 103,
+          logIds: [101, 103],
+          taskName: "SMC_Planning",
+          startTime: "2026-08-26T20:27:00.000Z",
+          endTime: "2026-08-26T20:29:00.000Z",
+          windowStart: "2026-08-26T20:27:00.000Z",
+          windowEnd: "2026-08-26T20:29:00.000Z",
+          minutes: 2,
+          detail: "overlap",
+        },
+      ],
+    });
+    expect(overlap).toContain("▸ 2:19–4:01p · SMC_Planning · 1h42m");
+    expect(overlap).toContain("▸ 4:27–4:29p · SMC_Planning · 2m");
   });
 
-  it("still itemizes the day when the shift is clean", () => {
-    const clean = formatShiftMessage("Arianne", "2026-08-26", {
+  it("escapes a task name, which is free text", () => {
+    const risky = formatShiftMessage("Flordeliz Mandin", "2026-08-26", {
+      ...billedBreak,
+      logs: logs.map((row) => (row.id === 5815 ? { ...row, task_name: "R&D <urgent>" } : row)),
+    });
+    expect(risky).toContain("R&amp;D &lt;urgent&gt;");
+    expect(risky).not.toContain("<urgent>");
+  });
+
+  it("says a clean shift is clean without listing anything", () => {
+    const clean = formatShiftMessage("Flordeliz Mandin", "2026-08-26", {
       clean: true,
       findings: [],
-      logs: result.logs,
+      logs,
     });
-    expect(clean).toContain("no anomalies found");
-    expect(clean).toContain("<pre>");
+    expect(clean).toContain("Shift looks clean.");
+    expect(clean).toContain("Day: <b>2h11m</b> billable · 5 entries");
+    expect(clean).not.toContain("▸");
+  });
+
+  it("prints the whole thing for eyeballing", () => {
+    console.log("\n" + message.replace(/<\/?b>/g, "").replace(/<\/?i>/g, "") + "\n");
+    expect(message.length).toBeGreaterThan(0);
   });
 });

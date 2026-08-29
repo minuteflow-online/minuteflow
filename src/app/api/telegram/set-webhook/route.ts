@@ -33,6 +33,49 @@ async function requireAdmin() {
   return {};
 }
 
+/**
+ * GET — what Telegram thinks the webhook is.
+ *
+ * Added after a reply in the finance chat produced no POST here at all, with
+ * no way to tell whether the webhook was unregistered, pointing somewhere
+ * else, or failing on Telegram's side. getWebhookInfo answers all three, and
+ * a browser link answers it without anyone handling the bot token.
+ *
+ * Read-only, and the token is deliberately not echoed back.
+ */
+export async function GET() {
+  const auth = await requireAdmin();
+  if (auth.error) return auth.error;
+
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return Response.json({ error: "TELEGRAM_BOT_TOKEN is not set" }, { status: 400 });
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
+  const json = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    result?: Record<string, unknown>;
+    description?: string;
+  };
+  if (!json.ok) {
+    return Response.json({ error: json.description ?? "Telegram rejected the request" }, { status: 502 });
+  }
+
+  const info = json.result ?? {};
+  return Response.json({
+    registered: Boolean(info.url),
+    matchesExpected: info.url === WEBHOOK_URL,
+    expected: WEBHOOK_URL,
+    url: info.url ?? null,
+    hasSecret: Boolean(info.has_custom_certificate) || undefined,
+    pendingUpdates: info.pending_update_count ?? 0,
+    allowedUpdates: info.allowed_updates ?? "(all)",
+    lastErrorDate: info.last_error_date
+      ? new Date(Number(info.last_error_date) * 1000).toISOString()
+      : null,
+    lastErrorMessage: info.last_error_message ?? null,
+  });
+}
+
 export async function POST() {
   const auth = await requireAdmin();
   if (auth.error) return auth.error;
