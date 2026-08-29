@@ -2,6 +2,14 @@ import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
 import { sendTelegram, chatIdFor, esc } from "@/lib/telegram";
 import { checkShiftAnomalies, formatShiftMessage } from "@/lib/shiftAnomalies";
+import {
+  shouldAutoHold,
+  holdLog,
+  holdNotice,
+  autoHoldReason,
+  screenshotCountFor,
+} from "@/lib/timeLogReview";
+import { notifyVaPrivately } from "@/lib/vaNotify";
 
 export const dynamic = "force-dynamic";
 
@@ -79,12 +87,13 @@ export async function GET(request: NextRequest) {
   });
 
   let sent = 0;
+  let autoHeld = 0;
   let skipped = 0;
 
   for (const s of pending) {
     const { data: prof } = await supabase
       .from("profiles")
-      .select("full_name, username, pay_rate_type")
+      .select("full_name, username, pay_rate_type, telegram_chat_id")
       .eq("id", s.user_id)
       .single();
 
@@ -103,6 +112,46 @@ export async function GET(request: NextRequest) {
 
     const who = prof.full_name || prof.username || "Someone";
     const result = await checkShiftAnomalies(supabase, s.user_id as string, s.session_date as string);
+
+    // Set aside anything the screenshots do not account for, before the alert
+    // is written, so the message describes the day as it now stands rather
+    // than as it was a moment ago.
+    //
+    // Only unbacked Clock In placeholders qualify — see shouldAutoHold. The
+    // person is told the same minute, because finding out later that hours
+    // quietly stopped counting is how a system loses people's trust.
+    for (const finding of result.findings) {
+      const shots = await screenshotCountFor(supabase, finding.logId);
+      if (!shouldAutoHold(finding, shots)) continue;
+
+      const held = await holdLog(supabase, {
+        logId: finding.logId,
+        userId: s.user_id as string,
+        source: "auto",
+        findingType: finding.type,
+        reason: autoHoldReason(finding, shots),
+      });
+      if (!held.ok) {
+        console.error("shift-anomaly-check: could not hold log", finding.logId, held.error);
+        continue;
+      }
+
+      await notifyVaPrivately({
+        chatId: prof.telegram_chat_id as number | null,
+        userId: s.user_id as string,
+        vaName: who,
+        topic: "Entry set aside",
+        message: holdNotice(finding, shots),
+      });
+
+      await supabase
+        .from("time_log_reviews")
+        .update({ notified_at: new Date().toISOString() })
+        .eq("id", held.reviewId);
+
+      autoHeld++;
+    }
+
     const message = formatShiftMessage(esc(who), (s.session_date as string) ?? "", result);
 
     // The finance chat, not a DM. These are billing questions, and they
@@ -130,5 +179,5 @@ export async function GET(request: NextRequest) {
       .eq("user_id", s.user_id);
   }
 
-  return Response.json({ checked: pending.length, sent, skipped });
+  return Response.json({ checked: pending.length, sent, skipped, autoHeld });
 }
