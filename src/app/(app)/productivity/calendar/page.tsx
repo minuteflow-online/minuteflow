@@ -200,6 +200,11 @@ export default function ProductivityCalendarPage() {
   // matching useRevisionByLogId uses. Powers the "shaded to actual time" overlay
   // on each scheduled block.
   const [actualMinutesByKey, setActualMinutesByKey] = useState<Map<string, number>>(new Map());
+  // Same real worked time, summed per person+day regardless of which task it
+  // was logged against — powers the Planned/Actual readouts (day, week, month
+  // totals), which compare "what's scheduled" against "everything actually
+  // worked that day", not just the portion that happens to match a block.
+  const [actualMinutesByVaDate, setActualMinutesByVaDate] = useState<Map<string, number>>(new Map());
   const [monthYear, setMonthYear] = useState<number>(new Date().getFullYear());
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -1302,18 +1307,25 @@ export default function ProductivityCalendarPage() {
     (async () => {
       if (actualTimeVaIds.length === 0 || weekDates.length === 0) {
         setActualMinutesByKey(new Map());
+        setActualMinutesByVaDate(new Map());
         return;
       }
+      // Covers whichever is wider — the Week grid only needs its own 7 days,
+      // but the Month grid's Planned/Actual cells need the whole visible
+      // month, and the two ranges don't nest inside each other.
+      const rangeStart = [weekDates[0], monthGrid[0]].filter(Boolean).sort()[0];
+      const rangeEnd = [weekDates[weekDates.length - 1], monthGrid[monthGrid.length - 1]].filter(Boolean).sort().slice(-1)[0];
       const supabase = createClient();
       const { data } = await supabase
         .from("time_logs")
         .select("user_id, task_name, account, session_date, duration_ms")
         .in("user_id", actualTimeVaIds)
-        .gte("session_date", weekDates[0])
-        .lte("session_date", weekDates[weekDates.length - 1])
+        .gte("session_date", rangeStart)
+        .lte("session_date", rangeEnd)
         .is("deleted_at", null);
       if (cancelled) return;
-      const map = new Map<string, number>();
+      const byKey = new Map<string, number>();
+      const byVaDate = new Map<string, number>();
       for (const log of (data ?? []) as {
         user_id: string; task_name: string | null; account: string | null;
         session_date: string | null; duration_ms: number | null;
@@ -1321,13 +1333,17 @@ export default function ProductivityCalendarPage() {
         if (!log.session_date) continue;
         const ms = log.duration_ms && log.duration_ms > 0 ? log.duration_ms : 0;
         if (ms === 0) continue;
+        const minutes = ms / 60000;
         const key = actualMatchKey(log.user_id, log.session_date, log.task_name, log.account);
-        map.set(key, (map.get(key) ?? 0) + ms / 60000);
+        byKey.set(key, (byKey.get(key) ?? 0) + minutes);
+        const vaDateKey = `${log.user_id}|${log.session_date}`;
+        byVaDate.set(vaDateKey, (byVaDate.get(vaDateKey) ?? 0) + minutes);
       }
-      setActualMinutesByKey(map);
+      setActualMinutesByKey(byKey);
+      setActualMinutesByVaDate(byVaDate);
     })();
     return () => { cancelled = true; };
-  }, [actualTimeVaIds, weekDates]);
+  }, [actualTimeVaIds, weekDates, monthGrid]);
 
   const weekBudget = useMemo(() => {
     const member = teamMembers.find((m) => m.id === dayUserId);
@@ -1432,6 +1448,33 @@ export default function ProductivityCalendarPage() {
     const overMinutes = Math.round(actual - pos.durationMinutes);
     const isOver = overMinutes > 0;
     return { shadeHeight, isOver, overMinutes };
+  }
+
+  // Planned (scheduled) vs. actual (logged) minutes for one day — the pair the
+  // Day/Week/Month totals all read from. `off` marks a day that's outside the
+  // VA's shift AND has logged time anyway, so callers can grey the pair out
+  // instead of coloring it, matching budgetBadgeFor's own off-day treatment.
+  const plannedActualForDate = useCallback(
+    (vaId: string | null, dateStr: string) => {
+      const planned = durationsForDate(dateStr).totalMinutes;
+      const actual = vaId ? actualMinutesByVaDate.get(`${vaId}|${dateStr}`) ?? 0 : 0;
+      return { planned, actual, off: isOffDay(dateStr) && actual > 0 };
+    },
+    [durationsForDate, actualMinutesByVaDate, isOffDay]
+  );
+
+  // Shared Planned/Actual readout — amber for planned, sage for actual (the
+  // palette's "caution" and "completed" accents, closest to the yellow/green
+  // Toni asked for), collapsing to plain stone when the day was worked off-shift.
+  function plannedActualReadout(planned: number, actual: number, off: boolean, size: "xs" | "sm" | "md" = "sm") {
+    const textSize = size === "md" ? "text-[13px]" : size === "sm" ? "text-[10px]" : "text-[9px]";
+    return (
+      <span className={`inline-flex items-center gap-1 font-bold ${textSize}`}>
+        <span className={off ? "text-stone" : "text-amber"}>{formatDuration(planned)}</span>
+        <span className="text-stone/40">/</span>
+        <span className={off ? "text-stone" : "text-sage"}>{formatDuration(actual)}</span>
+      </span>
+    );
   }
 
   // Due Time is a plain "HH:MM" clock time (not a timestamp, no timezone
@@ -1635,10 +1678,13 @@ export default function ProductivityCalendarPage() {
   const renderDurationList = (dates: string[], totalLabel: string) => (
     <div className="rounded-lg border border-sand overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-sand bg-parchment px-3 py-2">
-        <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">{totalLabel}</span>
-        <span className="text-[13px] font-bold text-espresso">
-          {formatDuration(dates.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0))}
-        </span>
+        <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">{totalLabel} — Planned / Actual</span>
+        {plannedActualReadout(
+          dates.reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0),
+          dates.reduce((sum, d) => sum + (dayUserId ? actualMinutesByVaDate.get(`${dayUserId}|${d}`) ?? 0 : 0), 0),
+          false,
+          "md"
+        )}
       </div>
       <div className="overflow-x-auto">
         <div
@@ -1649,10 +1695,11 @@ export default function ProductivityCalendarPage() {
           }}
         >
           {dates.map((dateStr) => {
-            const { rows, totalMinutes } = durationsForDate(dateStr);
+            const { rows } = durationsForDate(dateStr);
             const { weekday, day } = formatDayShort(dateStr);
             const isToday = dateStr === todayStr;
             const badge = budgetBadgeFor(dateStr, "hide");
+            const dayTotals = plannedActualForDate(dayUserId, dateStr);
             return (
               <div key={dateStr} className="flex min-w-0 flex-col">
                 <button
@@ -1664,9 +1711,11 @@ export default function ProductivityCalendarPage() {
                 >
                   <span className="text-[9px] font-semibold uppercase tracking-wide text-walnut">{weekday}</span>
                   <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
-                  <span className={`text-[10px] font-semibold ${rows.length === 0 ? "text-stone" : "text-espresso"}`}>
-                    {rows.length === 0 ? "—" : formatDuration(totalMinutes)}
-                  </span>
+                  {rows.length === 0 && dayTotals.actual === 0 ? (
+                    <span className="text-[10px] font-semibold text-stone">—</span>
+                  ) : (
+                    plannedActualReadout(dayTotals.planned, dayTotals.actual, dayTotals.off, "xs")
+                  )}
                   {badge && (
                     <span className={`rounded-full border px-1.5 text-[9px] font-semibold leading-tight ${budgetBadgeClass(badge)}`}>
                       {badge.text}
@@ -2319,6 +2368,12 @@ export default function ProductivityCalendarPage() {
             </button>
             <div className="flex flex-col items-center gap-0.5">
               <h2 className="text-sm font-bold text-espresso">{monthLabel}</h2>
+              {plannedActualReadout(
+                monthGrid.filter((d) => Number(d.slice(5, 7)) - 1 === monthMonth).reduce((sum, d) => sum + durationsForDate(d).totalMinutes, 0),
+                monthGrid.filter((d) => Number(d.slice(5, 7)) - 1 === monthMonth).reduce((sum, d) => sum + (dayUserId ? actualMinutesByVaDate.get(`${dayUserId}|${d}`) ?? 0 : 0), 0),
+                false,
+                "sm"
+              )}
               {monthBudget && (
                 <span
                   className={`text-[11px] font-bold px-2.5 py-[2px] rounded-full border ${
@@ -2382,6 +2437,11 @@ export default function ProductivityCalendarPage() {
                   {/* Only on days with something booked — badging all 42 cells
                       would bury the dots this grid exists to show. Days outside
                       the current month stay bare for the same reason. */}
+                  {isCurrentMonth && (() => {
+                    const { planned, actual, off } = plannedActualForDate(dayUserId, dateStr);
+                    if (planned === 0 && actual === 0) return null;
+                    return <div className="mt-0.5">{plannedActualReadout(planned, actual, off, "xs")}</div>;
+                  })()}
                   {isCurrentMonth && (() => {
                     const badge = budgetBadgeFor(dateStr, "hide");
                     if (!badge) return null;
@@ -2740,10 +2800,11 @@ export default function ProductivityCalendarPage() {
             ) : dayTab === "hours" ? (
               <div className="rounded-lg border border-sand overflow-hidden">
                 <div className="flex items-center justify-between gap-2 border-b border-sand bg-parchment px-3 py-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">Total</span>
-                  <span className="text-[13px] font-bold text-espresso">
-                    {formatDuration(dayDurations.totalMinutes)}
-                  </span>
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">Planned / Actual</span>
+                  {(() => {
+                    const { planned, actual, off } = plannedActualForDate(dayUserId, selectedDate);
+                    return plannedActualReadout(planned, actual, off, "md");
+                  })()}
                 </div>
                 {dayDurations.rows.length === 0 ? (
                   <p className="px-3 py-6 text-center text-[12px] text-stone">
