@@ -19,7 +19,7 @@ import { createClient } from "@supabase/supabase-js";
  * identical to finishing for the day — including the thank-you that follows,
  * which is the wrong thing to send someone who was just cut off.
  */
-export type AutoCloseReason = "idle" | "screen_unchanged" | "admin";
+export type AutoCloseReason = "idle" | "screen_unchanged" | "no_screenshots" | "admin";
 
 export async function forceClockOut(
   userId: string,

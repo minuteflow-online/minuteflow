@@ -22,6 +22,14 @@ import { esc } from "./telegram";
  * and skipped: too few captures, or a window that does not actually span the
  * period. Rows without a hash are excluded by the query rather than counted as
  * matching, so an older extension build cannot make someone look idle.
+ *
+ * One case is not ambiguous: ZERO captures in a full window, on a task that
+ * has itself been running that whole window. That is not "not enough evidence
+ * yet" — it is the extension having nothing to show for 15 straight minutes on
+ * a task old enough to have produced several. It gets its own warn-then-close
+ * path below, worded for "nothing is arriving" rather than "the screen froze,"
+ * since the likely cause (extension crashed, screen-share dropped, signed out)
+ * is different from a frozen-but-connected capture.
  */
 
 /** How long the screen must be unchanged before it is worth mentioning. */
@@ -45,6 +53,10 @@ type Candidate = {
   category: string | null;
   isBreak: boolean;
   log_id: number | null;
+  /** Start time of the currently active task, if known. Used only to decide
+   *  whether a full window has actually elapsed since it began — a task two
+   *  minutes old having zero captures is normal, not a warning. */
+  logStartTime: string | null;
 };
 
 /** Built here rather than passed in: the Supabase client type does not survive
@@ -79,13 +91,29 @@ export async function checkStaticScreens(
       .gte("created_at", since)
       .order("created_at", { ascending: true });
 
-    if (error || !shots || shots.length < MIN_CAPTURES) continue;
+    if (error) continue;
+    const count = shots?.length ?? 0;
 
-    // The captures must actually span the window. A burst of three uploads two
-    // minutes ago says nothing about the fifteen minutes before them.
-    const first = new Date(shots[0].created_at as string).getTime();
-    const last = new Date(shots[shots.length - 1].created_at as string).getTime();
-    if (last - first < STATIC_WINDOW_MS * 0.8) continue;
+    // Zero captures is only meaningful once the current task has actually
+    // been running the full window — a task started two minutes ago having
+    // zero captures so far is normal, not a warning.
+    const taskOldEnough =
+      c.logStartTime != null && Date.now() - new Date(c.logStartTime).getTime() >= STATIC_WINDOW_MS;
+    const noCaptures = count === 0 && taskOldEnough;
+
+    let frozen = false;
+    if (!noCaptures) {
+      if (count < MIN_CAPTURES) continue;
+
+      // The captures must actually span the window. A burst of three uploads
+      // two minutes ago says nothing about the fifteen minutes before them.
+      const first = new Date(shots![0].created_at as string).getTime();
+      const last = new Date(shots![shots!.length - 1].created_at as string).getTime();
+      if (last - first < STATIC_WINDOW_MS * 0.8) continue;
+
+      const checksums = shots!.map((s) => s.image_hash as string);
+      frozen = new Set(checksums).size === 1;
+    }
 
     // Loaded before the comparison because both outcomes need it — a moved
     // screen has to clear this person's standing warning, not just a still one.
@@ -96,14 +124,12 @@ export async function checkStaticScreens(
       .single();
     if (!prof) continue;
 
-    const checksums = shots.map((s) => s.image_hash as string);
-
-    // The screen moved. Clear any standing warning here rather than in a
-    // sweep afterwards — this is the only place that actually knows whose
-    // screen changed, and a sweep keyed on "still clocked in" would leave the
-    // warning set on everyone who came back, so their countdown would resume
-    // mid-way instead of starting over.
-    if (new Set(checksums).size !== 1) {
+    // The screen moved (real captures, not all identical). Clear any standing
+    // warning here rather than in a sweep afterwards — this is the only place
+    // that actually knows whose screen changed, and a sweep keyed on "still
+    // clocked in" would leave the warning set on everyone who came back, so
+    // their countdown would resume mid-way instead of starting over.
+    if (!noCaptures && !frozen) {
       if (prof?.screen_static_warned_at) {
         await supabase
           .from("profiles")
@@ -125,36 +151,47 @@ export async function checkStaticScreens(
         .update({ screen_static_warned_at: new Date().toISOString() })
         .eq("id", c.user_id);
 
-      // Worded as a prompt, not an accusation. A still screen has plenty of
-      // innocent explanations — reading, a call, a second monitor — and the
-      // useful thing is for them to check their own captures and decide.
+      // Worded as a prompt, not an accusation. Either case has plenty of
+      // innocent explanations — reading, a call, a second monitor, an
+      // extension that needs a reshare — and the useful thing is for them to
+      // check and decide, not to be told they are idle.
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id as number | null,
         userId: c.user_id,
         vaName: who,
         topic: "Screen activity",
-        message: [
-          "🖥️ <b>Quick check on your screenshots</b>",
-          "",
-          `Hi ${esc(who)} — your last few captures look identical, so MinuteFlow cannot tell whether your screen is being recorded properly.`,
-          "",
-          "Could you open MinuteFlow and check your screenshots are going through? If you have stepped away, a break or a clock-out keeps your log accurate.",
-          "",
-          `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
-        ].join("\n"),
+        message: noCaptures
+          ? [
+              "🖥️ <b>No screenshots detected</b>",
+              "",
+              `Hi ${esc(who)} — MinuteFlow has not received any screenshots from your session in the last ${Math.round(STATIC_WINDOW_MS / 60000)} minutes.`,
+              "",
+              "This usually means the extension lost connection or your screen-share stopped. Could you open MinuteFlow and check?",
+              "",
+              `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
+            ].join("\n")
+          : [
+              "🖥️ <b>Quick check on your screenshots</b>",
+              "",
+              `Hi ${esc(who)} — your last few captures look identical, so MinuteFlow cannot tell whether your screen is being recorded properly.`,
+              "",
+              "Could you open MinuteFlow and check your screenshots are going through? If you have stepped away, a break or a clock-out keeps your log accurate.",
+              "",
+              `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
+            ].join("\n"),
       });
 
       flagged.push(who);
       continue;
     }
 
-    // Warned already and still nothing moving — close it, but only if the
+    // Warned already and still nothing resolved — close it, but only if the
     // warning could actually have reached them. Someone with no Telegram link
     // never saw it, and closing a session on a warning nobody received is the
     // unfairness this whole flow exists to avoid. They stay flagged for Toni
     // instead, which is visible without being punitive.
     if (Date.now() - warnedAt >= GRACE_MS && prof.telegram_chat_id && AUTO_CLOSE_ENABLED) {
-      await forceClockOut(c.user_id, c.log_id, "screen_unchanged");
+      await forceClockOut(c.user_id, c.log_id, noCaptures ? "no_screenshots" : "screen_unchanged");
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id as number | null,
         userId: c.user_id,
@@ -163,7 +200,9 @@ export async function checkStaticScreens(
         message: [
           "⚪ <b>Session closed</b>",
           "",
-          "Your screen stayed the same after the check, so MinuteFlow ended the session and closed the open task.",
+          noCaptures
+            ? "No screenshots came through after the check, so MinuteFlow ended the session and closed the open task."
+            : "Your screen stayed the same after the check, so MinuteFlow ended the session and closed the open task.",
           "If you were working, tell Toni — the time can be put back.",
         ].join("\n"),
       });

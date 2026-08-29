@@ -33,6 +33,7 @@ type SessionRow = {
 const CLOSE_REASONS: Record<string, string> = {
   idle: "no activity",
   screen_unchanged: "unchanged screen activity",
+  no_screenshots: "no screenshots received",
   admin: "by admin",
 };
 
