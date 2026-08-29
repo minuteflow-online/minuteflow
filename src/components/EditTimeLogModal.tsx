@@ -1,5 +1,6 @@
 "use client";
 
+import { isBillableCategory } from "@/lib/billable";
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { countWords } from "@/lib/utils";
@@ -312,7 +313,7 @@ export default function EditTimeLogModal({
     // Time Review: five of Flor's Break entries were billed this way, and
     // since billable wasn't tracked below, the flip left no trace in
     // time_log_edits.
-    const isBillable = category !== "Personal" && category !== "Break";
+    const isBillable = isBillableCategory(category);
 
     if (isCreate) {
       // Find the selected user's profile for denormalized fields

@@ -1,5 +1,6 @@
 "use client";
 
+import { isBillableCategory } from "@/lib/billable";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useSession, type SessionActions } from "@/contexts/SessionContext";
@@ -1020,7 +1021,7 @@ export default function DashboardPage() {
 
       const lastLog = lastLogs[0] as TimeLog;
       const now = new Date().toISOString();
-      const isBillable = lastLog.category !== "Personal";
+      const isBillable = isBillableCategory(lastLog.category);
 
       const { data: logData, error: autoResumeLogError } = await supabase
         .from("time_logs")
@@ -1500,7 +1501,7 @@ export default function DashboardPage() {
         duration_ms: activeTask.start_time
           ? Date.now() - new Date(activeTask.start_time).getTime()
           : 0,
-        billable: activeTask.category !== "Personal",
+        billable: isBillableCategory(activeTask.category),
         client_memo: activeTask.client_memo || null,
         internal_memo: activeTask.internal_memo || null,
         is_manual: false,
@@ -1753,7 +1754,7 @@ export default function DashboardPage() {
     try {
     const now = new Date().toISOString();
 
-    const isBillable = preBreakTask.category !== "Personal";
+    const isBillable = isBillableCategory(preBreakTask.category);
 
     const { data: logData, error: resumeLogError } = await supabase
       .from("time_logs")
@@ -1842,7 +1843,7 @@ export default function DashboardPage() {
     // of billing the whole gap until now.
     await closeOpenNonBreakLogs(now);
 
-    const isBillable = log.category !== "Personal" && log.category !== "Break";
+    const isBillable = isBillableCategory(log.category);
 
     const { data: logData, error: onHoldLogError } = await supabase
       .from("time_logs")
@@ -2243,7 +2244,7 @@ export default function DashboardPage() {
               start_time: now,
               end_time: now,
               duration_ms: 0,
-              billable: formData.category !== "Personal" && formData.category !== "Break",
+              billable: isBillableCategory(formData.category),
               client_memo: formData.client_memo || null,
               internal_memo: formData.internal_memo || null,
               form_fill_ms: formData.form_fill_ms || 0,
@@ -2346,8 +2347,7 @@ export default function DashboardPage() {
         setActiveTask(null);
         setSession((prev) => (prev ? { ...prev, active_task: null } : prev));
 
-        const isBillable =
-          formData.category !== "Personal" && formData.category !== "Break";
+        const isBillable = isBillableCategory(formData.category);
 
         // If memos were for the old task (wizard flow), use new_task_client_memo for the new task
         const newTaskClientMemo = formData.task_status
@@ -2886,7 +2886,7 @@ export default function DashboardPage() {
         start_time: gapFillStartTime,
         end_time: now,
         duration_ms: durationMs,
-        billable: category !== "Personal" && category !== "Break",
+        billable: isBillableCategory(category),
         billing_type: "hourly",
         is_manual: true,
         form_fill_ms: 0,
@@ -2904,7 +2904,7 @@ export default function DashboardPage() {
           start_time: gapFillStartTime,
           end_time: now,
           duration_ms: durationMs,
-          billable: category !== "Personal" && category !== "Break",
+          billable: isBillableCategory(category),
           is_manual: true,
         } as unknown as TimeLog,
         ...prev,

@@ -1,3 +1,4 @@
+import { isBillableCategory } from "@/lib/billable";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 
 /**
@@ -99,12 +100,13 @@ export async function applyCorrection(
     });
   }
 
-  // Every other write path derives billable from category (billable = category
-  // !== "Personal"). Correction approval was the one place that didn't, so a log
-  // corrected out of "Clock Out"/"Personal" into a real task kept its old flag.
-  // An explicit billable change in the same correction wins over this default.
+  // Approving a correction re-derives billable from the new category, since
+  // a log corrected out of "Clock Out"/"Personal" into a real task would
+  // otherwise keep its old flag. It used to test Personal alone, so correcting
+  // an entry INTO Break made it billable. An explicit billable change in the
+  // same correction still wins over this default.
   if (changes.category && !("billable" in changes)) {
-    const newBillable = changes.category !== "Personal";
+    const newBillable = isBillableCategory(changes.category);
     updatePayload.billable = newBillable;
     auditRecords.push({
       log_id: logId,
