@@ -1192,17 +1192,30 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                   <div key={st.id} className="rounded-lg border border-sand bg-white p-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <span className="text-[12px] font-semibold text-espresso leading-tight">{st.task_name}</span>
-                        {/* Client Detail, not the task title — several subtasks under one
-                            Objective often share the same task name, so the title alone
-                            doesn't say which one this is. */}
-                        {st.task_detail && (
-                          <p className="text-[10px] text-stone/80 leading-snug mt-0.5">{st.task_detail}</p>
-                        )}
+                        {/* Client Detail leads — several subtasks under one Objective
+                            often share the same task name, so the title alone doesn't
+                            say which one this is. Task name + account + dates
+                            underneath for the rest of the context. */}
+                        <span className="text-[12px] font-semibold text-espresso leading-tight">
+                          {st.task_detail || st.task_name}
+                        </span>
+                        <p className="text-[10px] text-stone/80 leading-snug mt-0.5">
+                          {[st.task_name, st.account].filter(Boolean).join(" · ")}
+                          {st.start_date ? ` · Start ${formatDate(st.start_date)}` : ""}
+                          {st.due_date ? ` · Due ${formatDate(st.due_date)}` : ""}
+                        </p>
                       </div>
-                      <span className="text-[10px] text-stone shrink-0">
-                        {st.assignees.map((a) => a.name).join(", ") || "Unassigned"}
-                      </span>
+                      <div className="flex flex-col items-end gap-0.5 shrink-0">
+                        {st.assignees.length > 0 && (
+                          <span className="flex -space-x-1.5">
+                            {st.assignees.slice(0, 3).map((a) => <Avatar key={a.id} person={a} />)}
+                            {st.assignees.length > 3 && <span className="text-[10px] text-stone self-center pl-1">+{st.assignees.length - 3}</span>}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-stone text-right">
+                          {st.assignees.map((a) => a.name).join(", ") || "Unassigned"}
+                        </span>
+                      </div>
                     </div>
                     <ul className="mt-1 space-y-1">
                       {(st.todos ?? []).map((todo) => (
