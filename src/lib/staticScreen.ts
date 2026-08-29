@@ -30,6 +30,21 @@ import { esc } from "./telegram";
  * path below, worded for "nothing is arriving" rather than "the screen froze,"
  * since the likely cause (extension crashed, screen-share dropped, signed out)
  * is different from a frozen-but-connected capture.
+ *
+ * For that zero-captures case, extension_heartbeats.last_seen is consulted —
+ * but only to pick which message to send, never as its own trigger. That
+ * heartbeat is pinged by the extension itself, independent of which browser
+ * tab is focused, which is what makes it safe here in a way sessions.updated_at
+ * was not: a stale extension heartbeat means the capture agent itself is not
+ * running, not merely that a MinuteFlow tab is not the active one. Still,
+ * silence in task_screenshots is what decides whether to act; the extension
+ * heartbeat only decides what to say about it ("you look logged out" vs.
+ * "connected but nothing is coming through").
+ *
+ * Recovery is treated as easier to prove than trouble: a single fresh capture
+ * clears a standing warning immediately, before there is anywhere near enough
+ * to also judge frozen-vs-moving. Being slow to notice someone is back is its
+ * own kind of false positive.
  */
 
 /** How long the screen must be unchanged before it is worth mentioning. */
@@ -47,6 +62,12 @@ const MIN_CAPTURES = 3;
 /** Same switch the idle check uses. Both automatic closes are off until turned
  *  on deliberately — see the note in the idle cron for why. */
 const AUTO_CLOSE_ENABLED = process.env.IDLE_AUTO_CLOSE === "on";
+
+/** How stale extension_heartbeats.last_seen must be before the extension
+ *  itself (not the MinuteFlow tab) counts as disconnected/logged out. Matches
+ *  the threshold the dashboard's own SCE banner already uses, so "offline" in
+ *  a Telegram message and "offline" in the app mean the same thing. */
+const EXTENSION_STALE_MS = 5 * 60 * 1000;
 
 type Candidate = {
   user_id: string;
@@ -101,6 +122,31 @@ export async function checkStaticScreens(
       c.logStartTime != null && Date.now() - new Date(c.logStartTime).getTime() >= STATIC_WINDOW_MS;
     const noCaptures = count === 0 && taskOldEnough;
 
+    // Loaded before any branch needs it — both the recovery-clear path and
+    // the warn/close path need the profile, and this is the only place that
+    // knows whose warning to touch.
+    const { data: prof } = await supabase
+      .from("profiles")
+      .select("full_name, username, telegram_chat_id, screen_static_warned_at")
+      .eq("id", c.user_id)
+      .single();
+    if (!prof) continue;
+
+    // Any capture at all, even just one, is evidence the extension is back —
+    // clear a standing warning on the spot rather than waiting for enough
+    // shots to also judge frozen-vs-moving. Detecting "they're back" should
+    // be at least as quick as detecting "they went quiet," not slower: a
+    // warning that lingers after someone has visibly resumed is what makes
+    // this feel like it is watching for a reason to close them, not a check
+    // being cautious. The stricter frozen-screen judgment below still applies
+    // once there is enough to make it, on its own, later.
+    if (count > 0 && count < MIN_CAPTURES) {
+      if (prof.screen_static_warned_at) {
+        await supabase.from("profiles").update({ screen_static_warned_at: null }).eq("id", c.user_id);
+      }
+      continue;
+    }
+
     let frozen = false;
     if (!noCaptures) {
       if (count < MIN_CAPTURES) continue;
@@ -115,22 +161,13 @@ export async function checkStaticScreens(
       frozen = new Set(checksums).size === 1;
     }
 
-    // Loaded before the comparison because both outcomes need it — a moved
-    // screen has to clear this person's standing warning, not just a still one.
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("full_name, username, telegram_chat_id, screen_static_warned_at")
-      .eq("id", c.user_id)
-      .single();
-    if (!prof) continue;
-
     // The screen moved (real captures, not all identical). Clear any standing
     // warning here rather than in a sweep afterwards — this is the only place
     // that actually knows whose screen changed, and a sweep keyed on "still
     // clocked in" would leave the warning set on everyone who came back, so
     // their countdown would resume mid-way instead of starting over.
     if (!noCaptures && !frozen) {
-      if (prof?.screen_static_warned_at) {
+      if (prof.screen_static_warned_at) {
         await supabase
           .from("profiles")
           .update({ screen_static_warned_at: null })
@@ -144,6 +181,23 @@ export async function checkStaticScreens(
       ? new Date(prof.screen_static_warned_at as string).getTime()
       : null;
 
+    // Only meaningful for the zero-captures case: the extension pings its own
+    // heartbeat independently of any MinuteFlow tab, so a stale-or-missing row
+    // here means the extension itself looks logged out or not running — a
+    // more specific, more actionable thing to tell someone than "nothing is
+    // arriving." A frozen-but-connected screen already has captures, so this
+    // is never consulted for that case.
+    let extensionLoggedOut = false;
+    if (noCaptures) {
+      const { data: ext } = await supabase
+        .from("extension_heartbeats")
+        .select("last_seen")
+        .eq("user_id", c.user_id)
+        .maybeSingle();
+      extensionLoggedOut =
+        !ext?.last_seen || Date.now() - new Date(ext.last_seen as string).getTime() > EXTENSION_STALE_MS;
+    }
+
     // First time we see this stretch: say something, close nothing.
     if (!warnedAt) {
       await supabase
@@ -151,31 +205,41 @@ export async function checkStaticScreens(
         .update({ screen_static_warned_at: new Date().toISOString() })
         .eq("id", c.user_id);
 
-      // Worded as a prompt, not an accusation. Either case has plenty of
-      // innocent explanations — reading, a call, a second monitor, an
-      // extension that needs a reshare — and the useful thing is for them to
-      // check and decide, not to be told they are idle.
+      // Worded as a prompt, not an accusation. Every case here has plenty of
+      // innocent explanations — reading, a call, a second monitor, a signed-out
+      // extension — and the useful thing is for them to check and decide, not
+      // to be told they are idle.
       await notifyVaPrivately({
         chatId: prof.telegram_chat_id as number | null,
         userId: c.user_id,
         vaName: who,
         topic: "Screen activity",
         message: noCaptures
-          ? [
-              "🖥️ <b>No screenshots detected</b>",
-              "",
-              `Hi ${esc(who)} — MinuteFlow has not received any screenshots from your session in the last ${Math.round(STATIC_WINDOW_MS / 60000)} minutes.`,
-              "",
-              "This usually means the extension lost connection or your screen-share stopped. Could you open MinuteFlow and check?",
-              "",
-              `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
-            ].join("\n")
+          ? extensionLoggedOut
+            ? [
+                "🖥️ <b>You look logged out of the extension</b>",
+                "",
+                `Hi ${esc(who)} — MinuteFlow has not received any screenshots in the last ${Math.round(STATIC_WINDOW_MS / 60000)} minutes, and your extension has not checked in either.`,
+                "",
+                "Please open the MinuteFlow extension and make sure you are logged in — that is the most common cause.",
+                "",
+                `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
+              ].join("\n")
+            : [
+                "🖥️ <b>No screenshots detected</b>",
+                "",
+                `Hi ${esc(who)} — MinuteFlow has not received any screenshots from your session in the last ${Math.round(STATIC_WINDOW_MS / 60000)} minutes, even though your extension looks connected.`,
+                "",
+                "Double check you are logged into the extension and that your screen-share is still active.",
+                "",
+                `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
+              ].join("\n")
           : [
               "🖥️ <b>Quick check on your screenshots</b>",
               "",
               `Hi ${esc(who)} — your last few captures look identical, so MinuteFlow cannot tell whether your screen is being recorded properly.`,
               "",
-              "Could you open MinuteFlow and check your screenshots are going through? If you have stepped away, a break or a clock-out keeps your log accurate.",
+              "Could you open MinuteFlow and check your screenshots are going through — and that you're still logged into the extension? If you have stepped away, a break or a clock-out keeps your log accurate.",
               "",
               `If nothing changes in ${Math.round(GRACE_MS / 60000)} minutes the session will close on its own, and the time can always be corrected afterwards.`,
             ].join("\n"),
@@ -203,7 +267,8 @@ export async function checkStaticScreens(
           noCaptures
             ? "No screenshots came through after the check, so MinuteFlow ended the session and closed the open task."
             : "Your screen stayed the same after the check, so MinuteFlow ended the session and closed the open task.",
-          "If you were working, tell Toni — the time can be put back.",
+          "",
+          "If this is a mistake, open your Time Log, find this entry, and request a correction with an explanation — your screenshots up to the close are still on record for whoever reviews it.",
         ].join("\n"),
       });
       closed.push(who);
