@@ -22,13 +22,28 @@ async function requireAdmin() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
 
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("role, department")
+    .select("full_name, username, role, department")
     .eq("id", user.id)
     .single();
   if (!hasBroadAdminAccess(profile)) {
-    return { error: Response.json({ error: "Forbidden" }, { status: 403 }) };
+    // Says who the server thinks you are. A bare "Forbidden" on an account
+    // that plainly holds the role sends you hunting through RLS and deploy
+    // logs, when the usual answer is that this browser is signed in as
+    // somebody else — or as a client, via the login-as feature.
+    return {
+      error: Response.json(
+        {
+          error: "Forbidden",
+          signedInAs: profile?.full_name ?? profile?.username ?? "(no profile row found)",
+          role: profile?.role ?? null,
+          department: profile?.department ?? null,
+          lookupError: profileError?.message ?? null,
+        },
+        { status: 403 }
+      ),
+    };
   }
   return {};
 }
