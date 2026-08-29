@@ -350,6 +350,26 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
 
   const rootProjects = childrenByParent.get("__root__") ?? [];
 
+  // Every id nested under `id`, any depth. Same BFS shape nestableParentOptions
+  // already walks below, pulled out so the Subtasks tab's List/Board views can
+  // reuse it — those two fetch by project_id directly (see fetchSubtasks) and,
+  // unlike the Checklist view, weren't including a branch's sub-objectives.
+  const descendantsOf = useCallback(
+    (id: string): string[] => {
+      const acc: string[] = [];
+      const queue = [id];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        for (const child of childrenByParent.get(current) ?? []) {
+          acc.push(child.id);
+          queue.push(child.id);
+        }
+      }
+      return acc;
+    },
+    [childrenByParent]
+  );
+
   // Left-list search: keep a root if it or any descendant matches by name.
   const displayRoots = useMemo(() => {
     const q = listSearch.trim().toLowerCase();
@@ -539,7 +559,13 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const fetchSubtasks = useCallback(async (projectId: string) => {
     setSubtasksLoading(true);
     try {
-      const res = await fetch(`/api/assigned-tasks?projectId=${projectId}`, { cache: "no-store" });
+      // List/Board View for a branch, not just this one project — the
+      // Checklist view already pulls this project's whole nested tree
+      // (see ObjectiveOverview's dataScopeIds); these two views were only
+      // ever passed the one id, so a sub-objective's own subtasks never
+      // showed up under its parent.
+      const ids = [projectId, ...descendantsOf(projectId)].join(",");
+      const res = await fetch(`/api/assigned-tasks?projectId=${ids}`, { cache: "no-store" });
       if (!res.ok) return;
       const d = await res.json();
       setSubtasks(d.tasks ?? []);
@@ -548,7 +574,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
     } finally {
       setSubtasksLoading(false);
     }
-  }, []);
+  }, [descendantsOf]);
 
   // No ?mine=true here on purpose: the API's own rule already matches "VAs see
   // only what pertains to them, admins see all" — non-admins are filtered to
