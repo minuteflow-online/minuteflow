@@ -29,9 +29,14 @@ export const dynamic = "force-dynamic";
  * Secured by SHIFT_ANOMALY_CRON_SECRET.
  */
 export async function GET(request: NextRequest) {
+  // Vercel's scheduler sends CRON_SECRET, not this route's own name. Accepting
+  // both means the schedule works without giving up the ability to fire it by
+  // hand with a dedicated secret.
   const authHeader = request.headers.get("authorization");
-  const expectedSecret = process.env.SHIFT_ANOMALY_CRON_SECRET;
-  if (!expectedSecret || authHeader !== `Bearer ${expectedSecret}`) {
+  const accepted = [process.env.SHIFT_ANOMALY_CRON_SECRET, process.env.CRON_SECRET]
+    .filter(Boolean)
+    .map((secret) => `Bearer ${secret}`);
+  if (accepted.length === 0 || !authHeader || !accepted.includes(authHeader)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
