@@ -178,11 +178,18 @@ export async function POST(request: Request) {
     ? new Date(payload.record.clock_out_time).getTime()
     : null;
   const reasonIsFresh = closedAt !== null && Date.now() - closedAt < 2 * 60 * 1000;
-  const wasAutomatic = event === "clock_out" && Boolean(closedBy) && reasonIsFresh;
+  // Forced covers both: neither is the VA choosing to end their own day, so
+  // neither gets the thank-you greeting. Which of the two it was — a person
+  // clicking the button, or the idle/screenshot checks acting on their own —
+  // is a different fact, and conflating them ("automatically (by admin)") is
+  // a contradiction: an admin's click is not automatic.
+  const wasForced = event === "clock_out" && Boolean(closedBy) && reasonIsFresh;
+  const isAdminForced = wasForced && closedBy === "admin";
+  const isSystemForced = wasForced && !isAdminForced;
 
   let greeting: "sent" | "failed" | "unlinked" | null = null;
   let greetingText = "";
-  if ((event === "clock_in" || event === "clock_out") && !wasAutomatic) {
+  if ((event === "clock_in" || event === "clock_out") && !wasForced) {
     if (!chatId) {
       greeting = "unlinked";
     } else {
@@ -216,13 +223,17 @@ export async function POST(request: Request) {
   // Delivery is reported on this line rather than as a second message. Toni
   // asked to know when something reaches a VA privately, and one clock-in
   // producing two notifications would double the traffic for no extra fact.
-  // An automatic close says so in the same breath as the time, rather than
-  // reading exactly like someone finishing their day by choice.
-  const how = wasAutomatic
-    ? ` — automatically (${CLOSE_REASONS[closedBy as string] ?? closedBy})`
-    : "";
+  // A forced close says so in the same breath as the time, rather than
+  // reading exactly like someone finishing their day by choice — and says
+  // which kind: an admin's deliberate click, or the system acting on idle or
+  // screenshot checks it ran on its own.
+  const how = isAdminForced
+    ? " by admin"
+    : isSystemForced
+      ? ` — automatically by the system (${CLOSE_REASONS[closedBy as string] ?? closedBy})`
+      : "";
   const lines = [
-    `${wasAutomatic ? "⚠️" : EVENTS[event]} <b>${esc(who)}</b> ${VERBS[event]}${how} at ${time} ET.`,
+    `${wasForced ? "⚠️" : EVENTS[event]} <b>${esc(who)}</b> ${VERBS[event]}${how} at ${time} ET.`,
   ];
   // The exact words, not just that something went out. The lines are random,
   // so "greeting sent" would leave no way to know what a given person read.

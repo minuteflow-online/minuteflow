@@ -1207,15 +1207,29 @@ export default function AdminPage() {
       );
     }
 
-    // Reset their session (use update, not upsert — RLS INSERT policy blocks admins)
+    // Reset their session (use update, not upsert — RLS INSERT policy blocks admins).
+    // clock_out_time and auto_closed_reason are what session-events reads to
+    // decide the Telegram wording — without them this looked exactly like the
+    // VA's own end-of-day clock-out (thank-you greeting included), which is
+    // what actually happened to Flor on 2026-08-28.
     await supabase
       .from("sessions")
       .update({
         clocked_in: false,
         active_task: null,
         updated_at: now,
+        clock_out_time: now,
+        auto_closed_reason: "admin",
       })
       .eq("user_id", targetUserId);
+
+    // Matches what forceClockOut() clears on every other automatic close, so a
+    // standing warning from before this click doesn't carry into their next
+    // session and misfire the idle check.
+    await supabase
+      .from("profiles")
+      .update({ idle_warned_at: null, screen_static_warned_at: null })
+      .eq("id", targetUserId);
 
     // Create a "Forced Clock Out" log entry so the activity log shows it was forced
     const { data: targetProfile } = await supabase
