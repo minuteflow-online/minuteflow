@@ -14,7 +14,7 @@ type CommentRow = { id: number; body: string; created_at: string; author: string
 type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[] };
 type Assignee = { id: string; name: string; avatar_url: string | null };
 type Todo = { id: number; text: string; sort_order: number; completed: boolean };
-type TaskRider = { key: string; name: string; avatar_url: string | null; glow: "yellow" | "green" | "" };
+type TaskRider = { key: string; name: string; avatar_url: string | null; glow: "yellow" | "green" | ""; count: number };
 type SubtaskRow = { id: number; project_id: string; task_name: string; task_detail: string | null; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[]; todos?: Todo[] };
 
 // Mirrors LOCKED_TODO_STATUSES on the server (assigned-tasks/[id]/todos/[todoId]/route.ts)
@@ -529,15 +529,29 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
       const arr = byProject.get(st.project_id);
       if (arr) arr.push(st); else byProject.set(st.project_id, [st]);
     }
-    // One dot per TASK-assignment, split into two clusters: START (not yet
-    // approved) and END (approved). Each cluster renders as an overlapping
-    // avatar stack so faces PEEK past each other and the depth shows how many
-    // are involved — never a single face hiding the rest.
+    // ONE face per PERSON in each cluster — START (their not-yet-approved work)
+    // and END (their approved work) — with a badge counting that person's tasks
+    // there, so a person's many tasks don't repeat their face. Approving a task
+    // moves it from the person's start count to their end count: that's when a
+    // face "separates" out toward the fill edge.
+    type Raw = { personId: string; name: string; avatar_url: string | null; glow: "yellow" | "green" | "" };
+    const mergeGlow = (a: "yellow" | "green" | "", b: "yellow" | "green" | ""): "yellow" | "green" | "" =>
+      a === "yellow" || b === "yellow" ? "yellow" : a === "green" || b === "green" ? "green" : "";
+    const groupByPerson = (rows: Raw[]): TaskRider[] => {
+      const m = new Map<string, TaskRider>();
+      for (const r of rows) {
+        const e = m.get(r.personId);
+        if (e) { e.count += 1; e.glow = mergeGlow(e.glow, r.glow); }
+        else m.set(r.personId, { key: r.personId, name: r.name, avatar_url: r.avatar_url, glow: r.glow, count: 1 });
+      }
+      // Glowing faces to the front so a pending/approved marker peeks on top.
+      return [...m.values()].sort((x, y) => (y.glow ? 1 : 0) - (x.glow ? 1 : 0));
+    };
     const byItem = new Map<string, { start: TaskRider[]; end: TaskRider[]; fill: number }>();
     for (const item of overviewItems) {
       const ids = [item.id, ...descendantsOf(item.id)];
-      const start: TaskRider[] = [];
-      const end: TaskRider[] = [];
+      const startRaw: Raw[] = [];
+      const endRaw: Raw[] = [];
       for (const id of ids) {
         for (const st of byProject.get(id) ?? []) {
           if (STATUS_WEIGHT[st.status] === undefined) continue; // cancelled / unknown → excluded
@@ -546,15 +560,13 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
             ? "yellow"
             : (done && st.review_required ? "green" : "");
           for (const a of st.assignees) {
-            (done ? end : start).push({ key: `${st.id}-${a.id}`, name: a.name, avatar_url: a.avatar_url, glow });
+            (done ? endRaw : startRaw).push({ personId: a.id, name: a.name, avatar_url: a.avatar_url, glow });
           }
         }
       }
-      // Glowing (pending / reviewed) faces to the front so they peek on top.
-      const frontGlow = (arr: TaskRider[]) => arr.sort((x, y) => (y.glow ? 1 : 0) - (x.glow ? 1 : 0));
       const roll = rollup.get(item.id);
       const fill = roll && roll.total ? Math.round((roll.done / roll.total) * 100) : 0;
-      byItem.set(item.id, { start: frontGlow(start), end: frontGlow(end), fill });
+      byItem.set(item.id, { start: groupByPerson(startRaw), end: groupByPerson(endRaw), fill });
     }
     return byItem;
   }, [subtasks, overviewItems, descendantsOf, rollup]);
@@ -879,22 +891,28 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                             : g === "green"
                             ? "ring-2 ring-sage shadow-[0_0_7px_1px_rgba(107,143,113,0.85)]"
                             : "ring-1 ring-white";
-                        // Overlapping stack: faces peek past each other (-space-x),
-                        // leftmost on top (z-index), capped with a +N count.
+                        // One face per PERSON, peeking past each other (-space-x),
+                        // leftmost on top. A person's task count rides on the
+                        // top-right of their avatar, so the same face never repeats.
                         const stack = (riders: TaskRider[]) => {
                           const shown = riders.slice(0, CAP);
                           const extra = riders.length - shown.length;
                           return (
                             <div className="flex items-center">
-                              <div className="flex items-center -space-x-2">
+                              <div className="flex items-center -space-x-1.5">
                                 {shown.map((r, i) => (
                                   <span
                                     key={r.key}
-                                    title={`${r.name}${r.glow === "yellow" ? " · awaiting review" : r.glow === "green" ? " · reviewed & approved" : ""}`}
+                                    title={`${r.name} · ${r.count} task${r.count === 1 ? "" : "s"}${r.glow === "yellow" ? " · awaiting review" : r.glow === "green" ? " · reviewed & approved" : ""}`}
                                     className={`relative rounded-full ${glowRing(r.glow)}`}
                                     style={{ zIndex: shown.length - i }}
                                   >
                                     <Avatar person={{ id: r.key, name: r.name, avatar_url: r.avatar_url }} />
+                                    {r.count > 1 && (
+                                      <span className="absolute -top-1.5 -right-1.5 z-10 h-[14px] min-w-[14px] px-[3px] rounded-full bg-espresso text-white text-[8px] font-bold flex items-center justify-center border border-white">
+                                        {r.count}
+                                      </span>
+                                    )}
                                   </span>
                                 ))}
                               </div>
