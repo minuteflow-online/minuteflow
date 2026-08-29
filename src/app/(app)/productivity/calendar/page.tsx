@@ -56,6 +56,13 @@ function taskModesForMember(member: TeamMember | undefined): { canTimeBased: boo
   return { canTimeBased: true, canOutputBased: isHybrid };
 }
 
+// person + org-date + task + account — the best identity a time_log carries
+// (it has no task reference), same matching used by useRevisionByLogId for
+// the same underlying reason.
+function actualMatchKey(userId: string, dateStr: string, taskName: string | null, account: string | null) {
+  return `${userId}|${dateStr}|${(taskName ?? "").trim().toLowerCase()}|${(account ?? "").trim().toLowerCase()}`;
+}
+
 type DueItem = {
   id: string;
   // The underlying assigned_tasks/fixed_pay_tasks row id — id itself carries a
@@ -188,6 +195,11 @@ export default function ProductivityCalendarPage() {
   const [draftVaIds, setDraftVaIds] = useState<string[]>([]);
   const [compareSchedules, setCompareSchedules] = useState<Record<string, RawTask[]>>({});
   const [showComparePicker, setShowComparePicker] = useState(false);
+  // Actual worked minutes, keyed by matchKey(vaId, dateStr, taskName, account) —
+  // time_logs carries no task reference, so this is the same person+name+account
+  // matching useRevisionByLogId uses. Powers the "shaded to actual time" overlay
+  // on each scheduled block.
+  const [actualMinutesByKey, setActualMinutesByKey] = useState<Map<string, number>>(new Map());
   const [monthYear, setMonthYear] = useState<number>(new Date().getFullYear());
   const [monthMonth, setMonthMonth] = useState<number>(new Date().getMonth());
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -1274,6 +1286,49 @@ export default function ProductivityCalendarPage() {
     return Array.from({ length: 7 }, (_, i) => addDaysToDateStr(start, i));
   }, [selectedDate]);
 
+  // Real worked time, for the "shade to actual" overlay. Scoped to the whole
+  // visible week (selectedDate's week covers Day/Week/Compare alike, since
+  // selectedDate is always one of its own weekDates) and to every VA on
+  // screen — dayUserId for Week/Day, plus each compared teammate.
+  const actualTimeVaIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (dayUserId) ids.add(dayUserId);
+    for (const id of compareVaIds) ids.add(id);
+    return Array.from(ids);
+  }, [dayUserId, compareVaIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (actualTimeVaIds.length === 0 || weekDates.length === 0) {
+        setActualMinutesByKey(new Map());
+        return;
+      }
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("time_logs")
+        .select("user_id, task_name, account, session_date, duration_ms")
+        .in("user_id", actualTimeVaIds)
+        .gte("session_date", weekDates[0])
+        .lte("session_date", weekDates[weekDates.length - 1])
+        .is("deleted_at", null);
+      if (cancelled) return;
+      const map = new Map<string, number>();
+      for (const log of (data ?? []) as {
+        user_id: string; task_name: string | null; account: string | null;
+        session_date: string | null; duration_ms: number | null;
+      }[]) {
+        if (!log.session_date) continue;
+        const ms = log.duration_ms && log.duration_ms > 0 ? log.duration_ms : 0;
+        if (ms === 0) continue;
+        const key = actualMatchKey(log.user_id, log.session_date, log.task_name, log.account);
+        map.set(key, (map.get(key) ?? 0) + ms / 60000);
+      }
+      setActualMinutesByKey(map);
+    })();
+    return () => { cancelled = true; };
+  }, [actualTimeVaIds, weekDates]);
+
   const weekBudget = useMemo(() => {
     const member = teamMembers.find((m) => m.id === dayUserId);
     const limit = member?.weekly_budget_limit ?? null;
@@ -1345,7 +1400,38 @@ export default function ProductivityCalendarPage() {
     const endMinutes = (end.getHours() - DAY_START_HOUR) * 60 + end.getMinutes();
     const top = Math.max(0, (startMinutes / 60) * HOUR_HEIGHT);
     const height = Math.max(20, ((endMinutes - startMinutes) / 60) * HOUR_HEIGHT);
-    return { top, height };
+    // Unclamped, unlike height above — this is the scheduled length itself,
+    // used to compare against actual worked time. A very short block still
+    // floors its drawn height at 20px, but that floor shouldn't make a 10-min
+    // task read as "way over" the moment 15 minutes are logged against it.
+    const durationMinutes = Math.max(0, endMinutes - startMinutes);
+    return { top, height, durationMinutes };
+  }
+
+  // How long dateStr's rendering of task was actually worked, per the logged
+  // time_logs matched by person + task name + account (see actualMatchKey).
+  // Returns 0 for anything with no matching logged time.
+  const actualMinutesFor = useCallback(
+    (vaId: string | null, dateStr: string, task: RawTask) => {
+      if (!vaId) return 0;
+      return actualMinutesByKey.get(actualMatchKey(vaId, dateStr, task.task_name, task.account)) ?? 0;
+    },
+    [actualMinutesByKey]
+  );
+
+  // The shade-to-actual overlay + over-time treatment shared by all three
+  // hour-grid render sites (Week, Compare, Day) — height of the "worked so
+  // far" fill, whether the block ran over its scheduled length, and by how
+  // much. Shade height is capped to the block's own (already-clamped) height
+  // so a short block with lots of overrun doesn't shade past its own box.
+  function actualOverlay(vaId: string | null, dateStr: string, task: RawTask, pos: { top: number; height: number; durationMinutes: number }) {
+    const actual = actualMinutesFor(vaId, dateStr, task);
+    if (actual <= 0 || pos.durationMinutes <= 0) return null;
+    const ratio = actual / pos.durationMinutes;
+    const shadeHeight = Math.min(ratio, 1) * pos.height;
+    const overMinutes = Math.round(actual - pos.durationMinutes);
+    const isOver = overMinutes > 0;
+    return { shadeHeight, isOver, overMinutes };
   }
 
   // Due Time is a plain "HH:MM" clock time (not a timestamp, no timezone
@@ -1487,31 +1573,45 @@ export default function ProductivityCalendarPage() {
                             const dayTasks = scheduledForDate(dateStr);
                             const overlapLayout = computeOverlapLayout(dayTasks);
                             return dayTasks.map((task) => {
-                              const { top, height } = blockPosition(task);
+                              const pos = blockPosition(task);
+                              const { top, height } = pos;
                               // Due-date-driven blocks render fully opaque; start-date-driven
                               // blocks (the default) stay at 70% opacity.
                               const isDueBlock = dateStr === task.due_date && dateStr !== task.start_date;
                               const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
                               const label = spanLabel(task, dateStr);
+                              const overlay = actualOverlay(dayUserId, dateStr, task, pos);
+                              const left = `calc(2px + (100% - 4px) * ${col} / ${cols})`;
+                              const width = `calc((100% - 4px) / ${cols} - 2px)`;
                               return (
-                                <button
-                                  key={task.id}
-                                  type="button"
-                                  onClick={() => openEditBlock(task)}
-                                  className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
-                                  style={{
-                                    top,
-                                    height,
-                                    left: `calc(2px + (100% - 4px) * ${col} / ${cols})`,
-                                    width: `calc((100% - 4px) / ${cols} - 2px)`,
-                                  }}
-                                >
-                                  <p className="truncate text-[9px] font-semibold leading-tight">
-                                    {label && <span className="opacity-70">[{label}] </span>}
-                                    {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                                    {task.task_name}
-                                  </p>
-                                </button>
+                                <div key={task.id} className="contents">
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditBlock(task)}
+                                    className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                                    style={{ top, height, left, width }}
+                                  >
+                                    {overlay && (
+                                      <div
+                                        className="pointer-events-none absolute inset-x-0 top-0 bg-ink/25"
+                                        style={{ height: overlay.shadeHeight }}
+                                      />
+                                    )}
+                                    <p className="relative truncate text-[9px] font-semibold leading-tight">
+                                      {label && <span className="opacity-70">[{label}] </span>}
+                                      {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                                      {task.task_name}
+                                    </p>
+                                  </button>
+                                  {overlay?.isOver && (
+                                    <p
+                                      className="pointer-events-none absolute truncate text-[8px] font-bold text-terracotta leading-none"
+                                      style={{ top: top + height + 1, left, width }}
+                                    >
+                                      {overlay.overMinutes}m over
+                                    </p>
+                                  )}
+                                </div>
                               );
                             });
                           })()}
@@ -2594,36 +2694,50 @@ export default function ProductivityCalendarPage() {
                       const overlap = computeOverlapLayout(blocks);
                       const n = compareVaIds.length;
                       return blocks.map((task) => {
-                        const { top, height } = blockPosition(task);
+                        const pos = blockPosition(task);
+                        const { top, height } = pos;
                         const { col, cols } = overlap.get(task.id) ?? { col: 0, cols: 1 };
                         const isDueBlock = selectedDate === task.due_date && selectedDate !== task.start_date;
                         const frac = colIdx + col / cols;
                         const label = spanLabel(task, selectedDate);
+                        const overlay = actualOverlay(vaId, selectedDate, task, pos);
+                        const left = `calc(3.5rem + (100% - 3.5rem) * ${frac} / ${n})`;
+                        const width = `calc((100% - 3.5rem) / ${n * cols} - 3px)`;
                         return (
-                          <button
-                            key={`${vaId}-${task.id}`}
-                            type="button"
-                            onClick={() => openEditBlock(task)}
-                            className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
-                            style={{
-                              top,
-                              height,
-                              left: `calc(3.5rem + (100% - 3.5rem) * ${frac} / ${n})`,
-                              width: `calc((100% - 3.5rem) / ${n * cols} - 3px)`,
-                            }}
-                          >
-                            <p className="truncate text-[10px] font-semibold leading-tight">
-                              {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
-                              {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                              {task.task_name}
-                              {task.task_detail && (
-                                <span className="font-normal opacity-80"> | {task.task_detail}</span>
+                          <div key={`${vaId}-${task.id}`} className="contents">
+                            <button
+                              type="button"
+                              onClick={() => openEditBlock(task)}
+                              className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                              style={{ top, height, left, width }}
+                            >
+                              {overlay && (
+                                <div
+                                  className="pointer-events-none absolute inset-x-0 top-0 bg-ink/25"
+                                  style={{ height: overlay.shadeHeight }}
+                                />
                               )}
-                            </p>
-                            {task.account && (
-                              <p className="truncate text-[9px] opacity-80">{task.account}</p>
+                              <p className="relative truncate text-[10px] font-semibold leading-tight">
+                                {label && <span className="mr-1 rounded bg-black/10 px-1 text-[8px] font-bold uppercase">{label}</span>}
+                                {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                                {task.task_name}
+                                {task.task_detail && (
+                                  <span className="font-normal opacity-80"> | {task.task_detail}</span>
+                                )}
+                              </p>
+                              {task.account && (
+                                <p className="relative truncate text-[9px] opacity-80">{task.account}</p>
+                              )}
+                            </button>
+                            {overlay?.isOver && (
+                              <p
+                                className="pointer-events-none absolute truncate text-[8px] font-bold text-terracotta leading-none"
+                                style={{ top: top + height + 1, left, width }}
+                              >
+                                {overlay.overMinutes}m over
+                              </p>
                             )}
-                          </button>
+                          </div>
                         );
                       });
                     })}
@@ -2733,12 +2847,14 @@ export default function ProductivityCalendarPage() {
                       .filter((item) => item.dateType === "due" && item.dueTime)
                       .map((item) => dueTimePosition(item.dueTime!));
                     const taskBlocks = dayTasks.map((task) => {
-                      const { top, height } = blockPosition(task);
+                      const pos = blockPosition(task);
+                      const { top, height } = pos;
                       // Due-date-driven blocks render fully opaque; start-date-driven
                       // blocks (the default) stay at 70% opacity.
                       const isDueBlock = selectedDate === task.due_date && selectedDate !== task.start_date;
                       const { col, cols } = overlapLayout.get(task.id) ?? { col: 0, cols: 1 };
                       const label = spanLabel(task, selectedDate);
+                      const overlay = actualOverlay(dayUserId, selectedDate, task, pos);
                       // Reserve room on the right for a due-time badge when one
                       // falls inside this block's time span, so the two sit side
                       // by side instead of the badge floating on top of the block.
@@ -2748,60 +2864,72 @@ export default function ProductivityCalendarPage() {
                       // on the block. Treat the edge as a collision and dock it.
                       const collidesWithDueMarker = dueMarkerTops.some((markerTop) => markerTop >= top && markerTop <= top + height);
                       const dueGutter = collidesWithDueMarker ? 96 : 0;
+                      const left = `calc(4rem + (100% - 4rem - 0.5rem - ${dueGutter}px) * ${col} / ${cols})`;
+                      const width = `calc((100% - 4rem - 0.5rem - ${dueGutter}px) / ${cols} - 4px)`;
                       return (
-                        <button
-                          key={task.id}
-                          type="button"
-                          onClick={() => openEditBlock(task)}
-                          className={`pointer-events-auto absolute overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)}`}
-                          style={{
-                            top,
-                            height,
-                            left: `calc(4rem + (100% - 4rem - 0.5rem - ${dueGutter}px) * ${col} / ${cols})`,
-                            width: `calc((100% - 4rem - 0.5rem - ${dueGutter}px) / ${cols} - 4px)`,
-                          }}
-                        >
-                          <div className="flex h-full items-start gap-2">
-                            <div className="min-w-0 shrink-0 max-w-[55%]">
-                              {/* Task and client detail share the top line; the
-                                  account sits underneath. The block's position and
-                                  height already say when it runs, which is why the
-                                  times this used to print were the one thing here
-                                  you could read off the grid anyway. */}
-                              <p className="truncate text-[11px] font-semibold">
-                                {label && (
-                                  <span className="mr-1 rounded bg-black/10 px-1 text-[9px] font-bold uppercase tracking-wide">
-                                    {label}
-                                  </span>
+                        <div key={task.id} className="contents">
+                          <button
+                            type="button"
+                            onClick={() => openEditBlock(task)}
+                            className={`pointer-events-auto absolute overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                            style={{ top, height, left, width }}
+                          >
+                            {overlay && (
+                              <div
+                                className="pointer-events-none absolute inset-x-0 top-0 bg-ink/25"
+                                style={{ height: overlay.shadeHeight }}
+                              />
+                            )}
+                            <div className="relative flex h-full items-start gap-2">
+                              <div className="min-w-0 shrink-0 max-w-[55%]">
+                                {/* Task and client detail share the top line; the
+                                    account sits underneath. The block's position and
+                                    height already say when it runs, which is why the
+                                    times this used to print were the one thing here
+                                    you could read off the grid anyway. */}
+                                <p className="truncate text-[11px] font-semibold">
+                                  {label && (
+                                    <span className="mr-1 rounded bg-black/10 px-1 text-[9px] font-bold uppercase tracking-wide">
+                                      {label}
+                                    </span>
+                                  )}
+                                  {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                                  {task.task_name}
+                                  {task.task_detail && (
+                                    <span className="font-normal opacity-80"> | {task.task_detail}</span>
+                                  )}
+                                </p>
+                                {task.account && (
+                                  <p className="truncate text-[10px] opacity-80">{task.account}</p>
                                 )}
-                                {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                                {task.task_name}
-                                {task.task_detail && (
-                                  <span className="font-normal opacity-80"> | {task.task_detail}</span>
-                                )}
-                              </p>
-                              {task.account && (
-                                <p className="truncate text-[10px] opacity-80">{task.account}</p>
+                              </div>
+                              {task.todos.length > 0 && (
+                                // Runs alongside the title/time instead of stacking below
+                                // it — a 1hr block is usually wide, not tall, so the to-dos
+                                // get the block's full height to themselves here. Whatever
+                                // doesn't fit is clipped by the block's own overflow.
+                                <div className="min-w-0 flex-1 border-l border-black/10 pl-2">
+                                  <p className="truncate text-[9px] font-semibold opacity-70">
+                                    {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}
+                                  </p>
+                                  {task.todos.map((t) => (
+                                    <p key={t.id} className="truncate text-[9px] opacity-70 leading-tight">
+                                      · {t.text}
+                                    </p>
+                                  ))}
+                                </div>
                               )}
                             </div>
-                            {task.todos.length > 0 && (
-                              // Runs alongside the title/time instead of stacking below
-                              // it — a 1hr block is usually wide, not tall, so the to-dos
-                              // get the block's full height to themselves here. Whatever
-                              // doesn't fit is clipped by the block's own overflow.
-                              <div className="min-w-0 flex-1 border-l border-black/10 pl-2">
-                                <p className="truncate text-[9px] font-semibold opacity-70">
-                                  {task.todos.length} to-do{task.todos.length !== 1 ? "s" : ""}
-                                </p>
-                                {task.todos.map((t) => (
-                                  <p key={t.id} className="truncate text-[9px] opacity-70 leading-tight">
-                                    · {t.text}
-                                  </p>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </button>
+                          </button>
+                          {overlay?.isOver && (
+                            <p
+                              className="pointer-events-none absolute truncate text-[8px] font-bold text-terracotta leading-none"
+                              style={{ top: top + height + 1, left, width }}
+                            >
+                              {overlay.overMinutes}m over
+                            </p>
+                          )}
+                        </div>
                       );
                     });
 
