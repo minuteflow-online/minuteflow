@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { sendTelegram, sendTelegramTo, telegramEnabled, esc } from "@/lib/telegram";
 import { parseLinkPayload } from "@/lib/telegramLink";
+import { handleAnomalyReply } from "@/lib/anomalyConversation";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +30,8 @@ type TgUpdate = {
   message?: {
     text?: string;
     chat?: { id?: number; type?: string; first_name?: string; username?: string };
-    from?: { first_name?: string; username?: string };
+    from?: { id?: number; first_name?: string; username?: string };
+    reply_to_message?: { message_id?: number };
   };
 };
 
@@ -51,6 +53,21 @@ export async function POST(request: Request) {
   const message = update.message;
   const chatId = message?.chat?.id;
   const text = (message?.text ?? "").trim();
+
+  // Replies are handled before the /start filter: they are plain text in
+  // whatever chat the alert went to, so they would otherwise fall straight
+  // through it and be dropped. handleAnomalyReply returns false when the
+  // replied-to message is not one of ours.
+  const replyTo = message?.reply_to_message?.message_id;
+  if (chatId && replyTo && text) {
+    const handled = await handleAnomalyReply(admin(), {
+      chatId,
+      replyToMessageId: replyTo,
+      text,
+      fromId: message?.from?.id,
+    });
+    if (handled) return Response.json({ ok: true, handled: "anomaly-reply" });
+  }
 
   // Only private chats: a group's id is no use for a personal notice, and
   // linking one to a profile would send that person's messages to a room.

@@ -66,7 +66,7 @@ function tokenFor(bot: TelegramBot): string | undefined {
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
-function chatIdFor(topic: TelegramTopic): string | undefined {
+export function chatIdFor(topic: TelegramTopic): string | undefined {
   const submissions = process.env.TELEGRAM_SUBMISSIONS_CHAT_ID || process.env.TELEGRAM_GROUP_CHAT_ID;
   switch (topic) {
     // No fallbacks — see the routing rules above.

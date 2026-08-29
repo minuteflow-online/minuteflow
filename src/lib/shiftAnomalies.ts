@@ -1,4 +1,6 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { ORG_TIMEZONE } from "@/lib/taskSchedule";
+import { esc } from "@/lib/telegram";
 
 // Same three checks used in the manual August time review: a Break entry that
 // somehow ended up billable, a "Clock In" placeholder that never got handed
@@ -15,19 +17,19 @@ const OVERLAP_MINUTES = 2;
 export interface ShiftAnomalyFinding {
   type: "billed_break" | "orphaned_clock_in" | "overlap";
   logId: number;
+  /** Every log the finding implicates — two of them for an overlap. */
+  logIds: number[];
   taskName: string;
   startTime: string;
   endTime: string | null;
+  /** The slice of the day that is actually wrong, not the whole entry. */
+  windowStart: string;
+  windowEnd: string | null;
   minutes: number;
   detail: string;
 }
 
-export interface ShiftAnomalyResult {
-  clean: boolean;
-  findings: ShiftAnomalyFinding[];
-}
-
-interface TimeLogRow {
+export interface ShiftLogRow {
   id: number;
   task_name: string;
   category: string;
@@ -35,6 +37,13 @@ interface TimeLogRow {
   start_time: string;
   end_time: string | null;
   duration_ms: number | null;
+}
+
+export interface ShiftAnomalyResult {
+  clean: boolean;
+  findings: ShiftAnomalyFinding[];
+  /** The whole day, in order — what the itemized log in the alert is built from. */
+  logs: ShiftLogRow[];
 }
 
 /**
@@ -58,9 +67,10 @@ export async function checkShiftAnomalies(
     .select("id, task_name, category, billable, start_time, end_time, duration_ms")
     .eq("user_id", userId)
     .eq("session_date", sessionDate)
+    .is("deleted_at", null)
     .order("start_time", { ascending: true });
 
-  const rows = (logs ?? []) as unknown as TimeLogRow[];
+  const rows = (logs ?? []) as unknown as ShiftLogRow[];
   const findings: ShiftAnomalyFinding[] = [];
 
   for (const row of rows) {
@@ -70,9 +80,12 @@ export async function checkShiftAnomalies(
       findings.push({
         type: "billed_break",
         logId: row.id,
+        logIds: [row.id],
         taskName: row.task_name,
         startTime: row.start_time,
         endTime: row.end_time,
+        windowStart: row.start_time,
+        windowEnd: row.end_time,
         minutes,
         detail: `Break marked billable (${minutes.toFixed(0)} min)`,
       });
@@ -82,9 +95,12 @@ export async function checkShiftAnomalies(
       findings.push({
         type: "orphaned_clock_in",
         logId: row.id,
+        logIds: [row.id],
         taskName: row.task_name,
         startTime: row.start_time,
         endTime: row.end_time,
+        windowStart: row.start_time,
+        windowEnd: row.end_time,
         minutes,
         detail: `"Clock In" placeholder ran ${minutes.toFixed(0)} min without handing off to a task`,
       });
@@ -101,16 +117,22 @@ export async function checkShiftAnomalies(
       const aEnd = new Date(a.end_time).getTime();
       const bStart = new Date(b.start_time).getTime();
       const bEnd = new Date(b.end_time).getTime();
-      const overlapMs = Math.min(aEnd, bEnd) - Math.max(aStart, bStart);
-      const overlapMinutes = overlapMs / 60000;
+      const overlapStart = Math.max(aStart, bStart);
+      const overlapEnd = Math.min(aEnd, bEnd);
+      const overlapMinutes = (overlapEnd - overlapStart) / 60000;
 
       if (overlapMinutes > OVERLAP_MINUTES) {
         findings.push({
           type: "overlap",
           logId: b.id,
+          logIds: [a.id, b.id],
           taskName: b.task_name,
           startTime: b.start_time,
           endTime: b.end_time,
+          // Only the overlapping slice, not either entry in full — the point is
+          // to see the double-counted minutes on their own.
+          windowStart: new Date(overlapStart).toISOString(),
+          windowEnd: new Date(overlapEnd).toISOString(),
           minutes: overlapMinutes,
           detail: `"${b.task_name}" (log ${b.id}) overlaps "${a.task_name}" (log ${a.id}) by ${overlapMinutes.toFixed(0)} min — possible double count`,
         });
@@ -118,18 +140,96 @@ export async function checkShiftAnomalies(
     }
   }
 
-  return { clean: findings.length === 0, findings };
+  return { clean: findings.length === 0, findings, logs: rows };
+}
+
+/** "9:04 AM" in org time. */
+export function clockTime(iso: string | null): string {
+  if (!iso) return "open";
+  return new Date(iso).toLocaleTimeString("en-US", {
+    timeZone: ORG_TIMEZONE,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** "1h 22m" / "22m" — durations read faster than a raw minute count. */
+export function humanDuration(ms: number): string {
+  const totalMinutes = Math.round(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+}
+
+function pad(value: string, width: number): string {
+  return value.length >= width ? value.slice(0, width) : value + " ".repeat(width - value.length);
+}
+
+/**
+ * The itemized day, inside a <pre> block so the columns line up.
+ *
+ * The whole day is here rather than only the flagged entries, because deciding
+ * whether an overlap is a real double-count usually means looking at what sat
+ * either side of it.
+ */
+function formatDayLog(rows: ShiftLogRow[]): string[] {
+  if (rows.length === 0) return [];
+
+  const lines = rows.map((row) => {
+    const span = `${clockTime(row.start_time)}–${clockTime(row.end_time)}`;
+    const duration = humanDuration(row.duration_ms ?? 0);
+    const flag = row.billable ? " " : "·";
+    return `${pad(span, 18)}${flag} ${pad(row.task_name, 22)} ${pad(row.category, 15)} ${duration}`;
+  });
+
+  const billableMs = rows
+    .filter((row) => row.billable)
+    .reduce((sum, row) => sum + (row.duration_ms ?? 0), 0);
+
+  return [
+    "",
+    "<b>Full day</b>  <i>(· = non-billable)</i>",
+    `<pre>${esc(lines.join("\n"))}</pre>`,
+    `Billable total: <b>${humanDuration(billableMs)}</b>`,
+  ];
 }
 
 /** Telegram HTML message for one shift's result. Run vaName through esc() first. */
-export function formatShiftMessage(vaName: string, sessionDate: string, result: ShiftAnomalyResult): string {
+export function formatShiftMessage(
+  vaName: string,
+  sessionDate: string,
+  result: ShiftAnomalyResult
+): string {
   if (result.clean) {
-    return [`✅ <b>${vaName}</b> — ${sessionDate}`, "", "Shift looks clean, no anomalies found."].join("\n");
+    return [
+      `✅ <b>${vaName}</b> — ${sessionDate}`,
+      "",
+      "Shift looks clean, no anomalies found.",
+      ...formatDayLog(result.logs),
+    ].join("\n");
   }
 
-  const lines = [`⚠️ <b>${vaName}</b> — ${sessionDate}`, "", `${result.findings.length} item(s) flagged:`, ""];
-  for (const f of result.findings) {
-    lines.push(`• ${f.detail}`);
-  }
+  const lines = [
+    `⚠️ <b>${vaName}</b> — ${sessionDate}`,
+    "",
+    `${result.findings.length} item(s) flagged:`,
+    "",
+  ];
+
+  result.findings.forEach((finding, index) => {
+    // Numbered so a reply can name which one without quoting it back.
+    lines.push(`<b>[${index + 1}]</b> ${esc(finding.detail)}`);
+    lines.push(
+      `      ⏱ ${clockTime(finding.windowStart)}–${clockTime(finding.windowEnd)}  ·  log ${finding.logIds.join(", ")}`
+    );
+  });
+
+  lines.push(...formatDayLog(result.logs));
+  lines.push(
+    "",
+    "<i>Reply to this message with the fix — e.g. “1 delete” or “2 set end time 3:40pm”. Nothing is written until you confirm.</i>"
+  );
+
   return lines.join("\n");
 }

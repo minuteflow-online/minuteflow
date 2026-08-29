@@ -1,6 +1,6 @@
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { NextRequest } from "next/server";
-import { sendTelegramTo, esc } from "@/lib/telegram";
+import { sendTelegram, chatIdFor, esc } from "@/lib/telegram";
 import { checkShiftAnomalies, formatShiftMessage } from "@/lib/shiftAnomalies";
 
 export const dynamic = "force-dynamic";
@@ -73,13 +73,6 @@ export async function GET(request: NextRequest) {
     );
   });
 
-  const { data: founder } = await supabase
-    .from("profiles")
-    .select("telegram_chat_id")
-    .eq("role", "founder")
-    .single();
-  const toniChatId = founder?.telegram_chat_id ?? null;
-
   let sent = 0;
   let skipped = 0;
 
@@ -107,9 +100,23 @@ export async function GET(request: NextRequest) {
     const result = await checkShiftAnomalies(supabase, s.user_id as string, s.session_date as string);
     const message = formatShiftMessage(esc(who), (s.session_date as string) ?? "", result);
 
-    if (toniChatId) {
-      await sendTelegramTo(toniChatId, message, "internal");
-      sent++;
+    // The finance chat, not a DM. These are billing questions, and they
+    // belong where the invoices and paystubs are already discussed.
+    const posted = await sendTelegram("financial", message);
+    sent++;
+
+    // Recorded so a reply to this exact message can be traced back to the
+    // shift it reviewed. Without the message id there is no way to know which
+    // VA and which day a bare "1 delete" is about.
+    const chatId = chatIdFor("financial");
+    if (posted.messageId && chatId) {
+      await supabase.from("telegram_anomaly_alerts").insert({
+        chat_id: Number(chatId),
+        message_id: posted.messageId,
+        user_id: s.user_id,
+        session_date: s.session_date,
+        findings: result.findings,
+      });
     }
 
     await supabase

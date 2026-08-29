@@ -63,6 +63,7 @@ import VAPerformanceMetrics from "@/components/VAPerformanceMetrics";
 import { useFilterPrefs } from "@/components/table/useFilterPrefs";
 import { useUrlTab } from "@/hooks/useUrlTab";
 import { ADMIN_PERMISSION_BUNDLES, type AdminPermissionBundle } from "@/lib/adminPermissions";
+import { applyCorrection } from "@/lib/applyCorrection";
 import { hasFinancialAccess, hasAdminPanelAccess, hasAccountsClientsAccess, canGrantRoles } from "@/lib/financialAccess";
 
 /* ── Constants ───────────────────────────────────────────── */
@@ -1267,109 +1268,22 @@ export default function AdminPage() {
 
   const handleApproveCorrection = async (request: TimeCorrectionRequest, overrideChanges?: Record<string, string>): Promise<string | null> => {
     if (!currentUserId) return "Not authenticated.";
-    const supabase = createClient();
 
-    const changes = overrideChanges ?? (request.requested_changes as Record<string, string>);
-    const updatePayload: Record<string, unknown> = {};
-    const auditRecords: { log_id: number; edited_by: string; field_name: string; old_value: string | null; new_value: string | null }[] = [];
+    // The write itself lives in applyCorrection so this panel and the Telegram
+    // anomaly workflow cannot drift apart on what approving a correction means.
+    const result = await applyCorrection(createClient(), {
+      requestId: request.id,
+      logId: request.log_id,
+      changes: overrideChanges ?? (request.requested_changes as Record<string, string>),
+      reviewerId: currentUserId,
+      reviewNotes: reviewNotes[request.id] || null,
+    });
 
-    const { data: currentLog } = await supabase
-      .from("time_logs")
-      .select("*")
-      .eq("id", request.log_id)
-      .single();
-
-    if (currentLog) {
-      // Convert datetime-local values (no tz info) to proper UTC ISO strings before storing.
-      // Without this, Postgres treats them as UTC and times end up 4 hours off for EDT users.
-      const toUtcIso = (val: string) => (val ? new Date(val).toISOString() : null);
-
-      Object.entries(changes).forEach(([field, newValue]) => {
-        const isTimeField = field === "start_time" || field === "end_time";
-        const valueToStore = isTimeField && newValue ? toUtcIso(newValue) : (newValue || null);
-        updatePayload[field] = valueToStore;
-        auditRecords.push({
-          log_id: request.log_id,
-          edited_by: currentUserId,
-          field_name: field,
-          old_value: (currentLog as Record<string, unknown>)[field] != null ? String((currentLog as Record<string, unknown>)[field]) : null,
-          new_value: valueToStore,
-        });
-      });
-
-      // Recompute billable when the category changes. Every other write path in the app derives
-      // billable from category (never billable for Personal or Break) — this correction-approval
-      // path was the one place that didn't, so a log corrected out of "Clock Out"/"Personal" into
-      // a real task kept its old (often non-billable) flag instead of picking up the new one.
-      if (changes.category) {
-        const newBillable = changes.category !== "Personal" && changes.category !== "Break";
-        updatePayload.billable = newBillable;
-        auditRecords.push({
-          log_id: request.log_id,
-          edited_by: currentUserId,
-          field_name: "billable",
-          old_value: currentLog.billable != null ? String(currentLog.billable) : null,
-          new_value: String(newBillable),
-        });
-      }
-
-      if (changes.start_time || changes.end_time) {
-        const startTime = changes.start_time ? new Date(changes.start_time).toISOString() : currentLog.start_time;
-        const endTime = changes.end_time ? new Date(changes.end_time).toISOString() : currentLog.end_time;
-        if (startTime && endTime) {
-          // Guard: end_time must be after start_time
-          if (new Date(endTime).getTime() <= new Date(startTime).getTime()) {
-            return "The requested end time is before or equal to the task's start time. Please edit the date/time above before approving.";
-          }
-          updatePayload.duration_ms = Math.max(0, new Date(endTime).getTime() - new Date(startTime).getTime());
-        }
-      }
-
-      await supabase.from("time_logs").update(updatePayload).eq("id", request.log_id);
-
-      if (auditRecords.length > 0) {
-        await supabase.from("time_log_edits").insert(auditRecords);
-      }
-
-      // Auto-cascade: if end_time changed, update the next task's start_time to match
-      if (changes.end_time) {
-        const newEndIso = updatePayload.end_time as string;
-        const { data: nextTask } = await supabase
-          .from("time_logs")
-          .select("id, start_time, end_time, duration_ms")
-          .eq("user_id", currentLog.user_id)
-          .gt("start_time", currentLog.start_time)
-          .is("deleted_at", null)
-          .order("start_time", { ascending: true })
-          .limit(1)
-          .maybeSingle();
-
-        if (nextTask) {
-          const newEndMs = new Date(newEndIso).getTime();
-          const nextEndMs = nextTask.end_time ? new Date(nextTask.end_time).getTime() : null;
-          // Only cascade if it won't shrink the next task to zero/negative duration
-          if (!nextEndMs || newEndMs < nextEndMs) {
-            await supabase
-              .from("time_logs")
-              .update({
-                start_time: newEndIso,
-                ...(nextEndMs ? { duration_ms: nextEndMs - newEndMs } : {}),
-              })
-              .eq("id", nextTask.id);
-          }
-        }
-      }
+    if (!result.ok) {
+      return result.code === "end_before_start"
+        ? `${result.error} Please edit the date/time above before approving.`
+        : result.error;
     }
-
-    await supabase
-      .from("time_correction_requests")
-      .update({
-        status: "approved",
-        reviewed_by: currentUserId,
-        review_notes: reviewNotes[request.id] || null,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq("id", request.id);
 
     fetchData();
     return null;
