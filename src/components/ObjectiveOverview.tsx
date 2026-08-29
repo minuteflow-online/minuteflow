@@ -13,8 +13,13 @@ type SubmittedFileRow = { id: string; project_id: string; filename: string; uplo
 type CommentRow = { id: number; body: string; created_at: string; author: string; author_id: string | null };
 type MessageRow = { id: number; project_id: string; title: string; body: string; objective: string | null; created_at: string; author_id: string | null; comment_count: number; comments: CommentRow[] };
 type Assignee = { id: string; name: string; avatar_url: string | null };
-type Todo = { id: number; text: string; sort_order: number };
+type Todo = { id: number; text: string; sort_order: number; completed: boolean };
 type SubtaskRow = { id: number; project_id: string; task_name: string; status: string; recurring: boolean; due_date: string | null; start_date: string | null; account: string | null; client: string | null; review_required: boolean | null; assignees: Assignee[]; todos?: Todo[] };
+
+// Mirrors LOCKED_TODO_STATUSES on the server (assigned-tasks/[id]/todos/[todoId]/route.ts)
+// — once a subtask has been handed in, its to-dos freeze in the UI too, not
+// just on the write path.
+const LOCKED_TODO_STATUSES = new Set(["submitted", "reviewing", "approved", "completed", "paid"]);
 
 function initialsOf(name: string) {
   return name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -591,6 +596,52 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
     [filteredSubtasks]
   );
 
+  const [togglingTodoIds, setTogglingTodoIds] = useState<Set<number>>(new Set());
+
+  const toggleTodo = useCallback(async (subtaskId: number, todo: Todo) => {
+    const nextCompleted = !todo.completed;
+    setTogglingTodoIds((prev) => new Set(prev).add(todo.id));
+    // Optimistic — the PATCH below can still reject it (e.g. the subtask got
+    // submitted in another tab a moment ago), in which case this rolls back.
+    setSubtasks((prev) =>
+      prev.map((s) =>
+        s.id === subtaskId
+          ? { ...s, todos: (s.todos ?? []).map((t) => (t.id === todo.id ? { ...t, completed: nextCompleted } : t)) }
+          : s
+      )
+    );
+    try {
+      const res = await fetch(`/api/assigned-tasks/${subtaskId}/todos/${todo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ completed: nextCompleted }),
+      });
+      if (!res.ok) {
+        setSubtasks((prev) =>
+          prev.map((s) =>
+            s.id === subtaskId
+              ? { ...s, todos: (s.todos ?? []).map((t) => (t.id === todo.id ? { ...t, completed: todo.completed } : t)) }
+              : s
+          )
+        );
+      }
+    } catch {
+      setSubtasks((prev) =>
+        prev.map((s) =>
+          s.id === subtaskId
+            ? { ...s, todos: (s.todos ?? []).map((t) => (t.id === todo.id ? { ...t, completed: todo.completed } : t)) }
+            : s
+        )
+      );
+    } finally {
+      setTogglingTodoIds((prev) => {
+        const next = new Set(prev);
+        next.delete(todo.id);
+        return next;
+      });
+    }
+  }, []);
+
   const effectiveStatus = (st: SubtaskRow) => statusOverride[st.id] ?? st.status;
 
   /** Whose task this is. Staff can see everyone's work but only tick their own. */
@@ -1128,24 +1179,41 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
             <p className="text-[12px] text-walnut">No to-dos on these subtasks yet.</p>
           ) : (
             <div className="space-y-2">
-              {todoTasks.map((st) => (
-                <div key={st.id} className="rounded-lg border border-sand bg-white p-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-[12px] font-semibold text-espresso leading-tight">{st.task_name}</span>
-                    <span className="text-[10px] text-stone shrink-0">
-                      {st.assignees.map((a) => a.name).join(", ") || "Unassigned"}
-                    </span>
+              {todoTasks.map((st) => {
+                // Owners check their own — a VA browsing "All members" can see
+                // everyone's to-dos but only ever toggle the ones on a subtask
+                // they're actually assigned to. Admin/manager keep the same
+                // override the rest of this app gives them (matches the
+                // server's canAccessTodos, which this mirrors).
+                const isOwner = Boolean(currentUserId) && st.assignees.some((a) => a.id === currentUserId);
+                const isLocked = LOCKED_TODO_STATUSES.has(effectiveStatus(st));
+                const canCheck = !isLocked && (isAdmin || isOwner);
+                return (
+                  <div key={st.id} className="rounded-lg border border-sand bg-white p-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-[12px] font-semibold text-espresso leading-tight">{st.task_name}</span>
+                      <span className="text-[10px] text-stone shrink-0">
+                        {st.assignees.map((a) => a.name).join(", ") || "Unassigned"}
+                      </span>
+                    </div>
+                    <ul className="mt-1 space-y-1">
+                      {(st.todos ?? []).map((todo) => (
+                        <li key={todo.id} className="text-[11px] text-walnut flex items-start gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={todo.completed}
+                            disabled={!canCheck || togglingTodoIds.has(todo.id)}
+                            onChange={() => void toggleTodo(st.id, todo)}
+                            title={isLocked ? "Locked — this subtask has already been submitted" : !canCheck ? "Only the assignee can check this off" : undefined}
+                            className="mt-0.5 h-3 w-3 shrink-0 rounded border-sand text-terracotta focus:ring-terracotta disabled:cursor-not-allowed"
+                          />
+                          <span className={todo.completed ? "line-through text-stone/70" : undefined}>{todo.text}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="mt-1 space-y-0.5">
-                    {(st.todos ?? []).map((todo) => (
-                      <li key={todo.id} className="text-[11px] text-walnut flex gap-1.5">
-                        <span className="text-stone/60">·</span>
-                        <span>{todo.text}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

@@ -29,7 +29,7 @@ export async function GET(request: Request) {
   const supabase = serviceClient();
   const { data, error } = await supabase
     .from("assigned_tasks")
-    .select("id, project_id, task_name, status, recurring_template_id, due_date, start_date, account, review_required, assigned_task_assignees(va_id), task_todos(id, text, sort_order)")
+    .select("id, project_id, task_name, status, recurring_template_id, due_date, start_date, account, review_required, assigned_task_assignees(va_id), task_todos(id, text, sort_order, completed)")
     .in("project_id", ids)
     .neq("status", "cancelled")
     .is("deleted_at", null)
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     assigned_task_assignees?: Array<{ va_id: string }> | null;
     // Carried through so the To-Do List tab can be built from the same fetch
     // rather than a second pass over the same tasks.
-    task_todos?: Array<{ id: number; text: string; sort_order: number }> | null;
+    task_todos?: Array<{ id: number; text: string; sort_order: number; completed: boolean }> | null;
   };
   const allRows = (data ?? []) as Row[];
 
