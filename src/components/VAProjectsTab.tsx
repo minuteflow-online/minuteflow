@@ -1333,6 +1333,7 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                   {isViewing && !isEditing && (
                     <div className="ml-3 rounded-lg border border-sand overflow-hidden text-[12px]">
                       {([
+                        ["Task Title", sub.task_name],
                         ["Status", sub.status?.replace(/_/g, " ")],
                         ["Category", sub.category],
                         ["Project", sub.project],
