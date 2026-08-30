@@ -1561,9 +1561,9 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           <div className="rounded-lg bg-parchment/50 p-3 text-center">
             <div className={`text-lg font-bold ${status !== "away" ? "text-sage" : "text-espresso"}`}>
-              {formatDuration(member.todayHoursMs)}
+              {formatDuration(member.todayBillableMs)}
             </div>
-            <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Total Hours</div>
+            <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Billable Hours</div>
           </div>
           <div className="rounded-lg bg-parchment/50 p-3 text-center">
             <div className="text-lg font-bold text-espresso">{member.todayTaskCount}</div>

@@ -8314,6 +8314,7 @@ function InvoicesTab({ profiles, orgTimezone }: { profiles: Profile[]; orgTimezo
       .from("time_logs")
       .select("*")
       .eq("billable", true)
+      .is("deleted_at", null)
       .gte("start_time", new Date(dateFrom).toISOString())
       .lte("start_time", new Date(dateTo + "T23:59:59").toISOString())
       .order("start_time", { ascending: true });

@@ -188,6 +188,7 @@ export async function runRecurringInvoiceGeneration(
         .from("time_logs")
         .select("id, task_name, username, account, category, project, client_memo, duration_ms, start_time, client_name")
         .eq("billable", true)
+        .is("deleted_at", null)
         .gte("start_time", new Date(periodStart).toISOString())
         .lte("start_time", new Date(periodEnd + "T23:59:59").toISOString())
         .order("start_time", { ascending: true });

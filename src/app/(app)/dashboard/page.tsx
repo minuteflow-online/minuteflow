@@ -185,6 +185,13 @@ export default function DashboardPage() {
   // double-click can't create two time_logs rows for the same action.
   const isStartingBreakRef = useRef(false);
   const isStartingTaskRef = useRef(false);
+  // Guards the gap between a Start Task click and startTask() actually
+  // running — handleCheckAndStartTask awaits checkLiveSession() (a real
+  // network round-trip) before it ever reaches startTask()'s own guard.
+  // Without this, a second click landing in that window sails through
+  // unblocked and produces a short "phantom" log immediately followed by
+  // a duplicate of the same task.
+  const isCheckingLiveSessionRef = useRef(false);
 
   // Active task
   const [activeTask, setActiveTask] = useState<ActiveTask | null>(null);
@@ -2848,21 +2855,30 @@ export default function DashboardPage() {
         return;
       }
 
-      // No local active task — check DB for orphaned live sessions
-      // (different browser, disconnect, crash)
-      const liveLog = await checkLiveSession();
-      if (liveLog) {
-        // Orphaned task found — show the rejoin/close prompt
-        setLiveSessionData(liveLog);
-        setCloseOldClientMemo(liveLog.client_memo || "");
-        setCloseOldInternalMemo(liveLog.internal_memo || "");
-        setPendingFormData(formData);
-        setShowLivePrompt(true);
-        return;
-      }
+      // No local active task yet — about to check the DB for orphaned live
+      // sessions before startTask()'s own guard is reachable. Block a second
+      // call from re-entering this window (see isCheckingLiveSessionRef above).
+      if (isCheckingLiveSessionRef.current) return;
+      isCheckingLiveSessionRef.current = true;
+      try {
+        // No local active task — check DB for orphaned live sessions
+        // (different browser, disconnect, crash)
+        const liveLog = await checkLiveSession();
+        if (liveLog) {
+          // Orphaned task found — show the rejoin/close prompt
+          setLiveSessionData(liveLog);
+          setCloseOldClientMemo(liveLog.client_memo || "");
+          setCloseOldInternalMemo(liveLog.internal_memo || "");
+          setPendingFormData(formData);
+          setShowLivePrompt(true);
+          return;
+        }
 
-      // No live session anywhere — proceed normally (first task)
-      await startTask(formData);
+        // No live session anywhere — proceed normally (first task)
+        await startTask(formData);
+      } finally {
+        isCheckingLiveSessionRef.current = false;
+      }
     },
     [checkLiveSession, startTask, activeTask]
   );

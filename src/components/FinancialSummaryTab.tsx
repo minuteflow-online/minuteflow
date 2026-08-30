@@ -337,6 +337,7 @@ export default function FinancialSummaryTab({ timezone = "UTC" }: { timezone?: s
         .select(
           "id, user_id, full_name, task_name, category, account, client_name, start_time, end_time, duration_ms, billable, form_fill_ms, billing_type, task_rate, session_date"
         )
+        .is("deleted_at", null)
         .gte("session_date", startDate)
         .lte("session_date", endDate)
         .not("end_time", "is", null)
