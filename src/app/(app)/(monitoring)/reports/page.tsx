@@ -346,6 +346,7 @@ export default function ReportsPage() {
         supabase
           .from("time_logs")
           .select("*")
+          .is("deleted_at", null)
           .gte("session_date", toLocalDate(qStart, tz))
           .lte("session_date", toLocalDate(qEnd, tz))
           .order("start_time", { ascending: true }),
@@ -401,6 +402,7 @@ export default function ReportsPage() {
       const { data } = await supabase
         .from("time_logs")
         .select("*")
+        .is("deleted_at", null)
         .gte("session_date", sessionStart)
         .lte("session_date", sessionEnd);
       setCompLogs((data ?? []) as TimeLog[]);
