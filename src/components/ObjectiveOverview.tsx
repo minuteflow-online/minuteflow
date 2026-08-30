@@ -57,16 +57,21 @@ const SUB_FILTERS: { key: SubFilter; label: string }[] = [
 ];
 const NOT_STARTED = new Set(["pending", "unassigned", "on_queue"]);
 
-// Left-border accent for a subtask row: approved → green, overdue → red,
-// submitted → amber, delayed start → pink. First match wins (overdue outranks
-// submitted so a late unreviewed task still reads red); anything else neutral.
-function subtaskAccent(st: SubtaskRow, today: string): string {
+// Title colour by status/date — the task title itself is coloured (no border):
+// completed/approved green, past due red, delayed start pink, in-progress/
+// submitted yellow, pending gray. First match wins so overdue outranks the plain
+// status colours. `subtaskIsDone` also drives the ✓ shown on completed titles.
+function subtaskIsDone(s: string): boolean {
+  return s === "completed" || s === "paid";
+}
+function subtaskTitleColor(st: SubtaskRow, today: string): string {
   const s = st.status;
-  if (s === "approved" || s === "completed" || s === "paid") return "border-sage";
-  if (st.due_date && st.due_date < today && !DONE.has(s)) return "border-terracotta";
-  if (s === "submitted" || s === "reviewing") return "border-amber";
-  if (st.start_date && st.start_date < today && NOT_STARTED.has(s)) return "border-clay-rose";
-  return "border-transparent";
+  if (s === "completed" || s === "paid" || s === "approved") return "text-sage";
+  if (st.due_date && st.due_date < today && !DONE.has(s)) return "text-terracotta";
+  if (st.start_date && st.start_date < today && NOT_STARTED.has(s)) return "text-clay-rose";
+  if (s === "in_progress" || s === "submitted" || s === "reviewing") return "text-amber";
+  if (NOT_STARTED.has(s)) return "text-stone";
+  return "text-espresso";
 }
 
 // A task moves its assignee's avatar only once it's been APPROVED (approved/
@@ -1113,9 +1118,8 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                       {list.map((st) => {
                         const done = TICKED.has(effectiveStatus(st));
                         const blocked = tickBlockedReason(st);
-                        const owners = st.assignees.map((a) => a.name).join(", ");
                         return (
-                          <label key={st.id} title={blocked ?? undefined} className={`flex items-center gap-2 py-1.5 px-2 border-l-4 ${subtaskAccent(st, todayEastern)} hover:bg-cream transition-colors ${blocked ? "cursor-default" : "cursor-pointer"}`}>
+                          <label key={st.id} title={blocked ?? undefined} className={`flex items-center gap-2 py-1.5 px-2 hover:bg-cream transition-colors ${blocked ? "cursor-default" : "cursor-pointer"}`}>
                             <input
                               type="checkbox"
                               checked={done}
@@ -1125,7 +1129,9 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                               className="shrink-0 accent-sage disabled:cursor-not-allowed disabled:opacity-40"
                             />
                             <span className="min-w-0 flex-1">
-                              <span className={`flex items-center gap-1 text-[12px] ${done ? "text-stone line-through" : "text-espresso"}`}>
+                              {/* Title = the client memo detail (distinguishes same-named
+                                  tasks); coloured by status. Completed gets a ✓. */}
+                              <span className={`flex items-center gap-1 text-[12px] font-semibold ${subtaskTitleColor({ ...st, status: effectiveStatus(st) }, todayEastern)}`}>
                                 {st.recurring && (
                                   <span title="Recurring" className="shrink-0 text-slate-blue" aria-label="Recurring">
                                     <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -1134,11 +1140,12 @@ export default function ObjectiveOverview({ projects, onSelect, scopeId = null, 
                                     </svg>
                                   </span>
                                 )}
-                                <span className="truncate">{st.task_name}</span>
+                                {subtaskIsDone(effectiveStatus(st)) && <span className="shrink-0 text-sage" aria-label="Completed">✓</span>}
+                                <span className="truncate">{st.task_detail || st.task_name}</span>
                               </span>
-                              <span className="block text-[10px] text-bark truncate">
-                                {[st.account, st.client].filter(Boolean).join(" · ") || "—"}
-                                {owners ? ` · ${owners}` : " · Unassigned"}
+                              {/* Light context line: project · task title · objective. */}
+                              <span className="block text-[10px] text-stone/70 truncate">
+                                {[st.account, st.task_name, proj?.name].filter(Boolean).join(" · ") || "—"}
                                 {st.due_date ? ` · Due ${formatDate(st.due_date)}` : ""}
                               </span>
                             </span>
