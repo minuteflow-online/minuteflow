@@ -1260,28 +1260,25 @@ export default function DashboardPage() {
         .neq("category", "Clock Out");
 
       if (orphanedLogs && orphanedLogs.length > 0) {
+        // A log stale from a previous calendar date caps at end-of-day instead
+        // of billing the whole dead gap up to now — see cappedCloseTime. This
+        // orphan-close block missed that fix when it was applied to the other
+        // three (Break flow, resumeOnHoldTask, startTask) — confirmed on
+        // Shem's Aug 12 WebUpdate Processing row, which ran 26+ hours because
+        // clocking out the next day billed the whole overnight gap.
+        const closeTimes = new Map(orphanedLogs.map((o) => [o.id, cappedCloseTime(o.start_time, now)]));
         for (const orphan of orphanedLogs) {
-          const logStartMs = orphan.start_time
-            ? new Date(orphan.start_time).getTime()
-            : Date.now();
-          const logDurationMs = Math.max(0, new Date(now).getTime() - logStartMs);
+          const { endTime, durationMs } = closeTimes.get(orphan.id)!;
           await supabase
             .from("time_logs")
-            .update({ end_time: now, duration_ms: logDurationMs })
+            .update({ end_time: endTime, duration_ms: durationMs })
             .eq("id", orphan.id);
         }
         setTimeLogs((prev) =>
           prev.map((log) => {
-            const match = orphanedLogs.find((o) => o.id === log.id);
-            if (match && !log.end_time) {
-              const logStartMs = match.start_time
-                ? new Date(match.start_time).getTime()
-                : Date.now();
-              return {
-                ...log,
-                end_time: now,
-                duration_ms: Math.max(0, new Date(now).getTime() - logStartMs),
-              } as TimeLog;
+            const closed = closeTimes.get(log.id);
+            if (closed && !log.end_time) {
+              return { ...log, end_time: closed.endTime, duration_ms: closed.durationMs } as TimeLog;
             }
             return log;
           })

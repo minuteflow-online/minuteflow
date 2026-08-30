@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { isOnBreak, isOnPersonal } from "@/lib/breakState";
 import type { Profile, Session, TimeLog, TaskScreenshot, UserRole } from "@/types/database";
+import { isPayrollEligible, sumPayrollMs } from "@/lib/payrollHours";
 import AddRateModal from "@/components/AddRateModal";
 import {
   formatDuration,
@@ -268,10 +269,9 @@ export default function TeamPage() {
       const nonBreakLogs = userLogs.filter((l) => l.category !== "Break" && l.category !== "Clock Out");
       // Total = every logged minute, no exclusions — matches the Time Log page's definition.
       const todayHoursMs = userLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-      // Billable/payable = only what's flagged billable (breaks are billable:false, see doStartBreak).
-      const todayBillableMs = userLogs
-        .filter((l) => l.billable)
-        .reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+      // What the VA actually gets paid for — mirrors lib/paystub.ts, not the
+      // `billable` column (that's a client-invoicing flag, a different axis).
+      const todayBillableMs = sumPayrollMs(userLogs, profile.position);
       const todayTaskCount = nonBreakLogs.length;
       const todayScreenshots = screenshots.filter(
         (s) => s.user_id === profile.id
@@ -1406,13 +1406,13 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
   const accountBreakdown = useMemo(() => {
     const byAccount: Record<string, number> = {};
     member.todayLogs.forEach((log) => {
-      if (!log.billable) return; // exclude unbilled time from account breakdown
+      if (!isPayrollEligible(log, profile.position)) return;
       const acct = log.account || "Personal";
       byAccount[acct] = (byAccount[acct] || 0) + (log.duration_ms || 0);
     });
     // Sort by most time first
     return Object.entries(byAccount).sort((a, b) => b[1] - a[1]);
-  }, [member.todayLogs]);
+  }, [member.todayLogs, profile.position]);
 
   // Daily breakdown for multi-day ranges
   const moodEmoji: Record<string, string> = { bad: "\uD83D\uDE1E", neutral: "\uD83D\uDE10", good: "\uD83D\uDE0A" };
@@ -1435,8 +1435,8 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         const nonBreakLogs = dayLogs.filter(l => l.category !== "Break" && l.category !== "Clock Out");
         // Total = every logged minute that day, no exclusions — matches the Time Log page.
         const totalMs = dayLogs.reduce((sum, l) => sum + (l.duration_ms || 0), 0);
-        // Billable/payable = only what's flagged billable (breaks are billable:false).
-        const billedMs = dayLogs.filter(l => l.billable).reduce((sum, l) => sum + (l.duration_ms || 0), 0);
+        // What the VA actually gets paid for that day — mirrors lib/payrollHours.ts.
+        const billedMs = sumPayrollMs(dayLogs, profile.position);
         const dayPayable = computePayable(billedMs, profile.pay_rate || 0, profile.pay_rate_type || "hourly");
 
         // Clock in: earliest start_time of non-break logs
@@ -1467,7 +1467,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
         const sortedDayLogs = [...dayLogs].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
         return { dateLabel, isoDate, totalMs, billedMs, personalMs, dayPayable, clockIn, clockOut, hasActiveLog, taskCount: nonBreakLogs.length, logs: sortedDayLogs, mood, dayInProgress, dayCompleted, dayOnHold };
       });
-  }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type, userMoods]);
+  }, [member.todayLogs, isToday, profile.pay_rate, profile.pay_rate_type, profile.position, userMoods]);
 
   // Category totals - only show non-zero
   const categoryTotals = useMemo(() => {
@@ -1563,7 +1563,7 @@ function ExpandedMemberCard({ member, isAdmin, isToday, onForceLogout, onDeselec
             <div className={`text-lg font-bold ${status !== "away" ? "text-sage" : "text-espresso"}`}>
               {formatDuration(member.todayBillableMs)}
             </div>
-            <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Billable Hours</div>
+            <div className="text-[9px] uppercase tracking-[0.5px] text-bark mt-0.5">Payroll Hours</div>
           </div>
           <div className="rounded-lg bg-parchment/50 p-3 text-center">
             <div className="text-lg font-bold text-espresso">{member.todayTaskCount}</div>

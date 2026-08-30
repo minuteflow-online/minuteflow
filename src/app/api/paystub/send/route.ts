@@ -8,7 +8,7 @@ import {
   type RateSegment,
 } from "@/lib/payroll";
 import { hasFinancialAccess } from "@/lib/financialAccess";
-import { normalizePosition } from "@/types/database";
+import { isPayrollEligible } from "@/lib/payrollHours";
 
 export const dynamic = "force-dynamic";
 
@@ -120,22 +120,16 @@ export async function POST(request: Request) {
   const entries = logs ?? [];
 
   // Group by session_date (local date) — matches Financial tab logic.
-  // Personal time is never included in paystub hours or totals.
-  // Break time is excluded for Full Time VAs on sessions dated July 6, 2026 or later.
-  const isFullTimeVa = normalizePosition(vaProfile.position) === "Full Time";
-  const BREAK_EXCLUSION_DATE = "2026-07-06";
-
+  // Eligibility (personal/clock-out excluded, break excluded for Full Time VAs
+  // on/after the cutoff) lives in one place now — lib/payrollHours.ts — shared
+  // with every other page that shows "how many hours does this person get
+  // paid for" so they can't drift from what this route actually pays out.
   const byDate: Record<string, number> = {};
   let totalMs = 0;
 
   for (const log of entries) {
-    if (!log.duration_ms) continue;
-    const category = String(log.category ?? "").trim().toLowerCase();
-    if (category === "personal") continue;
-    if (category === "clock out") continue;
+    if (!isPayrollEligible(log, vaProfile.position)) continue;
     const dateKey = (log.session_date as string) || (log.start_time as string).split("T")[0];
-    if (category === "break" && isFullTimeVa && dateKey >= BREAK_EXCLUSION_DATE) continue;
-
     const ms = Number(log.duration_ms);
     byDate[dateKey] = (byDate[dateKey] || 0) + ms;
     totalMs += ms;
