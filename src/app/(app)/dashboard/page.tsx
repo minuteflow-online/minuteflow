@@ -2049,6 +2049,32 @@ export default function DashboardPage() {
         console.info(`[Screenshot] Skipped (${screenshotType}): SCE extension is capturing.`);
         return false;
       }
+      // Guard: the capture Worker fires on a fixed schedule against whatever
+      // logId it was last told, with no idea whether that log is still open —
+      // it only stops when told to. Every path that closes a log as a safety
+      // net (task switch, break, force clock-out) does so with a raw DB
+      // update and doesn't always follow up with a new task's capture
+      // schedule, so a stale Worker can keep capturing against a closed log
+      // for hours: real screenshots pile up on a row billing zero time, and
+      // the actual worked time never gets a log of its own. Check before
+      // capturing instead of trusting the schedule — inlined instead of
+      // clearCaptureTimers() because that callback is declared later.
+      if (screenshotType !== 'manual') {
+        const { data: logCheck } = await supabase
+          .from("time_logs")
+          .select("end_time")
+          .eq("id", logId)
+          .single();
+        if (logCheck?.end_time) {
+          console.warn(`[Screenshot] Stopping: log ${logId} is already closed.`);
+          captureTimersRef.current.forEach((t) => clearTimeout(t));
+          captureTimersRef.current = [];
+          if (captureWorkerRef.current) {
+            captureWorkerRef.current.postMessage({ type: "stop" });
+          }
+          return false;
+        }
+      }
       // Guard: enforce 45-second cooldown between captures (skip for 'end' and 'manual' — those are intentional)
       if (screenshotType !== 'end' && screenshotType !== 'manual') {
         const now = Date.now();
@@ -2091,7 +2117,7 @@ export default function DashboardPage() {
         isCapturingRef.current = false;
       }
     },
-    [captureFrame, uploadScreenshot, logCaptureFailure]
+    [captureFrame, uploadScreenshot, logCaptureFailure, supabase]
   );
 
   /** Clear all scheduled auto-capture timers and stop worker */

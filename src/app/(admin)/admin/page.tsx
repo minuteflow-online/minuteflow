@@ -1195,7 +1195,7 @@ export default function AdminPage() {
       .neq("category", "Clock Out");
 
     if (openLogs?.length) {
-      await Promise.all(
+      const closeResults = await Promise.all(
         openLogs.map((log) => {
           const startMs = log.start_time ? new Date(log.start_time).getTime() : nowMs;
           const duration_ms = Math.max(0, nowMs - startMs);
@@ -1205,6 +1205,14 @@ export default function AdminPage() {
             .eq("id", log.id);
         })
       );
+      // If any close silently failed, the person's timer is still running —
+      // stop here rather than mark them clocked out and insert a "Forced
+      // Clock Out" row that claims otherwise while their task keeps billing.
+      const closeError = closeResults.find((r) => r.error)?.error;
+      if (closeError) {
+        alert("Couldn't force clock-out: failed to close an active task (" + closeError.message + "). Nothing was changed — try again.");
+        return;
+      }
     }
 
     // Reset their session (use update, not upsert — RLS INSERT policy blocks admins).
