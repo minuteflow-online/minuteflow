@@ -97,12 +97,40 @@ export default function AvailableTasksWidget({
   const cardTitle = (detail: string | null | undefined, taskName: string | null | undefined) =>
     (detail ?? "").trim() || (taskName ?? "Untitled task");
 
-  // The line under it: what it is filed as, and where it belongs.
-  const cardMeta = (
-    taskName: string | null | undefined,
-    account: string | null | undefined,
-    project: string | null | undefined
-  ) => [taskName, project, account].filter((p) => p && String(p).trim()).join(" · ");
+  // Under the heading: what the work is filed as, then where it came from.
+  const clean = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+  const objectiveName = (row: unknown): string | null => {
+    const rel = (row as { projects?: unknown } | null)?.projects;
+    const one = Array.isArray(rel) ? rel[0] : rel;
+    return clean((one as { name?: string } | null)?.name);
+  };
+
+  const CardMeta = ({
+    taskName,
+    project,
+    objective,
+    account,
+  }: {
+    taskName?: string | null;
+    project?: string | null;
+    objective?: string | null;
+    account?: string | null;
+  }) => {
+    const filedAs = [clean(taskName), clean(project)].filter(Boolean).join(" · ");
+    const from = [clean(objective), clean(account)].filter(Boolean).join(" · ");
+    return (
+      <div className="mt-1 space-y-0.5">
+        {filedAs && <div className="text-[10px] text-walnut truncate">{filedAs}</div>}
+        {from && (
+          <div className="text-[10px] text-stone truncate">
+            {clean(objective) && <span className="font-semibold text-stone/90">Objective: </span>}
+            {from}
+          </div>
+        )}
+      </div>
+    );
+  };
   const [hourlyGrabbingId, setHourlyGrabbingId] = useState<number | null>(null);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
@@ -214,7 +242,7 @@ export default function AvailableTasksWidget({
 
         const { data, error: hourlyError } = await supabase
           .from("assigned_tasks")
-          .select("id, account, project, task_name, task_detail, due_date, fixed_pay_task_id, status, archived_at, deleted_at, created_at, updated_at")
+          .select("id, account, project, project_id, projects(name), task_name, task_detail, due_date, fixed_pay_task_id, status, archived_at, deleted_at, created_at, updated_at")
           .eq("status", "unassigned")
           .is("fixed_pay_task_id", null)
           .is("deleted_at", null)
@@ -222,7 +250,7 @@ export default function AvailableTasksWidget({
           .order("created_at", { ascending: false });
 
         if (hourlyError) throw new Error(hourlyError.message);
-        setHourlyTasks((data ?? []) as AssignedTask[]);
+        setHourlyTasks((data ?? []) as unknown as AssignedTask[]);
       }
     } catch {
       setError("Unable to load available tasks right now.");
@@ -415,9 +443,12 @@ export default function AvailableTasksWidget({
                       {due.label === "—" ? "No due date" : `Due ${due.label}`}
                     </span>
                   </div>
-                  <div className="text-[10px] text-stone mt-0.5 truncate">
-                    {cardMeta(task.task_name, task.account, task.project)}
-                  </div>
+                  <CardMeta
+                    taskName={task.task_name}
+                    project={task.project}
+                    objective={objectiveName(task)}
+                    account={task.account}
+                  />
                 </div>
 
                 <div className="px-2.5 py-2.5 bg-parchment/10 space-y-2">
@@ -466,11 +497,11 @@ export default function AvailableTasksWidget({
                         type="button"
                         onClick={() => toggleExpanded(`assigned-${task.id}`)}
                         aria-expanded={isExpanded}
-                        aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
-                        className="p-1 rounded-full hover:bg-stone-100/60 transition-colors"
+                        className="inline-flex items-center gap-1 rounded-lg border border-sand bg-white px-2 py-1 text-[10px] font-semibold text-walnut hover:border-walnut transition-colors"
                       >
+                        {isExpanded ? "Hide details" : "Details"}
                         <svg
-                          className={`h-3 w-3 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                          className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`}
                           viewBox="0 0 24 24"
                           fill="none"
                           stroke="currentColor"
@@ -481,9 +512,12 @@ export default function AvailableTasksWidget({
                       </button>
                     </div>
                   </div>
-                  <div className="text-[10px] text-stone mt-0.5 truncate">
-                    {cardMeta(task.assigned_tasks.task_name, task.assigned_tasks.account, task.assigned_tasks.project)}
-                  </div>
+                  <CardMeta
+                    taskName={task.assigned_tasks.task_name}
+                    project={task.assigned_tasks.project}
+                    objective={objectiveName(assignedTask)}
+                    account={task.assigned_tasks.account}
+                  />
                 </div>
 
                 {isExpanded && (
@@ -536,11 +570,11 @@ export default function AvailableTasksWidget({
                             type="button"
                             onClick={() => toggleExpanded(`fixed-${task.id}`)}
                             aria-expanded={isExpanded}
-                            aria-label={isExpanded ? "Collapse task details" : "Expand task details"}
-                            className="p-1 rounded-full hover:bg-stone-100/60 transition-colors"
+                            className="inline-flex items-center gap-1 rounded-lg border border-sand bg-white px-2 py-1 text-[10px] font-semibold text-walnut hover:border-walnut transition-colors"
                           >
+                            {isExpanded ? "Hide details" : "Details"}
                             <svg
-                              className={`h-3 w-3 text-stone transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                              className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`}
                               viewBox="0 0 24 24"
                               fill="none"
                               stroke="currentColor"
@@ -551,9 +585,12 @@ export default function AvailableTasksWidget({
                           </button>
                         </div>
                       </div>
-                      <div className="text-[10px] text-stone mt-0.5 truncate">
-                        {cardMeta(task.task_name, task.account, taskData?.project ?? task.category)}
-                      </div>
+                      <CardMeta
+                        taskName={task.task_name}
+                        project={taskData?.project ?? task.category}
+                        objective={objectiveName(taskData)}
+                        account={task.account}
+                      />
                     </div>
 
                     {isExpanded && (
