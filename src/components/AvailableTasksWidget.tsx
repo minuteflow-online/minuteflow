@@ -91,6 +91,18 @@ export default function AvailableTasksWidget({
   const [hourlyTasks, setHourlyTasks] = useState<AssignedTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [claimingId, setClaimingId] = useState<number | null>(null);
+
+  // Card heading: the client detail if there is one, otherwise fall back to
+  // the task name so a card is never untitled.
+  const cardTitle = (detail: string | null | undefined, taskName: string | null | undefined) =>
+    (detail ?? "").trim() || (taskName ?? "Untitled task");
+
+  // The line under it: what it is filed as, and where it belongs.
+  const cardMeta = (
+    taskName: string | null | undefined,
+    account: string | null | undefined,
+    project: string | null | undefined
+  ) => [taskName, project, account].filter((p) => p && String(p).trim()).join(" · ");
   const [hourlyGrabbingId, setHourlyGrabbingId] = useState<number | null>(null);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
@@ -202,7 +214,7 @@ export default function AvailableTasksWidget({
 
         const { data, error: hourlyError } = await supabase
           .from("assigned_tasks")
-          .select("id, account, project, task_name, due_date, fixed_pay_task_id, status, archived_at, deleted_at, created_at, updated_at")
+          .select("id, account, project, task_name, task_detail, due_date, fixed_pay_task_id, status, archived_at, deleted_at, created_at, updated_at")
           .eq("status", "unassigned")
           .is("fixed_pay_task_id", null)
           .is("deleted_at", null)
@@ -396,14 +408,15 @@ export default function AvailableTasksWidget({
               <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
                 <div className="px-2.5 py-2 bg-parchment/20">
                   <div className="flex items-start justify-between gap-2">
-                    <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
+                    <span className="text-xs font-medium text-espresso truncate">
+                      {cardTitle((task as { task_detail?: string | null }).task_detail, task.task_name)}
+                    </span>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
                       {due.label === "—" ? "No due date" : `Due ${due.label}`}
                     </span>
                   </div>
                   <div className="text-[10px] text-stone mt-0.5 truncate">
-                    {task.account ?? ""}
-                    {task.project ? ` / ${task.project}` : ""}
+                    {cardMeta(task.task_name, task.account, task.project)}
                   </div>
                 </div>
 
@@ -440,7 +453,9 @@ export default function AvailableTasksWidget({
               <div key={`assigned-${task.id}`} className="rounded-lg border border-sand overflow-hidden">
                 <div className="px-2.5 py-2 bg-parchment/20">
                   <div className="flex items-start justify-between gap-2">
-                    <span className="text-xs font-medium text-espresso truncate">{task.assigned_tasks.task_name}</span>
+                    <span className="text-xs font-medium text-espresso truncate">
+                      {cardTitle(assignedTask?.task_detail, task.assigned_tasks.task_name)}
+                    </span>
                     <div className="flex items-center gap-1 shrink-0">
                       {rate != null && (
                         <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
@@ -467,8 +482,7 @@ export default function AvailableTasksWidget({
                     </div>
                   </div>
                   <div className="text-[10px] text-stone mt-0.5 truncate">
-                    {task.assigned_tasks.account ?? ""}
-                    {task.assigned_tasks.project ? ` / ${task.assigned_tasks.project}` : ""}
+                    {cardMeta(task.assigned_tasks.task_name, task.assigned_tasks.account, task.assigned_tasks.project)}
                   </div>
                 </div>
 
@@ -511,7 +525,9 @@ export default function AvailableTasksWidget({
                   <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
                     <div className="px-2.5 py-2 bg-parchment/20">
                       <div className="flex items-start justify-between gap-2">
-                        <span className="text-xs font-medium text-espresso truncate">{task.task_name}</span>
+                        <span className="text-xs font-medium text-espresso truncate">
+                          {cardTitle(taskData?.task_detail, task.task_name)}
+                        </span>
                         <div className="flex items-center gap-1 shrink-0">
                           <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-100 text-emerald-700">
                             ${Number(task.rate).toFixed(2)}
@@ -536,8 +552,7 @@ export default function AvailableTasksWidget({
                         </div>
                       </div>
                       <div className="text-[10px] text-stone mt-0.5 truncate">
-                        {task.account ?? ""}
-                        {task.category ? ` / ${task.category}` : ""}
+                        {cardMeta(task.task_name, task.account, taskData?.project ?? task.category)}
                       </div>
                     </div>
 
