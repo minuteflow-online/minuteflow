@@ -293,6 +293,22 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
   useEffect(() => { loadDrafts(); }, [loadDrafts]);
   // Set when "Edit" on a draft pre-fills the generator, to auto-run Calculate.
   const [pendingCalc, setPendingCalc] = useState(false);
+  const [dismissingDraftId, setDismissingDraftId] = useState<string | null>(null);
+
+  // Dismiss a draft that shouldn't be paid (test accounts, admins with no
+  // pay rate) — only ever deletes a still-"draft" row, so a paystub that's
+  // already been sent is never touched by this.
+  const dismissDraft = useCallback(async (draft: { id: string; full_name: string }) => {
+    if (!confirm(`Delete this draft for ${draft.full_name}? This just removes it from the list — it can regenerate on the next auto-run if there's still time logged for them.`)) return;
+    setDismissingDraftId(draft.id);
+    try {
+      const supabase = createClient();
+      await supabase.from("paystub_snapshots").delete().eq("id", draft.id).eq("status", "draft");
+      setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+    } finally {
+      setDismissingDraftId(null);
+    }
+  }, []);
 
   // Editable payment fields (post-send, in expanded history row)
   const [editInputs, setEditInputs] = useState<Record<string, {
@@ -1277,13 +1293,23 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     <td className="px-3 py-3 text-right text-bark">{(Number(d.total_hours_ms) / 3_600_000).toFixed(2)} hrs</td>
                     <td className="px-3 py-3 text-right font-semibold text-espresso">{Number(d.gross_pay).toLocaleString("en-US", { style: "currency", currency: "USD" })}</td>
                     <td className="px-3 py-3 text-right whitespace-nowrap">
-                      <button
-                        onClick={() => editInGenerator(d)}
-                        className="inline-block rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white hover:bg-terracotta/90 transition-colors"
-                        title="Open in the generator above to review, add line items / fees / advances, then send"
-                      >
-                        Edit &amp; Send →
-                      </button>
+                      <div className="inline-flex items-center gap-2">
+                        <button
+                          onClick={() => editInGenerator(d)}
+                          className="inline-block rounded-lg bg-terracotta px-3 py-1 text-[11px] font-semibold text-white hover:bg-terracotta/90 transition-colors"
+                          title="Open in the generator above to review, add line items / fees / advances, then send"
+                        >
+                          Edit &amp; Send →
+                        </button>
+                        <button
+                          onClick={() => dismissDraft(d)}
+                          disabled={dismissingDraftId === d.id}
+                          className="rounded-lg px-3 py-1 text-[11px] font-semibold bg-stone/10 text-stone hover:bg-terracotta-soft hover:text-terracotta transition-colors disabled:opacity-50"
+                          title="Remove this draft — for test accounts or anyone who shouldn't get a paystub"
+                        >
+                          {dismissingDraftId === d.id ? "…" : "Delete"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
