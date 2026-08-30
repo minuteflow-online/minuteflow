@@ -4,11 +4,9 @@
 // this drives the DRAFT that Toni reviews.
 
 import { computeGrossForRateType, type PayRateHistoryRow } from "@/lib/payroll";
-import { normalizePosition } from "@/types/database";
+import { isPayrollEligible } from "@/lib/payrollHours";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
-
-const BREAK_EXCLUSION_DATE = "2026-07-06";
 
 export interface PaystubComputation {
   payRate: number;
@@ -38,7 +36,6 @@ export async function computePaystubData(
     .single();
   if (!vaProfile) return null;
 
-  const isFullTimeVa = normalizePosition(vaProfile.position) === "Full Time";
   const payRate = Number(vaProfile.pay_rate) || 0;
 
   const { data: logs } = await admin
@@ -52,11 +49,8 @@ export async function computePaystubData(
   const byDate: Record<string, number> = {};
   let totalMs = 0;
   for (const log of (logs ?? []) as { start_time: string; duration_ms: number; category: string | null; session_date: string | null }[]) {
-    if (!log.duration_ms) continue;
-    const category = String(log.category ?? "").trim().toLowerCase();
-    if (category === "personal" || category === "clock out") continue;
+    if (!isPayrollEligible(log, vaProfile.position)) continue;
     const dateKey = log.session_date || log.start_time.split("T")[0];
-    if (category === "break" && isFullTimeVa && dateKey >= BREAK_EXCLUSION_DATE) continue;
     const ms = Number(log.duration_ms);
     byDate[dateKey] = (byDate[dateKey] || 0) + ms;
     totalMs += ms;
