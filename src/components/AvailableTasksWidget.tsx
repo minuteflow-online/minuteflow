@@ -408,7 +408,7 @@ export default function AvailableTasksWidget({
               <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
                 <div className="px-2.5 py-2 bg-parchment/20">
                   <div className="flex items-start justify-between gap-2">
-                    <span className="text-xs font-medium text-espresso truncate">
+                    <span className="text-xs font-bold text-espresso truncate">
                       {cardTitle((task as { task_detail?: string | null }).task_detail, task.task_name)}
                     </span>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${dueBadgeClass}`}>
@@ -453,7 +453,7 @@ export default function AvailableTasksWidget({
               <div key={`assigned-${task.id}`} className="rounded-lg border border-sand overflow-hidden">
                 <div className="px-2.5 py-2 bg-parchment/20">
                   <div className="flex items-start justify-between gap-2">
-                    <span className="text-xs font-medium text-espresso truncate">
+                    <span className="text-xs font-bold text-espresso truncate">
                       {cardTitle(assignedTask?.task_detail, task.assigned_tasks.task_name)}
                     </span>
                     <div className="flex items-center gap-1 shrink-0">
@@ -525,7 +525,7 @@ export default function AvailableTasksWidget({
                   <div key={task.id} className="rounded-lg border border-sand overflow-hidden">
                     <div className="px-2.5 py-2 bg-parchment/20">
                       <div className="flex items-start justify-between gap-2">
-                        <span className="text-xs font-medium text-espresso truncate">
+                        <span className="text-xs font-bold text-espresso truncate">
                           {cardTitle(taskData?.task_detail, task.task_name)}
                         </span>
                         <div className="flex items-center gap-1 shrink-0">
