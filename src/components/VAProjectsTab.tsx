@@ -38,6 +38,7 @@ export interface SubtaskRow {
   id: number;
   task_name: string;
   due_date: string | null;
+  start_date?: string | null;
   created_at: string | null;
   status: string;
   pay_type?: string | null;
@@ -159,6 +160,20 @@ const PROJECT_STATUS_BY_VALUE = new Map(PROJECT_STATUS_OPTIONS.map((s) => [s.val
 
 // Statuses counted as "done" for the "Where They Are" completed/total figure.
 const DONE_STATUSES = new Set(["completed", "approved", "paid"]);
+const NOT_STARTED_STATUSES = new Set(["pending", "unassigned", "on_queue"]);
+const easternToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+
+// Colour a subtask title by status/date — same scheme as the checklist:
+// completed/approved green, past due red, delayed start pink, in-progress/
+// submitted yellow, pending gray.
+function listTitleColor(status: string, dueDate: string | null | undefined, startDate: string | null | undefined, today: string): string {
+  if (status === "completed" || status === "paid" || status === "approved") return "text-sage";
+  if (dueDate && dueDate < today && !DONE_STATUSES.has(status)) return "text-terracotta";
+  if (startDate && startDate < today && NOT_STARTED_STATUSES.has(status)) return "text-clay-rose";
+  if (status === "in_progress" || status === "submitted" || status === "reviewing") return "text-amber";
+  if (NOT_STARTED_STATUSES.has(status)) return "text-stone";
+  return "text-espresso";
+}
 
 export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin = false, kind }: VAProjectsTabProps) {
   const kindLabel = KIND_LABEL[kind];
@@ -255,6 +270,9 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   const [deletingSubId, setDeletingSubId] = useState<number | null>(null);
   const [viewingSubId, setViewingSubId] = useState<number | null>(null);
   const [subtaskPage, setSubtaskPage] = useState(0);
+  // List View filters: a single team member, or just my own subtasks.
+  const [listMemberFilter, setListMemberFilter] = useState<string>("");
+  const [listMyOnly, setListMyOnly] = useState(false);
   const [editStatus, setEditStatus] = useState("pending");
   const [savingSub, setSavingSub] = useState(false);
   const [editSubError, setEditSubError] = useState<string | null>(null);
@@ -859,6 +877,31 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
   // thing there is to do right now. See collapseRecurringSeries.
   const visibleSubtasks = useMemo(() => collapseRecurringSeries(subtasks), [subtasks]);
 
+  // Distinct assignees among the visible subtasks — options for the List View
+  // member filter.
+  const listMembers = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const st of visibleSubtasks) {
+      for (const a of st.assigned_task_assignees ?? []) {
+        if (!m.has(a.va_id)) {
+          const p = activeProfiles.find((pr) => pr.id === a.va_id);
+          m.set(a.va_id, p?.full_name || p?.username || "?");
+        }
+      }
+    }
+    return [...m.entries()].sort((x, y) => x[1].localeCompare(y[1]));
+  }, [visibleSubtasks, activeProfiles]);
+
+  const filteredListSubtasks = useMemo(() => {
+    if (!listMyOnly && !listMemberFilter) return visibleSubtasks;
+    return visibleSubtasks.filter((st) => {
+      const assignees = st.assigned_task_assignees ?? [];
+      if (listMyOnly && !assignees.some((a) => a.va_id === currentUserId)) return false;
+      if (listMemberFilter && !assignees.some((a) => a.va_id === listMemberFilter)) return false;
+      return true;
+    });
+  }, [visibleSubtasks, listMyOnly, listMemberFilter, currentUserId]);
+
   // "Where they are" — per assigned VA, completed/total on the selected node's own
   // subtasks. Scoped to this node only (not nested sub-objectives): each sub-objective
   // is browsed as its own node with its own subtasks, so this already works per
@@ -1185,13 +1228,39 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
           );
         })()}
 
+        {subtaskView === "list" && visibleSubtasks.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 px-1 pb-1">
+            <button
+              type="button"
+              onClick={() => setListMyOnly((v) => !v)}
+              className={`px-2 py-[3px] rounded-full text-[10px] font-semibold border transition-colors ${listMyOnly ? "bg-sage text-white border-sage" : "bg-white text-walnut border-sand hover:border-stone"}`}
+            >
+              My Subtasks
+            </button>
+            {listMembers.length > 0 && (
+              <select
+                value={listMemberFilter}
+                onChange={(e) => setListMemberFilter(e.target.value)}
+                className="rounded-lg border border-sand px-2 py-1 text-[11px] text-espresso outline-none bg-white"
+              >
+                <option value="">All members</option>
+                {listMembers.map(([id, name]) => (
+                  <option key={id} value={id}>{name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
         {subtaskView === "list" && visibleSubtasks.length > 0 && (() => {
           const SIZE = 8;
-          const pages = Math.max(1, Math.ceil(visibleSubtasks.length / SIZE));
+          const pages = Math.max(1, Math.ceil(filteredListSubtasks.length / SIZE));
           const page = Math.min(subtaskPage, pages - 1);
-          const slice = visibleSubtasks.slice(page * SIZE, page * SIZE + SIZE);
+          const slice = filteredListSubtasks.slice(page * SIZE, page * SIZE + SIZE);
           return (
           <>
+          {filteredListSubtasks.length === 0 && (
+            <p className="text-[12px] text-stone/70 px-1">No subtasks match this filter.</p>
+          )}
           <div className="space-y-1.5">
             {slice.map((sub) => {
               // Shared with SubtaskBoardView.tsx (src/lib/subtaskDisplay.ts) —
@@ -1210,28 +1279,24 @@ export default function VAProjectsTab({ activeProfiles, currentUserId, isAdmin =
                     <button
                       type="button"
                       onClick={() => setViewingSubId(isViewing ? null : sub.id)}
-                      className="flex-1 text-left text-[13px] font-semibold text-espresso leading-tight truncate hover:text-terracotta transition-colors"
+                      className="flex-1 min-w-0 text-left leading-tight"
                     >
-                      {sub.task_name}
-                    </button>
-                    {(sub.project || sub.category) && (
-                      <span className="text-[11px] text-walnut shrink-0 hidden sm:block">
-                        {sub.project ?? sub.category}
+                      {/* Title = client memo detail, coloured by status (✓ when completed). */}
+                      <span className={`flex items-center gap-1 text-[13px] font-semibold truncate ${listTitleColor(sub.status, sub.due_date, sub.start_date, easternToday())}`}>
+                        {DONE_STATUSES.has(sub.status) && (sub.status === "completed" || sub.status === "paid") && (
+                          <span className="shrink-0 text-sage" aria-label="Completed">✓</span>
+                        )}
+                        <span className="truncate">{sub.task_detail || sub.task_name}</span>
                       </span>
-                    )}
+                      {/* Light: project · task title · objective · due. */}
+                      <span className="block text-[10px] text-stone/70 truncate">
+                        {[sub.account, sub.task_name, selectedProject?.name].filter(Boolean).join(" · ") || "—"}
+                        {sub.due_date ? ` · Due ${formatDate(sub.due_date)}` : ""}
+                      </span>
+                    </button>
                     {names && (
                       <span className="text-[11px] text-walnut shrink-0 hidden sm:block">
                         {names}
-                      </span>
-                    )}
-                    {sub.account && (
-                      <span className="text-[11px] text-walnut shrink-0 hidden md:block">
-                        {sub.account}
-                      </span>
-                    )}
-                    {sub.due_date && (
-                      <span className="text-[11px] text-walnut shrink-0 hidden md:block">
-                        Due: {formatDate(sub.due_date)}
                       </span>
                     )}
                     {sub.created_at && (
