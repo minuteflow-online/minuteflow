@@ -16,6 +16,22 @@ export const RECURRENCE_OPTIONS: { value: RecurrenceType; label: string; helper:
   { value: "every_3_months", label: "Every 3 months", helper: "Repeats every three months on the same date" },
 ];
 
+// Once a task reaches one of these, it's out of the VA's hands — a due date
+// in the past no longer means a missed deadline, just that it happened
+// before now. Without this, a task submitted right on its due date reads as
+// "Overdue" forever afterward, since an overdue check that only compares the
+// date to right now can't tell "finished on time" from "still not done".
+// Deliberately excludes "revision_needed": that one still has real work
+// outstanding, so overdue should keep applying to it.
+export const DUE_DATE_FINISHED_STATUSES = new Set([
+  "submitted", "reviewing", "approved", "completed", "paid", "cancelled",
+]);
+
+export function isOverdueGivenStatus(dueDate: string, compareDate: string, status: string | null | undefined): boolean {
+  if (status && DUE_DATE_FINISHED_STATUSES.has(status)) return false;
+  return dueDate < compareDate;
+}
+
 // A normalized assigned_tasks row, regardless of which shape the API returned it in.
 export type RawTask = {
   id: number;

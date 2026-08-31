@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { DUE_DATE_FINISHED_STATUSES } from "@/lib/taskSchedule";
 import type { AssignedTask, FixedPayTaskWithClaimer, VAAssignedTask } from "@/types/database";
 
 function formatClaimedAt(claimedAt: string | null) {
@@ -17,19 +18,23 @@ function formatClaimedAt(claimedAt: string | null) {
   });
 }
 
-function formatDueDate(dueDate: string | null) {
+function formatDueDate(dueDate: string | null, status?: string | null) {
   if (!dueDate) return { label: "—", isOverdue: false };
 
   const date = new Date(dueDate.slice(0, 10) + "T12:00:00Z");
   if (Number.isNaN(date.getTime())) return { label: dueDate, isOverdue: false };
 
+  // Once a task's out of the open pool and into a finished status, a past
+  // due date isn't a missed deadline anymore — just history. Matches the
+  // same guard in assignment/page.tsx and the Calendar's Due sidebar.
+  const finished = Boolean(status && DUE_DATE_FINISHED_STATUSES.has(status));
   return {
     label: date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
     }),
-    isOverdue: date.getTime() < Date.now(),
+    isOverdue: !finished && date.getTime() < Date.now(),
   };
 }
 
@@ -429,7 +434,7 @@ export default function AvailableTasksWidget({
         <div className="space-y-1.5">
           {hourlyTasks.map((task) => {
             const isGrabbing = hourlyGrabbingId === task.id;
-            const due = formatDueDate(task.due_date);
+            const due = formatDueDate(task.due_date, task.status);
             const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
 
             return (

@@ -21,7 +21,7 @@ import TeamWorkloadView from "@/components/TeamWorkloadView";
 import ObjectiveProgressView from "@/components/ObjectiveProgressView";
 import type { RecurringTaskTemplate } from "@/types/database";
 import { countWords } from "@/lib/utils";
-import { CATEGORY_OPTIONS, collapseRecurringSeriesBy } from "@/lib/taskSchedule";
+import { CATEGORY_OPTIONS, collapseRecurringSeriesBy, DUE_DATE_FINISHED_STATUSES } from "@/lib/taskSchedule";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import RevisionBadge from "@/components/RevisionBadge";
 import RecurringBadge from "@/components/RecurringBadge";
@@ -303,19 +303,20 @@ function parseDueDateSafe(dueDate: string): Date {
   return new Date(dueDate.slice(0, 10) + "T12:00:00Z");
 }
 
-function formatDueDate(dueDate: string | null) {
+function formatDueDate(dueDate: string | null, status?: string | null) {
   if (!dueDate) return { label: "—", isOverdue: false };
 
   const date = parseDueDateSafe(dueDate);
   if (Number.isNaN(date.getTime())) return { label: dueDate, isOverdue: false };
 
+  const finished = Boolean(status && DUE_DATE_FINISHED_STATUSES.has(status));
   return {
     label: date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
     }),
-    isOverdue: date.getTime() < Date.now(),
+    isOverdue: !finished && date.getTime() < Date.now(),
   };
 }
 
@@ -2115,7 +2116,7 @@ export default function TaskListPage() {
                   ) : (
                     <div className="space-y-2">
                       {hourlyPoolTasks.map((task) => {
-                        const due = formatDueDate(task.due_date);
+                        const due = formatDueDate(task.due_date, task.status);
                         const isGrabbing = hourlyGrabbingId === task.id;
                         const dueBadgeClass = due.isOverdue ? "bg-terracotta/10 text-terracotta" : "bg-sage-soft text-sage";
 
@@ -2529,8 +2530,8 @@ export default function TaskListPage() {
                     <tbody>
                       {pageTasks.map((task) => {
                         const detail = task.assigned_tasks;
-                        const due = formatDueDate(detail.due_date);
-                        const start = formatDueDate(detail.start_date);
+                        const due = formatDueDate(detail.due_date, task.status);
+                        const start = formatDueDate(detail.start_date, task.status);
                         const isSelected = selectedTask?.id === task.id;
                         const dueTextClass = due.isOverdue ? "text-terracotta" : "text-walnut";
 
