@@ -175,13 +175,24 @@ export default function JobOrdersSection({
                 void act(o.id, { action: "accept", task_title: taskTitle.trim(), project });
               }}
                 className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors disabled:opacity-50">Accept</button>
-              <button disabled={busyId === o.id} onClick={() => { const reason = prompt("Reason for declining (optional):") ?? ""; void act(o.id, { action: "decline", reason }); }}
+              <button disabled={busyId === o.id} onClick={() => {
+                const reason = prompt("Reason for declining (required):");
+                if (reason == null) return;
+                if (!reason.trim()) { alert("A reason is required to decline."); return; }
+                void act(o.id, { action: "decline", reason: reason.trim() });
+              }}
                 className="px-2.5 py-1 rounded-lg text-[10px] font-semibold border border-terracotta/40 text-terracotta hover:border-terracotta transition-colors disabled:opacity-50">Decline</button>
             </span>
           )}
           {admin && o.status === "offered" && !canRespond && (
             <button disabled={busyId === o.id} onClick={() => { setEditing(o); setCreating(false); setExpanded(null); }}
               className="shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-stone/15 text-espresso hover:bg-stone/25 transition-colors disabled:opacity-50">Edit</button>
+          )}
+          {(o.status === "declined" || o.status === "expired" || o.status === "accepted") && (admin || o.offered_to === currentUserId) && (
+            <button disabled={busyId === o.id} onClick={() => {
+              if (confirm(`Reopen this order and offer it again?${o.status === "accepted" ? " The accepted task will be cancelled." : ""}`)) void act(o.id, { action: "reopen" });
+            }}
+              className="shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-slate-blue-soft text-slate-blue hover:bg-slate-blue/20 transition-colors disabled:opacity-50">Reopen</button>
           )}
         </div>
         {isExp && (
