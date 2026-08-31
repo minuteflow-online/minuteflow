@@ -376,6 +376,25 @@ function CreateForm({
     } finally { setSaving(false); }
   };
 
+  // Suggest check-in dates by spreading the milestones evenly from the start
+  // date (or a sensible default) up to the deadline — last one lands on the due
+  // date. No AI, just date math back from what's due.
+  const suggestDates = () => {
+    if (!deadline) { alert("Set a Deadline first — check-ins are suggested working back from it."); return; }
+    const toDate = (s: string) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+    const fmt = (dt: Date) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    const n = checkIns.length;
+    if (n === 0) return;
+    const end = toDate(deadline);
+    const DAY = 86400000;
+    const start = startDate ? toDate(startDate) : new Date(end.getTime() - n * 3 * DAY);
+    const span = Math.max(0, end.getTime() - start.getTime());
+    setCheckIns((prev) => prev.map((c, i) => {
+      const t = n === 1 ? 1 : i / (n - 1);
+      return { ...c, date: fmt(new Date(start.getTime() + span * t)) };
+    }));
+  };
+
   return (
     <div className="rounded-lg border border-sand bg-white p-3 space-y-3">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -463,7 +482,11 @@ function CreateForm({
           <input type="date" className={inputCls} value={respondBy} onChange={(e) => setRespondBy(e.target.value)} />
         </div>
         <div className="sm:col-span-2">
-          <label className={labelCls}>Check-ins</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className={`${labelCls} mb-0`}>Check-ins</label>
+            <button type="button" onClick={suggestDates}
+              className="text-[10px] font-semibold text-slate-blue hover:text-espresso transition-colors">✨ Suggest from due date</button>
+          </div>
           <div className="space-y-1.5">
             {checkIns.map((c, i) => (
               <div key={i} className="flex items-center gap-2">

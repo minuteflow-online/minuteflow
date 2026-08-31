@@ -614,8 +614,59 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       !selectedTask.deleted_at
   );
 
+  // Status lives in both panels. It used to be written inline in the view
+  // branch only, so clicking Edit dropped it entirely and there was no way to
+  // change status and any other field in one sitting.
+  const renderStatusField = (task: FixedPayTaskWithClaimer) => (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
+                  {isAdminOrManager ? (
+                    /* Admins change status straight from the details panel.
+                       It used to render a static badge for them, so the only
+                       way to move a task on was to open the full edit form
+                       — the server has always allowed the change. The current
+                       status is added to the list when it is display-only
+                       (approved, reviewing), or the select would have no
+                       matching option and blank itself. */
+                    <select
+                      value={task.status}
+                      disabled={statusSaving}
+                      onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
+                      className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta disabled:opacity-50"
+                    >
+                      {(STATUS_OPTIONS.includes(task.status)
+                        ? STATUS_OPTIONS
+                        : [task.status, ...STATUS_OPTIONS]
+                      ).map((status) => (
+                        <option key={status} value={status}>
+                          {STATUS_LABELS[status]}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (task.claimed_by_me || task.claimed_by === currentUserId) &&
+                  VA_STATUS_OPTIONS.includes(task.status) ? (
+                    <select
+                      value={task.status}
+                      disabled={statusSaving}
+                      onChange={(event) => void handleStatusChange(task.id, event.target.value as FixedPayTaskWithClaimer["status"])}
+                      className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta disabled:opacity-50"
+                    >
+                      {VA_STATUS_OPTIONS.map((status) => (
+                        <option key={status} value={status}>
+                          {STATUS_LABELS[status]}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[task.status]}`}>
+                      {STATUS_LABELS[task.status]}
+                    </span>
+                  )}
+                </div>
+  );
+
   if (profileLoading) {
-    return (
+  return (
       <div className="space-y-2">
         {[1, 2, 3].map((i) => (
           <div key={i} className="h-14 animate-pulse rounded-xl bg-parchment" />
@@ -1119,6 +1170,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                       onSaved={handleTaskSaved}
                     />
                   )}
+                  {panelMode === "edit" && selectedTask && renderStatusField(selectedTask)}
                 </>
               )}
 
@@ -1139,28 +1191,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     onSaved={handleTaskSaved}
                   />
 
-                  <div>
-                    <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-stone">Status</label>
-                    {(selectedTask.claimed_by_me || selectedTask.claimed_by === currentUserId) &&
-                    VA_STATUS_OPTIONS.includes(selectedTask.status) ? (
-                      <select
-                        value={selectedTask.status}
-                        disabled={statusSaving}
-                        onChange={(event) => void handleStatusChange(selectedTask.id, event.target.value as FixedPayTaskWithClaimer["status"])}
-                        className="w-full rounded-lg border border-sand bg-white px-2 py-1.5 text-[12px] text-espresso outline-none transition-colors focus:border-terracotta disabled:opacity-50"
-                      >
-                        {VA_STATUS_OPTIONS.map((status) => (
-                          <option key={status} value={status}>
-                            {STATUS_LABELS[status]}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASSES[selectedTask.status]}`}>
-                        {STATUS_LABELS[selectedTask.status]}
-                      </span>
-                    )}
-                  </div>
+                  {renderStatusField(selectedTask)}
 
                   <div className="rounded-xl border border-sand bg-parchment/20 p-4">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-stone">Claimed</div>
