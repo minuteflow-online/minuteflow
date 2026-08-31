@@ -214,6 +214,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return Response.json({ error: error.message }, { status: 500 });
     }
 
+    // Same reason as the admin path below: the mirror row is what GET reads
+    // back once a task has been claimed.
+    if (updates.status !== undefined) {
+      await admin
+        .from("assigned_tasks")
+        .update({ status: updates.status, updated_at: new Date().toISOString() })
+        .eq("fixed_pay_task_id", taskId)
+        .is("deleted_at", null);
+    }
+
     const [task] = await hydrateTaskProfiles(admin, [data as unknown as FixedPayTaskWithClaimer]);
     return Response.json({ task });
   }
@@ -337,6 +347,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 });
+  }
+
+  // Once a task has been claimed there is a mirror row in assigned_tasks, and
+  // GET /api/fixed-pay-tasks reads the mirror as the real status — the submit
+  // and review flow only ever writes there. So a status set here alone looked
+  // like it saved and then reverted on the next load. Write both.
+  if (updates.status !== undefined) {
+    await admin
+      .from("assigned_tasks")
+      .update({ status: updates.status, updated_at: now })
+      .eq("fixed_pay_task_id", taskId)
+      .is("deleted_at", null);
   }
 
   if (nextAssignedTo) {
