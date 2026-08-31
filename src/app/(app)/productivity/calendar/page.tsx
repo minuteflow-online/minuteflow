@@ -1592,6 +1592,28 @@ export default function ProductivityCalendarPage() {
     return result;
   }
 
+  // Grid-pixel top -> "9:00 AM", for the Actual Timeline hover summary below.
+  // Purely a scale conversion (px / HOUR_HEIGHT * 60 = minutes-of-day) — the
+  // timezone work already happened wherever the px value itself came from
+  // (blockPosition, actualTimelinePositions), so there's nothing to convert here.
+  function pxToClock(px: number): string {
+    const minutes = Math.round((px / HOUR_HEIGHT) * 60);
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const period = h >= 12 ? "PM" : "AM";
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+  }
+
+  // The hover summary for a rearranged Actual Timeline block — planned span
+  // next to where it actually landed, so the purple border's claim ("this
+  // moved") comes with the specifics instead of asking to be taken on faith.
+  function timelineMoveSummary(plan: { top: number; height: number }, actual: { top: number; height: number }): string {
+    const plannedSpan = `${pxToClock(plan.top)} – ${pxToClock(plan.top + plan.height)}`;
+    const actualSpan = `${pxToClock(actual.top)} – ${pxToClock(actual.top + actual.height)}`;
+    return `Planned ${plannedSpan} → Actual ${actualSpan}`;
+  }
+
   // Planned (scheduled) vs. actual (logged) minutes for one day — the pair the
   // Day/Week/Month totals all read from. `off` marks a day that's outside the
   // VA's shift AND has logged time anyway, so callers can grey the pair out
@@ -1889,7 +1911,8 @@ export default function ProductivityCalendarPage() {
                           <button
                             type="button"
                             onClick={() => openEditBlock(task)}
-                            className={`pointer-events-auto absolute inset-x-0.5 rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                            title={moved ? timelineMoveSummary(plan, { top, height }) : undefined}
+                            className={`pointer-events-auto absolute inset-x-0.5 rounded-md px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${moved ? "border-2 border-plum" : "border"} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                             style={{ top, height }}
                           >
                             <p className="truncate text-[9px] font-semibold leading-tight">
@@ -3213,7 +3236,8 @@ export default function ProductivityCalendarPage() {
                               <button
                                 type="button"
                                 onClick={() => openEditBlock(task)}
-                                className={`pointer-events-auto absolute left-16 right-2 rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                                title={moved ? timelineMoveSummary(plan, { top, height }) : undefined}
+                                className={`pointer-events-auto absolute left-16 right-2 rounded-md px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${moved ? "border-2 border-plum" : "border"} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                                 style={{ top, height }}
                               >
                                 <p className="truncate text-[11px] font-semibold">
