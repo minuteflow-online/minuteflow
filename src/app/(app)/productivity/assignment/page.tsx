@@ -1966,9 +1966,6 @@ export default function TaskListPage() {
   return (
     <>
     <div className="mx-auto max-w-6xl px-4 py-6">
-      {currentUserId && (
-        <JobOrdersSection currentUserId={currentUserId} currentRole={currentRole} teamMembers={allTeamMembers} />
-      )}
       <div className="rounded-2xl border border-sand bg-white shadow-sm">
         <div className="border-b border-parchment px-5 py-3">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -2074,6 +2071,12 @@ export default function TaskListPage() {
             </div>
           </div>
         </div>
+
+        {currentUserId && activeView === "my_tasks" && (
+          <div className="px-5 pt-4">
+            <JobOrdersSection currentUserId={currentUserId} currentRole={currentRole} teamMembers={allTeamMembers} accounts={accountOptions} />
+          </div>
+        )}
 
         {canShowHourlyPool && activeView === "my_tasks" && (
           <div className="px-5 pt-4">

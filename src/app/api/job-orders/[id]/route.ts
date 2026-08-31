@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/projectAccess";
 import { hasBroadAdminAccess, isFounder } from "@/lib/financialAccess";
+import { notifyOne } from "@/lib/notifyOne";
+import { esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -34,8 +36,24 @@ export async function PATCH(request: Request, { params }: RouteContext) {
   if (readErr) return Response.json({ error: readErr.message }, { status: 500 });
   if (!order) return Response.json({ error: "Job order not found" }, { status: 404 });
 
-  const body = (await request.json()) as { action?: string; reason?: string; rate?: number };
+  const body = (await request.json()) as { action?: string; reason?: string; rate?: number; task_title?: string; project?: string; fields?: Record<string, unknown> };
   const action = body.action;
+
+  // ── Creator/admin edits an open order ─────────────────────────────────────
+  if (action === "edit") {
+    const isOwnerOrAdmin = order.created_by === user.id || hasBroadAdminAccess(profile);
+    if (!isOwnerOrAdmin) return Response.json({ error: "Forbidden" }, { status: 403 });
+    if (order.status !== "offered") return Response.json({ error: "Only an offered order can be edited" }, { status: 409 });
+    const f = body.fields ?? {};
+    const allowed = ["title", "type", "linked_project_id", "create_later", "account", "details", "links", "work_type", "time_frame", "start_date", "deadline", "respond_by", "review_required", "priority", "offered_to"];
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of allowed) if (k in f) updates[k] = f[k];
+    // The rate is Founder-only, even on edit.
+    if ("rate" in f && isFounder(profile)) updates.rate = typeof f.rate === "number" ? f.rate : null;
+    const { data, error } = await supabase.from("job_orders").update(updates).eq("id", id).select("*").single();
+    if (error) return Response.json({ error: error.message }, { status: 400 });
+    return Response.json({ ok: true, order: data });
+  }
 
   // ── Founder sets the money ────────────────────────────────────────────────
   if (action === "set_rate") {
@@ -65,6 +83,9 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       return Response.json({ error: `This order is already ${order.status}` }, { status: 409 });
     }
 
+    const p = profile as { full_name?: string | null; username?: string | null } | null;
+    const vaName = p?.full_name || p?.username || "A VA";
+
     if (action === "decline") {
       const reason = typeof body.reason === "string" ? body.reason.trim() : "";
       const { error } = await supabase
@@ -72,20 +93,29 @@ export async function PATCH(request: Request, { params }: RouteContext) {
         .update({ status: "declined", decline_reason: reason || null, updated_at: new Date().toISOString() })
         .eq("id", id);
       if (error) return Response.json({ error: error.message }, { status: 400 });
+      await notifyOne(supabase, {
+        targetUserId: order.created_by,
+        senderId: user.id,
+        content: `${vaName} declined your job order “${order.title}”${reason ? `: ${reason}` : ""}.`,
+        telegram: `↩️ <b>${esc(vaName)}</b> declined your job order\n\n<b>${esc(order.title)}</b>${reason ? `\n\nReason: ${esc(reason)}` : ""}`,
+        topic: "job_order",
+      });
       return Response.json({ ok: true });
     }
 
-    // accept → create the subtask. A "create later" order (the VA will make the
-    // Objective/Operation) is created unlinked for now — it lands in their task
-    // list and can be attached to the node they create.
+    // accept → create the subtask. The VA supplies the task title (and project)
+    // as they take it on. A "create later" order is created unlinked for now —
+    // it lands in their task list to attach to the node they create.
+    const vaTaskTitle = typeof body.task_title === "string" && body.task_title.trim() ? body.task_title.trim() : null;
+    const vaProject = typeof body.project === "string" && body.project.trim() ? body.project.trim() : null;
     const projectId = order.create_later ? null : (order.linked_project_id ?? null);
     const { data: task, error: taskErr } = await supabase
       .from("assigned_tasks")
       .insert({
-        task_name: order.task_title || order.title,
+        task_name: vaTaskTitle || order.title,
         task_detail: order.title, // the client-memo entry
         account: order.account,
-        project: order.project,
+        project: vaProject || order.project,
         project_id: projectId,
         due_date: order.deadline,
         start_date: order.start_date,
@@ -110,6 +140,14 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       .update({ status: "accepted", accepted_task_id: task.id, accepted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", id);
     if (updErr) return Response.json({ error: updErr.message }, { status: 400 });
+
+    await notifyOne(supabase, {
+      targetUserId: order.created_by,
+      senderId: user.id,
+      content: `${vaName} accepted your job order “${order.title}” — it's now a task on their list.`,
+      telegram: `✅ <b>${esc(vaName)}</b> accepted your job order\n\n<b>${esc(order.title)}</b>`,
+      topic: "job_order",
+    });
 
     return Response.json({ ok: true, task_id: task.id, pending_setup: order.create_later });
   }

@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { serviceClient } from "@/lib/projectAccess";
 import { hasBroadAdminAccess, isFounder } from "@/lib/financialAccess";
+import { notifyOne } from "@/lib/notifyOne";
+import { esc } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -109,5 +111,17 @@ export async function POST(request: Request) {
   const supabase = serviceClient();
   const { data, error } = await supabase.from("job_orders").insert(insert).select(SELECT).single();
   if (error) return Response.json({ error: error.message }, { status: 400 });
+
+  // Ping the VA it's offered to — bell + Telegram.
+  const p = profile as { full_name?: string | null; username?: string | null } | null;
+  const fromName = p?.full_name || p?.username || "Someone";
+  await notifyOne(supabase, {
+    targetUserId: offeredTo,
+    senderId: user.id,
+    content: `${fromName} offered you a job order: “${title}”. Accept or decline it on the Assignment page.`,
+    telegram: `📋 <b>New job order</b> from ${esc(fromName)}\n\n<b>${esc(title)}</b>\n\nAccept or decline it on the Assignment page.`,
+    topic: "job_order",
+  });
+
   return Response.json({ order: stripRate(data as OrderRow, user.id, founder) }, { status: 201 });
 }

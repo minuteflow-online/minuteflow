@@ -66,10 +66,12 @@ export default function JobOrdersSection({
   currentUserId,
   currentRole,
   teamMembers,
+  accounts,
 }: {
   currentUserId: string;
   currentRole: string | null;
   teamMembers: Member[];
+  accounts: string[];
 }) {
   const profile = { role: currentRole };
   const admin = hasBroadAdminAccess(profile);
@@ -80,6 +82,7 @@ export default function JobOrdersSection({
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<JobOrder | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectOpt[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -147,7 +150,7 @@ export default function JobOrdersSection({
             <span className="min-w-0">
               <span className="block text-[13px] font-semibold text-espresso leading-tight truncate">{o.title}</span>
               <span className="block text-[11px] text-stone/80 truncate">
-                {[o.task_title || o.project, o.account].filter(Boolean).join(" · ")}
+                {[o.account, o.type === "adhoc" ? "Adhoc" : o.type].filter(Boolean).join(" · ")}
                 {o.deadline ? ` · Due ${fmtDate(o.deadline)}` : ""}
                 {o.rate != null ? ` · $${o.rate}` : ""}
               </span>
@@ -157,11 +160,20 @@ export default function JobOrdersSection({
           <span className={`shrink-0 text-[10px] font-semibold px-2 py-[2px] rounded-full border ${STATUS_CLS[o.status]}`}>{o.status}</span>
           {canRespond && (
             <span className="flex items-center gap-1 shrink-0">
-              <button disabled={busyId === o.id} onClick={() => void act(o.id, { action: "accept" })}
+              <button disabled={busyId === o.id} onClick={() => {
+                const taskTitle = prompt("Name this task (you're creating it):", o.title);
+                if (taskTitle == null || !taskTitle.trim()) return;
+                const project = o.type !== "adhoc" ? (prompt("Project (optional):") ?? "") : "";
+                void act(o.id, { action: "accept", task_title: taskTitle.trim(), project });
+              }}
                 className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors disabled:opacity-50">Accept</button>
               <button disabled={busyId === o.id} onClick={() => { const reason = prompt("Reason for declining (optional):") ?? ""; void act(o.id, { action: "decline", reason }); }}
                 className="px-2.5 py-1 rounded-lg text-[10px] font-semibold border border-terracotta/40 text-terracotta hover:border-terracotta transition-colors disabled:opacity-50">Decline</button>
             </span>
+          )}
+          {admin && o.status === "offered" && !canRespond && (
+            <button disabled={busyId === o.id} onClick={() => { setEditing(o); setCreating(false); }}
+              className="shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-stone/15 text-espresso hover:bg-stone/25 transition-colors disabled:opacity-50">Edit</button>
           )}
         </div>
         {isExp && (
@@ -169,8 +181,6 @@ export default function JobOrdersSection({
             {([
               ["Offered to", nameOf(memberById.get(o.offered_to))],
               ["Type", o.type === "adhoc" ? "Adhoc" : (o.create_later ? `${o.type} · create later` : (projects.find((p) => p.id === o.linked_project_id)?.name ?? o.type))],
-              ["Project", o.project],
-              ["Task title", o.task_title],
               ["Account", o.account],
               ["Work type", o.work_type === "output" ? "Output based" : "Time based"],
               [o.work_type === "output" ? "Rate" : "Time frame", o.work_type === "output" ? (o.rate != null ? `$${o.rate}` : (founder ? "— (set a rate)" : "hidden")) : o.time_frame],
@@ -204,18 +214,21 @@ export default function JobOrdersSection({
   };
 
   return (
-    <div className="rounded-xl border border-sand bg-cream/40 p-3 mb-4">
+    <div className="rounded-xl border-2 border-amber/40 bg-amber-soft/25 p-3.5 mb-4 shadow-sm">
       <div className="flex items-center justify-between gap-2">
         <button type="button" onClick={() => setOpen((v) => !v)} className="flex items-center gap-2">
+          <svg className="h-4 w-4 shrink-0 text-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" /><rect x="9" y="3" width="6" height="4" rx="1" /><path d="M9 12l2 2 4-4" />
+          </svg>
+          <h3 className="text-sm font-extrabold text-espresso uppercase tracking-wide">Job Orders</h3>
           <span className="text-amber text-[10px] w-3 shrink-0">{open ? "▼" : "▶"}</span>
-          <h3 className="text-xs font-bold text-espresso uppercase tracking-wide">Job Orders</h3>
           {offeredToMe.length > 0 && (
-            <span className="text-[10px] font-semibold px-2 py-[2px] rounded-full bg-amber-soft text-amber border border-amber/30">{offeredToMe.length} offered to you</span>
+            <span className="text-[11px] font-bold px-2.5 py-[3px] rounded-full bg-amber text-white animate-pulse">{offeredToMe.length} offered to you — respond</span>
           )}
         </button>
         {admin && open && (
-          <button type="button" onClick={() => setCreating((v) => !v)}
-            className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors">
+          <button type="button" onClick={() => { setCreating((v) => !v); setEditing(null); }}
+            className="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-sage text-white hover:bg-sage/90 transition-colors shadow-sm">
             {creating ? "Cancel" : "+ Job Order"}
           </button>
         )}
@@ -223,12 +236,15 @@ export default function JobOrdersSection({
 
       {open && (
         <div className="mt-3 space-y-3">
-          {creating && admin && (
+          {(creating || editing) && admin && (
             <CreateForm
               teamMembers={teamMembers}
               projects={projects}
+              accounts={accounts}
               founder={founder}
-              onDone={() => { setCreating(false); setReload((k) => k + 1); }}
+              initial={editing}
+              onDone={() => { setCreating(false); setEditing(null); setReload((k) => k + 1); }}
+              onCancel={() => { setCreating(false); setEditing(null); }}
             />
           )}
 
@@ -258,69 +274,74 @@ export default function JobOrdersSection({
   );
 }
 
-// ── Create form ─────────────────────────────────────────────────────────────
+// ── Create / edit form ──────────────────────────────────────────────────────
 function CreateForm({
-  teamMembers, projects, founder, onDone,
+  teamMembers, projects, accounts, founder, initial, onDone, onCancel,
 }: {
   teamMembers: Member[];
   projects: ProjectOpt[];
+  accounts: string[];
   founder: boolean;
+  initial: JobOrder | null;
   onDone: () => void;
+  onCancel: () => void;
 }) {
-  const [title, setTitle] = useState("");
-  const [offeredTo, setOfferedTo] = useState("");
-  const [type, setType] = useState<"objective" | "operation" | "adhoc">("adhoc");
-  const [linkMode, setLinkMode] = useState<"existing" | "later">("existing");
-  const [linkedId, setLinkedId] = useState("");
-  const [project, setProject] = useState("");
-  const [taskTitle, setTaskTitle] = useState("");
-  const [account, setAccount] = useState("");
-  const [details, setDetails] = useState("");
-  const [links, setLinks] = useState("");
-  const [workType, setWorkType] = useState<"output" | "time">("time");
-  const [rate, setRate] = useState("");
-  const [timeFrame, setTimeFrame] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [deadline, setDeadline] = useState("");
-  const [respondBy, setRespondBy] = useState("");
-  const [reviewRequired, setReviewRequired] = useState(false);
-  const [priority, setPriority] = useState<"low" | "med" | "high" | "urgent">("med");
+  const editing = Boolean(initial);
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [offeredTo, setOfferedTo] = useState(initial?.offered_to ?? "");
+  const [type, setType] = useState<"objective" | "operation" | "adhoc">(initial?.type ?? "adhoc");
+  const [linkMode, setLinkMode] = useState<"existing" | "later">(initial?.create_later ? "later" : "existing");
+  const [linkedId, setLinkedId] = useState(initial?.linked_project_id ?? "");
+  const [account, setAccount] = useState(initial?.account ?? "");
+  const [details, setDetails] = useState(initial?.details ?? "");
+  const [links, setLinks] = useState((initial?.links ?? []).join("\n"));
+  const [workType, setWorkType] = useState<"output" | "time">(initial?.work_type ?? "time");
+  const [rate, setRate] = useState(initial?.rate != null ? String(initial.rate) : "");
+  const [timeFrame, setTimeFrame] = useState(initial?.time_frame ?? "");
+  const [startDate, setStartDate] = useState(initial?.start_date ?? "");
+  const [deadline, setDeadline] = useState(initial?.deadline ?? "");
+  const [respondBy, setRespondBy] = useState(initial?.respond_by ? initial.respond_by.slice(0, 10) : "");
+  const [reviewRequired, setReviewRequired] = useState(initial?.review_required ?? false);
+  const [priority, setPriority] = useState<"low" | "med" | "high" | "urgent">(initial?.priority ?? "med");
   const [saving, setSaving] = useState(false);
 
   const linkable = projects.filter((p) => p.kind === type);
-  const inputCls = "w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] text-espresso outline-none bg-white";
+  const inputCls = "w-full rounded-lg border border-sand px-2 py-1.5 text-[12px] text-espresso outline-none bg-white disabled:bg-parchment/60 disabled:text-stone";
   const labelCls = "block text-[10px] font-semibold text-walnut uppercase tracking-wide mb-1";
 
   const submit = async () => {
     if (!title.trim() || !offeredTo) return;
     setSaving(true);
+    const payload = {
+      title: title.trim(),
+      offered_to: offeredTo,
+      type,
+      linked_project_id: type !== "adhoc" && linkMode === "existing" ? (linkedId || null) : null,
+      create_later: type !== "adhoc" && linkMode === "later",
+      account: founder ? (account || null) : (initial?.account ?? null),
+      details: details || null,
+      links: links.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
+      work_type: workType,
+      rate: founder && workType === "output" && rate ? Number(rate) : null,
+      time_frame: workType === "time" ? (timeFrame || null) : null,
+      start_date: startDate || null,
+      deadline: deadline || null,
+      respond_by: respondBy || null,
+      review_required: reviewRequired,
+      priority,
+    };
     try {
-      const r = await fetch("/api/job-orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          offered_to: offeredTo,
-          type,
-          linked_project_id: type !== "adhoc" && linkMode === "existing" ? (linkedId || null) : null,
-          create_later: type !== "adhoc" && linkMode === "later",
-          project: project || null,
-          task_title: taskTitle || null,
-          account: account || null,
-          details: details || null,
-          links: links.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
-          work_type: workType,
-          rate: founder && workType === "output" && rate ? Number(rate) : null,
-          time_frame: workType === "time" ? (timeFrame || null) : null,
-          start_date: startDate || null,
-          deadline: deadline || null,
-          respond_by: respondBy || null,
-          review_required: reviewRequired,
-          priority,
-        }),
-      });
+      const r = editing
+        ? await fetch(`/api/job-orders/${initial!.id}`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "edit", fields: payload }),
+          })
+        : await fetch("/api/job-orders", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
       if (r.ok) onDone();
-      else { const d = await r.json().catch(() => ({})); alert(d.error || "Couldn't create the order."); }
+      else { const d = await r.json().catch(() => ({})); alert(d.error || "Couldn't save the order."); }
     } finally { setSaving(false); }
   };
 
@@ -366,17 +387,15 @@ function CreateForm({
             )}
           </div>
         )}
-        <div>
-          <label className={labelCls}>Project</label>
-          <input className={inputCls} value={project} onChange={(e) => setProject(e.target.value)} />
-        </div>
-        <div>
-          <label className={labelCls}>Task title</label>
-          <input className={inputCls} value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} />
+        <div className="sm:col-span-2 text-[11px] text-stone/80 bg-parchment/50 rounded-lg px-2.5 py-1.5">
+          The <b>project</b> and <b>task title</b> are set by the VA when they accept and create the task.
         </div>
         <div>
           <label className={labelCls}>Account {founder ? "" : "(Founder assigns)"}</label>
-          <input className={inputCls} value={account} onChange={(e) => setAccount(e.target.value)} disabled={!founder} placeholder={founder ? "" : "—"} />
+          <select className={inputCls} value={account} onChange={(e) => setAccount(e.target.value)} disabled={!founder}>
+            <option value="">{founder ? "Select account…" : (account || "—")}</option>
+            {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
         </div>
         <div>
           <label className={labelCls}>Priority</label>
@@ -426,10 +445,14 @@ function CreateForm({
           Review required
         </label>
       </div>
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel}
+          className="px-3 py-1.5 rounded-lg bg-stone/15 text-stone text-[12px] font-semibold hover:bg-stone/25 transition-colors">
+          Cancel
+        </button>
         <button type="button" onClick={() => void submit()} disabled={saving || !title.trim() || !offeredTo}
           className="px-4 py-1.5 rounded-lg bg-sage text-white text-[12px] font-semibold hover:bg-sage/90 transition-colors disabled:opacity-50">
-          {saving ? "Offering…" : "Offer job order"}
+          {saving ? "Saving…" : editing ? "Save changes" : "Offer job order"}
         </button>
       </div>
     </div>
