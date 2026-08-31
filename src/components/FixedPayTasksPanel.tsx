@@ -922,6 +922,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                     {!hiddenColumns.has("active") && (
                       <ColumnHeader label="Active" width={columnWidths.active} onResize={(w) => setColumnWidth("active", w)} />
                     )}
+                    <th className="px-3 py-2.5 w-32"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1048,6 +1049,24 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                             </span>
                           </td>
                         )}
+                        <td className="px-3 py-3 text-right" onClick={(event) => event.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openViewPanel(task)}
+                              className="rounded-lg border border-sand px-2.5 py-1 text-[11px] text-walnut transition-colors hover:border-walnut"
+                            >
+                              View
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openEditPanel(task)}
+                              className="rounded-lg border border-sand px-2.5 py-1 text-[11px] text-walnut transition-colors hover:border-walnut"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
