@@ -141,7 +141,7 @@ export default function FixedPayTasksTab() {
   const [panelStatus, setPanelStatus] = useState<FixedPayTaskWithClaimer["status"]>("open");
   const [panelIsActive, setPanelIsActive] = useState(true);
   const [panelSaving, setPanelSaving] = useState(false);
-  const [bulkAction, setBulkAction] = useState<"archive" | "trash" | "delete" | null>(null);
+  const [bulkAction, setBulkAction] = useState<"archive" | "trash" | "delete" | "complete" | null>(null);
   const [revokingClaim, setRevokingClaim] = useState(false);
   const [createTaskMode, setCreateTaskMode] = useState<"time_based" | "output_based">("output_based");
   const taskEditorRef = useRef<TaskEditorHandle | null>(null);
@@ -449,7 +449,7 @@ export default function FixedPayTasksTab() {
   }, [filteredTasks]);
 
   const runBulkVisibilityAction = useCallback(
-    async (payload: Record<string, unknown>, successText: string, action: "archive" | "trash") => {
+    async (payload: Record<string, unknown>, successText: string, action: "archive" | "trash" | "complete") => {
       const targets = tasks.filter((task) => selectedTaskIdSet.has(task.id));
       if (targets.length === 0) return;
 
@@ -469,6 +469,16 @@ export default function FixedPayTasksTab() {
     },
     [selectedTaskIdSet, tasks, updateTaskVisibility]
   );
+
+  // Separate confirm from Archive/Trash — this is the step that makes a task
+  // count toward payroll (paystub.ts and FinancialSummaryTab.tsx both query
+  // status = "completed" directly), so a misclick here is a money mistake,
+  // not just a visibility one.
+  const runBulkComplete = useCallback(() => {
+    if (selectedTaskIds.length === 0) return;
+    if (!confirm(`Mark ${selectedTaskIds.length} task(s) as Completed? This makes them count toward payroll on the next paystub.`)) return;
+    void runBulkVisibilityAction({ status: "completed" }, "Selected tasks marked completed.", "complete");
+  }, [selectedTaskIds.length, runBulkVisibilityAction]);
 
   const runBulkDeleteAction = useCallback(async () => {
     const targets = tasks.filter((task) => selectedTaskIdSet.has(task.id));
@@ -820,6 +830,15 @@ export default function FixedPayTasksTab() {
                 <span className="font-semibold">{selectedTaskIds.length}</span> selected
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={runBulkComplete}
+                  disabled={bulkAction !== null}
+                  className="rounded-lg border border-sage px-3 py-2 text-[12px] font-semibold text-sage transition-colors hover:bg-sage-soft disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Marks the selected tasks payroll-ready — they'll show up on this VA's next paystub"
+                >
+                  {bulkAction === "complete" ? "Marking Completed..." : "Mark Completed"}
+                </button>
                 <button
                   type="button"
                   onClick={() => void runBulkVisibilityAction({ archived_at: new Date().toISOString(), deleted_at: null }, "Selected tasks archived.", "archive")}
