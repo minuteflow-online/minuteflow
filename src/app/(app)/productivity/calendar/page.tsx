@@ -1815,24 +1815,37 @@ export default function ProductivityCalendarPage() {
                       const cascaded = positions.get(task.id);
                       if (!cascaded) return null;
                       const { top, height, isOver, overrun } = cascaded;
+                      const plan = blockPosition(task);
+                      // Same ghost-of-the-plan treatment as the Day view: only
+                      // drawn when this task actually moved or grew, so it reads
+                      // as the spill/readjustment itself rather than a second
+                      // copy of every block.
+                      const moved = top !== plan.top || height !== plan.height;
                       return (
-                        <button
-                          key={task.id}
-                          type="button"
-                          onClick={() => openEditBlock(task)}
-                          className={`pointer-events-auto absolute inset-x-0.5 rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                          style={{ top, height }}
-                        >
-                          <p className="truncate text-[9px] font-semibold leading-tight">
-                            {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                            {task.task_name}
-                          </p>
-                          {isOver && (
-                            <p className="pointer-events-none absolute inset-x-0 -translate-y-full truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white" style={{ top: height }}>
-                              {formatDuration(overrun)} over
-                            </p>
+                        <div key={task.id} className="pointer-events-none absolute inset-x-0">
+                          {moved && (
+                            <div
+                              className="absolute inset-x-0.5 rounded-md border-2 border-dashed border-stone/40"
+                              style={{ top: plan.top, height: plan.height }}
+                            />
                           )}
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditBlock(task)}
+                            className={`pointer-events-auto absolute inset-x-0.5 rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                            style={{ top, height }}
+                          >
+                            <p className="truncate text-[9px] font-semibold leading-tight">
+                              {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                              {task.task_name}
+                            </p>
+                            {isOver && (
+                              <p className="pointer-events-none absolute inset-x-0 -translate-y-full truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white" style={{ top: height }}>
+                                {formatDuration(overrun)} over
+                              </p>
+                            )}
+                          </button>
+                        </div>
                       );
                     });
                   })()}
@@ -3126,30 +3139,43 @@ export default function ProductivityCalendarPage() {
                           const cascaded = positions.get(task.id);
                           if (!cascaded) return null;
                           const { top, height, isOver, overrun } = cascaded;
+                          const plan = blockPosition(task);
+                          // The plan's own box, faint and dashed, only when this
+                          // task actually moved or grew — the spill/readjustment
+                          // itself, not just a restated position. A task that
+                          // landed exactly where it was planned draws no ghost.
+                          const moved = top !== plan.top || height !== plan.height;
                           return (
-                            <button
-                              key={task.id}
-                              type="button"
-                              onClick={() => openEditBlock(task)}
-                              className={`pointer-events-auto absolute left-16 right-2 rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
-                              style={{ top, height }}
-                            >
-                              <p className="truncate text-[11px] font-semibold">
-                                {task.isRecurring && <RecurringMark className="mr-0.5" />}
-                                {task.task_name}
-                                {task.task_detail && (
-                                  <span className="font-normal opacity-80"> | {task.task_detail}</span>
-                                )}
-                              </p>
-                              {task.account && (
-                                <p className="truncate text-[10px] opacity-80">{task.account}</p>
+                            <div key={task.id} className="pointer-events-none absolute inset-x-0">
+                              {moved && (
+                                <div
+                                  className="absolute left-16 right-2 rounded-md border-2 border-dashed border-stone/40"
+                                  style={{ top: plan.top, height: plan.height }}
+                                />
                               )}
-                              {isOver && (
-                                <p className="absolute right-1.5 top-1 rounded-full bg-terracotta px-1.5 text-[8px] font-bold leading-tight text-white">
-                                  +{formatDuration(overrun)}
+                              <button
+                                type="button"
+                                onClick={() => openEditBlock(task)}
+                                className={`pointer-events-auto absolute left-16 right-2 rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                                style={{ top, height }}
+                              >
+                                <p className="truncate text-[11px] font-semibold">
+                                  {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                                  {task.task_name}
+                                  {task.task_detail && (
+                                    <span className="font-normal opacity-80"> | {task.task_detail}</span>
+                                  )}
                                 </p>
-                              )}
-                            </button>
+                                {task.account && (
+                                  <p className="truncate text-[10px] opacity-80">{task.account}</p>
+                                )}
+                                {isOver && (
+                                  <p className="absolute right-1.5 top-1 rounded-full bg-terracotta px-1.5 text-[8px] font-bold leading-tight text-white">
+                                    +{formatDuration(overrun)}
+                                  </p>
+                                )}
+                              </button>
+                            </div>
                           );
                         });
                       })()}
