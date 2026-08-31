@@ -20,6 +20,8 @@ import {
   isDateInSpan,
   reanchorToDate,
   spanLabel,
+  isOverdueGivenStatus,
+  DUE_DATE_FINISHED_STATUSES,
 } from "@/lib/taskSchedule";
 import type { Project, UserRole } from "@/types/database";
 import { normalizePosition } from "@/types/database";
@@ -963,7 +965,11 @@ export default function ProductivityCalendarPage() {
     () =>
       daySchedule
         .filter(
-          (t) => t.due_date && t.due_date <= selectedDate && taskPassesFilters(t) && t.status !== "completed"
+          (t) =>
+            t.due_date &&
+            t.due_date <= selectedDate &&
+            taskPassesFilters(t) &&
+            !DUE_DATE_FINISHED_STATUSES.has(t.status ?? "")
         )
         .sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? ""))
         .map((t) => ({
@@ -971,7 +977,7 @@ export default function ProductivityCalendarPage() {
           name: t.task_name,
           dueDate: t.due_date as string,
           dueTime: t.due_time,
-          overdue: (t.due_date as string) < selectedDate,
+          overdue: isOverdueGivenStatus(t.due_date as string, selectedDate, t.status),
         })),
     [daySchedule, selectedDate, taskPassesFilters]
   );
