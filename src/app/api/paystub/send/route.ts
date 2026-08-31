@@ -187,7 +187,7 @@ export async function POST(request: Request) {
   // Fetch fixed-rate assignments that are approved or completed (not yet paid)
   const { data: fixedAssignmentsRaw } = await adminClient
     .from("va_task_assignments")
-    .select("id, rate, quantity_claimed, status, project_task_assignments(task_library(task_name), project_tags(account, project_name))")
+    .select("id, rate, quantity_claimed, status, assigned_at, project_task_assignments(task_library(task_name), project_tags(account, project_name))")
     .eq("va_id", user_id)
     .eq("billing_type", "fixed")
     .in("status", ["approved", "completed"]);
@@ -202,6 +202,7 @@ export async function POST(request: Request) {
     quantity: Number(a.quantity_claimed) || 1,
     amount: (Number(a.rate) || 0) * (Number(a.quantity_claimed) || 1),
     status: a.status as string,
+    date: (a.assigned_at as string | null) ?? null,
   }));
 
   // Fetch Output Based Tasks (the Team/VA "Output Based Tasks" tab) this VA has
@@ -210,7 +211,7 @@ export async function POST(request: Request) {
   // "Output Based Assignments" section on the paystub so they show up together.
   const { data: fixedPayTasksRaw } = await adminClient
     .from("fixed_pay_tasks")
-    .select("id, task_name, account, category, rate")
+    .select("id, task_name, account, category, rate, claimed_at")
     .eq("claimed_by", user_id)
     .eq("status", "completed")
     .is("deleted_at", null);
@@ -224,6 +225,7 @@ export async function POST(request: Request) {
     quantity: 1,
     amount: Number(t.rate) || 0,
     status: "completed",
+    date: (t.claimed_at as string | null) ?? null,
   }));
 
   const allFixedItems = [...fixedAssignments, ...fixedPayTaskItems];
@@ -499,6 +501,7 @@ interface FixedAssignment {
   quantity: number;
   amount: number;
   status: string;
+  date: string | null;
 }
 
 interface PaystubData {
@@ -559,6 +562,7 @@ function buildPaystubEmail(data: PaystubData): string {
   const fixedRowsHtml = fixedAssignments.map((a) => `
     <tr>
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #3d2b1f; font-size: 13px;">${a.task_name}${a.account ? ` <span style="color:#9e9080; font-size:11px;">· ${a.account}</span>` : ""}</td>
+      <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px;">${a.date ? formatDateLabel(a.date.split("T")[0]) : "—"}</td>
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${a.quantity > 1 ? `${a.quantity}× ${formatCurrency(a.rate)}` : formatCurrency(a.rate)}</td>
       <td style="padding: 10px 12px; border-bottom: 1px solid #e8e0d4; color: #6b5e52; font-size: 13px; text-align: right;">${formatCurrency(a.amount)}</td>
     </tr>`).join("");
@@ -626,6 +630,7 @@ function buildPaystubEmail(data: PaystubData): string {
           <thead>
             <tr style="background: #faf6f0;">
               <th style="padding: 9px 12px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Task</th>
+              <th style="padding: 9px 12px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Date</th>
               <th style="padding: 9px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Rate</th>
               <th style="padding: 9px 12px; text-align: right; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #9e9080; border-bottom: 1px solid #e8e0d4;">Amount</th>
             </tr>

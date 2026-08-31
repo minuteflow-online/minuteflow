@@ -31,6 +31,7 @@ interface FixedAssignment {
   quantity: number;
   amount: number;
   status: string;
+  date: string | null;
 }
 
 interface PreviewData {
@@ -924,6 +925,7 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                     <thead>
                       <tr className="text-bark/40 border-b border-linen">
                         <th className="text-left pb-1.5 font-semibold">Task</th>
+                        <th className="text-left pb-1.5 font-semibold">Date</th>
                         <th className="text-right pb-1.5 font-semibold">Rate</th>
                         <th className="text-right pb-1.5 font-semibold">Amount</th>
                       </tr>
@@ -934,6 +936,9 @@ export default function PaystubTab({ profiles, orgTimezone, orgName }: Props) {
                           <td className="py-1.5 text-bark/70">
                             {a.task_name}
                             {a.account && <span className="text-bark/40 ml-1">· {a.account}</span>}
+                          </td>
+                          <td className="py-1.5 text-bark/70">
+                            {a.date ? formatDateLabel(a.date.split("T")[0]) : "—"}
                           </td>
                           <td className="py-1.5 text-right text-bark/70">
                             {a.quantity > 1 ? `${a.quantity}× ${formatCurrency(a.rate)}` : formatCurrency(a.rate)}
