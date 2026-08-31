@@ -185,6 +185,14 @@ export async function GET(request: Request) {
       )
     );
 
+    // No task can have been worked before the earliest of them existed, so
+    // this bounds the scan without excluding anything real.
+    const earliestTaskCreatedAt =
+      Array.from(taskMeta.values())
+        .map((m) => m.createdAt)
+        .filter((d): d is string => Boolean(d))
+        .sort()[0] ?? new Date(0).toISOString();
+
     const [revisionRes, assigneeRes, logRes] = await Promise.all([
       // Every thread entry, not just revisions: the newest one also tells us
       // whether the task is still awaiting review (see reviewState below).
@@ -205,6 +213,13 @@ export async function GET(request: Request) {
             .from("time_logs")
             .select("user_id, task_name, account, start_time, duration_ms")
             .in("task_name", names)
+            // PostgREST caps a response at 1000 rows by default. Once the
+            // logs for these task names passed that, the query silently
+            // returned a truncated slice and every total on the page went
+            // blank with no error anywhere. Narrowed to the window the tasks
+            // actually cover, and given an explicit ceiling well above it.
+            .gte("start_time", earliestTaskCreatedAt)
+            .limit(20000)
         : Promise.resolve({ data: [] as never[] }),
     ]);
 
