@@ -266,9 +266,9 @@ export default function ProductivityCalendarPage() {
   // plan reflowed by what really happened — a late-running task pushes
   // everything after it later, absorbing into any open gaps first).
   const [dayTab, setDayTab] = useState<"grid" | "hours" | "actual">("grid");
-  // Week gets the same Grid/Hours split as Day. Separate state so switching
+  // Week gets the same three faces as Day. Separate state so switching
   // views doesn't drag one view's choice onto the other.
-  const [weekTab, setWeekTab] = useState<"grid" | "hours">("grid");
+  const [weekTab, setWeekTab] = useState<"grid" | "hours" | "actual">("grid");
   const [rangeTab, setRangeTab] = useState<"grid" | "hours">("grid");
   // Opening a block should answer "what is this?" before it offers to change
   // it, so the modal lands on Details and Edit Task is one click away.
@@ -1754,6 +1754,97 @@ export default function ProductivityCalendarPage() {
               </div>
   );
 
+  // Actual Timeline, over any list of days — same shape as renderTimeGrid
+  // (one column per day) but each day's blocks are positioned by
+  // actualTimelinePositions instead of blockPosition, so a late-running task
+  // pushes what's after it later within that day. Read-only: no click-to-add,
+  // since a slot here is a computed position, not a real place to schedule.
+  const renderActualTimeline = (dates: string[]) => (
+    <div className="overflow-x-auto">
+      <div className="grid" style={{ minWidth: Math.max(760, dates.length * 110), gridTemplateColumns: COLS(dates.length) }}>
+        <div />
+        {dates.map((dateStr) => {
+          const { weekday, day } = formatDayShort(dateStr);
+          const isToday = dateStr === todayStr;
+          const dayTotals = plannedActualForDate(dayUserId, dateStr);
+          return (
+            <button
+              key={dateStr}
+              type="button"
+              onClick={() => openDay(dateStr)}
+              className={`flex flex-col items-center gap-0.5 rounded-md py-1.5 text-center hover:bg-cream transition-colors cursor-pointer ${
+                isToday ? "bg-terracotta-soft" : ""
+              }`}
+            >
+              <span className="text-[9px] font-semibold text-walnut uppercase tracking-wide">{weekday}</span>
+              <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
+              {(dayTotals.planned > 0 || dayTotals.actual > 0) &&
+                plannedActualReadout(dayTotals.planned, dayTotals.actual, dayTotals.off, "xs")}
+            </button>
+          );
+        })}
+
+        <div className={GRID_SCROLL_CLASS} style={{ gridColumn: `span ${dates.length + 1}` }}>
+          <div className="relative grid" style={{ height: hours.length * HOUR_HEIGHT, gridTemplateColumns: COLS(dates.length) }}>
+            <div className="relative">
+              {hours.map((hour, i) => (
+                <span
+                  key={hour}
+                  className="absolute left-0 w-12 pt-0.5 text-[10px] text-stone"
+                  style={{ top: i * HOUR_HEIGHT }}
+                >
+                  {new Date(2000, 0, 1, hour).toLocaleTimeString("en-US", { hour: "numeric" })}
+                </span>
+              ))}
+            </div>
+
+            {dates.map((dateStr) => (
+              <div key={dateStr} className="relative border-l border-sand">
+                {hours.map((hour, i) => (
+                  <div
+                    key={hour}
+                    className="absolute left-0 right-0 border-t border-sand"
+                    style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                  />
+                ))}
+                <div className="pointer-events-none absolute inset-0">
+                  {(() => {
+                    const dayTasks = scheduledForDate(dateStr);
+                    const positions = actualTimelinePositions(dateStr, dayUserId);
+                    return dayTasks.map((task) => {
+                      const cascaded = positions.get(task.id);
+                      if (!cascaded) return null;
+                      const { top, height, isOver, overrun } = cascaded;
+                      return (
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={() => openEditBlock(task)}
+                          className={`pointer-events-auto absolute inset-x-0.5 rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                          style={{ top, height }}
+                        >
+                          <p className="truncate text-[9px] font-semibold leading-tight">
+                            {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                            {task.task_name}
+                          </p>
+                          {isOver && (
+                            <p className="pointer-events-none absolute inset-x-0 -translate-y-full truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white" style={{ top: height }}>
+                              {formatDuration(overrun)} over
+                            </p>
+                          )}
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   // The same work the Time Block grid shows, as lengths rather than positions.
   //
   // Laid out in the SAME shape as that grid: one column per day, not one row.
@@ -2594,7 +2685,7 @@ export default function ProductivityCalendarPage() {
               what the whole panel shows, so it sits above the date rather than
               under it. */}
           <div className="mb-3 mx-auto flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
-            {(["grid", "hours"] as const).map((tab) => (
+            {(["grid", "hours", "actual"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -2603,7 +2694,7 @@ export default function ProductivityCalendarPage() {
                   weekTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
                 }`}
               >
-                {tab === "grid" ? "Time Block" : "Duration Block"}
+                {tab === "grid" ? "Time Block" : tab === "hours" ? "Duration Block" : "Actual Timeline"}
               </button>
             ))}
           </div>
@@ -2658,6 +2749,8 @@ export default function ProductivityCalendarPage() {
             <div className="py-8 text-center text-xs text-stone">Loading…</div>
           ) : weekTab === "hours" ? (
             renderDurationList(weekGrid, "Week total")
+          ) : weekTab === "actual" ? (
+            renderActualTimeline(weekGrid)
           ) : (
             renderTimeGrid(weekGrid)
           )}
