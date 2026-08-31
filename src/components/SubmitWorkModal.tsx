@@ -65,8 +65,10 @@ export default function SubmitWorkModal({
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
   const words = countWords(message);
-  // A task nobody reviews only needs a submission that isn't empty. The
-  // checklist and the 15-word bar exist for a reader this work never gets.
+  // A task nobody reviews only needs a submission that isn't empty — the
+  // 15-word bar exists for a reader this work never gets. The checklist still
+  // shows, because it's a prompt worth reading even when nothing enforces it;
+  // it just doesn't block submitting.
   const needsEvidence = reviewRequired !== false;
   const hasContent = needsEvidence
     ? submissionMeetsBar({ message, link, fileCount: files.length })
@@ -207,9 +209,10 @@ export default function SubmitWorkModal({
             />
           </div>
 
-          {needsEvidence && (
           <div className="rounded-lg border border-sand bg-cream/40 p-2">
-            <label className={labelClass}>Before you submit</label>
+            <label className={labelClass}>
+              Before you submit{needsEvidence ? "" : " (optional)"}
+            </label>
             <div className="space-y-1">
               {CHECKLIST.map((item) => (
                 <label key={item.key} className="flex cursor-pointer items-start gap-2">
@@ -239,7 +242,6 @@ export default function SubmitWorkModal({
               ))}
             </div>
           </div>
-          )}
 
           {needsEvidence && !hasContent && (
             <p className="rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[10px] leading-relaxed text-stone">
