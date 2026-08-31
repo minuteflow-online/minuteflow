@@ -45,7 +45,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (!isOwnerOrAdmin) return Response.json({ error: "Forbidden" }, { status: 403 });
     if (order.status !== "offered") return Response.json({ error: "Only an offered order can be edited" }, { status: 409 });
     const f = body.fields ?? {};
-    const allowed = ["title", "type", "linked_project_id", "create_later", "account", "details", "links", "work_type", "time_frame", "start_date", "deadline", "respond_by", "review_required", "priority", "offered_to"];
+    const allowed = ["title", "type", "linked_project_id", "create_later", "account", "details", "links", "work_type", "time_frame", "start_date", "deadline", "respond_by", "review_required", "priority", "offered_to", "check_ins"];
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (k in f) updates[k] = f[k];
     // The rate is Founder-only, even on edit.
@@ -112,6 +112,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     const now = new Date().toISOString();
     let acceptedTaskId: number | null = null;
 
+    // Carry the check-in schedule onto the task so the VA has the milestones.
+    const checkIns = Array.isArray(order.check_ins) ? (order.check_ins as { label?: string; date?: string | null }[]) : [];
+    const scheduleNote = checkIns.length
+      ? "Check-ins — " + checkIns.map((c) => `${c.label}: ${c.date || "TBD"}`).join(" · ")
+      : null;
+
     if (order.work_type === "output") {
       // Output work → a fixed_pay_task, assigned + claimed to the VA, so it
       // shows in the Output Based Tasks tab with the (Founder-set) rate.
@@ -120,6 +126,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
         .insert({
           task_name: vaTaskTitle || order.title,
           task_detail: order.title,
+          task_notes: scheduleNote,
           account: order.account,
           project: vaProject || order.project,
           project_id: projectId,
@@ -143,6 +150,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
         .insert({
           task_name: vaTaskTitle || order.title,
           task_detail: order.title, // the client-memo entry
+          task_notes: scheduleNote,
           account: order.account,
           project: vaProject || order.project,
           project_id: projectId,
