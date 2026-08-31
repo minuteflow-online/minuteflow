@@ -142,6 +142,9 @@ const TITLE_FIELDS = [
 ];
 type TitleField = string;
 
+/** Enough to scan in one screenful without scrolling for a minute. */
+const THREADS_PER_PAGE = 25;
+
 const SCOPE_OPTIONS: Array<{ value: SubmissionScopeFilter; label: string }> = [
   { value: "all", label: "All work" },
   { value: "objective", label: "Objective" },
@@ -258,6 +261,7 @@ export default function SubmissionsPage() {
   }, [currentUserId]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [detailTaskId, setDetailTaskId] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
   const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   // Every filter is multi-select; an empty set means "all".
@@ -355,6 +359,12 @@ export default function SubmissionsPage() {
       setLoading(false);
     }
   }, [showTrash]);
+
+  // Any change to what's being shown starts at the first page — page 4 of a
+  // freshly filtered list is not where anyone wants to land.
+  useEffect(() => {
+    setPage(0);
+  }, [vaFilter, scopeFilter, projectFilter, categoryFilter, accountFilter, clientFilter, statusFilter, assignedByFilter, ownerMode, showTrash]);
 
   useEffect(() => {
     void load();
@@ -729,7 +739,7 @@ This cannot be undone.`
   // Timeline threads them instead: all submissions for one task form a single
   // card, oldest first, so a resubmission reads as the next entry under the
   // original rather than an unrelated card further down the page.
-  const threadsByDay = useMemo(() => {
+  const allThreads = useMemo(() => {
     const byTask = new Map<number, FeedItem[]>();
     for (const item of visibleItems) {
       const key = item.task?.id ?? item.assigned_task_id ?? -item.id;
@@ -743,21 +753,29 @@ This cannot be undone.`
       return { taskId, items: ordered, latest: ordered[ordered.length - 1] };
     });
 
-    // A thread sits on the day of its most recent submission, so reworked
-    // tasks resurface as current activity instead of staying buried on the
-    // date they were first submitted.
+    // Newest activity first. A thread sits on the day of its most recent
+    // submission, so reworked tasks resurface as current work rather than
+    // staying buried on the date they were first submitted.
+    threads.sort((a, b) => b.latest.created_at.localeCompare(a.latest.created_at));
+    return threads;
+  }, [visibleItems]);
+
+  const pageCount = Math.max(1, Math.ceil(allThreads.length / THREADS_PER_PAGE));
+  // Filtering down to fewer results than the current page would otherwise
+  // leave you staring at an empty page with no obvious way back.
+  const safePage = Math.min(page, pageCount - 1);
+
+  const threadsByDay = useMemo(() => {
+    const start = safePage * THREADS_PER_PAGE;
     const map = new Map<string, Thread[]>();
-    for (const thread of threads) {
+    for (const thread of allThreads.slice(start, start + THREADS_PER_PAGE)) {
       const day = localDay(thread.latest.created_at, orgTimezone);
       const list = map.get(day) ?? [];
       list.push(thread);
       map.set(day, list);
     }
-    for (const list of map.values()) {
-      list.sort((a, b) => b.latest.created_at.localeCompare(a.latest.created_at));
-    }
     return map;
-  }, [visibleItems, orgTimezone]);
+  }, [allThreads, safePage, orgTimezone]);
 
   return (
     <div className="mx-auto max-w-5xl px-4 pb-12">
@@ -942,6 +960,31 @@ This cannot be undone.`
           >
             Clear
           </button>
+        </div>
+      )}
+
+      {view === "timeline" && pageCount > 1 && (
+        <div className="mb-3 flex items-center justify-between rounded-xl border border-sand bg-white px-3 py-2">
+          <span className="text-[11px] text-stone">
+            Page {safePage + 1} of {pageCount} · {allThreads.length} task
+            {allThreads.length === 1 ? "" : "s"}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((n) => Math.max(0, n - 1))}
+              disabled={safePage === 0}
+              className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+            >
+              ← Newer
+            </button>
+            <button
+              onClick={() => setPage((n) => Math.min(pageCount - 1, n + 1))}
+              disabled={safePage >= pageCount - 1}
+              className="rounded-lg bg-stone/10 px-3 py-1 text-[10px] font-semibold text-stone transition-colors hover:bg-stone/20 disabled:opacity-40"
+            >
+              Older →
+            </button>
+          </div>
         </div>
       )}
 
