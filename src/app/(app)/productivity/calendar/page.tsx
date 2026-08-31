@@ -262,12 +262,14 @@ export default function ProductivityCalendarPage() {
   const [timeOff, setTimeOff] = useState<Array<{ user_id: string; start_date: string; end_date: string; start_time: string | null; end_time: string | null }>>([]);
 
   const [showFilters, setShowFilters] = useState(false);
-  // Day view has two faces: the Time Block grid, and a Duration Block table that answers
-  // "how long is each of these" without caring when they sit.
-  const [dayTab, setDayTab] = useState<"grid" | "hours">("grid");
-  // Week gets the same Grid/Hours split as Day. Separate state so switching
+  // Day view has three faces: the Time Block grid (the plan), the Duration
+  // Block table (how long each task takes, not when), and Actual Timeline (the
+  // plan reflowed by what really happened — a late-running task pushes
+  // everything after it later, absorbing into any open gaps first).
+  const [dayTab, setDayTab] = useState<"grid" | "hours" | "actual">("grid");
+  // Week gets the same three faces as Day. Separate state so switching
   // views doesn't drag one view's choice onto the other.
-  const [weekTab, setWeekTab] = useState<"grid" | "hours">("grid");
+  const [weekTab, setWeekTab] = useState<"grid" | "hours" | "actual">("grid");
   const [rangeTab, setRangeTab] = useState<"grid" | "hours">("grid");
   // Opening a block should answer "what is this?" before it offers to change
   // it, so the modal lands on Details and Edit Task is one click away.
@@ -1508,16 +1510,86 @@ export default function ProductivityCalendarPage() {
   // The shade-to-actual overlay + over-time treatment shared by all three
   // hour-grid render sites (Week, Compare, Day) — height of the "worked so
   // far" fill, whether the block ran over its scheduled length, and by how
-  // much. Shade height is capped to the block's own (already-clamped) height
-  // so a short block with lots of overrun doesn't shade past its own box.
+  // much. Deliberately uncapped: a block that ran long shades past its own
+  // box to the true worked length, rather than maxing out at 100% fill and
+  // hiding how far over it actually went. The render sites drop the block's
+  // overflow-hidden so this can actually spill past the box.
   function actualOverlay(vaId: string | null, dateStr: string, task: RawTask, pos: { top: number; height: number; durationMinutes: number }) {
     const actual = actualMinutesFor(vaId, dateStr, task);
     if (actual <= 0 || pos.durationMinutes <= 0) return null;
     const ratio = actual / pos.durationMinutes;
-    const shadeHeight = Math.min(ratio, 1) * pos.height;
+    const shadeHeight = ratio * pos.height;
     const overMinutes = Math.round(actual - pos.durationMinutes);
     const isOver = overMinutes > 0;
     return { shadeHeight, isOver, overMinutes };
+  }
+
+  // Same shade-to-actual idea as actualOverlay, for the Duration Block list
+  // rather than the Time Block grid — a row has no vertical position to shade
+  // by height, so this fills left-to-right instead. Output Based rows are
+  // excluded: they're never clocked through time_logs the way hourly work is,
+  // so actualMinutesByKey has nothing to match them against.
+  function durationRowOverlay(
+    vaId: string | null,
+    dateStr: string,
+    row: { name: string | null; account: string | null; minutes: number; source: "assigned" | "fixed" }
+  ) {
+    if (!vaId || row.source === "fixed" || row.minutes <= 0) return null;
+    const actual = actualMinutesByKey.get(actualMatchKey(vaId, dateStr, row.name, row.account)) ?? 0;
+    if (actual <= 0) return null;
+    const fillPercent = Math.min(actual / row.minutes, 1) * 100;
+    const overMinutes = Math.round(actual - row.minutes);
+    const isOver = overMinutes > 0;
+    return { fillPercent, isOver, overMinutes };
+  }
+
+  // Actual Timeline: the day's blocks reflowed by what really happened,
+  // instead of where they were planned. Walks the day in scheduled order
+  // carrying a running delay ("cursor") forward — a block that ran long pushes
+  // everything after it later, but only by however much delay survives after
+  // any open gap between two blocks eats into it first (an empty half hour
+  // between two plans absorbs a 20-minute overrun with nothing downstream
+  // moving at all). A block with no logged time yet is assumed to take
+  // exactly as long as planned — it doesn't add its own delay, but it still
+  // slides later if an earlier block already pushed the cursor forward.
+  // Same-day only: a delay that runs past the day's own blocks just compresses
+  // toward the end rather than spilling into tomorrow.
+  function actualTimelinePositions(dateStr: string, vaId: string | null) {
+    const dayTasks = scheduledForDate(dateStr);
+    const withPos = dayTasks
+      .map((task) => ({ task, pos: blockPosition(task) }))
+      .sort((a, b) => a.pos.top - b.pos.top);
+
+    const result = new Map<number, { top: number; height: number; overrun: number; isOver: boolean }>();
+    let cursorMinutes = 0;
+    let prevScheduledEndMinutes: number | null = null;
+
+    for (const { task, pos } of withPos) {
+      const scheduledStartMinutes = (pos.top / HOUR_HEIGHT) * 60;
+      const scheduledEndMinutes = scheduledStartMinutes + pos.durationMinutes;
+
+      if (prevScheduledEndMinutes != null) {
+        const gap = scheduledStartMinutes - prevScheduledEndMinutes;
+        cursorMinutes = Math.max(0, cursorMinutes - Math.max(0, gap));
+      }
+
+      const effectiveStartMinutes = scheduledStartMinutes + cursorMinutes;
+      const actual = actualMinutesFor(vaId, dateStr, task);
+      const effectiveDurationMinutes = actual > 0 ? actual : pos.durationMinutes;
+      const overMinutes = actual > 0 ? Math.max(0, actual - pos.durationMinutes) : 0;
+
+      result.set(task.id, {
+        top: (effectiveStartMinutes / 60) * HOUR_HEIGHT,
+        height: Math.max(20, (effectiveDurationMinutes / 60) * HOUR_HEIGHT),
+        overrun: overMinutes,
+        isOver: overMinutes > 0,
+      });
+
+      cursorMinutes += overMinutes;
+      prevScheduledEndMinutes = scheduledEndMinutes;
+    }
+
+    return result;
   }
 
   // Planned (scheduled) vs. actual (logged) minutes for one day — the pair the
@@ -1704,7 +1776,7 @@ export default function ProductivityCalendarPage() {
                                   key={task.id}
                                   type="button"
                                   onClick={() => openEditBlock(task)}
-                                  className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                                  className={`pointer-events-auto absolute rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                                   style={{ top, height, left, width }}
                                 >
                                   {overlay && (
@@ -1719,7 +1791,10 @@ export default function ProductivityCalendarPage() {
                                     {task.task_name}
                                   </p>
                                   {overlay?.isOver && (
-                                    <p className="pointer-events-none absolute inset-x-0 bottom-0 truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white">
+                                    <p
+                                      className="pointer-events-none absolute inset-x-0 -translate-y-full truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white"
+                                      style={{ top: overlay.shadeHeight }}
+                                    >
                                       {overlay.overMinutes}m over
                                     </p>
                                   )}
@@ -1734,6 +1809,97 @@ export default function ProductivityCalendarPage() {
                   </div>
                 </div>
               </div>
+  );
+
+  // Actual Timeline, over any list of days — same shape as renderTimeGrid
+  // (one column per day) but each day's blocks are positioned by
+  // actualTimelinePositions instead of blockPosition, so a late-running task
+  // pushes what's after it later within that day. Read-only: no click-to-add,
+  // since a slot here is a computed position, not a real place to schedule.
+  const renderActualTimeline = (dates: string[]) => (
+    <div className="overflow-x-auto">
+      <div className="grid" style={{ minWidth: Math.max(760, dates.length * 110), gridTemplateColumns: COLS(dates.length) }}>
+        <div />
+        {dates.map((dateStr) => {
+          const { weekday, day } = formatDayShort(dateStr);
+          const isToday = dateStr === todayStr;
+          const dayTotals = plannedActualForDate(dayUserId, dateStr);
+          return (
+            <button
+              key={dateStr}
+              type="button"
+              onClick={() => openDay(dateStr)}
+              className={`flex flex-col items-center gap-0.5 rounded-md py-1.5 text-center hover:bg-cream transition-colors cursor-pointer ${
+                isToday ? "bg-terracotta-soft" : ""
+              }`}
+            >
+              <span className="text-[9px] font-semibold text-walnut uppercase tracking-wide">{weekday}</span>
+              <span className={`text-[13px] font-bold ${isToday ? "text-terracotta" : "text-espresso"}`}>{day}</span>
+              {(dayTotals.planned > 0 || dayTotals.actual > 0) &&
+                plannedActualReadout(dayTotals.planned, dayTotals.actual, dayTotals.off, "xs")}
+            </button>
+          );
+        })}
+
+        <div className={GRID_SCROLL_CLASS} style={{ gridColumn: `span ${dates.length + 1}` }}>
+          <div className="relative grid" style={{ height: hours.length * HOUR_HEIGHT, gridTemplateColumns: COLS(dates.length) }}>
+            <div className="relative">
+              {hours.map((hour, i) => (
+                <span
+                  key={hour}
+                  className="absolute left-0 w-12 pt-0.5 text-[10px] text-stone"
+                  style={{ top: i * HOUR_HEIGHT }}
+                >
+                  {new Date(2000, 0, 1, hour).toLocaleTimeString("en-US", { hour: "numeric" })}
+                </span>
+              ))}
+            </div>
+
+            {dates.map((dateStr) => (
+              <div key={dateStr} className="relative border-l border-sand">
+                {hours.map((hour, i) => (
+                  <div
+                    key={hour}
+                    className="absolute left-0 right-0 border-t border-sand"
+                    style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                  />
+                ))}
+                <div className="pointer-events-none absolute inset-0">
+                  {(() => {
+                    const dayTasks = scheduledForDate(dateStr);
+                    const positions = actualTimelinePositions(dateStr, dayUserId);
+                    return dayTasks.map((task) => {
+                      const cascaded = positions.get(task.id);
+                      if (!cascaded) return null;
+                      const { top, height, isOver, overrun } = cascaded;
+                      return (
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={() => openEditBlock(task)}
+                          className={`pointer-events-auto absolute inset-x-0.5 rounded-md border px-1 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                          style={{ top, height }}
+                        >
+                          <p className="truncate text-[9px] font-semibold leading-tight">
+                            {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                            {task.task_name}
+                          </p>
+                          {isOver && (
+                            <p className="pointer-events-none absolute inset-x-0 -translate-y-full truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white" style={{ top: height }}>
+                              {formatDuration(overrun)} over
+                            </p>
+                          )}
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 
   // The same work the Time Block grid shows, as lengths rather than positions.
@@ -1799,12 +1965,14 @@ export default function ProductivityCalendarPage() {
                   {rows.length === 0 ? (
                     <p className="pt-2 text-center text-[10px] text-stone/70">Nothing blocked</p>
                   ) : (
-                    rows.map((row) => (
+                    rows.map((row) => {
                       // Clickable, same as the Day list's rows — these were plain
                       // divs, so a card here looked identical to one on the Day
                       // view but did nothing when clicked. The day comes from
                       // this column, not selectedDate, so scheduling an untimed
                       // task lands on the column you actually clicked.
+                      const overlay = durationRowOverlay(dayUserId, dateStr, row);
+                      return (
                       <button
                         key={`${row.source}-${row.id}`}
                         type="button"
@@ -1819,11 +1987,17 @@ export default function ProductivityCalendarPage() {
                           if (task) void openScheduleExisting(task, dateStr);
                         }}
                         title={`${row.name}${row.account ? " — " + row.account : ""} · ${formatDuration(row.minutes)}`}
-                        className={`w-full rounded-md border px-1.5 py-1 text-left shadow-sm ${categoryBlockClasses(row.category)} ${
+                        className={`relative w-full overflow-hidden rounded-md border px-1.5 py-1 text-left shadow-sm ${categoryBlockClasses(row.category)} ${
                           row.source === "fixed" ? "cursor-default" : "cursor-pointer hover:opacity-90"
-                        }`}
+                        } ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                       >
-                        <p className="truncate text-[11px] font-semibold leading-tight">
+                        {overlay && (
+                          <div
+                            className="pointer-events-none absolute inset-y-0 left-0 bg-ink/25"
+                            style={{ width: `${overlay.fillPercent}%` }}
+                          />
+                        )}
+                        <p className="relative truncate text-[11px] font-semibold leading-tight">
                           {row.recurring && <RecurringMark className="mr-0.5" />}
                           {row.name}
                           {row.detail && <span className="font-normal opacity-80"> | {row.detail}</span>}
@@ -1831,16 +2005,19 @@ export default function ProductivityCalendarPage() {
                         {/* Account and length share a line — the length has to stay
                             visible here because, unlike a Time Block, nothing about
                             this card's size says how long the task takes. */}
-                        <p className="truncate text-[9px] opacity-80">
+                        <p className="relative truncate text-[9px] opacity-80">
                           {[row.account, formatDuration(row.minutes)].filter(Boolean).join(" | ")}
                           {row.source === "fixed"
                             ? " · Output Based"
                             : !row.timed
                             ? " · no set time"
                             : ""}
+                          {overlay?.isOver && (
+                            <span className="font-semibold text-terracotta"> · {formatDuration(overlay.overMinutes)} over</span>
+                          )}
                         </p>
                         {row.todos.length > 0 && (
-                          <div className="mt-0.5 border-t border-black/10 pt-0.5">
+                          <div className="relative mt-0.5 border-t border-black/10 pt-0.5">
                             {row.todos.map((t) => (
                               <p key={t.id} className="truncate text-[9px] opacity-70 leading-tight">
                                 · {t.text}
@@ -1849,7 +2026,8 @@ export default function ProductivityCalendarPage() {
                           </div>
                         )}
                       </button>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -2564,7 +2742,7 @@ export default function ProductivityCalendarPage() {
               what the whole panel shows, so it sits above the date rather than
               under it. */}
           <div className="mb-3 mx-auto flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
-            {(["grid", "hours"] as const).map((tab) => (
+            {(["grid", "hours", "actual"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -2573,7 +2751,7 @@ export default function ProductivityCalendarPage() {
                   weekTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
                 }`}
               >
-                {tab === "grid" ? "Time Block" : "Duration Block"}
+                {tab === "grid" ? "Time Block" : tab === "hours" ? "Duration Block" : "Actual Timeline"}
               </button>
             ))}
           </div>
@@ -2628,6 +2806,8 @@ export default function ProductivityCalendarPage() {
             <div className="py-8 text-center text-xs text-stone">Loading…</div>
           ) : weekTab === "hours" ? (
             renderDurationList(weekGrid, "Week total")
+          ) : weekTab === "actual" ? (
+            renderActualTimeline(weekGrid)
           ) : (
             renderTimeGrid(weekGrid)
           )}
@@ -2695,7 +2875,7 @@ export default function ProductivityCalendarPage() {
                 different shape with no single day to total. */}
             {compareVaIds.length < 2 && (
               <div className="mb-3 mx-auto flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold w-fit">
-                {(["grid", "hours"] as const).map((tab) => (
+                {(["grid", "hours", "actual"] as const).map((tab) => (
                   <button
                     key={tab}
                     type="button"
@@ -2704,7 +2884,7 @@ export default function ProductivityCalendarPage() {
                       dayTab === tab ? "bg-terracotta text-white" : "bg-white text-stone hover:bg-cream"
                     }`}
                   >
-                    {tab === "grid" ? "Time Block" : "Duration Block"}
+                    {tab === "grid" ? "Time Block" : tab === "hours" ? "Duration Block" : "Actual Timeline"}
                   </button>
                 ))}
               </div>
@@ -2851,7 +3031,7 @@ export default function ProductivityCalendarPage() {
                             key={`${vaId}-${task.id}`}
                             type="button"
                             onClick={() => openEditBlock(task)}
-                            className={`pointer-events-auto absolute overflow-hidden rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                            className={`pointer-events-auto absolute rounded-md border px-1.5 py-0.5 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                             style={{ top, height, left, width }}
                           >
                             {overlay && (
@@ -2872,7 +3052,10 @@ export default function ProductivityCalendarPage() {
                               <p className="relative truncate text-[9px] opacity-80">{task.account}</p>
                             )}
                             {overlay?.isOver && (
-                              <p className="pointer-events-none absolute inset-x-0 bottom-0 truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white">
+                              <p
+                                className="pointer-events-none absolute inset-x-0 -translate-y-full truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white"
+                                style={{ top: overlay.shadeHeight }}
+                              >
                                 {overlay.overMinutes}m over
                               </p>
                             )}
@@ -2899,7 +3082,9 @@ export default function ProductivityCalendarPage() {
                   </p>
                 ) : (
                   <div className="space-y-1.5 p-2">
-                    {dayDurations.rows.map((row) => (
+                    {dayDurations.rows.map((row) => {
+                      const overlay = durationRowOverlay(dayUserId, selectedDate, row);
+                      return (
                       <button
                         // assigned_tasks and fixed_pay_tasks number their rows
                         // independently, so the id alone isn't unique here.
@@ -2918,11 +3103,17 @@ export default function ProductivityCalendarPage() {
                           const task = daySchedule.find((t) => t.id === row.id);
                           if (task) void openScheduleExisting(task, selectedDate);
                         }}
-                        className={`flex w-full items-center justify-between gap-3 rounded-md border px-2 py-1.5 text-left shadow-sm transition-opacity ${categoryBlockClasses(row.category)} ${
+                        className={`relative flex w-full items-center justify-between gap-3 overflow-hidden rounded-md border px-2 py-1.5 text-left shadow-sm transition-opacity ${categoryBlockClasses(row.category)} ${
                           row.source === "fixed" ? "cursor-default" : "hover:opacity-90 cursor-pointer"
-                        }`}
+                        } ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                       >
-                        <span className="min-w-0">
+                        {overlay && (
+                          <div
+                            className="pointer-events-none absolute inset-y-0 left-0 bg-ink/25"
+                            style={{ width: `${overlay.fillPercent}%` }}
+                          />
+                        )}
+                        <span className="relative min-w-0">
                           {/* Styled as the grid block itself, not a dot beside
                               neutral text — the same task reads the same way in
                               either view. Colours come from categoryBlockClasses,
@@ -2949,13 +3140,79 @@ export default function ProductivityCalendarPage() {
                               : !row.timed && (row.account ? " · no set time" : "No set time")}
                           </span>
                         </span>
-                        <span className="shrink-0 text-[12px] font-semibold">
+                        <span className="relative shrink-0 text-right text-[12px] font-semibold">
                           {formatDuration(row.minutes)}
+                          {overlay?.isOver && (
+                            <span className="block text-[10px] font-semibold text-terracotta">
+                              {formatDuration(overlay.overMinutes)} over
+                            </span>
+                          )}
                         </span>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
+              </div>
+            ) : dayTab === "actual" ? (
+              <div className="rounded-lg border border-sand overflow-hidden">
+                <div className="border-b border-sand bg-parchment px-3 py-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-espresso">Actual Timeline</span>
+                  <p className="mt-0.5 text-[10px] text-stone">
+                    The plan, reflowed by what really happened — a task that ran long pushes what comes after it later, absorbing into any open gaps first.
+                  </p>
+                </div>
+                <div className={GRID_SCROLL_CLASS}>
+                  <div className="relative" style={{ height: hours.length * HOUR_HEIGHT }}>
+                    {hours.map((hour, i) => (
+                      <div
+                        key={hour}
+                        className="absolute left-0 right-0 flex items-start gap-2 border-t border-sand"
+                        style={{ top: i * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                      >
+                        <span className="w-14 shrink-0 pt-0.5 text-[10px] text-stone">
+                          {new Date(2000, 0, 1, hour).toLocaleTimeString("en-US", { hour: "numeric" })}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="pointer-events-none absolute inset-0">
+                      {(() => {
+                        const dayTasks = scheduledForDate(selectedDate);
+                        const positions = actualTimelinePositions(selectedDate, dayUserId);
+                        return dayTasks.map((task) => {
+                          const cascaded = positions.get(task.id);
+                          if (!cascaded) return null;
+                          const { top, height, isOver, overrun } = cascaded;
+                          return (
+                            <button
+                              key={task.id}
+                              type="button"
+                              onClick={() => openEditBlock(task)}
+                              className={`pointer-events-auto absolute left-16 right-2 rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category)} ${isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                              style={{ top, height }}
+                            >
+                              <p className="truncate text-[11px] font-semibold">
+                                {task.isRecurring && <RecurringMark className="mr-0.5" />}
+                                {task.task_name}
+                                {task.task_detail && (
+                                  <span className="font-normal opacity-80"> | {task.task_detail}</span>
+                                )}
+                              </p>
+                              {task.account && (
+                                <p className="truncate text-[10px] opacity-80">{task.account}</p>
+                              )}
+                              {isOver && (
+                                <p className="absolute right-1.5 top-1 rounded-full bg-terracotta px-1.5 text-[8px] font-bold leading-tight text-white">
+                                  +{formatDuration(overrun)}
+                                </p>
+                              )}
+                            </button>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
               <div ref={openAtWorkingHours} className={GRID_SCROLL_CLASS}>
@@ -3011,7 +3268,7 @@ export default function ProductivityCalendarPage() {
                           key={task.id}
                           type="button"
                           onClick={() => openEditBlock(task)}
-                          className={`pointer-events-auto absolute overflow-hidden rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
+                          className={`pointer-events-auto absolute rounded-md border px-2 py-1 text-left shadow-sm hover:opacity-90 cursor-pointer ${categoryBlockClasses(task.category, isDueBlock)} ${overlay?.isOver ? "ring-2 ring-terracotta ring-inset" : ""}`}
                           style={{ top, height, left, width }}
                         >
                           {overlay && (
@@ -3021,7 +3278,10 @@ export default function ProductivityCalendarPage() {
                             />
                           )}
                           {overlay?.isOver && (
-                            <p className="pointer-events-none absolute inset-x-0 bottom-0 z-10 truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white">
+                            <p
+                              className="pointer-events-none absolute inset-x-0 -translate-y-full z-10 truncate rounded-b-md bg-terracotta px-1 text-center text-[8px] font-bold leading-tight text-white"
+                              style={{ top: overlay.shadeHeight }}
+                            >
                               {overlay.overMinutes}m over
                             </p>
                           )}
