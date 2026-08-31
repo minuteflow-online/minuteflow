@@ -272,17 +272,6 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
   }
 
-  if (
-    messageType === "submission" &&
-    !submissionMeetsBar({ message, link, fileCount: files.length })
-  ) {
-    return Response.json(
-      {
-        error: `Add an attachment or a link, or describe the work in at least ${MIN_SUBMISSION_WORDS} words.`,
-      },
-      { status: 400 }
-    );
-  }
   if (messageType !== "submission" && !message && !link) {
     return Response.json({ error: "A message is required" }, { status: 400 });
   }
@@ -296,6 +285,27 @@ export async function POST(request: Request, { params }: RouteContext) {
     .single();
   if (taskError || !task) {
     return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  // The evidence bar exists so a reviewer has something to judge. A task
+  // flagged review_required = false is never read by one, so demanding 15
+  // words of it is friction with no reader — it only needs to not be empty,
+  // so the submission record still says something happened.
+  if (messageType === "submission") {
+    const needsEvidence = task.review_required !== false;
+    const ok = needsEvidence
+      ? submissionMeetsBar({ message, link, fileCount: files.length })
+      : Boolean(message.trim() || link.trim() || files.length > 0);
+    if (!ok) {
+      return Response.json(
+        {
+          error: needsEvidence
+            ? `Add an attachment or a link, or describe the work in at least ${MIN_SUBMISSION_WORDS} words.`
+            : "Add an attachment, a message, or a link before submitting.",
+        },
+        { status: 400 }
+      );
+    }
   }
 
   const { data: submission, error: insertError } = await admin

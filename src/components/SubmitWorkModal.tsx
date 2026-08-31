@@ -26,6 +26,9 @@ interface SubmitWorkModalProps {
   taskName: string;
   /** Shown inline under the first checklist item, so it's actually read. */
   instructions?: string | null;
+  /** When false, nobody reviews this task, so the checklist and the word bar
+   *  are dropped — they exist for a reader this work will never have. */
+  reviewRequired?: boolean | null;
   onClose: () => void;
   /**
    * Called once the submission is saved. Receives the status the task should
@@ -49,6 +52,7 @@ export default function SubmitWorkModal({
   taskId,
   taskName,
   instructions,
+  reviewRequired,
   onClose,
   onSubmitted,
 }: SubmitWorkModalProps) {
@@ -61,8 +65,13 @@ export default function SubmitWorkModal({
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
   const words = countWords(message);
-  const hasContent = submissionMeetsBar({ message, link, fileCount: files.length });
-  const allChecked = CHECKLIST.every((c) => checked.has(c.key));
+  // A task nobody reviews only needs a submission that isn't empty. The
+  // checklist and the 15-word bar exist for a reader this work never gets.
+  const needsEvidence = reviewRequired !== false;
+  const hasContent = needsEvidence
+    ? submissionMeetsBar({ message, link, fileCount: files.length })
+    : Boolean(message.trim() || link.trim() || files.length > 0);
+  const allChecked = !needsEvidence || CHECKLIST.every((c) => checked.has(c.key));
   const canSubmit = hasContent && allChecked;
 
   const addFiles = (list: FileList | null) => {
@@ -198,6 +207,7 @@ export default function SubmitWorkModal({
             />
           </div>
 
+          {needsEvidence && (
           <div className="rounded-lg border border-sand bg-cream/40 p-2">
             <label className={labelClass}>Before you submit</label>
             <div className="space-y-1">
@@ -229,8 +239,9 @@ export default function SubmitWorkModal({
               ))}
             </div>
           </div>
+          )}
 
-          {!hasContent && (
+          {needsEvidence && !hasContent && (
             <p className="rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[10px] leading-relaxed text-stone">
               Attach a file or add a link — or, if the message is all there is,
               describe the work in at least {MIN_SUBMISSION_WORDS} words.
