@@ -1225,7 +1225,14 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
           // Output Based tasks (pay only counts once approved), unlike the
           // interactive toggle time-based tasks get. reviewRequired state is
           // never touched in this mode, so deriving from it would send false.
-          review_required: true,
+          // Create-only: it's fixed at true from the start and never meant to
+          // change again, so an edit never needs to resend it — sending it
+          // unconditionally here meant every edit included a field outside
+          // VA_EDITABLE_FIELDS, so a VA saving ANY change to their own
+          // output-based task (detail, notes, rate, dates — anything) always
+          // hit a 403 Forbidden, not just the fields actually meant to be
+          // locked.
+          ...(!isEditing ? { review_required: true } : {}),
           rate: Number(rate),
           start_date: startDate || null,
           due_date: dueDate || null,
@@ -1779,7 +1786,17 @@ const TaskEditor = forwardRef<TaskEditorHandle, TaskEditorProps>(function TaskEd
 
         <div>
           <label className={labelClass}>Assigned By</label>
-          <select value={assignedBy} onChange={(e) => setAssignedBy(e.target.value)} disabled={readOnly} className={inputClass}>
+          {/* Output-based specifically: a VA's own edit never sends assigned_by
+              at all (see the save body below, gated to isAdminOrManager) — so
+              this dropdown looked editable but silently discarded any change
+              a VA made to it. Disabled here rather than left interactive with
+              no effect. Left untouched for time-based, which has its own,
+              different assigned_by rules server-side. */}
+          <select
+            value={assignedBy}
+            onChange={(e) => setAssignedBy(e.target.value)}
+            disabled={readOnly || (mode === "output_based" && !isAdminOrManager)}
+            className={inputClass}>
             {assignByOptions.map((m) => (
               <option key={m.id} value={m.id}>{m.full_name || m.username}</option>
             ))}

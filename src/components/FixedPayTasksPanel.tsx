@@ -159,6 +159,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
   const [statusSaving, setStatusSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [grabbing, setGrabbing] = useState(false);
+  const [tablePage, setTablePage] = useState(0);
 
   const headerSelectAllRef = useRef<HTMLInputElement | null>(null);
 
@@ -392,9 +393,30 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
     });
   }, [filterBaseTasks, filterRates, filterStartDates, filterDueDates, filterClaimStates, filterCreators, filterAssignedBy, filterVas, filterProjects, currentUserId]);
 
+  // 10 per page, same pattern as VAProjectsTab's subtask list — the table's
+  // own scrollbar (see the wrapping div below) handles a page's worth just
+  // fine; this keeps a filter change or a big pool from rendering hundreds
+  // of rows at once.
+  const TASKS_PER_PAGE = 10;
+  const totalPages = Math.max(1, Math.ceil(filteredTasks.length / TASKS_PER_PAGE));
+  const currentTablePage = Math.min(tablePage, totalPages - 1);
+  const pagedTasks = filteredTasks.slice(
+    currentTablePage * TASKS_PER_PAGE,
+    currentTablePage * TASKS_PER_PAGE + TASKS_PER_PAGE
+  );
+
+  // Back to page 1 whenever the filtered set changes — otherwise applying a
+  // filter could strand the view on a now out-of-range page showing nothing.
+  useEffect(() => {
+    setTablePage(0);
+  }, [filteredTasks]);
+
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
-  const allVisibleSelected = filteredTasks.length > 0 && filteredTasks.every((task) => selectedTaskIdSet.has(task.id));
-  const someVisibleSelected = filteredTasks.some((task) => selectedTaskIdSet.has(task.id)) && !allVisibleSelected;
+  // "Visible" means this page, not every filtered task across every page —
+  // otherwise checking the header box would silently select rows the VA
+  // can't even see right now.
+  const allVisibleSelected = pagedTasks.length > 0 && pagedTasks.every((task) => selectedTaskIdSet.has(task.id));
+  const someVisibleSelected = pagedTasks.some((task) => selectedTaskIdSet.has(task.id)) && !allVisibleSelected;
 
   useEffect(() => {
     if (headerSelectAllRef.current) {
@@ -435,7 +457,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
 
   const toggleVisibleSelection = useCallback(() => {
     setSelectedTaskIds((current) => {
-      const visibleIds = filteredTasks.map((task) => task.id);
+      const visibleIds = pagedTasks.map((task) => task.id);
       if (visibleIds.length === 0) return current;
       const visibleSet = new Set(visibleIds);
       const hasAllVisible = visibleIds.every((id) => current.includes(id));
@@ -444,7 +466,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
       }
       return Array.from(new Set([...current, ...visibleIds]));
     });
-  }, [filteredTasks]);
+  }, [pagedTasks]);
 
   const handleStatusChange = useCallback(
     async (taskId: number, status: FixedPayTaskWithClaimer["status"]) => {
@@ -718,9 +740,9 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
               No Output Based tasks found.
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-sand bg-white shadow-sm">
+            <div className="max-h-[600px] overflow-auto rounded-xl border border-sand bg-white shadow-sm">
               <table className="w-full table-fixed">
-                <thead>
+                <thead className="sticky top-0 z-10">
                   <tr className="border-b border-sand bg-parchment">
                     <th className="w-10 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-walnut">
                       <input
@@ -852,7 +874,7 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredTasks.map((task) => {
+                  {pagedTasks.map((task) => {
                     const isSelected = selectedTaskIdSet.has(task.id) || selectedTask?.id === task.id;
                     const claimedByMe = task.claimed_by_me || task.claimed_by === currentUserId;
                     const rowStateLabel = task.deleted_at ? "Trash" : task.archived_at ? "Archived" : task.is_active ? "On" : "Off";
@@ -957,6 +979,27 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-2 text-[11px] text-bark">
+              <button
+                type="button"
+                disabled={currentTablePage === 0}
+                onClick={() => setTablePage(currentTablePage - 1)}
+                className="px-2 py-0.5 rounded hover:bg-parchment disabled:opacity-40"
+              >
+                ‹ Prev
+              </button>
+              <span className="text-stone">{currentTablePage + 1} / {totalPages}</span>
+              <button
+                type="button"
+                disabled={currentTablePage >= totalPages - 1}
+                onClick={() => setTablePage(currentTablePage + 1)}
+                className="px-2 py-0.5 rounded hover:bg-parchment disabled:opacity-40"
+              >
+                Next ›
+              </button>
             </div>
           )}
         </div>
