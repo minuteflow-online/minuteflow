@@ -7,6 +7,7 @@ import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { AssignedTask, AssignedTaskStatus, Project, TaskScreenshot } from "@/types/database";
 import { normalizePosition } from "@/types/database";
 import AvailableTasksWidget from "@/components/AvailableTasksWidget";
+import JobOrdersSection from "@/components/JobOrdersSection";
 import TaskEditor, { type TaskEditorHandle, type TaskEditorInitialTask } from "@/components/TaskEditor";
 import TaskDetailsView from "@/components/TaskDetailsView";
 import Section from "@/components/ui/Section";
@@ -1965,6 +1966,9 @@ export default function TaskListPage() {
   return (
     <>
     <div className="mx-auto max-w-6xl px-4 py-6">
+      {currentUserId && (
+        <JobOrdersSection currentUserId={currentUserId} currentRole={currentRole} teamMembers={allTeamMembers} />
+      )}
       <div className="rounded-2xl border border-sand bg-white shadow-sm">
         <div className="border-b border-parchment px-5 py-3">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

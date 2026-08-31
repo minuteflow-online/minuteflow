@@ -14,6 +14,13 @@ export function hasFinancialAccess(
   return profile?.role === "specialist" && profile?.department?.trim().toLowerCase() === "accounting";
 }
 
+// The Founder tier (CEO/Founder). Used where money is Founder-only — e.g. a
+// job order's rate: only the Founder may set it, and only the Founder and the
+// offeree may see it.
+export function isFounder(profile?: { role?: string | null } | null): boolean {
+  return profile?.role === "ceo" || profile?.role === "founder";
+}
+
 export function hasBroadAdminAccess(
   profile?: { role?: string | null } | null
 ): boolean {
