@@ -172,7 +172,7 @@ export default function JobOrdersSection({
             </span>
           )}
           {admin && o.status === "offered" && !canRespond && (
-            <button disabled={busyId === o.id} onClick={() => { setEditing(o); setCreating(false); }}
+            <button disabled={busyId === o.id} onClick={() => { setEditing(o); setCreating(false); setExpanded(null); }}
               className="shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-stone/15 text-espresso hover:bg-stone/25 transition-colors disabled:opacity-50">Edit</button>
           )}
         </div>
