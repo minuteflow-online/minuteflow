@@ -103,41 +103,72 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       return Response.json({ ok: true });
     }
 
-    // accept → create the subtask. The VA supplies the task title (and project)
-    // as they take it on. A "create later" order is created unlinked for now —
-    // it lands in their task list to attach to the node they create.
+    // accept → materialize the work. The VA supplies the task title (and
+    // project) as they take it on. A "create later" order is created unlinked
+    // for now — it lands in their list to attach to the node they create.
     const vaTaskTitle = typeof body.task_title === "string" && body.task_title.trim() ? body.task_title.trim() : null;
     const vaProject = typeof body.project === "string" && body.project.trim() ? body.project.trim() : null;
     const projectId = order.create_later ? null : (order.linked_project_id ?? null);
-    const { data: task, error: taskErr } = await supabase
-      .from("assigned_tasks")
-      .insert({
-        task_name: vaTaskTitle || order.title,
-        task_detail: order.title, // the client-memo entry
-        account: order.account,
-        project: vaProject || order.project,
-        project_id: projectId,
-        due_date: order.deadline,
-        start_date: order.start_date,
-        status: "pending",
-        review_required: order.review_required,
-        review_required_locked: true,
-        category: "Task",
-        created_by: order.created_by,
-        assigned_by: order.created_by,
-      })
-      .select("id")
-      .single();
-    if (taskErr) return Response.json({ error: taskErr.message }, { status: 400 });
+    const now = new Date().toISOString();
+    let acceptedTaskId: number | null = null;
 
-    const { error: assignErr } = await supabase
-      .from("assigned_task_assignees")
-      .insert({ assigned_task_id: task.id, va_id: order.offered_to });
-    if (assignErr) return Response.json({ error: assignErr.message }, { status: 400 });
+    if (order.work_type === "output") {
+      // Output work → a fixed_pay_task, assigned + claimed to the VA, so it
+      // shows in the Output Based Tasks tab with the (Founder-set) rate.
+      const { error: fptErr } = await supabase
+        .from("fixed_pay_tasks")
+        .insert({
+          task_name: vaTaskTitle || order.title,
+          task_detail: order.title,
+          account: order.account,
+          project: vaProject || order.project,
+          project_id: projectId,
+          rate: order.rate,
+          status: "pending",
+          review_required: order.review_required,
+          start_date: order.start_date,
+          due_date: order.deadline,
+          is_active: true,
+          assigned_to: order.offered_to,
+          assigned_by: order.created_by,
+          claimed_by: order.offered_to,
+          claimed_at: now,
+          created_by: order.created_by,
+        });
+      if (fptErr) return Response.json({ error: fptErr.message }, { status: 400 });
+      // accepted_task_id FK is to assigned_tasks, so it stays null for output.
+    } else {
+      const { data: task, error: taskErr } = await supabase
+        .from("assigned_tasks")
+        .insert({
+          task_name: vaTaskTitle || order.title,
+          task_detail: order.title, // the client-memo entry
+          account: order.account,
+          project: vaProject || order.project,
+          project_id: projectId,
+          due_date: order.deadline,
+          start_date: order.start_date,
+          status: "pending",
+          review_required: order.review_required,
+          review_required_locked: true,
+          category: "Task",
+          created_by: order.created_by,
+          assigned_by: order.created_by,
+        })
+        .select("id")
+        .single();
+      if (taskErr) return Response.json({ error: taskErr.message }, { status: 400 });
+
+      const { error: assignErr } = await supabase
+        .from("assigned_task_assignees")
+        .insert({ assigned_task_id: task.id, va_id: order.offered_to });
+      if (assignErr) return Response.json({ error: assignErr.message }, { status: 400 });
+      acceptedTaskId = task.id as number;
+    }
 
     const { error: updErr } = await supabase
       .from("job_orders")
-      .update({ status: "accepted", accepted_task_id: task.id, accepted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .update({ status: "accepted", accepted_task_id: acceptedTaskId, accepted_at: now, updated_at: now })
       .eq("id", id);
     if (updErr) return Response.json({ error: updErr.message }, { status: 400 });
 
@@ -149,7 +180,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
       topic: "job_order",
     });
 
-    return Response.json({ ok: true, task_id: task.id, pending_setup: order.create_later });
+    return Response.json({ ok: true, task_id: acceptedTaskId, pending_setup: order.create_later });
   }
 
   return Response.json({ error: "Unknown action" }, { status: 400 });

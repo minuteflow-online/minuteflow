@@ -183,7 +183,8 @@ export default function JobOrdersSection({
               ["Type", o.type === "adhoc" ? "Adhoc" : (o.create_later ? `${o.type} · create later` : (projects.find((p) => p.id === o.linked_project_id)?.name ?? o.type))],
               ["Account", o.account],
               ["Work type", o.work_type === "output" ? "Output based" : "Time based"],
-              [o.work_type === "output" ? "Rate" : "Time frame", o.work_type === "output" ? (o.rate != null ? `$${o.rate}` : (founder ? "— (set a rate)" : "hidden")) : o.time_frame],
+              ["Rate", o.work_type === "output" ? (o.rate != null ? `$${o.rate}` : (founder ? "— (set a rate)" : "hidden")) : null],
+              ["Time frame", o.time_frame],
               ["Start date", o.start_date ? fmtDate(o.start_date) : null],
               ["Deadline", o.deadline ? fmtDate(o.deadline) : null],
               ["Respond by", o.respond_by ? fmtDate(o.respond_by) : null],
@@ -327,7 +328,7 @@ function CreateForm({
       links: links.split(/[\n,]/).map((s) => s.trim()).filter(Boolean),
       work_type: workType,
       rate: founder && workType === "output" && rate ? Number(rate) : null,
-      time_frame: workType === "time" ? (timeFrame || null) : null,
+      time_frame: timeFrame || null,
       start_date: startDate || null,
       deadline: deadline || null,
       respond_by: respondBy || null,
@@ -413,17 +414,16 @@ function CreateForm({
             <option value="time">Time based</option><option value="output">Output based</option>
           </select>
         </div>
-        {workType === "output" ? (
+        {workType === "output" && (
           <div>
             <label className={labelCls}>Rate ($) {founder ? "" : "(Founder only)"}</label>
             <input className={inputCls} value={rate} onChange={(e) => setRate(e.target.value)} disabled={!founder} inputMode="decimal" placeholder={founder ? "" : "set by Founder"} />
           </div>
-        ) : (
-          <div>
-            <label className={labelCls}>Time frame</label>
-            <input className={inputCls} value={timeFrame} onChange={(e) => setTimeFrame(e.target.value)} placeholder="e.g. 3 hrs" />
-          </div>
         )}
+        <div>
+          <label className={labelCls}>Time frame</label>
+          <input className={inputCls} value={timeFrame} onChange={(e) => setTimeFrame(e.target.value)} placeholder="e.g. 3 hrs" />
+        </div>
         <div>
           <label className={labelCls}>Start date</label>
           <input type="date" className={inputCls} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
