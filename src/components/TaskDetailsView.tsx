@@ -52,8 +52,9 @@ export default function TaskDetailsView({
     ["Time Block", start && end ? `${start} – ${end}` : null],
     ["Duration", plannedMinutes != null && plannedMinutes > 0 ? formatMinutesInput(plannedMinutes) : null],
     ["Rate", task.rate != null ? `${task.rate}` : null],
+    ["Review Required", task.review_required == null ? null : task.review_required ? "Yes" : "No"],
   ];
-  const filled = rows.filter(([, value]) => Boolean(value));
+
 
   return (
     <div className="space-y-3">
@@ -70,22 +71,24 @@ export default function TaskDetailsView({
       </div>
 
       <dl className="divide-y divide-sand rounded-lg border border-sand overflow-hidden">
-        {filled.map(([label, value]) => (
+        {rows.map(([label, value]) => (
           <div key={label} className="flex gap-3 px-3 py-1.5">
             <dt className="w-28 shrink-0 text-[10px] font-bold uppercase tracking-wide text-walnut">{label}</dt>
-            <dd className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] text-espresso">{value}</dd>
+            <dd className={`min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] ${value ? "text-espresso" : "text-stone/50"}`}>
+              {value ?? "--"}
+            </dd>
           </div>
         ))}
-        {filled.length === 0 && (
-          <p className="px-3 py-4 text-center text-[12px] text-stone">Nothing filled in yet.</p>
-        )}
       </dl>
 
-      {todos.length > 0 && (
-        <div>
+      <div>
           <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-walnut">
             To-Do ({todos.length})
           </p>
+          {todos.length === 0 && (
+            <p className="rounded-lg border border-sand p-2 text-[12px] text-stone/50">--</p>
+          )}
+          {todos.length > 0 && (
           <ul className="space-y-1 rounded-lg border border-sand p-2">
             {todos
               .slice()
@@ -97,8 +100,8 @@ export default function TaskDetailsView({
                 </li>
               ))}
           </ul>
+          )}
         </div>
-      )}
 
       <div className="flex items-center gap-2 pt-1">
         <button

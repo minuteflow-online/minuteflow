@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { hasBroadAdminAccess } from "@/lib/financialAccess";
 import type { FixedPayTaskWithClaimer } from "@/types/database";
 import { normalizePosition } from "@/types/database";
+import TaskDetailsView from "@/components/TaskDetailsView";
 import ColumnHeader from "@/components/table/ColumnHeader";
 import ColumnVisibilityPicker from "@/components/table/ColumnVisibilityPicker";
 import ToolbarFilterDropdown from "@/components/table/ToolbarFilterDropdown";
@@ -1218,19 +1219,25 @@ export default function FixedPayTasksPanel({ refreshKey = 0 }: FixedPayTasksPane
 
               {panelMode === "view" && selectedTask && (
                 <>
-                  <TaskEditor
-                    key={`view-${selectedTask.id}`}
-                    mode="output_based"
-                    editingTaskId={selectedTask.id}
-                    initialTask={selectedTask as unknown as Record<string, unknown>}
-                    currentUserId={currentUserId ?? ""}
-                    isAdminOrManager={isAdminOrManager}
-                    teamMembers={teamMembers}
-                    currentPayRate={currentPayRate ?? undefined}
-                    readOnly
-                    hideFooter
-                    onCancel={closePanel}
-                    onSaved={handleTaskSaved}
+                  <div className="flex rounded-lg border border-sand overflow-hidden text-[12px] font-semibold">
+                    <button
+                      type="button"
+                      className="flex-1 px-3 py-1.5 bg-terracotta text-white transition-colors cursor-pointer"
+                    >
+                      Details
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openEditPanel(selectedTask)}
+                      className="flex-1 px-3 py-1.5 bg-white text-stone hover:bg-cream transition-colors cursor-pointer"
+                    >
+                      Edit Task
+                    </button>
+                  </div>
+
+                  <TaskDetailsView
+                    task={selectedTask as unknown as Parameters<typeof TaskDetailsView>[0]["task"]}
+                    onEdit={() => openEditPanel(selectedTask)}
                   />
 
                   {renderStatusField(selectedTask)}
