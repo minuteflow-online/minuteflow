@@ -4,6 +4,8 @@ import { hasAdminPermission } from "@/lib/adminPermissions";
 import {
   canReviewSubmissions,
   submissionSummary,
+  submissionMeetsBar,
+  MIN_SUBMISSION_WORDS,
   type SubmissionMessageType,
 } from "@/lib/submissions";
 import { sendTelegram, sendTelegramPhoto, sendTelegramDocument, telegramEnabled, esc, mention } from "@/lib/telegram";
@@ -270,9 +272,14 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
   }
 
-  if (messageType === "submission" && !message && !link && files.length === 0) {
+  if (
+    messageType === "submission" &&
+    !submissionMeetsBar({ message, link, fileCount: files.length })
+  ) {
     return Response.json(
-      { error: "Add an attachment, a message, or a link before submitting" },
+      {
+        error: `Add an attachment or a link, or describe the work in at least ${MIN_SUBMISSION_WORDS} words.`,
+      },
       { status: 400 }
     );
   }

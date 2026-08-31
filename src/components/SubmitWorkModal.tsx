@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { AssignedTaskStatus } from "@/types/database";
+import { countWords, submissionMeetsBar, MIN_SUBMISSION_WORDS } from "@/lib/submissions";
 
 /**
  * Run before turning work in. Instructions show the task's own text inline,
@@ -59,7 +60,8 @@ export default function SubmitWorkModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
 
-  const hasContent = Boolean(message.trim() || link.trim() || files.length > 0);
+  const words = countWords(message);
+  const hasContent = submissionMeetsBar({ message, link, fileCount: files.length });
   const allChecked = CHECKLIST.every((c) => checked.has(c.key));
   const canSubmit = hasContent && allChecked;
 
@@ -227,6 +229,14 @@ export default function SubmitWorkModal({
               ))}
             </div>
           </div>
+
+          {!hasContent && (
+            <p className="rounded-lg border border-sand bg-cream/40 px-2 py-1.5 text-[10px] leading-relaxed text-stone">
+              Attach a file or add a link — or, if the message is all there is,
+              describe the work in at least {MIN_SUBMISSION_WORDS} words.
+              {words > 0 && ` (${words} so far)`}
+            </p>
+          )}
 
           <p className="rounded-lg border border-amber/20 bg-amber-soft px-2 py-1.5 text-[10px] leading-relaxed text-walnut">
             Once submitted this can&apos;t be edited. If something changes, add a note to the

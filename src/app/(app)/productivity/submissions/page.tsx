@@ -12,6 +12,7 @@ import {
 } from "@/lib/submissions";
 import RevisionBadge from "@/components/RevisionBadge";
 import MultiSelectFilter from "@/components/MultiSelectFilter";
+import TaskDetailModal from "@/components/TaskDetailModal";
 import { useColumnPrefs, type ColumnDef } from "@/components/table/useColumnPrefs";
 import type { AssignedTaskStatus, Project } from "@/types/database";
 import { CATEGORY_OPTIONS } from "@/lib/taskSchedule";
@@ -256,6 +257,7 @@ export default function SubmissionsPage() {
     }
   }, [currentUserId]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const [detailTaskId, setDetailTaskId] = useState<number | null>(null);
   const [assignedByFilter, setAssignedByFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   // Every filter is multi-select; an empty set means "all".
@@ -787,7 +789,11 @@ This cannot be undone.`
       {/* Key sits in the filter bar rather than above it: two full-width
           bordered rows for one button was most of the page's dead space. */}
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-sand bg-white px-3 py-2">
-        <SubmissionsLegend />
+        {detailTaskId !== null && (
+        <TaskDetailModal taskId={detailTaskId} onClose={() => setDetailTaskId(null)} />
+      )}
+
+      <SubmissionsLegend />
 
         {/* Whose submissions is a filter like any other, so it sits with them
             rather than as a third tab strip competing with the view toggle. */}
@@ -958,6 +964,7 @@ This cannot be undone.`
           hiddenFields={hiddenFields}
           clientByAccount={clientByAccount}
           onCancelReversal={cancelReversal}
+          onOpenTask={setDetailTaskId}
         />
       ) : (
         <CalendarView
@@ -1369,6 +1376,7 @@ function ThreadCard({
   hiddenFields,
   clientByAccount,
   onCancelReversal,
+  onOpenTask,
 }: {
   thread: Thread;
   canReview: boolean;
@@ -1388,6 +1396,7 @@ function ThreadCard({
   hiddenFields: Set<string>;
   clientByAccount: Map<string, ClientRow>;
   onCancelReversal: (item: FeedItem) => void;
+  onOpenTask: (taskId: number) => void;
 }) {
   // Notes and reviews live in the thread too, but the submissions are what the
   // numbering, the rounds and the review actions all key off.
@@ -1525,13 +1534,13 @@ function ThreadCard({
         {/* Straight into the real task editor rather than a second copy of it
             embedded here. Outside the collapse button so it isn't a nested. */}
         {head.task && (
-          <a
-            href={`/productivity/assignment?task=${head.task.id}`}
+          <button
+            onClick={() => onOpenTask(head.task!.id)}
             className="shrink-0 text-[10px] font-semibold text-stone transition-colors hover:text-terracotta"
-            title="Open this task"
+            title="View the full task without leaving this page"
           >
-            Open task
-          </a>
+            View task
+          </button>
         )}
 
         {totalMs > 0 && (
@@ -1706,6 +1715,7 @@ function TimelineView({
   hiddenFields,
   clientByAccount,
   onCancelReversal,
+  onOpenTask,
 }: {
   byDay: Map<string, Thread[]>;
   orgTimezone: string;
@@ -1724,6 +1734,7 @@ function TimelineView({
   hiddenFields: Set<string>;
   clientByAccount: Map<string, ClientRow>;
   onCancelReversal: (item: FeedItem) => void;
+  onOpenTask: (taskId: number) => void;
 }) {
   const days = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
 
@@ -1765,6 +1776,7 @@ function TimelineView({
                 hiddenFields={hiddenFields}
                 clientByAccount={clientByAccount}
                 onCancelReversal={onCancelReversal}
+                onOpenTask={onOpenTask}
               />
             ))}
         </DayGroup>
